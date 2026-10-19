@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1341,33 +1342,55 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("cleans up detached work after releasing the Pi process", () =>
+  it.effect.each(["session", "process"] as const)("cleans up detached work on Pi %s exit", (exit) =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const scopeStopped = yield* Deferred.make<void>();
       let processReleased = false;
       const stopped: Array<{ unit: string; processReleased: boolean }> = [];
       yield* Effect.gen(function* () {
         yield* openRuntime({
           ...fake,
           spawner: ChildProcessSpawner.make((command) =>
-            Effect.acquireRelease(fake.spawner.spawn(command), () =>
-              Effect.sync(() => {
-                processReleased = true;
-              }),
+            Effect.acquireRelease(
+              fake.spawner
+                .spawn(command)
+                .pipe(
+                  Effect.map((child) =>
+                    ChildProcessSpawner.makeHandle({ ...child, exitCode: Deferred.await(exited) }),
+                  ),
+                ),
+              () =>
+                Effect.sync(() => {
+                  processReleased = true;
+                }),
             ),
           ),
         });
         assert.deepStrictEqual(stopped, []);
+        if (exit === "process") {
+          // Stdout stays open as it would for a child holding the inherited pipe.
+          yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(19));
+          yield* Deferred.await(scopeStopped);
+          assert.isFalse(processReleased);
+        }
       }).pipe(
         Effect.scoped,
         Effect.provideService(AgentScope, {
           ...AgentScope.defaultValue(),
           wrap: ({ command, args }) =>
             Effect.succeed({ command, args, unit: "t3code-pi-test.scope" }),
-          stop: (unit) => Effect.sync(() => void stopped.push({ unit, processReleased })),
+          stop: (unit) =>
+            Effect.sync(() => void stopped.push({ unit, processReleased })).pipe(
+              Effect.andThen(Deferred.succeed(scopeStopped, undefined)),
+              Effect.asVoid,
+            ),
         }),
       );
-      assert.deepStrictEqual(stopped, [{ unit: "t3code-pi-test.scope", processReleased: true }]);
+      assert.deepStrictEqual(stopped, [
+        { unit: "t3code-pi-test.scope", processReleased: exit === "session" },
+      ]);
     }).pipe(Effect.provide(layerTest)),
   );
 

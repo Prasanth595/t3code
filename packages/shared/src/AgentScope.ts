@@ -17,12 +17,8 @@ export interface AgentScopeShape {
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**
-   * Stops a scope from `wrap` once its agent has exited, with every process
-   * still in it. A scope lives while any process is in it, and a daemon a tool
-   * detached with `setsid` (the agent-browser daemon and its Chrome) leaves
-   * the agent's process group, so killing the group misses it. A scope
-   * systemd is already stopping after an OOM kill is left alone, so the
-   * thread keeps its OOM label.
+   * Reaps processes left after the owning agent exits, including setsid
+   * descendants outside its process group. Preserves systemd OOM diagnosis.
    */
   readonly stop: (unit: string) => Effect.Effect<void>;
   /**

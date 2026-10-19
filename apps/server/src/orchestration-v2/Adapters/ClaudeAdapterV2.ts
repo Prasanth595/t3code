@@ -274,11 +274,8 @@ const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 const WORKFLOW_MEMBER_TRANSCRIPT_FLUSH_MS = 500;
 
 /**
- * When the CLI exits it stops the MCP servers it started, but not their children: a plugin's
- * `bun run start` wrapper dies and its `bun server.ts` keeps running, writing to a pipe nobody
- * reads (#3089). Those stay in the CLI's group, so the rest of the group gets SIGKILL once the
- * CLI exits for any reason. `onExit` then stops the CLI's agent scope, for daemons a tool
- * detached from the group.
+ * MCP wrappers can leave children behind when the CLI exits. Kill its process
+ * group, then stop its scope to reach descendants detached with setsid.
  */
 function spawnClaudeProcessGroup(
   options: ClaudeSpawnOptions,

@@ -1650,7 +1650,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           threadId: input.threadId,
           env: environment,
         });
-        // Registered before the host, so it runs after the host is closed.
+        // Finalizers run in reverse order: reap detached work after closing the host.
         const scopeUnit = launch.unit;
         if (scopeUnit !== undefined) yield* Scope.addFinalizer(scope, agentScope.stop(scopeUnit));
         const created = yield* Effect.acquireRelease(

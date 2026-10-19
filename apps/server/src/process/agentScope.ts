@@ -10,7 +10,6 @@ import {
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -20,11 +19,6 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
-
-/** Where the cgroup2 hierarchy is mounted. Tests point it at a temp dir. */
-export const CgroupRoot = Context.Reference<string>("t3/process/agentScope/CgroupRoot", {
-  defaultValue: () => "/sys/fs/cgroup",
-});
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
@@ -50,9 +44,7 @@ export interface ScopeState {
   readonly loadState: string;
   readonly activeState: string;
   readonly result: string;
-  readonly oomKills: number;
-  /** False when `memory.events` could not be read, so `oomKills` is unknown. */
-  readonly oomKillsKnown?: boolean | undefined;
+  readonly oomKills: number | undefined;
   readonly populated: boolean | undefined;
 }
 
@@ -70,7 +62,11 @@ export function classifyScope(state: ScopeState): "oom-killed" | "gone" | "runni
   ) {
     return "gone";
   }
-  if (state.activeState === "deactivating" || state.oomKills > 0 || state.populated === false) {
+  if (
+    state.activeState === "deactivating" ||
+    (state.oomKills ?? 0) > 0 ||
+    state.populated === false
+  ) {
     return "stopping";
   }
   return "running";
@@ -109,7 +105,6 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const ownedSlice = ownedAgentSlice(stateDir);
-  const cgroupRoot = yield* CgroupRoot;
   const layerScope = yield* Effect.scope;
 
   const resolve = (command: string, env: NodeJS.ProcessEnv) =>
@@ -124,7 +119,7 @@ export const make = Effect.gen(function* () {
 
   const readCgroupFile = (controlGroup: string, file: string) =>
     fileSystem
-      .readFileString(path.join(cgroupRoot, controlGroup, file))
+      .readFileString(path.join("/sys/fs/cgroup", controlGroup, file))
       .pipe(Effect.orElseSucceed(() => ""));
 
   // Old agents keep their scopes when the server is killed, and the restarted
@@ -180,7 +175,8 @@ export const make = Effect.gen(function* () {
       // older user managers still get scopes, without the OOM label.
       const stopOptions = [STOP_TIMEOUT_OPTION];
       const oomOptions = [...stopOptions, "--property=OOMPolicy=stop"];
-      const scopeOptions = (yield* probe(oomOptions))
+      const oomPolicy = yield* probe(oomOptions);
+      const scopeOptions = oomPolicy
         ? oomOptions
         : (yield* probe(stopOptions))
           ? stopOptions
@@ -206,14 +202,14 @@ export const make = Effect.gen(function* () {
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
-        oomPolicy: scopeOptions === oomOptions,
+        oomPolicy,
       });
       return {
         systemdRun,
         systemctl,
         runtimeDir,
         scopeOptions,
-        oomPolicy: scopeOptions === oomOptions,
+        oomPolicy,
       };
     }),
   );
@@ -234,13 +230,11 @@ export const make = Effect.gen(function* () {
       const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
       const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
       const populated = parseCgroupCounter(cgroupEvents, "populated");
-      const oomKills = parseCgroupCounter(memoryEvents, "oom_kill");
       return {
         loadState: values.get("LoadState") ?? "",
         activeState: values.get("ActiveState") ?? "",
         result: values.get("Result") ?? "",
-        oomKills: oomKills ?? 0,
-        oomKillsKnown: oomKills !== undefined,
+        oomKills: parseCgroupCounter(memoryEvents, "oom_kill"),
         populated: populated === undefined ? undefined : populated === 1,
       } satisfies ScopeState;
     });
@@ -315,37 +309,31 @@ export const make = Effect.gen(function* () {
       return false;
     });
 
-  const stop: AgentScopeShape["stop"] = (unit) =>
-    Effect.gen(function* () {
-      if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) return;
-      const scope = yield* systemd;
-      if (scope === undefined) return;
-      // The kernel counts an OOM kill before it sends the kill, so the count is
-      // visible here even when systemd has not handled the kill yet. A stop
-      // from here could then end the scope as a plain stop, and the thread
-      // would lose its OOM label. An empty scope has nothing left to stop.
-      // Without OOMPolicy=stop (systemd before 253) nothing else stops an
-      // OOM-killed scope, and there is no label to keep, so it is stopped here.
-      // With it, a scope whose OOM count can't be read is left alone.
-      const state = yield* readScope(scope.systemctl, unit);
-      if (state === undefined || (scope.oomPolicy && state.oomKillsKnown === false)) return;
-      const status = classifyScope(state);
-      const oomKilledWithoutPolicy =
-        !scope.oomPolicy &&
-        status === "stopping" &&
-        state.oomKills > 0 &&
-        state.populated !== false &&
-        state.activeState !== "deactivating";
-      if (status !== "running" && !oomKilledWithoutPolicy) return;
-      const stopped = yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
-      if (stopped._tag === "None" || stopped.value.code !== 0) {
-        // The next server start stops whatever is still left in agent scopes.
-        yield* Effect.logWarning("Could not stop an exited agent's scope", {
-          unit,
-          stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
-        });
-      }
-    });
+  const stop = Effect.fn("AgentScope.stop")(function* (unit: string) {
+    if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) return;
+    const scope = yield* systemd;
+    if (scope === undefined) return;
+    const state = yield* readScope(scope.systemctl, unit);
+    if (
+      state === undefined ||
+      state.loadState !== "loaded" ||
+      state.activeState !== "active" ||
+      state.result === "oom-kill" ||
+      state.populated === false
+    )
+      return;
+    // The kernel counts OOM kills before signaling the victim. Let OOMPolicy
+    // record the result before a manual stop can overwrite it; an unreadable
+    // counter cannot rule out that race. Older managers need us to stop it.
+    if (scope.oomPolicy && (state.oomKills === undefined || state.oomKills > 0)) return;
+    const stopped = yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
+    if (stopped._tag === "None" || stopped.value.code !== 0) {
+      yield* Effect.logWarning("Could not stop an exited agent's scope", {
+        unit,
+        exitCode: stopped._tag === "Some" ? stopped.value.code : undefined,
+      });
+    }
+  });
 
   const clear: AgentScopeShape["clear"] = (threadId) =>
     Effect.gen(function* () {

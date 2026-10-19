@@ -1450,11 +1450,11 @@ export const make = (
           });
     const scopedSpawnCommand =
       scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
-    // Registered before the spawn, so it runs after the finalizers that end the agent.
+    // Finalizers run in reverse order: reap detached work after terminating the agent.
     const scopeUnit = scopedLaunch?.unit;
-    if (scopeUnit !== undefined) {
-      yield* Scope.addFinalizer(runtimeScope, agentScope.stop(scopeUnit));
-    }
+    const stopScope =
+      scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+    yield* Scope.addFinalizer(runtimeScope, stopScope);
     const containedSpawnCommand =
       linuxCgroupLease === undefined
         ? scopedSpawnCommand
@@ -1496,6 +1496,14 @@ export const make = (
             }),
         ),
       );
+
+    // Detached children can keep stdout open, delaying protocol termination.
+    if (scopeUnit !== undefined) {
+      yield* child.exitCode.pipe(
+        Effect.matchEffect({ onFailure: () => stopScope, onSuccess: () => stopScope }),
+        Effect.forkIn(runtimeScope),
+      );
+    }
 
     const posixOwnershipLedger = new Map<string, AcpOwnedPosixProcess>();
     const posixOwnershipFrontier = new Map<number, AcpOwnedPosixProcess>();

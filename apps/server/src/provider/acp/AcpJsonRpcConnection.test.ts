@@ -15,6 +15,7 @@ import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -288,7 +289,25 @@ describe("AcpSessionRuntime", () => {
   it.effect("reports an idle child exit and rejects later prompts", () =>
     Effect.gen(function* () {
       const stopped = yield* Deferred.make<string>();
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            spawner.spawn(command).pipe(
+              Effect.map((child) =>
+                ChildProcessSpawner.makeHandle({
+                  ...child,
+                  // Model an inherited pipe held open until detached work is stopped.
+                  stdout: Stream.concat(
+                    child.stdout,
+                    Stream.fromEffect(Deferred.await(stopped)).pipe(Stream.drain),
+                  ),
+                }),
+              ),
+            ),
+          ),
+        ),
         Effect.provideService(AgentScope, {
           ...AgentScope.defaultValue(),
           wrap: ({ command, args }) =>
