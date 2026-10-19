@@ -3444,6 +3444,7 @@ export default function ChatView(props: ChatViewProps) {
       worktreePath?: string | null;
       preferNewTerminal?: boolean;
       rememberAsLastInvoked?: boolean;
+      shellHistory?: "preserve" | "suppress";
     },
   ) => {
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -3502,7 +3503,9 @@ export default function ChatView(props: ChatViewProps) {
 
     const writeResult = await terminalActions.writeToTerminal(
       targetTerminalId,
-      projectScriptTerminalInput(script.command),
+      options?.shellHistory === "preserve"
+        ? `${script.command}\r`
+        : projectScriptTerminalInput(script.command),
     );
     if (!writeResult) return;
     if (writeResult._tag === "Failure") {
@@ -3548,7 +3551,7 @@ export default function ChatView(props: ChatViewProps) {
         icon: "play",
         runOnWorktreeCreate: false,
       },
-      { rememberAsLastInvoked: false },
+      { rememberAsLastInvoked: false, shellHistory: "preserve" },
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);

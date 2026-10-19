@@ -82,7 +82,8 @@ export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectS
 
 /**
  * Leading spaces omit scripts from Bash history with ignorespace/ignoreboth,
- * zsh with HIST_IGNORE_SPACE, and fish. This does not suppress PowerShell/PSReadLine history.
+ * zsh with HIST_IGNORE_SPACE, and fish. Only the first line is prefixed, so later
+ * entries from multiline input may still enter history. PowerShell/PSReadLine history is not suppressed.
  */
 export function projectScriptTerminalInput(command: string): string {
   return ` ${command}\r`;
