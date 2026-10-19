@@ -6062,12 +6062,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          options: { readonly terminalizeSubagents: boolean },
+          options: {
+            readonly toolStatus: "interrupted" | "failed";
+            readonly terminalizeSubagents: boolean;
+          },
         ) {
           for (const tool of context.tools.values()) {
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
-              yield* emitTool(context, tool, "interrupted");
+              yield* emitTool(context, tool, options.toolStatus);
             }
           }
           if (!options.terminalizeSubagents) return;
@@ -6141,7 +6144,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* terminalizeOpenForegroundTools(context);
           } else if (settledStatus === "interrupted") {
             yield* terminalizeOpenRunOwnedItems(context, {
+              toolStatus: "interrupted",
               terminalizeSubagents: directStopQuarantine,
+            });
+          } else if (settledStatus === "failed") {
+            yield* terminalizeOpenRunOwnedItems(context, {
+              toolStatus: "failed",
+              terminalizeSubagents: false,
             });
           }
           yield* closeTextStreams(context);
