@@ -73,6 +73,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 type ApiCall =
   | {
       readonly kind: "graphql";
+      readonly authorization?: string | undefined;
       readonly partial?: boolean;
       /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
@@ -86,7 +87,7 @@ type ApiCall =
 type ApiAnswer = Effect.Effect<GitHubRest.GitHubRestResponse, GitHubRequestPolicy.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
-const defaultCredential = (host: string) =>
+const defaultCredential = (host: string, _cwd?: string) =>
   Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
 const mockedCredential = vi.fn(defaultCredential);
 const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
@@ -98,7 +99,7 @@ const mockApi = Layer.succeed(
   GitHubRest.GitHubRest,
   GitHubRest.GitHubRest.of({
     rest: (input) => mockedExecute({ kind: "rest", ...input }),
-    credential: (host) => mockedCredential(host),
+    credential: (host, cwd) => mockedCredential(host, cwd),
   }),
 );
 
@@ -122,6 +123,7 @@ const mockHttp = Layer.succeed(
           : { query: "", operationName: "", variables: {} };
       const call: ApiCall = {
         kind: "graphql",
+        authorization: request.headers.authorization,
         host,
         operation: "batch",
         operationName: sent.operationName,
@@ -167,8 +169,12 @@ const layer = it.layer(
     Layer.provideMerge(mockHttp),
     Layer.provideMerge(
       Layer.succeed(GitHubCredentials.GitHubCredentials, {
-        get: (host) =>
-          Effect.map(mockedCredential(host), (held) => ({ ...held, host, source: "gh" as const })),
+        get: (host, cwd) =>
+          Effect.map(mockedCredential(host, cwd), (held) => ({
+            ...held,
+            host,
+            source: "gh" as const,
+          })),
         invalidate: () => Effect.void,
       }),
     ),
@@ -616,6 +622,78 @@ afterEach(() => {
   mockedCredential.mockImplementation(defaultCredential);
 });
 
+it.effect("uses and caches each checkout login for GitHub reads and writes", () =>
+  Effect.gen(function* () {
+    const directories: Array<string | undefined> = [];
+    const requests: Array<{ method: string; authorization: string | undefined }> = [];
+    const host = TestSourceControlHost.layer({
+      process: {
+        run: (input) =>
+          Effect.sync(() => {
+            directories.push(input.cwd);
+            return TestSourceControlHost.processOutput(
+              (input.cwd === "/work" ? "work" : "personal") + "-token",
+            );
+          }),
+      },
+    });
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push({ method: request.method, authorization: request.headers.authorization });
+          const work = request.headers.authorization === "Bearer work-token";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeJson({ id: work ? 1 : 2, login: work ? "work" : "personal" }), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(GitHubCredentials.layer),
+          Layer.provideMerge(http),
+          Layer.provideMerge(GitHubQuota.layer),
+          Layer.provideMerge(SourceControlRateLimit.layer),
+          Layer.provideMerge(host),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+    const work = { host: "git.test.internal", cwd: "/work" };
+    const personal = { host: "git.test.internal", cwd: "/personal" };
+    expect(yield* cli.getViewerLogin(work)).toBe("work");
+    expect(yield* cli.getViewerLogin(personal)).toBe("personal");
+    yield* cli.setLabels({
+      ...work,
+      repository: "acme/web",
+      number: 7,
+      labels: ["bug"],
+      applied: true,
+    });
+    yield* cli.setLabels({
+      ...personal,
+      repository: "octo/site",
+      number: 8,
+      labels: ["bug"],
+      applied: false,
+    });
+
+    expect(requests).toEqual([
+      { method: "GET", authorization: "Bearer work-token" },
+      { method: "GET", authorization: "Bearer personal-token" },
+      { method: "POST", authorization: "Bearer work-token" },
+      { method: "DELETE", authorization: "Bearer personal-token" },
+    ]);
+    expect(directories).toEqual(["/work", "/personal"]);
+  }),
+);
+
 it.effect(
   "keeps a verified credential through an auth switch and separates token fingerprints",
   () =>
@@ -696,7 +774,7 @@ it.effect(
           .filter((request) => request.url.endsWith("/user"))
           .map((request) => request.authorization),
       ).toEqual(["Bearer broad-credential", "Bearer restricted-credential"]);
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "123",
         viewer: "same-account",
       });
@@ -817,7 +895,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ),
         { concurrency: 4 },
       );
-      expect(results).toEqual(
+      expect(results).toMatchObject(
         Array.from({ length: 4 }, () => ({ accountId: "123", viewer: "viewer" })),
       );
       expect(mockedExecute).toHaveBeenCalledTimes(1);
@@ -847,7 +925,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const second = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         yield* Fiber.interrupt(first);
-        expect(yield* Fiber.join(second)).toEqual({ accountId: "123", viewer: "viewer" });
+        expect(yield* Fiber.join(second)).toMatchObject({ accountId: "123", viewer: "viewer" });
         expect(verifications).toBe(2);
       }),
   );
@@ -943,6 +1021,50 @@ layer("GitHubPullRequestApi.layer", (it) => {
         _0_stacks: true,
         _1_number: 8,
       });
+    }),
+  );
+
+  it.effect("batches linked pull requests with their checkout credentials", () =>
+    Effect.gen(function* () {
+      mockedCredential.mockImplementation((host, cwd) =>
+        Effect.succeed({ token: Redacted.make("token" + cwd), fingerprint: host + ":" + cwd }),
+      );
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "graphql") return Effect.die("Expected a GraphQL read");
+        const number = Number(call.variables?._0_number);
+        expect(call.authorization).toBe(
+          number === 7 ? "Bearer token/work" : "Bearer token/personal",
+        );
+        return Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                _0_repository: {
+                  pullRequest: coreResponse({
+                    number,
+                    headRefName: "feat/" + number,
+                    latestReviews: { nodes: [] },
+                  }).data.repository.pullRequest,
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const reads = yield* Effect.forEach(
+        [
+          { cwd: "/work", repository: "acme/web", number: 7 },
+          { cwd: "/personal", repository: "octo/site", number: 8 },
+        ],
+        (read) => cli.getPullRequestSummary({ ...read, host: "github.com" }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summaries = yield* Fiber.join(reads);
+
+      expect(summaries.map((summary) => summary.headBranch)).toEqual(["feat/7", "feat/8"]);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 
@@ -3641,7 +3763,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
 
       expect(login).toBe("enterprise-user");
-      expect(mockedCredential).toHaveBeenCalledWith("github.acme.com");
+      expect(mockedCredential).toHaveBeenCalledWith("github.acme.com", "/w");
       expect(callAt(0)).toMatchObject({ kind: "rest", host: "github.acme.com", path: "user" });
     }),
   );
@@ -3654,12 +3776,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed({ token: Redacted.make("test-credential-a"), fingerprint: `${host}:a` }),
       );
       mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"maria-rcks"}')));
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "123",
         viewer: "maria-rcks",
       });
 
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "123",
         viewer: "maria-rcks",
       });
@@ -3683,7 +3805,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(mockedExecute).toHaveBeenCalledTimes(2);
 
       mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"maria-rcks"}')));
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "456",
         viewer: "maria-rcks",
       });

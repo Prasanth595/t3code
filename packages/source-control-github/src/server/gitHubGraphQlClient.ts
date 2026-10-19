@@ -22,6 +22,7 @@ export class GitHubGraphQlTarget extends Context.Service<
   GitHubGraphQlTarget,
   {
     readonly host: string;
+    readonly cwd?: string | undefined;
     readonly operation: string;
     /** Overrides `SourceControlRateLimit.Interactive` for this one call. */
     readonly allowReserve?: boolean | undefined;
@@ -75,6 +76,7 @@ export class GitHubGraphQlAuth extends GraphQLMiddleware.Service<
             return yield* policy.request(
               {
                 host,
+                cwd: target.cwd,
                 operation: target.operation,
                 resource: "graphql",
                 allowReserve: target.allowReserve ?? (yield* SourceControlRateLimit.Interactive),
@@ -227,6 +229,24 @@ export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
       ?.credentialFingerprint ?? null,
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
   ]);
+
+/** Pin before joining a resolver: its batch key must reflect the token that will send it. */
+export const withCheckoutCredential = <A, E, R>(
+  credential: GitHubRequestPolicy.GitHubRequestPolicy["Service"]["credential"],
+  input: { readonly cwd: string; readonly host: string },
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | GitHubRequestPolicy.GitHubApiError, R> =>
+  Effect.gen(function* () {
+    const host = GitHubRequestPolicy.normalizeHost(input.host);
+    const { token, fingerprint } = yield* credential(host, input.cwd);
+    return yield* effect.pipe(
+      Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+        host,
+        token,
+        credentialFingerprint: fingerprint,
+      }),
+    );
+  });
 
 /**
  * GitHub's `errors` on an answer, as the policy's errors: not found when every error says so,

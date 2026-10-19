@@ -4662,6 +4662,125 @@ it.effect("reads the repositories one at a time when the search itself fails", (
     assert.strictEqual(result.entries.length, 2);
   }),
 );
+it.effect("loads line counts across checkouts with different credentials", () =>
+  Effect.gen(function* () {
+    const asked: Array<{ cwd: string; repositories: ReadonlyArray<string> }> = [];
+    const identityFor = (cwd: string) => ({
+      accountId: "1",
+      viewer: "work",
+      credentialFingerprint: cwd.startsWith("/ops/") ? "ops" : "work",
+    });
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/work/web", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/work/api", repository: "acme/api" }),
+        project({ id: "p3", title: "ops", workspaceRoot: "/ops/infra", repository: "acme/infra" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getRoutingIdentity: ({ cwd }) => Effect.succeed(identityFor(cwd)),
+          withVerifiedCredential: ({ cwd }, use) => use(identityFor(cwd)),
+          listChangeRequestStats: (input) => {
+            asked.push({
+              cwd: input.cwd,
+              repositories: input.changeRequests.map((request) => request.repository),
+            });
+            const visible = input.cwd.startsWith("/ops/")
+              ? ["acme/infra"]
+              : ["acme/web", "acme/api"];
+            return Effect.succeed(
+              input.changeRequests
+                .filter((request) => visible.includes(request.repository))
+                .map((request) => ({ ...request, additions: request.number * 10, deletions: 0 })),
+            );
+          },
+        }),
+      ],
+    });
+
+    const result = yield* service.listStats({
+      refs: [
+        { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 },
+        { projectId: "p2" as ProjectId, repository: "acme/api", number: 2 },
+        { projectId: "p3" as ProjectId, repository: "acme/infra", number: 3 },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      result.stats.toSorted((a, b) => a.number - b.number),
+      [
+        { projectId: "p1", repository: "acme/web", number: 1, additions: 10, deletions: 0 },
+        { projectId: "p2", repository: "acme/api", number: 2, additions: 20, deletions: 0 },
+        { projectId: "p3", repository: "acme/infra", number: 3, additions: 30, deletions: 0 },
+      ],
+    );
+    assert.deepStrictEqual(
+      asked.toSorted((a, b) => a.cwd.localeCompare(b.cwd)),
+      [
+        { cwd: "/ops/infra", repositories: ["acme/infra"] },
+        { cwd: "/work/web", repositories: ["acme/web", "acme/api"] },
+      ],
+    );
+  }),
+);
+it.effect("does not lend a changed checkout credential to a cross-project batch", () =>
+  Effect.gen(function* () {
+    const groupedReads: Array<ReadonlyArray<string>> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getRoutingIdentity: () =>
+            Effect.succeed({ accountId: "1", viewer: "work", credentialFingerprint: "old" }),
+          // The checkout switches after grouping, before dispatch. The account ID is unchanged.
+          withVerifiedCredential: (_, use) =>
+            use({ accountId: "1", viewer: "work", credentialFingerprint: "new" }),
+          listChangeRequestStats: ({ changeRequests }) =>
+            Effect.sync(() => {
+              groupedReads.push(changeRequests.map(({ repository }) => repository));
+              return changeRequests.map((ref) => ({ ...ref, additions: 10, deletions: 0 }));
+            }),
+          listChangeRequestsAcross: ({ repositories }) =>
+            Effect.sync(() => {
+              groupedReads.push(repositories);
+              return {
+                items: repositories.map((repository) => ({
+                  ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                  repository,
+                })),
+                truncated: false,
+              };
+            }),
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+        }),
+      ],
+    });
+
+    const stats = yield* service.listStats({
+      refs: [
+        { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 },
+        { projectId: "p2" as ProjectId, repository: "acme/api", number: 1 },
+      ],
+    });
+    const list = yield* service.list({ state: "open" });
+
+    assert.deepStrictEqual(groupedReads, []);
+    assert.deepStrictEqual(stats.stats, []);
+    assert.deepStrictEqual(list.entries.map(({ repository }) => repository).toSorted(), [
+      "acme/api",
+      "acme/web",
+    ]);
+    assert.deepStrictEqual(list.errors, []);
+  }),
+);
 it.effect("fills in the line counts for the rows it is given", () =>
   Effect.gen(function* () {
     const asked: Array<unknown> = [];

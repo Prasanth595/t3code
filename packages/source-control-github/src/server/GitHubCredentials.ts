@@ -7,13 +7,13 @@ import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as PlatformError from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import { readSourceControlHostSettings } from "@t3tools/source-control-core/client/definition";
 import type { ServerSettings } from "@t3tools/contracts";
 
@@ -76,13 +76,15 @@ export type GitHubCredentialUnavailableError =
   | GitHubHostDisabledError
   | GitHubCliFailedError;
 
+/** Directory-aware `gh` shims choose their login from the checkout's `cwd`. */
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
     readonly get: (
       host: string,
+      cwd?: string,
     ) => Effect.Effect<GitHubCredential, GitHubCredentialUnavailableError>;
-    readonly invalidate: (host: string) => Effect.Effect<void>;
+    readonly invalidate: (host: string, cwd?: string) => Effect.Effect<void>;
   }
 >()("@t3tools/source-control-github/server/GitHubCredentials") {}
 
@@ -130,7 +132,7 @@ export const make = Effect.gen(function* () {
       Effect.orDie,
     );
 
-  const fromGh = (host: string, account: string | undefined) =>
+  const fromGh = (host: string, account: string | undefined, cwd: string) =>
     process
       .run({
         operation: "GitHubCredentials.get",
@@ -142,16 +144,14 @@ export const make = Effect.gen(function* () {
           host,
           ...(account === undefined ? [] : ["--user", account]),
         ],
-        cwd: workingDirectory,
+        cwd,
         // Never let gh print the token into a debug log.
         env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
         timeoutMs: 10_000,
       })
       .pipe(
         Effect.mapError((error) =>
-          error._tag === "VcsProcessSpawnError" &&
-          error.cause instanceof PlatformError.PlatformError &&
-          error.cause.reason._tag === "NotFound"
+          isMissingExecutable(error)
             ? new GitHubCliMissingError({ host })
             : // gh exits non-zero with "no oauth token" when it has no login for the host.
               error._tag === "VcsProcessExitError"
@@ -183,18 +183,19 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  const cacheKey = (host: string, account: string | undefined) =>
-    account === undefined ? host : `${host}\u0000${account}`;
+  const cacheKey = (host: string, account: string | undefined, cwd: string | undefined) =>
+    [host, account ?? "", cwd ?? workingDirectory].join("\u0000");
 
   const lookup = Effect.fn("GitHubCredentials.lookup")(function* (key: string) {
-    const [host = key, choice] = key.split("\u0000");
+    const [host = key, account = "", cwd = workingDirectory] = key.split("\u0000");
+    const choice = account === "" ? undefined : account;
     const fromEnv = environmentToken(host, environment);
     const token =
       fromEnv ??
-      (yield* fromGh(host, choice).pipe(
+      (yield* fromGh(host, choice, cwd).pipe(
         Effect.catchTags({
           GitHubNotSignedInError: (error) =>
-            choice === undefined ? Effect.fail(error) : fromGh(host, undefined),
+            choice === undefined ? Effect.fail(error) : fromGh(host, undefined, cwd),
         }),
       ));
     return {
@@ -206,7 +207,7 @@ export const make = Effect.gen(function* () {
   });
 
   const cache = yield* Cache.makeWith(lookup, {
-    capacity: 32,
+    capacity: 512,
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? TOKEN_TTL
@@ -218,7 +219,7 @@ export const make = Effect.gen(function* () {
   });
 
   return GitHubCredentials.of({
-    get: Effect.fn("GitHubCredentials.get")(function* (rawHost) {
+    get: Effect.fn("GitHubCredentials.get")(function* (rawHost, cwd) {
       const host = normalizeHost(rawHost);
       const choice = yield* hostChoice(host);
       if (choice?.enabled === false) {
@@ -233,12 +234,12 @@ export const make = Effect.gen(function* () {
           fingerprint: yield* fingerprintOf(host, saved),
         } satisfies GitHubCredential;
       }
-      return yield* Cache.get(cache, cacheKey(host, choice?.account));
+      return yield* Cache.get(cache, cacheKey(host, choice?.account, cwd));
     }),
-    invalidate: (rawHost) => {
+    invalidate: (rawHost, cwd) => {
       const host = normalizeHost(rawHost);
       return hostChoice(host).pipe(
-        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account))),
+        Effect.flatMap((choice) => Cache.invalidate(cache, cacheKey(host, choice?.account, cwd))),
       );
     },
   });
