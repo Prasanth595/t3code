@@ -87,9 +87,15 @@ describe("normalizeGitRemoteUrl", () => {
   });
 
   it("keeps absolute SSH paths distinct from relative SCP paths", () => {
-    expect(normalizeGitRemoteUrl("forge:App.git")).toBe("forge/app");
+    expect(normalizeGitRemoteUrl("forge:App.git")).toBe("forge:app");
     expect(normalizeGitRemoteUrl("deploy@forge:/App.git")).toBe("deploy@forge:/app");
-    expect(normalizeGitRemoteUrl("ssh://deploy@forge/App.git")).toBe("forge/app");
+    expect(normalizeGitRemoteUrl("ssh://deploy@forge/App.git")).toBe("ssh://deploy@forge/app");
+    expect(normalizeGitRemoteUrl("alice@server.test:app.git")).not.toBe(
+      normalizeGitRemoteUrl("bob@server.test:app.git"),
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@server.test/app.git")).not.toBe(
+      normalizeGitRemoteUrl("git@server.test:app.git"),
+    );
     expect(normalizeGitRemoteUrl("git@server.test:srv/app.git")).not.toBe(
       normalizeGitRemoteUrl("git@server.test:/srv/app.git"),
     );

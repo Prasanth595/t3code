@@ -142,7 +142,7 @@ function azureDevOpsRepositoryKey(host: string, segments: ReadonlyArray<string>)
 }
 
 // `[user@]host:path`, git's SCP-like spelling of an SSH remote.
-const SCP_REMOTE_PATTERN = /^(?:([a-z0-9._-]+)@)?([^:/\s@]+):(\/?[^/\s]+(?:\/[^/\s]+)*)$/i;
+const SCP_REMOTE_PATTERN = /^(?:([a-z0-9._-]+)@)?([^:/\s@]+):([^/\s]+(?:\/[^/\s]+)+)$/i;
 
 /**
  * Normalize a git remote URL into a stable comparison key.
@@ -158,7 +158,7 @@ export function normalizeGitRemoteUrl(value: string): string {
     try {
       const url = new URL(normalized);
       const repositorySegments = url.pathname.split("/").filter((segment) => segment.length > 0);
-      if (url.hostname && repositorySegments.length > 0) {
+      if (url.hostname && repositorySegments.length > 1) {
         return (
           azureDevOpsRepositoryKey(url.hostname, repositorySegments) ??
           `${url.hostname}/${repositorySegments.join("/")}`
@@ -172,15 +172,7 @@ export function normalizeGitRemoteUrl(value: string): string {
   const [, scpUser, scpHost, scpPath] = SCP_REMOTE_PATTERN.exec(normalized) ?? [];
   // A userless one-letter host is a Windows drive path.
   if (scpHost && scpPath && (scpUser || scpHost.length > 1)) {
-    if (scpPath.startsWith("/")) {
-      const provider = detectSourceControlProviderFromRemoteUrl(`git@${scpHost}:`);
-      // An absolute filesystem path is not the login-relative SCP spelling.
-      if (!provider || provider.kind === "unknown") return normalized;
-    }
-    const repositoryPath = scpPath.replace(/^\//, "");
-    return (
-      azureDevOpsRepositoryKey(scpHost, repositoryPath.split("/")) ?? `${scpHost}/${repositoryPath}`
-    );
+    return azureDevOpsRepositoryKey(scpHost, scpPath.split("/")) ?? `${scpHost}/${scpPath}`;
   }
 
   return normalized;

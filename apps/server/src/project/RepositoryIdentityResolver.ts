@@ -186,13 +186,13 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
   const remote = pickPrimaryRemote(remotes);
   if (!remote) return null;
-  const resolvedRemoteUrl = yield* expandSshHostAlias(remote.remoteUrl);
+  const resolvedRemoteUrl = yield* expandSshHostAlias(remote.remoteUrl, cacheKey);
   const originUrl = remotes.get("origin");
   const resolvedOriginUrl =
     originUrl === remote.remoteUrl
       ? resolvedRemoteUrl
       : originUrl
-        ? yield* expandSshHostAlias(originUrl)
+        ? yield* expandSshHostAlias(originUrl, cacheKey)
         : undefined;
   return buildRepositoryIdentity({
     ...remote,

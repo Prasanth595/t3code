@@ -5,6 +5,8 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 
 // These documented SSH-over-443 endpoints share their public forge's identity.
 const SSH_ENDPOINT_HOSTS = new Map([
@@ -63,8 +65,24 @@ function parseSshConfig(stdout: string): ReadonlyMap<string, string> {
   );
 }
 
-const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (remote: SshRemote) {
+const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (
+  remote: SshRemote,
+  cwd: string,
+) {
+  const environment = yield* HostProcess.Environment;
+  if (environment.GIT_SSH_COMMAND || environment.GIT_SSH || environment.GIT_SSH_VARIANT) return "";
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const customTransport = yield* processRunner
+    .run({
+      command: "git",
+      args: ["-C", cwd, "config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"],
+      env: explicitBareRepositoryEnv(environment, yield* HostProcess.Platform),
+      timeout: Duration.seconds(5),
+      timeoutBehavior: "timedOutResult",
+    })
+    .pipe(Effect.option);
+  // Arbitrary Git SSH commands may use another executable or configuration.
+  if (customTransport._tag === "None" || customTransport.value.code !== 1) return "";
   const result = yield* processRunner
     .run({
       command: "ssh",
@@ -83,12 +101,15 @@ const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (remote:
 
 export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(function* (
   remoteUrl: string,
+  cwd: string,
 ) {
   const remote = parseSshRemote(remoteUrl);
   if (!remote) return remoteUrl;
 
   const alias = remote.host.toLowerCase();
-  const config = parseSshConfig(PUBLIC_SSH_HOSTS.has(alias) ? "" : yield* readSshConfig(remote));
+  const config = parseSshConfig(
+    PUBLIC_SSH_HOSTS.has(alias) ? "" : yield* readSshConfig(remote, cwd),
+  );
   const hostName = (config.get("hostname") ?? alias).toLowerCase().replace(/\.$/, "");
   if (hostName.includes(":")) return remoteUrl;
   const resolvedHost = SSH_ENDPOINT_HOSTS.get(hostName) ?? hostName;

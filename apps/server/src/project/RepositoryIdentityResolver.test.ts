@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -62,6 +63,7 @@ const layerRemoteResolver = (
       Layer.succeed(ProcessRunner.ProcessRunner, {
         run: (input) => {
           if (input.command === "ssh") return ssh(input);
+          if (input.args.includes("config")) return Effect.succeed(processOutput("", 1));
           expect(input.command).toBe("git");
           return Effect.succeed(
             processOutput(
@@ -277,9 +279,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const bob = () =>
         Effect.succeed(processOutput("hostname server.test\nuser bob@corp.example\n"));
       expect((yield* resolveRemote("alice-box:app.git", alice))?.canonicalKey).toBe(
-        "alice-box/app",
+        "alice-box:app",
       );
-      expect((yield* resolveRemote("bob-box:app.git", bob))?.canonicalKey).toBe("bob-box/app");
+      expect((yield* resolveRemote("bob-box:app.git", bob))?.canonicalKey).toBe("bob-box:app");
       const forge = yield* resolveRemote("forgejo@code.example.org:Team/App.git", () =>
         Effect.succeed(processOutput("hostname code.example.org\nuser forgejo\nport 22\n")),
       );
@@ -420,9 +422,46 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
               });
         expect((yield* resolveRemote("gh:Team/App.git", ssh))?.canonicalKey).toBe("gh/team/app");
         expect((yield* resolveRemote("alice@server.test:app.git", ssh))?.canonicalKey).toBe(
-          "server.test/app",
+          "alice@server.test:app",
         );
       }),
+  );
+
+  it.effect("keeps alias identity when Git uses a custom SSH command", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ssh-override-" });
+      yield* git(cwd, ["init"]);
+      const remoteUrl = "git@work:Team/App.git";
+      yield* git(cwd, ["remote", "add", "origin", remoteUrl]);
+      yield* git(cwd, ["config", "core.sshCommand", "ssh -F /custom/config"]);
+      const runner = yield* ProcessRunner.ProcessRunner;
+      let sshCalls = 0;
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command !== "ssh") return runner.run(input);
+            sshCalls++;
+            return Effect.succeed(processOutput("hostname github.com\nuser git\n"));
+          },
+        }),
+      );
+      const configured = yield* resolver.resolve(cwd);
+      expect(configured?.canonicalKey).toBe("work/team/app");
+      expect(configured?.locator.remoteUrl).toBe(remoteUrl);
+      yield* git(cwd, ["config", "--unset", "core.sshCommand"]);
+      const environment = yield* resolver.resolve(cwd, { refresh: true }).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ...process.env,
+          GIT_SSH_COMMAND: "ssh -F /another/config",
+        }),
+      );
+      expect(environment?.canonicalKey).toBe("work/team/app");
+      expect(sshCalls).toBe(0);
+      const standard = yield* resolver.resolve(cwd, { refresh: true });
+      expect(standard?.canonicalKey).toBe("github.com/team/app");
+      expect(sshCalls).toBe(1);
+    }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
   it.effect("resolves a host named constructor without reading inherited endpoint mappings", () =>
@@ -430,7 +469,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const identity = yield* resolveRemote("git@constructor:repo.git", () =>
         Effect.succeed(processOutput("hostname constructor\nuser git\n")),
       );
-      expect(identity?.canonicalKey).toBe("constructor/repo");
+      expect(identity?.canonicalKey).toBe("git@constructor:repo");
       expect(identity?.locator.remoteUrl).toBe("git@constructor:repo.git");
     }),
   );
