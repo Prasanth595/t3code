@@ -2,6 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "../hooks/useSettings";
+import { clearPushRegistrationFailure, startPushRegistration } from "../forkWebPushRegistration";
 import {
   listenForInstalledAppNotificationClicks,
   syncInstalledAppServiceWorker,
@@ -44,25 +45,24 @@ export function InstalledAppCoordinator() {
     // The push worker of a removed environment stays, and its server can still push here. The
     // environment list is empty for a moment at each page load, so it cannot decide a removal.
     // Revisit if removed environments still notify.
-    const sync = async () => {
-      if (!wanted) {
-        await removePushRegistrations();
-        return;
-      }
-      for (const environmentId of connectedEnvironmentIds) {
-        const key = await readPublicKey({ environmentId, input: {} });
-        if (key._tag === "Failure") {
-          console.warn("Web Push: the environment gave no key", environmentId, key.cause);
-          continue;
-        }
-        const subscription = await subscribeEnvironment(environmentId, key.value.publicKey);
-        await saveSubscription({
-          environmentId,
-          input: { subscription, origin: window.location.origin },
-        });
-      }
-    };
-    sync().catch((error: unknown) => console.error("Web Push did not update", error));
+    if (!wanted) {
+      clearPushRegistrationFailure();
+      void removePushRegistrations().catch((error: unknown) =>
+        console.error("Web Push did not update", error),
+      );
+      return;
+    }
+    return startPushRegistration(connectedEnvironmentIds, async (environmentId, active) => {
+      const key = await readPublicKey({ environmentId, input: {} });
+      if (key._tag === "Failure") return key;
+      if (!active()) return;
+      const subscription = await subscribeEnvironment(environmentId, key.value.publicKey);
+      if (!active()) return;
+      return saveSubscription({
+        environmentId,
+        input: { subscription, origin: window.location.origin },
+      });
+    });
   }, [
     connectedEnvironmentIds,
     enabled,

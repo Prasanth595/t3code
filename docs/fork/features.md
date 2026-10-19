@@ -99,6 +99,7 @@ Each machine decides which browsers get in through Cloudflare Access.
 
 - **Setting:** `clientAccess` (`off` by default). Change it per machine in the portal Settings view, with the passkey step. In the desktop app of a machine, change it in Settings > Machines > "Client access".
 - `off` keeps the owner login. `observe` gives a browser of an approved client the level of its arrow, at most `standard`. `enforce` lets in only browsers of approved clients. Other browsers wait for approval.
+- An open browser also enters the waiting page if its key is removed or the machine switches to `enforce`. It checks for approval automatically.
 - To turn it on safely, and to get back in after a lockout, follow [Client access](../../apps/machine-map/README.md#client-access) in the portal README.
 
 ### Sibling client sessions
@@ -475,6 +476,7 @@ Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an a
 A phone gets thread notifications while the installed app is closed, from each server that the page connects to.
 
 - **Setting:** client setting `webPushEnabled` (on by default). Settings > General > "Web Push". It needs the installed app setting and system notifications. "Send a test" sends a test push.
+- Failed registration retries automatically with increasing delays, then stops. The failure appears separately from the enabled preference. Reconnect or reload to try again after retries stop.
 - **Works on:** web browsers, mainly the installed web app on a phone. The native mobile app has its own push, see [Android APK](#android-apk).
 - A server pushes when a thread starts to wait for approval or input, or when a running thread completes or fails.
 - A push replaces the page notification of the same thread. No push shows when the window in front already shows that thread.

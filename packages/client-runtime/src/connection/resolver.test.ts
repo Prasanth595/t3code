@@ -25,6 +25,7 @@ import {
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
   BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -79,6 +80,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
   readonly primaryBearerToken?: string;
+  readonly refreshBearerToken?: ClientCapabilities.PrimaryEnvironmentAuth["Service"]["refreshBearerToken"];
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
 }) => {
@@ -170,6 +172,7 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
       ClientCapabilities.PrimaryEnvironmentAuth,
       ClientCapabilities.PrimaryEnvironmentAuth.of({
         bearerToken: Effect.succeed(Option.fromNullishOr(options?.primaryBearerToken)),
+        ...(options?.refreshBearerToken ? { refreshBearerToken: options.refreshBearerToken } : {}),
       }),
     ),
     Layer.succeed(
@@ -284,6 +287,83 @@ describe("ConnectionResolver", () => {
       });
       expect(yield* Ref.get(bearerInputs)).toEqual([{ token: "desktop-bearer", method: "direct" }]);
     }),
+  );
+
+  it.effect("refreshes a refused primary bearer once before authorizing again", () =>
+    Effect.gen(function* () {
+      const tokens: string[] = [];
+      const rejected: string[] = [];
+      const layerBroker = yield* makeDependencies({
+        primaryBearerToken: "revoked",
+        refreshBearerToken: (token) =>
+          Effect.sync(() => {
+            rejected.push(token);
+            return Option.some("fresh");
+          }),
+        authorizeBearer: (input) => {
+          tokens.push(input.bearerToken);
+          if (input.bearerToken === "revoked")
+            return Effect.fail(
+              new ConnectionBlockedError({ reason: "authentication", detail: "Revoked" }),
+            );
+          return Effect.succeed({
+            environmentId: input.expectedEnvironmentId,
+            label: "Primary",
+            httpBaseUrl: input.httpBaseUrl,
+            socketUrl: "ws://127.0.0.1:3777/ws",
+            httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+          });
+        },
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+      });
+      expect(yield* broker.prepare(catalogEntry(target))).toMatchObject({
+        httpAuthorization: { token: "fresh" },
+      });
+      expect(tokens).toEqual(["revoked", "fresh"]);
+      expect(rejected).toEqual(["revoked"]);
+    }),
+  );
+
+  it.effect(
+    "does not loop on a second auth refusal or refresh for an incompatible environment",
+    () =>
+      Effect.gen(function* () {
+        for (const reason of ["authentication", "configuration"] as const) {
+          const tokens: string[] = [];
+          const refreshed: string[] = [];
+          const layerBroker = yield* makeDependencies({
+            primaryBearerToken: "revoked",
+            refreshBearerToken: (token) =>
+              Effect.sync(() => {
+                refreshed.push(token);
+                return Option.some("fresh");
+              }),
+            authorizeBearer: (input) => {
+              tokens.push(input.bearerToken);
+              return Effect.fail(new ConnectionBlockedError({ reason, detail: "Refused" }));
+            },
+          });
+          const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+            Effect.provide(layerBroker),
+          );
+          const target = new PrimaryConnectionTarget({
+            environmentId: ENVIRONMENT_ID,
+            label: "Primary",
+            httpBaseUrl: "http://127.0.0.1:3777",
+            wsBaseUrl: "ws://127.0.0.1:3777",
+          });
+          const error = yield* broker.prepare(catalogEntry(target)).pipe(Effect.flip);
+          expect(error._tag).toBe("ConnectionBlockedError");
+          expect(tokens).toEqual(reason === "authentication" ? ["revoked", "fresh"] : ["revoked"]);
+          expect(refreshed).toEqual(reason === "authentication" ? ["revoked"] : []);
+        }
+      }),
   );
 
   it.effect("uses the registered bearer profile without re-reading the profile store", () =>

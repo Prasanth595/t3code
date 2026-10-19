@@ -1,10 +1,13 @@
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
 
 import { readDesktopPrimaryBearerToken } from "./desktopAuth";
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
+
+const isUnauthenticatedSession = Schema.is(Schema.Struct({ authenticated: Schema.Literal(false) }));
 
 function isSameOriginBrowserPrimary(): boolean {
   if (
@@ -20,12 +23,22 @@ function isSameOriginBrowserPrimary(): boolean {
 
 function withPrimaryBearerToken(client: HttpClient.HttpClient): HttpClient.HttpClient {
   return client.pipe(
-    HttpClient.mapRequestEffect((request) =>
-      Effect.promise(readDesktopPrimaryBearerToken).pipe(
-        Effect.map((bearerToken) =>
-          bearerToken ? HttpClientRequest.bearerToken(request, bearerToken) : request,
-        ),
-      ),
+    HttpClient.transform((effect, request) =>
+      Effect.gen(function* () {
+        const bearerToken = yield* Effect.promise(() => readDesktopPrimaryBearerToken());
+        if (!bearerToken) return yield* effect;
+        const response = yield* client.execute(HttpClientRequest.bearerToken(request, bearerToken));
+        // The session probe reports a refused bearer as a successful anonymous response.
+        const anonymousSession =
+          response.status === 200 &&
+          new URL(request.url).pathname === "/api/auth/session" &&
+          isUnauthenticatedSession(yield* response.json);
+        if (response.status !== 401 && !anonymousSession) return response;
+        const refreshed = yield* Effect.promise(() => readDesktopPrimaryBearerToken(bearerToken));
+        return refreshed
+          ? yield* client.execute(HttpClientRequest.bearerToken(request, refreshed))
+          : response;
+      }),
     ),
   );
 }
