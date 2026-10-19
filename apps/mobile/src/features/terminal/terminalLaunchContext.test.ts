@@ -62,19 +62,32 @@ describe("resolveTerminalOpenLocation", () => {
     });
   });
 
-  it("keeps a running checkout terminal on the checkout after the thread gains a worktree", () => {
+  it("preserves checkout cwd and identity from the selected terminal or active session", () => {
+    const checkout = { cwd: "/repo/root/packages/app", worktreePath: null };
+    const threadLocation = {
+      workspaceRoot: "/repo/root",
+      threadShellWorktreePath: "/repo/worktrees/feature",
+      threadDetailWorktreePath: "/repo/worktrees/feature",
+    };
+
     expect(
       resolveTerminalOpenLocation({
-        terminalLocation: null,
-        activeSessionLocation: { cwd: "/repo/root", worktreePath: null },
-        workspaceRoot: "/repo/root",
-        threadShellWorktreePath: "/repo/worktrees/feature",
-        threadDetailWorktreePath: "/repo/worktrees/feature",
+        ...threadLocation,
+        terminalLocation: checkout,
+        activeSessionLocation: {
+          cwd: "/repo/worktrees/other",
+          worktreePath: "/repo/worktrees/other",
+        },
       }),
-    ).toEqual({
-      cwd: "/repo/root",
-      worktreePath: null,
-    });
+    ).toEqual(checkout);
+
+    expect(
+      resolveTerminalOpenLocation({
+        ...threadLocation,
+        terminalLocation: null,
+        activeSessionLocation: checkout,
+      }),
+    ).toEqual(checkout);
   });
 });
 

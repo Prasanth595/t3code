@@ -522,19 +522,17 @@ describe("session branch mismatch dismissal", () => {
 });
 
 describe("resolveTerminalWorktreePath", () => {
-  const threadWorktreePath = "/repo/.worktrees/feature";
+  it("uses the terminal's checkout identity until neither launch nor session is known", () => {
+    const threadWorktreePath = "/repo/.worktrees/feature";
 
-  it("keeps a terminal launched on the checkout off the thread's later worktree", () => {
     expect(
       resolveTerminalWorktreePath({
         launchContext: { worktreePath: null },
-        summary: null,
+        summary: { worktreePath: "/repo/.worktrees/other" },
         threadWorktreePath,
       }),
     ).toBeNull();
-  });
 
-  it("keeps a terminal the server opened on the checkout off the thread's later worktree", () => {
     expect(
       resolveTerminalWorktreePath({
         launchContext: null,
@@ -542,9 +540,7 @@ describe("resolveTerminalWorktreePath", () => {
         threadWorktreePath,
       }),
     ).toBeNull();
-  });
 
-  it("falls back to the thread's worktree only without a launch context or summary", () => {
     expect(
       resolveTerminalWorktreePath({ launchContext: null, summary: null, threadWorktreePath }),
     ).toBe(threadWorktreePath);
