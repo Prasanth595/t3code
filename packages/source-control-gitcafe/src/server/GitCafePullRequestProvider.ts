@@ -531,7 +531,7 @@ export const make = Effect.gen(function* () {
           ...Json.toChangeRequest(pull, input),
           headRepositoryNameWithOwner: pull.sourceRepo
             ? `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`
-            : null,
+            : input.repository,
           closedAt: pull.closedAt,
           mergedAt: pull.mergedAt,
         })),
@@ -562,9 +562,9 @@ export const make = Effect.gen(function* () {
         ...Json.toChangeRequest(pull, input),
         headSha: pull.headOid,
         body: pull.description ?? "",
-        ...(pull.sourceRepo === null
-          ? {}
-          : { headRepositoryNameWithOwner: `${pull.sourceRepo.owner}/${pull.sourceRepo.name}` }),
+        headRepositoryNameWithOwner: pull.sourceRepo
+          ? `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`
+          : input.repository,
         additions: changes?.additions ?? 0,
         deletions: changes?.deletions ?? 0,
         changedFiles: changes?.changedFiles ?? 0,
