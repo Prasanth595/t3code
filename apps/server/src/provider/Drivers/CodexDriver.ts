@@ -23,6 +23,7 @@ import {
   checkCodexProviderStatus,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
+  resolveCodexProcessCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
@@ -288,7 +289,10 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
                 binaryPath: effectiveConfig.binaryPath,
                 homePath: effectiveConfig.homePath,
                 launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-                cwd: process.cwd(),
+                cwd: yield* resolveCodexProcessCwd({
+                  settings: effectiveConfig,
+                  purpose: { kind: "metadata" },
+                }),
                 environment: processEnv,
               });
               const response = yield* client.request("account/rateLimitResetCredit/consume", {
@@ -299,6 +303,8 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
           )
           .pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
             Effect.mapError(
               (cause) =>
                 new ProviderDriverError({

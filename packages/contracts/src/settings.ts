@@ -608,6 +608,14 @@ export const CodexSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    metadataCwd: Schema.optionalKey(TrimmedNonEmptyString).pipe(
+      Schema.annotateKey({
+        title: "Metadata working directory",
+        description:
+          "Host directory for provider metadata. Sessions start in their workspace, or this directory when no workspace is set.",
+        providerSettingsForm: { hidden: true, clearWhenEmpty: "omit" },
+      }),
+    ),
     shadowHomePath: TrimmedString.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({

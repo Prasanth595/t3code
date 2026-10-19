@@ -16,6 +16,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
+import type { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import type {
   CodexSettings,
   CustomModelSetting,
@@ -404,6 +405,79 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
+class CodexMetadataCwdError extends Schema.TaggedError<CodexMetadataCwdError>()(
+  "CodexMetadataCwdError",
+  {
+    metadataCwd: Schema.String,
+    reason: Schema.Literals(["relative", "unavailable", "not-directory"]),
+    cause: Schema.optionalKey(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "relative":
+        return "Codex metadata directory must be an absolute path";
+      case "unavailable":
+        return "Codex metadata directory does not exist or cannot be accessed";
+      case "not-directory":
+        return "Codex metadata directory is not a directory";
+    }
+  }
+}
+
+type CodexProcessCwdPurpose =
+  | { readonly kind: "metadata" }
+  | { readonly kind: "session"; readonly workspaceCwd: ProviderAdapterV2RuntimePolicy["cwd"] };
+
+type CodexProcessCwdInput<Purpose extends CodexProcessCwdPurpose> = {
+  readonly settings: Pick<CodexSettings, "metadataCwd">;
+  readonly purpose: Purpose;
+};
+
+export function resolveCodexProcessCwd(
+  input: CodexProcessCwdInput<{ readonly kind: "metadata" }>,
+): Effect.Effect<string, CodexMetadataCwdError, FileSystem.FileSystem | Path.Path>;
+export function resolveCodexProcessCwd(
+  input: CodexProcessCwdInput<{
+    readonly kind: "session";
+    readonly workspaceCwd: ProviderAdapterV2RuntimePolicy["cwd"];
+  }>,
+): Effect.Effect<string | undefined, CodexMetadataCwdError, FileSystem.FileSystem | Path.Path>;
+export function resolveCodexProcessCwd({
+  settings,
+  purpose,
+}: CodexProcessCwdInput<CodexProcessCwdPurpose>) {
+  return Effect.gen(function* () {
+    if (settings.metadataCwd === undefined) {
+      return purpose.kind === "metadata" ? process.cwd() : undefined;
+    }
+    const path = yield* Path.Path;
+    const metadataCwd = expandHomePath(settings.metadataCwd, yield* HostProcess.HomeDirectory);
+    if (!path.isAbsolute(metadataCwd)) {
+      return yield* new CodexMetadataCwdError({ metadataCwd, reason: "relative" });
+    }
+    const fileSystem = yield* FileSystem.FileSystem;
+    const canonical = yield* fileSystem
+      .realPath(metadataCwd)
+      .pipe(
+        Effect.mapError(
+          (cause) => new CodexMetadataCwdError({ metadataCwd, reason: "unavailable", cause }),
+        ),
+      );
+    const info = yield* fileSystem
+      .stat(canonical)
+      .pipe(
+        Effect.mapError(
+          (cause) => new CodexMetadataCwdError({ metadataCwd, reason: "unavailable", cause }),
+        ),
+      );
+    if (info.type !== "Directory") {
+      return yield* new CodexMetadataCwdError({ metadataCwd, reason: "not-directory" });
+    }
+    return purpose.kind === "metadata" ? canonical : (purpose.workspaceCwd ?? canonical);
+  });
+}
+
 export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string | undefined;
@@ -654,14 +728,20 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
-  const probeResult = yield* probe({
-    binaryPath: codexSettings.binaryPath,
-    homePath: codexSettings.homePath,
-    launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
-    cwd: process.cwd(),
-    customModels: codexSettings.customModels,
-    environment: resolvedEnvironment,
-    ...(managedAuth ? { skipNativeUsage: true } : {}),
+  const probeResult = yield* Effect.gen(function* () {
+    const cwd = yield* resolveCodexProcessCwd({
+      settings: codexSettings,
+      purpose: { kind: "metadata" },
+    });
+    return yield* probe({
+      binaryPath: codexSettings.binaryPath,
+      homePath: codexSettings.homePath,
+      launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
+      cwd,
+      customModels: codexSettings.customModels,
+      environment: resolvedEnvironment,
+      ...(managedAuth ? { skipNativeUsage: true } : {}),
+    });
   }).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),

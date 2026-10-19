@@ -25,6 +25,18 @@ T3 Code can use your installed Codex and its existing login. Run `codex login`
 on the environment's machine to sign in. [Provider setup](./install.md#providers)
 covers installation and custom configuration.
 
+For a CLI wrapper that needs a specific working directory, set `metadataCwd` in
+that Codex instance's `config` through the provider settings API. For example,
+`"metadataCwd": "~/code/metadata-repo"` selects an existing directory on the
+server host. This advanced option is not shown in the provider settings form.
+T3 Code expands `~` on that host, resolves symlinks, and rejects relative,
+missing, or non-directory paths without creating a directory.
+
+The option sets the working directory for provider status and account operations.
+Sessions start in their workspace, or in this directory when no workspace is set.
+Workspace skill discovery still uses the workspace. Omit `metadataCwd` to retain
+the existing startup behavior. This option does not change `HOME` or `CODEX_HOME`.
+
 ## Use multiple accounts
 
 Add another ChatGPT account in **Settings → Providers**, then select the account

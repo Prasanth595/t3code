@@ -17,6 +17,7 @@ import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.t
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
+  resolveCodexProcessCwd,
 } from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
@@ -1498,11 +1499,16 @@ function isSensitiveCodexProtocolKey(key: string): boolean {
 export const layerAppServerClientFactory: Layer.Layer<
   CodexAppServerClientFactory,
   never,
-  ChildProcessSpawner.ChildProcessSpawner | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | ProviderEventLoggers.ProviderEventLoggers
+  | FileSystem.FileSystem
+  | Path.Path
 > = Layer.effect(
   CodexAppServerClientFactory,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
 
@@ -1514,6 +1520,21 @@ export const layerAppServerClientFactory: Layer.Layer<
             ...codexAppServerEnvironment(input.environment),
             ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
           };
+          const cwd = yield* resolveCodexProcessCwd({
+            settings: input.settings,
+            purpose: { kind: "session", workspaceCwd: input.runtimePolicy.cwd },
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterOpenSessionError({
+                  driver: CODEX_PROVIDER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
             args: codexAppServerArgs(
@@ -1521,6 +1542,7 @@ export const layerAppServerClientFactory: Layer.Layer<
             ),
             env: environment,
             threadId: input.threadId,
+            ...(cwd === undefined ? {} : { cwd }),
           }).pipe(Effect.provideService(AgentScope, agentScope));
           const handle = yield* spawner.spawn(command).pipe(
             Effect.provideService(Scope.Scope, scope),

@@ -100,6 +100,19 @@ const windowsHost = HostProcess.Platform.defaultValue() === "win32";
 const noSpawn = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Codex must not spawn a process"),
 );
+const decodeCodexSettingsEffect = Schema.decodeEffect(CodexSettings);
+const decodeAccountReceipt = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        cwd: Schema.String,
+        home: Schema.String,
+        codexHome: Schema.String,
+        idempotencyKey: Schema.String,
+      }),
+    ),
+  ),
+);
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
@@ -151,7 +164,7 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
             { name: "HOME", value: home, sensitive: false },
             { name: "FAKE_ACCOUNT_RECEIPT", value: receipt, sensitive: false },
           ],
-          config: Schema.decodeUnknownSync(CodexSettings)({
+          config: yield* decodeCodexSettingsEffect({
             binaryPath,
             homePath: codexHome,
             ...(metadataCwd === undefined ? {} : { metadataCwd }),
@@ -167,21 +180,9 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
             .pipe(Effect.provideService(HostProcess.HomeDirectory, home)),
         ).toBe("noCredit");
       }
-      const rows = (yield* fs.readFileString(receipt))
-        .trim()
-        .split("\n")
-        .map(
-          Schema.decodeUnknownSync(
-            Schema.fromJsonString(
-              Schema.Struct({
-                cwd: Schema.String,
-                home: Schema.String,
-                codexHome: Schema.String,
-                idempotencyKey: Schema.String,
-              }),
-            ),
-          ),
-        );
+      const rows = yield* decodeAccountReceipt(
+        `[${(yield* fs.readFileString(receipt)).trim().split("\n").join(",")}]`,
+      );
       expect(rows.map((row) => row.cwd)).toEqual([yield* fs.realPath(metadata), process.cwd()]);
       expect(rows.map((row) => row.home)).toEqual([home, home]);
       expect(rows.map((row) => row.codexHome)).toEqual([codexHome, codexHome]);

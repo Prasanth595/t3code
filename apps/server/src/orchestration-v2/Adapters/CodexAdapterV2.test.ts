@@ -67,6 +67,7 @@ import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
+const decodeCodexSettingsEffect = Schema.decodeEffect(CodexSettings);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
@@ -775,9 +776,13 @@ describe("CodexAdapterV2 process spawning", () => {
             }),
             environment: { HOME: root, CODEX_HOME: path.join(root, "isolated-home") },
           })
-          .pipe(Effect.scoped, Effect.result);
-      const settings = Schema.decodeUnknownSync(CodexSettings)({
-        metadataCwd: metadata,
+          .pipe(
+            Effect.scoped,
+            Effect.result,
+            Effect.provideService(HostProcess.HomeDirectory, root),
+          );
+      const settings = yield* decodeCodexSettingsEffect({
+        metadataCwd: "~/metadata",
         launchArgs: "--strict-config",
       });
       yield* open(settings, workspace);
@@ -788,13 +793,16 @@ describe("CodexAdapterV2 process spawning", () => {
         [workspace, physicalMetadata, undefined],
       );
       assert.deepStrictEqual(spawned[0]?.args, ["app-server", "--strict-config"]);
-      assert.deepStrictEqual(spawned[0]?.options.env, { ...spawned[1]?.options.env });
+      assert.deepStrictEqual(spawned[0]?.options.env, {
+        HOME: root,
+        CODEX_HOME: path.join(root, "isolated-home"),
+        CODEX_INTERNAL_ORIGINATOR_OVERRIDE: "T3 Code",
+      });
+      assert.deepStrictEqual(spawned[1]?.options.env, spawned[0]?.options.env);
+      assert.isFalse(Object.hasOwn(spawned[2]?.options ?? {}, "cwd"));
 
       for (const metadataCwd of ["relative", path.join(root, "missing")]) {
-        const result = yield* open(
-          Schema.decodeUnknownSync(CodexSettings)({ metadataCwd }),
-          workspace,
-        );
+        const result = yield* open(yield* decodeCodexSettingsEffect({ metadataCwd }), workspace);
         assert.equal(result._tag, "Failure");
         if (result._tag === "Failure")
           assert.equal(result.failure._tag, "ProviderAdapterOpenSessionError");
@@ -848,7 +856,10 @@ describe("CodexAdapterV2 process spawning", () => {
         ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed"],
         ["app-server", "--enable", "env-feature"],
       ]);
-    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.provideService(HostProcess.Platform, "linux"),
+    ),
   );
 
   it.effect("expands ~ in the configured binary path before spawning", () =>

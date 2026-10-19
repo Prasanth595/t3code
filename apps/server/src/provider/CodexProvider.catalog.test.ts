@@ -183,30 +183,36 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex metadata cwd"
         fixture.metadata,
         fixture.path.join(fixture.home, "metadata-alias"),
       );
-      const provider = yield* checkCodexProviderStatus(
-        decodeCodexSettings({
-          binaryPath: fixture.binaryPath,
-          homePath: fixture.codexHome,
-          metadataCwd: "~/metadata-alias",
-        }),
-        undefined,
-        fixture.environment,
-      ).pipe(Effect.provideService(HostProcess.HomeDirectory, fixture.home));
-      assert.equal(provider.status, "ready", provider.message);
-      assert.deepStrictEqual(
-        provider.skills.map((skill) => skill.name),
-        ["selected"],
-      );
-      const receipt = yield* fixture.readReceipt;
-      assert.isTrue(receipt.length > 0);
-      for (const call of receipt) {
-        assert.equal(call.cwd, fixture.physicalMetadata);
-        assert.equal(call.home, fixture.home);
-        assert.equal(call.codexHome, fixture.codexHome);
+      for (const [metadataCwd, expectedCwd] of [
+        ["~/metadata-alias", fixture.physicalMetadata],
+        ["~", yield* fixture.fs.realPath(fixture.home)],
+      ] satisfies ReadonlyArray<readonly [string, string]>) {
+        yield* fixture.fs.writeFileString(fixture.receipt, "");
+        const provider = yield* checkCodexProviderStatus(
+          decodeCodexSettings({
+            binaryPath: fixture.binaryPath,
+            homePath: fixture.codexHome,
+            metadataCwd,
+          }),
+          undefined,
+          { ...fixture.environment, FAKE_EXPECTED_CWD: expectedCwd },
+        ).pipe(Effect.provideService(HostProcess.HomeDirectory, fixture.home));
+        assert.equal(provider.status, "ready", provider.message);
+        assert.deepStrictEqual(
+          provider.skills.map((skill) => skill.name),
+          ["selected"],
+        );
+        const receipt = yield* fixture.readReceipt;
+        assert.isTrue(receipt.length > 0);
+        for (const call of receipt) {
+          assert.equal(call.cwd, expectedCwd);
+          assert.equal(call.home, fixture.home);
+          assert.equal(call.codexHome, fixture.codexHome);
+        }
+        assert.deepStrictEqual(receipt.find((call) => call.method === "skills/list")?.cwds, [
+          expectedCwd,
+        ]);
       }
-      assert.deepStrictEqual(receipt.find((call) => call.method === "skills/list")?.cwds, [
-        fixture.physicalMetadata,
-      ]);
     }).pipe(Effect.scoped),
   );
 
