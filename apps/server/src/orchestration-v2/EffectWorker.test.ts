@@ -115,6 +115,7 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnStartService.ProviderTurnStartServiceV2,
       ProviderTurnStartService.ProviderTurnStartServiceV2.of({
+        failStartingRun: () => Effect.void,
         start: () =>
           Effect.gen(function* () {
             yield* record("start");
@@ -773,7 +774,7 @@ it.effect("safely retries after replacement cleanup succeeds and start fails", (
 
     const first = yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
-      return yield* Effect.exit(executor.execute(effect));
+      return yield* Effect.exit(executor.execute(effect, { willRetry: true }));
     }).pipe(Effect.provide(layer));
     assert.isTrue(Exit.isFailure(first));
 
