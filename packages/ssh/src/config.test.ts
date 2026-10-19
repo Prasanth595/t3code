@@ -97,6 +97,40 @@ describe("ssh config", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
+  it.effect("keeps distinct known-host ports and rejects malformed explicit ports", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(sshDir);
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        [
+          "host.example ssh-ed25519 AAAA",
+          "[host.example]:2222 ssh-ed25519 AAAA",
+          "[host.example]:2223 ssh-ed25519 AAAA",
+          "[host.example]:2222 ssh-rsa BBBB",
+          "[fe80::1%fixture0]:2200 ssh-ed25519 AAAA",
+          "[invalid.example]:65536 ssh-ed25519 AAAA",
+          "[invalid.example]:abc ssh-ed25519 AAAA",
+          "invalid.example: ssh-ed25519 AAAA",
+        ].join("\n"),
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map(({ alias, hostname, port }) => ({ alias, hostname, port })),
+        [
+          { alias: "host.example", hostname: "host.example", port: null },
+          { alias: "ssh://[fe80::1%fixture0]:2200", hostname: "fe80::1%fixture0", port: 2200 },
+          { alias: "ssh://host.example:2222", hostname: "host.example", port: 2222 },
+          { alias: "ssh://host.example:2223", hostname: "host.example", port: 2223 },
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("parses known_hosts entries without returning hashed hosts", () =>
     Effect.sync(() => {
       assert.deepEqual(

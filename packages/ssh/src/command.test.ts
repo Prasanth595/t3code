@@ -84,48 +84,43 @@ describe("ssh command", () => {
     }),
   );
 
-  it.effect("keeps a discovered SSH URI valid after resolving its user", () =>
-    Effect.gen(function* () {
-      for (const [alias, hostname, expected] of [
-        ["ssh://host.example:2222", "host.example", "alice@host.example"],
-        ["ssh://[::1]:2222", "::1", "alice@::1"],
-        ["SSH://host.example:2222", "host.example", "alice@host.example"],
-        ["SsH://[::1]:2222", "::1", "alice@::1"],
-      ]) {
-        const resolved = parseSshResolveOutput(
-          alias!,
-          `hostname ${hostname}\nuser alice\nport 2222\n`,
-        );
-        assert.equal(yield* buildSshHostSpecEffect(resolved), expected);
-        assert.include(baseSshArgs(resolved), "2222");
-        assert.include(baseSshArgs({ ...resolved, port: null }), "2222");
-      }
-    }),
-  );
-
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "passes SSH URI destinations to OpenSSH with their exact user and port",
+    "preserves URI destinations through OpenSSH resolution and command execution",
     () =>
       Effect.gen(function* () {
-        for (const hostname of ["host.example", "2001:db8::1", "fe80::1%fixture0"]) {
-          for (const username of [null, "developer+ops", "developer%ops"]) {
-            const alias = `ssh://${hostname.includes(":") ? `[${hostname}]` : hostname}:2222`;
-            const target = { alias, hostname, username, port: null };
-            const { stdout } = yield* runSshCommand(target, {
-              preHostArgs: ["-F", "/dev/null", "-G"],
-            });
-            assert.include(stdout, "port 2222\n");
-            assert.include(stdout, `hostname ${hostname}\n`);
-            if (username) assert.include(stdout, `user ${username}\n`);
-          }
+        for (const { alias, hostname, username, port } of [
+          {
+            alias: "ssh://developer%2Bops%25@host.example:2222",
+            hostname: "host.example",
+            username: null,
+            port: 2222,
+          },
+          {
+            alias: "SSH://[2001:db8::1]:2223",
+            hostname: "2001:db8::1",
+            username: "developer+ops%",
+            port: 2223,
+          },
+          {
+            alias: "SsH://[fe80::1%fixture0]:2200",
+            hostname: "fe80::1%fixture0",
+            username: "developer+ops%",
+            port: 2200,
+          },
+        ]) {
+          const { stdout } = yield* runSshCommand(
+            { alias, hostname, username, port: null },
+            { preHostArgs: ["-F", "/dev/null", "-G"] },
+          );
+          const resolved = parseSshResolveOutput(alias, stdout);
+          assert.deepEqual(resolved, { alias, hostname, username: "developer+ops%", port });
+          assert.equal(yield* buildSshHostSpecEffect(resolved), `developer+ops%@${hostname}`);
+
+          const rerun = yield* runSshCommand(resolved, {
+            preHostArgs: ["-F", "/dev/null", "-G"],
+          });
+          assert.deepEqual(parseSshResolveOutput(alias, rerun.stdout), resolved);
         }
-        const encoded = {
-          alias: "ssh://developer%2Bops%25@host.example:2222",
-          hostname: "host.example",
-          username: null,
-          port: null,
-        };
-        assert.equal(yield* buildSshHostSpecEffect(encoded), "developer+ops%@host.example");
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
