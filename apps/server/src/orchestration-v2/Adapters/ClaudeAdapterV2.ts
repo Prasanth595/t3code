@@ -5501,7 +5501,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             [
               ...(previousPlan === undefined ||
               previousPlan.id === plan.id ||
-              previousPlan.status === "completed"
+              (previousPlan.kind !== "todo_list" && previousPlan.status === "completed")
                 ? []
                 : [
                     emitProviderEvent({
