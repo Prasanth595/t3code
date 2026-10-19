@@ -3999,6 +3999,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         terminalContexts: composerTerminalContexts,
         reviewComments: composerReviewComments,
         previewAnnotations: composerPreviewAnnotations,
+        threadContexts: composerThreadContexts,
       })?.records;
       if (
         applyPromptReplacement(0, prompt.length, "", {
@@ -4007,6 +4008,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         })
       ) {
         clearComposerDraftTerminalContexts(composerDraftTarget);
+        setComposerDraftThreadContexts(attachmentDraftTarget, []);
         for (const comment of composerReviewComments)
           removeComposerDraftReviewComment(composerDraftTarget, comment.id);
         for (const annotation of composerPreviewAnnotations)

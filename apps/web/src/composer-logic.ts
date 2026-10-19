@@ -1,7 +1,7 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import type { AssistantCitation, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import type { ComposerContextRecord } from "@t3tools/contracts";
-import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -360,5 +360,5 @@ export function parseSideChatPrompt(
   const match = /^\/side(?:\s+([\s\S]*))?$/.exec(prompt.trim());
   if (!match) return null;
   const text = match[1]?.trim() ?? "";
-  return records.length ? serializeLegacyContextMessage({ text, records }) : text;
+  return records.length ? projectComposerContextForProvider({ text, records }) : text;
 }
