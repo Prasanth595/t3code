@@ -16,9 +16,7 @@ const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
-// Longest incoming JSONL line, in UTF-8 bytes, LF excluded.
-// Codex diffs reach ~49M characters; a far longer line could exhaust the heap
-// during join and parse.
+// Bound JSONL lines before joining and parsing; the LF delimiter is excluded.
 const MAX_INCOMING_MESSAGE_BYTES = 128 * 1024 * 1024;
 
 export interface CodexAppServerProtocolLogEvent {
@@ -406,35 +404,29 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     yield* options.stdio.stdin.pipe(
       Stream.interruptWhen(Deferred.await(terminationSignal)),
       Stream.decodeText(),
-      Stream.runForEach((chunk) =>
-        Effect.suspend(() => {
-          const lines: Array<string> = [];
+      Stream.runForEach(
+        Effect.fnUntraced(function* (chunk) {
           let start = 0;
           while (start < chunk.length) {
             const newline = chunk.indexOf("\n", start);
             const fragment = chunk.slice(start, newline === -1 ? chunk.length : newline);
             // decodeText holds back split UTF-8 sequences, so fragment byte sums are exact.
             remainderBytes += Buffer.byteLength(fragment, "utf8");
-            // Reject an oversized message before it is joined, logged or parsed.
             if (remainderBytes > maxIncomingMessageBytes) {
               remainder.length = 0;
-              const error = new CodexError.CodexAppServerTransportError({
+              return yield* new CodexError.CodexAppServerTransportError({
                 operation: "read-input-stream",
                 cause: new Error(`Incoming message exceeded ${maxIncomingMessageBytes} bytes.`),
               });
-              return Effect.forEach(lines, handleLine, { discard: true }).pipe(
-                Effect.andThen(Effect.fail(error)),
-              );
             }
-            // Keep unfinished lines in fragments so each chunk is scanned only once.
             remainder.push(fragment);
             if (newline === -1) break;
-            lines.push(remainder.join("").replace(/\r$/, ""));
+            const line = remainder.join("").replace(/\r$/, "");
             remainder.length = 0;
             remainderBytes = 0;
+            yield* handleLine(line);
             start = newline + 1;
           }
-          return Effect.forEach(lines, handleLine, { discard: true });
         }),
       ),
       Effect.matchEffect({
