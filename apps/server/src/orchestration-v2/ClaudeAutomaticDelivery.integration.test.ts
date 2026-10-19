@@ -100,7 +100,9 @@ const toolResult = (id: string, cancelled: boolean) =>
         },
       ],
     },
-    ...(cancelled ? { tool_result_meta: [{ id, non_execution_kind: "cancelled" }] } : {}),
+    ...(cancelled && id !== "build"
+      ? { tool_result_meta: [{ id, non_execution_kind: "cancelled" }] }
+      : {}),
   });
 
 const result = (uuid: string, aborted: boolean) =>
@@ -139,7 +141,8 @@ it.effect.each(deliveries)(
         const offers: SDKUserMessage[] = [];
         const nativeQueue: SDKUserMessage[] = [];
         const batchAbort = new AbortController();
-        // Offers already sent when each interrupt reached the CLI.
+        const commandAbort = new AbortController();
+        let closes = 0;
         const offersAtInterrupt: number[] = [];
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: modelSelection.instanceId,
@@ -157,6 +160,12 @@ it.effect.each(deliveries)(
                 messages: Stream.fromQueue(sdkMessages),
                 offer: (message) =>
                   Effect.sync(() => {
+                    if (message.priority === "now") {
+                      assert.isTrue(
+                        commandAbort.signal.aborted,
+                        "interrupt the foreground command before offering the steer",
+                      );
+                    }
                     offers.push(message);
                     nativeQueue.push(message);
                     // Claude Code 2.1.289's queue watcher aborts when a now-priority
@@ -170,14 +179,16 @@ it.effect.each(deliveries)(
                 setPermissionMode: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 stopTask: () => Effect.void,
-                // Only a user's steer interrupts the running command.
                 interrupt:
-                  delivery === "user steering"
+                  delivery === "user steering" || delivery === "promoted queued message"
                     ? Effect.sync(() => {
                         offersAtInterrupt.push(offers.length);
+                        commandAbort.abort();
                       })
                     : Effect.die("automatic delivery must never interrupt"),
-                close: Effect.void,
+                close: Effect.sync(() => {
+                  closes++;
+                }),
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
@@ -402,6 +413,8 @@ it.effect.each(deliveries)(
           const explicitSteer =
             delivery === "user steering" || delivery === "promoted queued message";
           assert.equal(batchAbort.signal.aborted, explicitSteer);
+          assert.equal(commandAbort.signal.aborted, explicitSteer);
+          assert.equal(closes, 0);
           assert.equal(offers.length, explicitSteer ? 2 : 1);
           assert.deepEqual(offersAtInterrupt, explicitSteer ? [1] : []);
           const finished = yield* watch(
@@ -410,7 +423,7 @@ it.effect.each(deliveries)(
               event.payload.id === parent.id &&
               event.payload.status === "waiting",
           );
-          yield* Queue.offer(sdkMessages, toolResult("build", false));
+          yield* Queue.offer(sdkMessages, toolResult("build", commandAbort.signal.aborted));
           for (const id of statusIds)
             yield* Queue.offer(sdkMessages, toolResult(id, batchAbort.signal.aborted));
           if (explicitSteer) yield* Queue.offer(sdkMessages, result("aborted", true));
@@ -441,6 +454,17 @@ it.effect.each(deliveries)(
             if (delivered !== null) yield* Fiber.join(delivered);
           }
           const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(closes, 0, "the steer must complete without closing the query");
+          if (explicitSteer) {
+            assert.lengthOf(
+              after.runs.filter((run) => run.status !== "cancelled"),
+              1,
+            );
+            assert.lengthOf(after.providerTurns, 1);
+            assert.equal(after.providerTurns[0]?.status, "completed");
+          }
+          const command = after.turnItems.find((item) => item.nativeItemRef?.nativeId === "build");
+          assert.equal(command?.status, explicitSteer ? "failed" : "completed");
           const reads = after.turnItems.filter((item) =>
             statusIds.includes(item.nativeItemRef?.nativeId ?? ""),
           );
