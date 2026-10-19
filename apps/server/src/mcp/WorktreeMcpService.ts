@@ -210,18 +210,31 @@ const make = Effect.gen(function* () {
     const startFromOrigin = input.startFromOrigin ?? (yield* readDefaultStartFromOrigin);
 
     let worktreeBaseRef = baseRef;
+    let baseRefName = baseRef;
     if (startFromOrigin) {
+      const baseRemote = yield* gitWorkflow
+        .resolveBaseRemote({ cwd: projectCwd, refName: baseRef })
+        .pipe(asOperationFailed(`Unable to resolve the remote of '${baseRef}'`));
+      if (baseRemote === null) {
+        return yield* failure(
+          "operation_failed",
+          `No remote is available for base ref '${baseRef}'.`,
+        );
+      }
+      const { remoteName, branchName } = baseRemote;
+      const remoteRefName = `${remoteName}/${branchName}`;
       yield* gitWorkflow
-        .fetchRemote({ cwd: projectCwd, remoteName: "origin" })
-        .pipe(asOperationFailed("Unable to fetch origin"));
+        .fetchRemote({ cwd: projectCwd, remoteName, refName: remoteRefName })
+        .pipe(asOperationFailed(`Unable to fetch ${remoteName}`));
       const resolvedRemoteBase = yield* gitWorkflow
         .resolveRemoteTrackingCommit({
           cwd: projectCwd,
-          refName: baseRef,
-          fallbackRemoteName: "origin",
+          refName: remoteRefName,
+          fallbackRemoteName: remoteName,
         })
         .pipe(asOperationFailed(`Unable to resolve the remote-tracking commit of '${baseRef}'`));
       worktreeBaseRef = resolvedRemoteBase.commitSha;
+      baseRefName = resolvedRemoteBase.remoteRefName;
     }
 
     const ids = yield* handoffIds(scope);
@@ -242,7 +255,7 @@ const make = Effect.gen(function* () {
               cwd: projectCwd,
               refName: worktreeBaseRef,
               newRefName: input.branch,
-              baseRefName: baseRef,
+              baseRefName,
               path: null,
             })
             .pipe(asOperationFailed("Unable to create the worktree")),

@@ -4357,6 +4357,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           { commitSha: forkHead, remoteRefName: "origin/origin/main" },
         );
 
+        yield* git(cwd, ["config", "--unset", "branch.work.merge"]);
+        assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "work" }), {
+          remoteName: "origin",
+          branchName: "work",
+        });
+        yield* git(cwd, ["config", "branch.work.merge", "refs/heads/main"]);
         yield* git(cwd, ["config", "branch.work.remote", "."]);
         assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "work" }), {
           remoteName: "origin",
