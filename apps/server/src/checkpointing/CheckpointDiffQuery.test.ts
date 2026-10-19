@@ -201,8 +201,6 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
   }).pipe(Effect.provide(layer));
 });
 
-// Run 2 was stopped. Run 3 shares the root scope, and its parent checkpoint at
-// scope ordinal 2 is either run 2's own capture or the baseline run 3 recorded.
 function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
   const thirdRunId = RunId.make("run:checkpoint-diff-v2:3");
   const checkpoint = (
@@ -222,8 +220,16 @@ function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
       { id: secondRunId, ordinal: 2, status: "interrupted" },
       { id: thirdRunId, ordinal: 3, status: "completed" },
     ],
-    checkpointScopes: [{ id: firstScopeId, runId: thirdRunId, kind: "root_run", cwd: "/repo" }],
+    checkpointScopes: [
+      { id: firstScopeId, runId: thirdRunId, kind: "root_run", cwd: "/repo" },
+      { id: secondScopeId, runId: secondRunId, kind: "tool", cwd: "/repo" },
+    ],
     checkpoints: [
+      {
+        ...checkpoint(2, null),
+        scopeId: secondScopeId,
+        ref: CheckpointRef.make("refs/t3/test/tool/2"),
+      },
       checkpoint(0, null),
       checkpoint(1, firstRunId),
       checkpoint(2, stoppedRunCheckpoint ? secondRunId : null),
@@ -248,12 +254,32 @@ it.effect.each([false, true])(
       const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
 
       assert.strictEqual(result.diff, "diff --git a/file b/file");
+      yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
+      yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
       assert.deepEqual(
-        {
-          from: diffCheckpoints.mock.calls[0]?.[0].fromCheckpointRef,
-          to: diffCheckpoints.mock.calls[0]?.[0].toCheckpointRef,
-        },
-        { from: "refs/t3/test/ordinal/2", to: "refs/t3/test/ordinal/3" },
+        diffCheckpoints.mock.calls.map(([input]) => ({
+          from: input.fromCheckpointRef,
+          to: input.toCheckpointRef,
+        })),
+        [
+          { from: "refs/t3/test/ordinal/2", to: "refs/t3/test/ordinal/3" },
+          { from: "refs/t3/test/ordinal/1", to: "refs/t3/test/ordinal/3" },
+          {
+            from: yield* checkpointRefForScopeOrdinal({
+              scopeId: firstScopeId,
+              ordinalWithinScope: 0,
+            }),
+            to: "refs/t3/test/ordinal/3",
+          },
+        ],
+      );
+      const stoppedTurnError = yield* query
+        .getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 })
+        .pipe(Effect.flip);
+      assert.instanceOf(stoppedTurnError, CheckpointRefUnavailableError);
+      assert.deepEqual(
+        { checkpoint: stoppedTurnError.checkpoint, turnCount: stoppedTurnError.turnCount },
+        { checkpoint: "to", turnCount: 2 },
       );
     }).pipe(Effect.provide(layer));
   },
