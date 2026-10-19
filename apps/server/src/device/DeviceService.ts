@@ -672,25 +672,21 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       return yield* new DeviceNotFoundError({ hostId: host.id, deviceId: input.deviceId });
     }
     if (device.platform === "android" && !device.physical) {
-      // Resolve the override on the device host, in the same environment and cwd as its hub.
-      const encoders = yield* ready.run(
-        ready.nodePath,
-        [
-          "-e",
-          `const { spawnSync } = require("node:child_process");
+      // Resolve the override on the device host the way its hub does.
+      const encoders = yield* ready.run(ready.nodePath, [
+        "-e",
+        `const { spawnSync } = require("node:child_process");
 const result = spawnSync(process.env.SERVE_EMU_FFMPEG?.trim() || "ffmpeg", ["-hide_banner", "-encoders"], {
   stdio: "inherit", timeout: 10000, killSignal: "SIGKILL",
 });
 process.exitCode = result.error ? 1 : (result.status ?? 1);`,
-        ],
-        { timeoutMs: 10_000 },
-      );
+      ]);
       if (encoders.code !== 0) {
         return yield* new DevicePlatformUnavailableError({
           hostId: host.id,
           platform: "android",
           reason:
-            "Android emulator video needs working ffmpeg with the libx264 encoder. Install it on the device host's PATH or set SERVE_EMU_FFMPEG there, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, restart SSH device support or the local environment server.",
+            "Android emulator video needs working ffmpeg with the libx264 encoder. Install it on the device host's PATH or set SERVE_EMU_FFMPEG there, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, turn device support off and on for SSH hosts, or restart the local environment server.",
         });
       }
       if (!/\blibx264\b/.test(`${encoders.stdout}\n${encoders.stderr}`)) {
@@ -698,7 +694,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
           hostId: host.id,
           platform: "android",
           reason:
-            "Android emulator video needs the libx264 encoder. Install an ffmpeg build that includes libx264 on the device host, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, restart SSH device support or the local environment server.",
+            "Android emulator video needs the libx264 encoder. Install an ffmpeg build that includes libx264 on the device host, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, turn device support off and on for SSH hosts, or restart the local environment server.",
         });
       }
     }
