@@ -163,17 +163,15 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
-// macOS implements core.fsyncMethod=fsync as F_FULLFSYNC, which SMB, NFS and AFP
-// mounts reject with ENOTSUP; writeout-only is a plain fsync(2) there, the strongest
-// flush they offer, and still reports I/O errors. Object writes report the errno; a
-// ref lock write only says it could not write, so that message is matched too.
-// Other platforms stay out: Linux writeout-only only starts writeback, so it could
-// hide a real disk error, and Windows has no weaker flush to fall back to.
+// On macOS, Git's fsync uses F_FULLFSYNC; writeout-only still uses fsync(2).
+// Network mounts can reject F_FULLFSYNC. Ref writes omit errno, so retry their
+// bare write error too; explicit unrelated errors remain failures.
+// Linux writeout-only only starts writeback, so it must not use this fallback.
 const FULL_FSYNC_ARG = "core.fsyncMethod=fsync";
 const WRITEOUT_ONLY_FSYNC_ARG = "core.fsyncMethod=writeout-only";
-const isUnsupportedFullFsync = (stderr: string) =>
-  /fsync error on [^\n]+: operation not supported/i.test(stderr) ||
-  /cannot update ref [^\n]+: couldn't write [^\n]+\.lock'/i.test(stderr);
+const canRetryFullFsync = (stderr: string) =>
+  /fsync error on [^\r\n]+: operation not supported\r?$/im.test(stderr) ||
+  /cannot update ref [^\r\n]+: couldn't write '[^\r\n]+\.lock'\r?$/im.test(stderr);
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
@@ -242,11 +240,13 @@ export const make = Effect.gen(function* () {
 
     if (
       hostPlatform === "darwin" &&
+      input.operation === CHECKPOINT_CAPTURE_OPERATION &&
       !input.allowNonZeroExit &&
+      result.code !== null &&
       result.code !== 0 &&
       input.command === "git" &&
       input.args.includes(FULL_FSYNC_ARG) &&
-      isUnsupportedFullFsync(result.stderr)
+      canRetryFullFsync(result.stderr)
     ) {
       result = yield* spawn(
         {

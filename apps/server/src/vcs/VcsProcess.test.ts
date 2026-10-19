@@ -123,6 +123,11 @@ describe("VcsProcess.run", () => {
       stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
       fsyncMethods: ["fsync"],
     },
+    {
+      operation: baseInput.operation,
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync"],
+    },
   ] as const)(
     "falls back to writeout-only only for unsupported fsync on macOS: $stderr",
     ({ stderr, fsyncMethods, ...scenario }) =>
@@ -156,7 +161,10 @@ describe("VcsProcess.run", () => {
         const exit = yield* service
           .run({
             ...baseInput,
-            operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+            operation:
+              "operation" in scenario
+                ? scenario.operation
+                : VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
             args: ["-c", "core.fsync=objects,reference", "-c", "core.fsyncMethod=fsync", "add"],
           })
           .pipe(Effect.exit);
