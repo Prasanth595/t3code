@@ -1150,18 +1150,31 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   ];
 
-  it.effect("keeps a running background shell pending across a successful stream reconnect", () =>
+  it.effect("keeps background shells pending across worktree moves and stream reconnects", () =>
     Effect.gen(function* () {
+      const movedDirectory = "/work/opencode2-feature";
       const gate = makeProviderReplayGate(["drop", "queued-drop", "delivered-drop"]);
+      const disconnected = yield* Deferred.make<void>();
+      const logger = Logger.make(({ message }) => {
+        if (JSON.stringify(message).includes("Lost the OpenCode event stream; reconnecting.")) {
+          Deferred.doneUnsafe(disconnected, Effect.void);
+        }
+      });
       const { runtime, thread } = yield* resumed(
         [
           ...shellTurn("sh_1", "sh_2"),
+          ...directoryModels(movedDirectory),
+          out("session.get", { sessionID: SESSION }),
+          replyData("session.get", sessionInfo()),
+          out("session.move", { sessionID: SESSION, directory: movedDirectory }),
+          reply("session.move", null),
           event("session.usage.updated", { sessionID: SESSION }, "drop"),
           { type: "runtime_exit", status: "success" },
           out("event.subscribe"),
           out("session.active"),
           // Background shells outlive executions, so their parent need not be active.
           replyData("session.active", {}),
+          // Moving the session does not move the shells out of their launch directory.
           ...shellStatus("sh_1", "running"),
           // This shell completed and its result was delivered during the gap.
           ...shellStatus("sh_2", "exited"),
@@ -1196,16 +1209,34 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           readMarker("delivered-result"),
         ],
         { replayGate: gate },
-      );
+      ).pipe(Effect.provide(Logger.layer([logger])));
       const watch = yield* watchShells(runtime);
       yield* runtime.startTurn(turnInput(thread));
       yield* watch.until(() => watch.seen.ended === 1);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      gate.release("drop");
-      yield* watch.until(() => watch.seen.models.has("opencode/reconnected"));
+      yield* runtime.resumeThread({
+        providerThread: thread,
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: { ...policy(), cwd: movedDirectory },
+      });
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      gate.release("drop");
+      // A bad shell lookup must fail the replay instead of waiting on frozen reconnect retries.
+      yield* Deferred.await(disconnected);
+      yield* TestClock.adjust("1 minute");
+      yield* watch
+        .until(() => watch.seen.models.has("opencode/reconnected"))
+        .pipe(Effect.raceFirst(Fiber.join(watch.reader)));
+      assert.deepEqual(
+        yield* Effect.all({
+          runtime: runtime.hasPendingBackgroundWork!,
+          thread: runtime.hasPendingBackgroundWorkForThread!(thread),
+        }),
+        { runtime: true, thread: true },
+      );
       gate.release("queued-drop");
       yield* watch.until(() => watch.seen.models.has("opencode/recovered-result"));
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
@@ -1214,7 +1245,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.seen.models.has("opencode/delivered-result"));
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("leaves no background shell pending once reconnecting has given up", () =>

@@ -308,7 +308,7 @@ export class OpenCodeReplayController {
   }
 
   private fail(cause: unknown): void {
-    this.failure = cause;
+    this.failure ??= cause;
     for (const waiter of this.waiters) waiter();
     this.waiters.clear();
   }
