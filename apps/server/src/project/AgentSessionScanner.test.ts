@@ -120,6 +120,31 @@ const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(fu
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
 
+const ZSTD_BLOCK_BYTES = 128 * 1024;
+
+/**
+ * A single zstd frame holding `text` followed by `paddingBlocks` run-length blocks of spaces, so
+ * gibibytes of decompressed padding cost tens of kibibytes on disk. The padding extends the last
+ * record. It must share the frame because Node's decompressor stops after the first one.
+ */
+const zstdRolloutWithPadding = (text: string, paddingBlocks: number) => {
+  const raw = new TextEncoder().encode(text);
+  const blockHeader = (size: number, type: 0 | 1, isLast: boolean) => {
+    const header = (size << 3) | (type << 1) | (isLast ? 1 : 0);
+    return [header & 0xff, (header >> 8) & 0xff, (header >> 16) & 0xff];
+  };
+  const frame = new Uint8Array(6 + 3 + raw.byteLength + paddingBlocks * 4);
+  // Magic number, a frame header without optional fields, and a 128 KiB window.
+  frame.set([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x38]);
+  frame.set(blockHeader(raw.byteLength, 0, paddingBlocks === 0), 6);
+  frame.set(raw, 9);
+  for (let index = 0; index < paddingBlocks; index += 1) {
+    const header = blockHeader(ZSTD_BLOCK_BYTES, 1, index === paddingBlocks - 1);
+    frame.set([...header, 0x20], 9 + raw.byteLength + index * 4);
+  }
+  return frame;
+};
+
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
 
@@ -1188,6 +1213,57 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           ["Compressed prompt", "Answer to Compressed prompt"],
           ["Plain prompt", "Answer to Plain prompt"],
         ]);
+      }),
+    );
+
+    it.effect("charges decompressed zstd bytes against the aggregate import budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        const rollout = (sessionId: string) =>
+          [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspace },
+            }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              payload: { type: "user_message", message: "Imported prompt" },
+            }),
+          ].join("\n");
+        const gibibyteBlocks = (1024 * 1024 * 1024) / ZSTD_BLOCK_BYTES;
+        const sessionsDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+        // The two large rollouts take 2.5 GiB each of the 4 GiB import budget once decompressed,
+        // yet only a few tens of KiB on disk. The third is tiny and would fit if the budget
+        // were charged by size on disk.
+        for (const [index, { sessionId, paddingBlocks }] of [
+          { sessionId: "large-first", paddingBlocks: 2.5 * gibibyteBlocks },
+          { sessionId: "large-second", paddingBlocks: 2.5 * gibibyteBlocks },
+          { sessionId: "small-last", paddingBlocks: 0 },
+        ].entries()) {
+          yield* writeTranscript({
+            filePath: path.join(sessionsDir, `rollout-${sessionId}.jsonl.zst`),
+            contents: zstdRolloutWithPadding(rollout(sessionId), paddingBlocks),
+            mtimeMs: nowMs - index * 1_000,
+          });
+        }
+
+        const outcomes = yield* runRecentThreadOutcomes({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(
+          outcomes.map((outcome) =>
+            outcome._tag === "Importable" ? outcome.thread.providerSessionId : outcome._tag,
+          ),
+        ).toEqual(["large-first", "Skipped", "Skipped"]);
       }),
     );
 

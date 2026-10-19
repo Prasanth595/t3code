@@ -191,6 +191,10 @@ interface TranscriptCandidate {
   readonly size: number;
 }
 
+interface ImportByteBudget {
+  bytesRemaining: number;
+}
+
 interface MetadataReadBudget {
   bytesRemaining: number;
   operationsRemaining: number;
@@ -874,12 +878,17 @@ export const make = Effect.gen(function* () {
     expected: ReturnType<typeof transcriptIdentity>,
     recordLimit: number,
     source: AgentSessionSource,
+    budget: ImportByteBudget,
   ) {
     if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
 
     const compressed = isZstdTranscript(filePath);
-    // A compressed file is read to its end under the same ceiling as a plain one.
-    const readLimit = compressed ? MAX_IMPORTED_TRANSCRIPT_BYTES : expected.size;
+    // A plain file's size is reserved before it is read. A compressed file's size on disk says
+    // nothing about its decompressed length, so it is read to its end under whatever is left of
+    // the aggregate budget and charged for each decompressed byte, even if the read then fails.
+    const readLimit = compressed
+      ? Math.min(MAX_IMPORTED_TRANSCRIPT_BYTES, budget.bytesRemaining)
+      : expected.size;
 
     return yield* Effect.scoped(
       openTranscript(filePath).pipe(
@@ -941,6 +950,7 @@ export const make = Effect.gen(function* () {
               }
 
               bytesRead += next.value.byteLength;
+              if (compressed) budget.bytesRemaining -= next.value.byteLength;
               const withinBudget = yield* Effect.try(() => {
                 let start = 0;
                 while (start < next.value.byteLength) {
@@ -1427,7 +1437,7 @@ export const make = Effect.gen(function* () {
       (source) => `${source.providerInstanceId}\0${source.filePath}`,
     );
     const importedSessions = new Set<string>();
-    let bytesRemaining = MAX_IMPORT_BYTES;
+    const importBudget: ImportByteBudget = { bytesRemaining: MAX_IMPORT_BYTES };
     let transcriptsRemaining = MAX_IMPORT_TRANSCRIPTS;
     let recordsRemaining = MAX_IMPORT_RECORDS;
     return Stream.fromIteratorSucceed(eligibleTranscripts.values(), 1).pipe(
@@ -1438,7 +1448,9 @@ export const make = Effect.gen(function* () {
           );
           if (
             completed === undefined &&
-            (transcriptsRemaining === 0 || bytesRemaining === 0 || recordsRemaining === 0)
+            (transcriptsRemaining === 0 ||
+              importBudget.bytesRemaining === 0 ||
+              recordsRemaining === 0)
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
@@ -1464,17 +1476,18 @@ export const make = Effect.gen(function* () {
             transcriptsRemaining === 0 ||
             recordsRemaining === 0 ||
             identity.size > MAX_IMPORTED_TRANSCRIPT_BYTES ||
-            identity.size > bytesRemaining
+            identity.size > importBudget.bytesRemaining
           ) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           transcriptsRemaining -= 1;
-          bytesRemaining -= identity.size;
+          if (!isZstdTranscript(transcript.filePath)) importBudget.bytesRemaining -= identity.size;
           const snapshot = yield* readTranscript(
             transcript.filePath,
             identity,
             recordsRemaining,
             candidate.source,
+            importBudget,
           );
           if (snapshot === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
