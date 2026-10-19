@@ -132,6 +132,14 @@ export function parseGitHubRepositorySelector(
   return null;
 }
 
+export function gitHubRepositoryEnvironment(environment: NodeJS.ProcessEnv, hostHint?: string) {
+  const defaultHost = (hostHint ?? environment.GH_HOST ?? "github.com").toLowerCase();
+  return {
+    defaultHost,
+    locator: parseGitHubRepositorySelector(environment.GH_REPO?.trim() ?? "", defaultHost),
+  };
+}
+
 export function parsePullRequestReference(
   reference: string,
 ):

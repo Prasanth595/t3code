@@ -13,6 +13,9 @@ import {
 } from "effect/http";
 
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import { parseGitHubRepositorySelector } from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
+
+import { workspaceGitHubCredential } from "../sourceControl/GitHubWorkspaceAccount.ts";
 
 /**
  * Everything a redirect leads to — the presigned object stores GitHub hands assets off to —
@@ -50,11 +53,26 @@ const SVG_CONTENT_TYPE = "image/svg+xml";
 // body cannot run script against this origin.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-const githubToken = GitHubCredentials.GitHubCredentials.pipe(
-  Effect.flatMap((credentials) => credentials.get("github.com")),
-  Effect.map((credential) => credential.token),
-  Effect.orElseSucceed(() => null),
-);
+/** Explicit PR repositories override the checkout; null still loads public media. */
+const githubToken = (cwd: string, repository?: string) =>
+  Effect.gen(function* () {
+    if (repository === undefined) return yield* workspaceGitHubCredential(cwd);
+    const locator = parseGitHubRepositorySelector(repository, "github.com");
+    // These media URLs are only supported on github.com, regardless of the PR's host.
+    if (locator === null || locator.host !== "github.com") return null;
+    const credentials = yield* GitHubCredentials.GitHubCredentials;
+    return yield* credentials.get(locator.host, `${locator.owner}/${locator.name}`);
+  }).pipe(
+    Effect.flatMap((credential) =>
+      credential?.host === "github.com"
+        ? Effect.succeed(credential)
+        : GitHubCredentials.GitHubCredentials.pipe(
+            Effect.flatMap((credentials) => credentials.get("github.com")),
+          ),
+    ),
+    Effect.map((credential) => credential.token),
+    Effect.orElseSucceed(() => null),
+  );
 
 const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedirects")(function* (
   url: string,
@@ -88,11 +106,16 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
 });
 
 export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaResponse")(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: {
+    readonly url: string;
+    readonly cwd: string;
+    readonly repository?: string;
+    readonly expiresAt: number;
+  },
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  const token = yield* githubToken;
+  const token = yield* githubToken(asset.cwd, asset.repository);
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = requestHeaders[name];
