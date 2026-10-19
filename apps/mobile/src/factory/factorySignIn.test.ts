@@ -1,12 +1,21 @@
-import { describe, expect, it } from "vite-plus/test";
+import {
+  EnvironmentAuthInvalidError,
+  EnvironmentScopeRequiredError,
+  type AuthPairingCredentialResult,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  FACTORY_SESSION_LABEL,
+  FACTORY_SESSION_SCOPES,
   factoryLinkAction,
-  factoryUrl,
+  mintAndInject,
   mintPairingToken,
   parseFactoryMessage,
   probeFactory,
   nextSignIn,
+  type FactoryFetch,
   type SignInState,
 } from "./factorySignIn";
 
@@ -17,11 +26,42 @@ const CREDENTIAL = "credential-secret-456";
 const server = { httpBaseUrl: BASE, bearerToken: BEARER };
 
 function json(status: number, body: unknown) {
-  return new Response(JSON.stringify(body), {
+  return new Response(typeof body === "string" ? body : JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
   });
 }
+
+const issued = {
+  id: "link-1",
+  credential: CREDENTIAL,
+  label: FACTORY_SESSION_LABEL,
+  expiresAt: "2030-01-01T00:00:00Z",
+} satisfies Record<keyof AuthPairingCredentialResult, unknown>;
+
+const scopeRequired = (requiredPermission: string) =>
+  Schema.encodeSync(Schema.fromJsonString(EnvironmentScopeRequiredError))(
+    new EnvironmentScopeRequiredError({
+      code: "insufficient_scope",
+      requiredScope: "access:write",
+      requiredPermission,
+      traceId: "trace-1",
+    }),
+  );
+
+const authInvalid = Schema.encodeSync(Schema.fromJsonString(EnvironmentAuthInvalidError))(
+  new EnvironmentAuthInvalidError({
+    code: "auth_invalid",
+    reason: "invalid_credential",
+    traceId: "trace-2",
+  }),
+);
+
+/** Settles only when the request is aborted, like a peer that accepts the connection and never answers. */
+const hanging: FactoryFetch = (_url, init) =>
+  new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+  });
 
 describe("factoryLinkAction", () => {
   it.each([
@@ -55,6 +95,7 @@ describe("nextSignIn", () => {
   const pair = { type: "location", href: `${BASE}/pair` } as const;
   const factory = { type: "location", href: `${BASE}/factory/runs/1` } as const;
   const unauthorized = { type: "unauthorized" } as const;
+  const authorized = { type: "authorized" } as const;
   const step = (
     state: SignInState,
     event: Parameters<typeof nextSignIn>[1],
@@ -72,6 +113,7 @@ describe("nextSignIn", () => {
 
   it("mints nothing when the WebView lands on /factory with a valid cookie", () => {
     expect(step("idle", factory, `${BASE}/factory`)).toEqual({ state: "idle", action: "none" });
+    expect(step("idle", authorized, `${BASE}/factory`)).toEqual({ state: "idle", action: "none" });
     expect(step("idle", { type: "location", href: `${BASE}/settings` })).toEqual({
       state: "idle",
       action: "none",
@@ -84,21 +126,32 @@ describe("nextSignIn", () => {
     expect(step("minting", unauthorized).state).toBe("minting");
   });
 
-  it("moves minting -> exchanging -> exchanged -> signed-in", () => {
+  it("moves minting -> exchanging -> exchanged -> signed-in once the status call succeeds", () => {
     expect(step("minting", { type: "minted" })).toEqual({ state: "exchanging", action: "none" });
     expect(step("exchanging", { type: "exchange", ok: true })).toEqual({
       state: "exchanged",
       action: "none",
     });
-    expect(step("exchanged", factory, `${BASE}/factory`)).toEqual({
+    expect(step("exchanged", authorized, `${BASE}/factory`)).toEqual({
       state: "signed-in",
       action: "none",
     });
   });
 
-  it("fails instead of looping when unauthenticated after an accepted exchange", () => {
+  it("does not count landing on /factory as signed in: the cookie is checked only after the page loads", () => {
+    expect(step("exchanged", factory, `${BASE}/factory`)).toEqual({
+      state: "exchanged",
+      action: "none",
+    });
+  });
+
+  it("fails instead of looping when the accepted cookie does not authenticate the WebView", () => {
+    const landed = step("exchanged", factory, `${BASE}/factory`);
+    expect(step(landed.state, unauthorized, `${BASE}/factory`)).toEqual({
+      state: "idle",
+      action: "rejected",
+    });
     expect(step("exchanged", pair).action).toBe("rejected");
-    expect(step("exchanged", unauthorized).action).toBe("rejected");
   });
 
   it("signs in again when a signed-in session later ends", () => {
@@ -123,6 +176,7 @@ describe("nextSignIn", () => {
       action: "none",
     });
     expect(step("idle", pair, "about:blank").action).toBe("none");
+    expect(step("exchanged", authorized, "https://evil.example/").state).toBe("exchanged");
     expect(
       step("exchanging", { type: "exchange", ok: false }, "https://evil.example/").action,
     ).toBe("none");
@@ -144,6 +198,9 @@ describe("parseFactoryMessage", () => {
     expect(parseFactoryMessage(JSON.stringify({ type: "unauthorized" }))).toEqual({
       type: "unauthorized",
     });
+    expect(parseFactoryMessage(JSON.stringify({ type: "authorized" }))).toEqual({
+      type: "authorized",
+    });
     expect(parseFactoryMessage(JSON.stringify({ type: "exchange", ok: false }))).toEqual({
       type: "exchange",
       ok: false,
@@ -156,34 +213,41 @@ describe("parseFactoryMessage", () => {
 });
 
 describe("mintPairingToken", () => {
-  it("returns the credential and sends the bearer to the pairing endpoint", async () => {
+  it("asks the pairing endpoint, with the bearer, for a labelled credential with the Factory scopes only", async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const result = await mintPairingToken(server, async (url, init) => {
       calls.push({ url: String(url), init: init ?? {} });
-      return json(200, { id: "1", credential: CREDENTIAL, expiresAt: "2030-01-01T00:00:00Z" });
+      return json(200, issued);
     });
     expect(result).toEqual({ ok: true, credential: CREDENTIAL });
+    expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(`${BASE}/api/auth/pairing-token`);
     expect(calls[0]?.init.method).toBe("POST");
     expect(new Headers(calls[0]?.init.headers).get("authorization")).toBe(`Bearer ${BEARER}`);
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      label: FACTORY_SESSION_LABEL,
+      scopes: FACTORY_SESSION_SCOPES,
+    });
+    expect(FACTORY_SESSION_SCOPES).not.toContain("terminal:operate");
+    expect(FACTORY_SESSION_SCOPES).not.toContain("access:write");
   });
 
   it("explains a missing bearer without calling the server", async () => {
     let called = false;
     const result = await mintPairingToken({ httpBaseUrl: BASE, bearerToken: null }, async () => {
       called = true;
-      return json(200, {});
+      return json(200, issued);
     });
     expect(called).toBe(false);
     expect(result.ok).toBe(false);
   });
 
   it.each([
-    [401, {}],
-    [403, { code: "insufficient_scope" }],
-    [403, {}],
-    [500, {}],
-    [200, { nope: true }],
+    [401, authInvalid],
+    [403, scopeRequired("orchestration:operate")],
+    [403, JSON.stringify({ code: "insufficient_scope" })],
+    [500, "boom"],
+    [200, JSON.stringify({ nope: true })],
   ])("maps status %s to a one-line reason without secrets", async (status, body) => {
     const result = await mintPairingToken(server, async () => json(status, body));
     expect(result.ok).toBe(false);
@@ -194,12 +258,15 @@ describe("mintPairingToken", () => {
     }
   });
 
-  it("names the missing scope on 403 insufficient_scope", async () => {
+  it("names the scope the server asked for on 403 insufficient_scope", async () => {
     const result = await mintPairingToken(server, async () =>
-      json(403, { code: "insufficient_scope" }),
+      json(403, scopeRequired("settings:write")),
     );
     expect(result).toMatchObject({ ok: false });
-    if (!result.ok) expect(result.reason).toContain("access:write");
+    if (!result.ok) {
+      expect(result.reason).toContain("settings:write");
+      expect(result.reason).not.toContain("access:write");
+    }
   });
 
   it("reports an unreachable server on a network error", async () => {
@@ -214,9 +281,90 @@ describe("mintPairingToken", () => {
   });
 
   it("gives distinct reasons for 401 and server errors", async () => {
-    const unauthorized = await mintPairingToken(server, async () => json(401, {}));
-    const failed = await mintPairingToken(server, async () => json(500, {}));
+    const unauthorized = await mintPairingToken(server, async () => json(401, authInvalid));
+    const failed = await mintPairingToken(server, async () => json(500, "boom"));
     expect(unauthorized).not.toEqual(failed);
+  });
+
+  it("resolves the endpoint against a base with a trailing slash", async () => {
+    const urls: string[] = [];
+    await mintPairingToken({ httpBaseUrl: SLASH_BASE, bearerToken: BEARER }, async (url) => {
+      urls.push(url);
+      return json(200, issued);
+    });
+    expect(urls).toEqual(["https://mac.tail1234.ts.net:3876/api/auth/pairing-token"]);
+  });
+});
+
+describe("request timeout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    ["probeFactory", probeFactory],
+    ["mintPairingToken", mintPairingToken],
+  ])("%s gives up on a request that never answers", async (_name, call) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = call(server, hanging);
+    await vi.advanceTimersByTimeAsync(14_999);
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ ok: false, reason: "The server is unreachable." });
+  });
+});
+
+describe("mintAndInject", () => {
+  function harness(fetchFn: FactoryFetch, current = () => true) {
+    const events: string[] = [];
+    const injected: string[] = [];
+    const run = mintAndInject({
+      server,
+      fetchFn,
+      isCurrent: current,
+      onMinted: () => events.push("minted"),
+      inject: (script) => {
+        events.push("inject");
+        injected.push(script);
+      },
+      onFailure: (reason) => events.push(`failure:${reason}`),
+    });
+    return { run, events, injected };
+  }
+
+  it("marks the state minted, then injects the credential once, bound to the server origin", async () => {
+    const { run, events, injected } = harness(async () => json(200, issued));
+    await expect(run).resolves.toBe("injected");
+    expect(events).toEqual(["minted", "inject"]);
+    expect(injected).toHaveLength(1);
+    expect(injected[0]).toContain(JSON.stringify(CREDENTIAL));
+    expect(injected[0]).toContain(JSON.stringify(BASE));
+  });
+
+  it("reports a failed mint in the open it belongs to", async () => {
+    const { run, events, injected } = harness(async () => json(401, authInvalid));
+    await expect(run).resolves.toBe("failed");
+    expect(events).toEqual(["failure:The server no longer accepts this pairing."]);
+    expect(injected).toEqual([]);
+  });
+
+  it("drops a mint that resolves after its open ended: no injection, no error", async () => {
+    let current = true;
+    let answer!: (response: Response) => void;
+    const { run, events, injected } = harness(
+      () => new Promise<Response>((resolve) => (answer = resolve)),
+      () => current,
+    );
+    current = false;
+    answer(json(200, issued));
+    await expect(run).resolves.toBe("stale");
+    expect(events).toEqual([]);
+    expect(injected).toEqual([]);
   });
 });
 
@@ -254,33 +402,21 @@ describe("probeFactory", () => {
 
   it("reports an unreachable server on a network error", async () => {
     const result = await probeFactory(server, async () => {
-      throw new TypeError("Network request failed");
+      throw new TypeError(`Network request failed for ${BEARER}`);
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toContain("unreachable");
-  });
-});
-
-describe("factoryUrl", () => {
-  it("joins a path onto a base with or without a trailing slash", () => {
-    expect(factoryUrl("/factory", SLASH_BASE)).toBe("https://mac.tail1234.ts.net:3876/factory");
-    expect(factoryUrl("/factory", BASE)).toBe(`${BASE}/factory`);
+    if (!result.ok) {
+      expect(result.reason).toContain("unreachable");
+      expect(result.reason).not.toContain(BEARER);
+    }
   });
 
-  it("is used for the mint and probe requests", async () => {
+  it("resolves the endpoint against a base with a trailing slash", async () => {
     const urls: string[] = [];
-    const slash = { httpBaseUrl: SLASH_BASE, bearerToken: BEARER };
-    await mintPairingToken(slash, async (url) => {
-      urls.push(url);
-      return json(200, { credential: CREDENTIAL });
-    });
-    await probeFactory(slash, async (url) => {
+    await probeFactory({ httpBaseUrl: SLASH_BASE, bearerToken: BEARER }, async (url) => {
       urls.push(url);
       return json(200, {});
     });
-    expect(urls).toEqual([
-      "https://mac.tail1234.ts.net:3876/api/auth/pairing-token",
-      "https://mac.tail1234.ts.net:3876/api/factory/status",
-    ]);
+    expect(urls).toEqual(["https://mac.tail1234.ts.net:3876/api/factory/status"]);
   });
 });

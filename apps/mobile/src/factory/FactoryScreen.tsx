@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Linking, View } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
+import { environmentEndpointUrl } from "@t3tools/client-runtime/environment";
+
 import { AppActivityIndicator } from "../components/ui/AppActivityIndicator";
-import { AppText } from "../components/ui/AppText";
-import { Button } from "../components/ui/Button";
+import { EmptyState } from "../components/ui/EmptyState";
 import { ListRow } from "../components/ui/ListRow";
 import { ListSection } from "../components/ui/ListSection";
 import type { SavedRemoteConnection } from "../lib/connection";
@@ -16,26 +17,27 @@ import {
 } from "./factoryEnvironments";
 import {
   factoryLinkAction,
-  factoryUrl,
-  mintPairingToken,
-  originOf,
+  mintAndInject,
   parseFactoryMessage,
   nextSignIn,
   probeFactory,
   type SignInState,
 } from "./factorySignIn";
-import {
-  FACTORY_BEFORE_CONTENT_LOADED_SCRIPT,
-  factoryExchangeScript,
-} from "./factoryWebViewScripts";
+import { FACTORY_BEFORE_CONTENT_LOADED_SCRIPT } from "./factoryWebViewScripts";
 
-function Message(props: { readonly text: string; readonly onRetry?: () => void }) {
+function Message(props: {
+  readonly title: string;
+  readonly detail: string;
+  readonly onRetry?: () => void;
+}) {
   return (
-    <View className="flex-1 items-center justify-center gap-4 bg-screen px-8">
-      <AppText textRole="body" className="text-center text-foreground-muted">
-        {props.text}
-      </AppText>
-      {props.onRetry ? <Button tone="primary" label="Retry" onPress={props.onRetry} /> : null}
+    <View className="flex-1 justify-center bg-screen">
+      <EmptyState
+        variant="plain"
+        title={props.title}
+        detail={props.detail}
+        {...(props.onRetry ? { actionLabel: "Retry", onAction: props.onRetry } : {})}
+      />
     </View>
   );
 }
@@ -55,9 +57,9 @@ export function FactoryScreen() {
   const choice = factoryEnvironmentChoice(Object.values(savedConnectionsById));
   switch (choice.kind) {
     case "none":
-      return <Message text={FACTORY_NO_ENVIRONMENT_MESSAGE} />;
+      return <Message title="Factory" detail={FACTORY_NO_ENVIRONMENT_MESSAGE} />;
     case "relay-only":
-      return <Message text={FACTORY_RELAY_ONLY_MESSAGE} />;
+      return <Message title="Factory" detail={FACTORY_RELAY_ONLY_MESSAGE} />;
     case "one":
       return (
         <FactoryWebView key={choice.connection.environmentId} connection={choice.connection} />
@@ -126,27 +128,29 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
         setPhase({ kind: "error", reason: "The server did not accept the sign-in." });
       } else if (next.action === "mint") {
         const generation = generationRef.current;
-        const minted = await mintPairingToken({ httpBaseUrl, bearerToken }, fetch);
-        if (generation !== generationRef.current) return;
-        if (!minted.ok) {
-          setPhase({ kind: "error", reason: minted.reason });
-          return;
-        }
-        signInRef.current = nextSignIn(
-          signInRef.current,
-          { type: "minted" },
-          event.nativeEvent.url,
-          httpBaseUrl,
-        ).state;
-        webViewRef.current?.injectJavaScript(
-          factoryExchangeScript(minted.credential, originOf(httpBaseUrl) ?? ""),
-        );
+        await mintAndInject({
+          server: { httpBaseUrl, bearerToken },
+          fetchFn: fetch,
+          isCurrent: () => generation === generationRef.current,
+          onMinted: () => {
+            signInRef.current = nextSignIn(
+              signInRef.current,
+              { type: "minted" },
+              event.nativeEvent.url,
+              httpBaseUrl,
+            ).state;
+          },
+          inject: (script) => webViewRef.current?.injectJavaScript(script),
+          onFailure: (reason) => setPhase({ kind: "error", reason }),
+        });
       }
     },
     [httpBaseUrl, bearerToken],
   );
 
-  if (phase.kind === "error") return <Message text={phase.reason} onRetry={retry} />;
+  if (phase.kind === "error") {
+    return <Message title="Factory unavailable" detail={phase.reason} onRetry={retry} />;
+  }
   if (phase.kind === "probing") {
     return (
       <View className="flex-1 items-center justify-center bg-screen">
@@ -158,7 +162,7 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   return (
     <WebView<object>
       ref={webViewRef}
-      source={{ uri: factoryUrl("/factory", httpBaseUrl) }}
+      source={{ uri: environmentEndpointUrl(httpBaseUrl, "/factory") }}
       originWhitelist={["*"]}
       sharedCookiesEnabled
       injectedJavaScriptBeforeContentLoaded={FACTORY_BEFORE_CONTENT_LOADED_SCRIPT}

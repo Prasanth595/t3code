@@ -2,6 +2,24 @@
 // in, and how the pairing-token and status requests map to one-line reasons. No reason
 // ever carries the bearer or the minted credential.
 
+import { environmentEndpointUrl } from "@t3tools/client-runtime/environment";
+import {
+  executeEnvironmentHttpRequest,
+  layerRemoteHttpClient,
+  makeEnvironmentHttpApiGroupClient,
+  type RemoteEnvironmentRequestError,
+} from "@t3tools/client-runtime/rpc";
+import {
+  AuthEnvironmentMaintainScope,
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
+  type AuthGrantScope,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+
+import { factoryExchangeScript } from "./factoryWebViewScripts";
+
 export type FactoryServer = {
   readonly httpBaseUrl: string;
   readonly bearerToken: string | null;
@@ -17,10 +35,19 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const UNREACHABLE = "The server is unreachable.";
 const NO_FACTORY_PAGES = "This server has no Factory pages.";
 
-/** Saved base URLs end in "/", so paths are resolved, never concatenated. */
-export function factoryUrl(path: string, httpBaseUrl: string): string {
-  return new URL(path, httpBaseUrl).toString();
-}
+/**
+ * The scopes the Factory pages' own routes check, and nothing of the wider app: the session
+ * the WebView ends up with cannot drive terminals, providers or the filesystem.
+ */
+export const FACTORY_SESSION_SCOPES: ReadonlyArray<AuthGrantScope> = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  AuthEnvironmentMaintainScope,
+];
+
+/** How the session reads in the server's Connections settings, where it is revoked. */
+export const FACTORY_SESSION_LABEL = "T3 Code Mobile · Factory";
 
 export function originOf(url: string): string | null {
   try {
@@ -46,6 +73,7 @@ export function factoryLinkAction(url: string, httpBaseUrl: string): "webview" |
 export type FactoryWebViewMessage =
   | { readonly type: "location"; readonly href: string }
   | { readonly type: "unauthorized" }
+  | { readonly type: "authorized" }
   | { readonly type: "exchange"; readonly ok: boolean };
 
 export function parseFactoryMessage(data: string): FactoryWebViewMessage | null {
@@ -61,6 +89,7 @@ export function parseFactoryMessage(data: string): FactoryWebViewMessage | null 
     return { type: "location", href: message.href };
   }
   if (message.type === "unauthorized") return { type: "unauthorized" };
+  if (message.type === "authorized") return { type: "authorized" };
   if (message.type === "exchange" && typeof message.ok === "boolean") {
     return { type: "exchange", ok: message.ok };
   }
@@ -75,10 +104,11 @@ const IDLE_NONE = { action: "none" } as const;
 
 /**
  * One sign-in per unauthenticated signal. idle -> minting -> exchanging (credential
- * injected) -> exchanged (cookie set) -> signed-in (landed on /factory). A second
- * unauthenticated signal while exchanged is "rejected": the server took the credential but
- * the WebView is still unauthenticated, so Retry replaces a loop. Messages count only when
- * the WebView's top frame (eventUrl) is on the server's origin.
+ * injected) -> exchanged (cookie set) -> signed-in (the page's status call succeeded with
+ * that cookie). Landing on /factory proves nothing, since the page loads before its cookie
+ * is checked, so an unauthenticated signal while exchanged is "rejected": the server took
+ * the credential but the cookie did not authenticate the WebView, and Retry replaces a loop.
+ * Messages count only when the WebView's top frame (eventUrl) is on the server's origin.
  */
 export function nextSignIn(
   state: SignInState,
@@ -98,6 +128,9 @@ export function nextSignIn(
       ? { state: "exchanged", ...IDLE_NONE }
       : { state: "idle", action: "exchange-failed" };
   }
+  if (event.type === "authorized") {
+    return { state: state === "exchanged" ? "signed-in" : state, ...IDLE_NONE };
+  }
 
   let href: URL | null = null;
   if (event.type === "location") {
@@ -106,9 +139,6 @@ export function nextSignIn(
     } catch {
       return { state, ...IDLE_NONE };
     }
-  }
-  if (href !== null && href.origin === serverOrigin && /^\/factory(\/|$)/.test(href.pathname)) {
-    return { state: state === "exchanged" ? "signed-in" : state, ...IDLE_NONE };
   }
   const unauthenticated =
     event.type === "unauthorized" ||
@@ -121,6 +151,7 @@ export function nextSignIn(
   return { state: "minting", action: "mint" };
 }
 
+/** A stalled peer must not hold the spinner: every request aborts after REQUEST_TIMEOUT_MS. */
 async function request(fetchFn: FactoryFetch, url: string, init: RequestInit) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -131,48 +162,91 @@ async function request(fetchFn: FactoryFetch, url: string, init: RequestInit) {
   }
 }
 
-function authorized(server: FactoryServer, extra: Record<string, string> = {}) {
-  return { authorization: `Bearer ${server.bearerToken ?? ""}`, ...extra };
-}
-
 const NOT_CONNECTED = "This environment is not connected yet.";
 
-/** Mints a one-time pairing credential with the connection's bearer token. */
+function mintFailureReason(error: RemoteEnvironmentRequestError): string {
+  switch (error._tag) {
+    case "EnvironmentAuthInvalidError":
+      return "The server no longer accepts this pairing.";
+    case "EnvironmentScopeRequiredError":
+      return `This pairing cannot sign in the Factory pages: it lacks ${error.requiredPermission ?? error.requiredScope}.`;
+    case "EnvironmentRequestInvalidError":
+    case "EnvironmentOperationForbiddenError":
+      return "The server refused to sign in the Factory pages.";
+    case "EnvironmentResourceNotFoundError":
+      return "The server failed to sign in (404).";
+    case "EnvironmentInternalError":
+      return "The server failed to sign in (500).";
+    case "RemoteEnvironmentAuthUndeclaredStatusError":
+      return `The server failed to sign in (${error.status}).`;
+    case "RemoteEnvironmentAuthInvalidJsonError":
+      return "The server returned an unexpected sign-in response.";
+    case "RemoteEnvironmentAuthFetchError":
+    case "RemoteEnvironmentAuthTimeoutError":
+      return UNREACHABLE;
+  }
+}
+
+/**
+ * Mints a one-time pairing credential with the connection's bearer token, through the
+ * contract's typed auth client so an upstream change to the endpoint fails typecheck here
+ * rather than on a phone. The credential carries FACTORY_SESSION_SCOPES and
+ * FACTORY_SESSION_LABEL.
+ */
 export async function mintPairingToken(
   server: FactoryServer,
   fetchFn: FactoryFetch,
 ): Promise<FactoryResult<{ readonly credential: string }>> {
   if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
-  let response: Response;
-  try {
-    response = await request(fetchFn, factoryUrl("/api/auth/pairing-token", server.httpBaseUrl), {
-      method: "POST",
-      headers: authorized(server, { "content-type": "application/json" }),
-      body: "{}",
-    });
-  } catch {
-    return { ok: false, reason: UNREACHABLE };
+  const authorization = `Bearer ${server.bearerToken}`;
+  const mint = makeEnvironmentHttpApiGroupClient(server.httpBaseUrl, "auth").pipe(
+    Effect.flatMap((auth) =>
+      auth.pairingCredential({
+        headers: { authorization },
+        payload: { label: FACTORY_SESSION_LABEL, scopes: FACTORY_SESSION_SCOPES },
+      }),
+    ),
+  );
+  const timedFetch: typeof fetch = (input, init) =>
+    request(fetchFn, input instanceof Request ? input.url : String(input), init ?? {});
+  return Effect.runPromise(
+    executeEnvironmentHttpRequest(
+      environmentEndpointUrl(server.httpBaseUrl, "/api/auth/pairing-token"),
+      REQUEST_TIMEOUT_MS,
+      mint,
+    ).pipe(
+      Effect.map((issued) => ({ ok: true, credential: issued.credential }) as const),
+      Effect.catch((error) =>
+        Effect.succeed({ ok: false, reason: mintFailureReason(error) } as const),
+      ),
+      Effect.provide(layerRemoteHttpClient(timedFetch)),
+    ),
+  );
+}
+
+/**
+ * One mint for one open of the WebView. `isCurrent` is read after the mint returns: a mint
+ * that outlived its open (Retry, a new bearer, unmount) neither injects its credential into
+ * a newer WebView nor reports an error for it. `onMinted` runs before the injection, so the
+ * state machine is "exchanging" by the time the exchange message arrives.
+ */
+export async function mintAndInject(input: {
+  readonly server: FactoryServer;
+  readonly fetchFn: FactoryFetch;
+  readonly isCurrent: () => boolean;
+  readonly onMinted: () => void;
+  readonly inject: (script: string) => void;
+  readonly onFailure: (reason: string) => void;
+}): Promise<"injected" | "failed" | "stale"> {
+  const minted = await mintPairingToken(input.server, input.fetchFn);
+  if (!input.isCurrent()) return "stale";
+  if (!minted.ok) {
+    input.onFailure(minted.reason);
+    return "failed";
   }
-  if (response.status === 401) {
-    return { ok: false, reason: "The server no longer accepts this pairing." };
-  }
-  if (response.status === 403) {
-    const body = (await response.json().catch(() => null)) as { code?: unknown } | null;
-    return {
-      ok: false,
-      reason:
-        body?.code === "insufficient_scope"
-          ? "This pairing cannot sign in the Factory pages: it lacks access:write."
-          : "The server refused to sign in the Factory pages.",
-    };
-  }
-  if (!response.ok)
-    return { ok: false, reason: `The server failed to sign in (${response.status}).` };
-  const body = (await response.json().catch(() => null)) as { credential?: unknown } | null;
-  if (typeof body?.credential !== "string" || body.credential.length === 0) {
-    return { ok: false, reason: "The server returned an unexpected sign-in response." };
-  }
-  return { ok: true, credential: body.credential };
+  input.onMinted();
+  input.inject(factoryExchangeScript(minted.credential, originOf(input.server.httpBaseUrl) ?? ""));
+  return "injected";
 }
 
 /** Checks the server has Factory pages and accepts this connection. Mints nothing. */
@@ -183,10 +257,14 @@ export async function probeFactory(
   if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
   let response: Response;
   try {
-    response = await request(fetchFn, factoryUrl("/api/factory/status", server.httpBaseUrl), {
-      method: "GET",
-      headers: authorized(server, { accept: "application/json" }),
-    });
+    response = await request(
+      fetchFn,
+      environmentEndpointUrl(server.httpBaseUrl, "/api/factory/status"),
+      {
+        method: "GET",
+        headers: { authorization: `Bearer ${server.bearerToken}`, accept: "application/json" },
+      },
+    );
   } catch {
     return { ok: false, reason: UNREACHABLE };
   }

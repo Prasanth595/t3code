@@ -1,7 +1,10 @@
 // Scripts run inside the Factory WebView. The web app changes URL through the history
 // API, so a navigation callback alone would miss most moves.
 
-/** Reports the location on load and on every history change, and reports a 401 from the status endpoint. */
+/**
+ * Reports the location on load and on every history change, and reports whether the
+ * status endpoint accepted the WebView's cookie (authorized) or not (unauthorized).
+ */
 export const FACTORY_BEFORE_CONTENT_LOADED_SCRIPT = `
 (function () {
   if (window.__factoryBridge) return;
@@ -31,12 +34,12 @@ export const FACTORY_BEFORE_CONTENT_LOADED_SCRIPT = `
         target = new URL(url, window.location.href);
       } catch (error) {}
       if (
-        response.status === 401 &&
         target &&
         target.origin === window.location.origin &&
         target.pathname === "/api/factory/status"
       ) {
-        post({ type: "unauthorized" });
+        if (response.status === 401) post({ type: "unauthorized" });
+        else if (response.ok) post({ type: "authorized" });
       }
       return response;
     });
