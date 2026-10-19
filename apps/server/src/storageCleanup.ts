@@ -543,9 +543,9 @@ const make = Effect.gen(function* () {
           maxOutputBytes: 64 * 1024,
         });
       const admin = yield* inspect(["rev-parse", "--absolute-git-dir"]);
-      if (admin.stdoutTruncated)
+      if (admin.stdoutTruncated || admin.stderrTruncated)
         return { force: false, reason: "submodule inspection exceeded the limit" };
-      const modules = path.join(admin.stdout.trim(), "modules");
+      const modules = path.join(admin.stdout.replace(/\n$/, ""), "modules");
       const stored = yield* fs.exists(modules);
       if (!stored && !(yield* fs.exists(path.join(cwd, ".gitmodules"))))
         return { force: false, reason: null };
@@ -556,22 +556,15 @@ const make = Effect.gen(function* () {
         "--quiet",
         'printf "%s\\0" "$toplevel/$sm_path"',
       ]);
-      if (populated.stdoutTruncated)
+      if (populated.stdoutTruncated || populated.stderrTruncated)
         return { force: false, reason: "submodule inspection exceeded the limit" };
       const paths = populated.stdout.split("\0").filter(Boolean);
       const pending = [modules];
       for (const submodule of paths) {
-        const changes = yield* localChangesReason(submodule, rules);
-        if (changes !== null) return { force: false, reason: `submodule ${changes}` };
-        const directory = yield* git.execute({
-          operation: "StorageCleanup.submoduleGitDirectory",
-          cwd: submodule,
-          args: ["rev-parse", "--absolute-git-dir"],
-          maxOutputBytes: 64 * 1024,
-        });
-        if (directory.stdoutTruncated)
+        const directory = yield* inspect(["-C", submodule, "rev-parse", "--absolute-git-dir"]);
+        if (directory.stdoutTruncated || directory.stderrTruncated)
           return { force: false, reason: "submodule inspection exceeded the limit" };
-        pending.push(directory.stdout.trim());
+        pending.push(directory.stdout.replace(/\n$/, ""));
       }
       const visited = new Set<string>();
       while (pending.length > 0) {
@@ -597,13 +590,20 @@ const make = Effect.gen(function* () {
             "--not",
             "--remotes",
           ]);
-          if (unpushed.stdoutTruncated || unpushed.stdout.trim() !== "")
+          if (unpushed.stdoutTruncated || unpushed.stderrTruncated)
+            return { force: false, reason: "submodule inspection exceeded the limit" };
+          if (unpushed.stdout.trim() !== "")
             return { force: false, reason: "submodule has commits not on a remote-tracking ref" };
           pending.push(path.join(directory, "modules"));
         } else {
           for (const name of yield* fs.readDirectory(directory))
             pending.push(path.join(directory, name));
         }
+      }
+      // Check files after walking stored history to shorten the gap before forced removal.
+      for (const submodule of paths) {
+        const changes = yield* localChangesReason(submodule, rules);
+        if (changes !== null) return { force: false, reason: `submodule ${changes}` };
       }
       return { force: stored || paths.length > 0, reason: null };
     },
