@@ -534,7 +534,8 @@ it.live("removes clean submodules recursively, including deinitialized repositor
 it.live("keeps nested submodule files protected by the current keep rule", () =>
   runCleanupTest(
     Effect.gen(function* () {
-      const { service, fs, worktree, child, setPolicy } = yield* submoduleCleanupFixture();
+      const { service, fs, worktree, submodule, child, command, setPolicy } =
+        yield* submoduleCleanupFixture();
       setPolicy("tracked-changes");
       yield* fs.writeFileString(`${child}/tracked.txt`, "local edit\n");
       expect(
@@ -548,6 +549,17 @@ it.live("keeps nested submodule files protected by the current keep rule", () =>
         (yield* service.runNow).entries.find((entry) => entry.path === worktree),
       ).toMatchObject({ outcome: "kept" });
       expect(yield* fs.readFileString(`${child}/.env`)).toBe("local secret\n");
+
+      yield* fs.remove(`${child}/.env`);
+      yield* command(submodule, ["submodule", "deinit", "child"]);
+      yield* fs.writeFileString(`${child}/.env`, "secret after deinit\n");
+      const report = yield* service.runNow;
+      expect({
+        outcome: report.entries.find((entry) => entry.path === worktree)?.outcome,
+        contents: (yield* fs.exists(`${child}/.env`))
+          ? yield* fs.readFileString(`${child}/.env`)
+          : null,
+      }).toEqual({ outcome: "kept", contents: "secret after deinit\n" });
     }),
   ),
 );
