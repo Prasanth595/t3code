@@ -1535,7 +1535,7 @@ it.live("failed session and browser launches release capacity, as does closing a
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("interrupting an open releases its slot without leaving a relaunchable session", () =>
+it.live("an interrupted open holds capacity until launch settles and leaves no session", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { broker, browser } = yield* ready;
@@ -1554,8 +1554,23 @@ it.live("interrupting an open releases its slot without leaving a relaunchable s
       let pending = yield* PubSub.take(events);
       while (pending.type !== "opened") pending = yield* PubSub.take(events);
       yield* Effect.promise(() => started.promise);
+      // This viewer joins the real launch promise before the request is interrupted.
+      const launchingViewer = yield* browser
+        .attachViewer(viewerInput(pending.tabId, false))
+        .pipe(Effect.result, Effect.forkScoped({ startImmediately: true }));
       yield* Fiber.interrupt(opening);
+      // Only the canceled launch stays gated; an incorrectly admitted retry can finish.
+      contextGate = null;
+      const duringLaunch = yield* open.pipe(Effect.result);
       gate.resolve();
+      expect(yield* Fiber.join(launchingViewer)).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ServerBrowserTabNotFoundError" },
+      });
+      expect(duringLaunch).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
+      });
       // Attaching must not resurrect the interrupted request's session.
       const attached = yield* browser
         .attachViewer(viewerInput(pending.tabId, false))
