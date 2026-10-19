@@ -34,11 +34,9 @@ const QUOTED_FILE_PATH_PATTERN =
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
-// The whitespace-delimited token a path match sits in, and a query string inside it.
-// Request logs print routes like `/api/trpc/post.list?batch=1`; files don't carry
-// queries, while prose like `src/main.ts?` still trims to a path.
-const TOKEN_PATTERN = /[^\s"'`<>]*/y;
-const QUERY_STRING_PATTERN = /\?[A-Za-z0-9_%&=-]/;
+// A question mark is legal in filenames; only exclude query-bearing request targets.
+const REQUEST_ROUTE_PATTERN =
+  /(?:^|[\s"'`])(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE|proxying)\s+(?:\/|[A-Za-z0-9_-]+\/)[^\s?]*\?\S*/g;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
@@ -60,12 +58,6 @@ function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   trimUnbalanced("[", "]");
   trimUnbalanced("{", "}");
   return output;
-}
-
-function hasQueryString(line: string, start: number): boolean {
-  TOKEN_PATTERN.lastIndex = start;
-  const token = TOKEN_PATTERN.exec(line)?.[0] ?? "";
-  return QUERY_STRING_PATTERN.test(token);
 }
 
 function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
@@ -90,9 +82,7 @@ function collectMatches(
 
     const trimmed = quotedPath === undefined ? trimClosingDelimiters(raw, kind) : raw;
     if (trimmed.length === 0) continue;
-    if (kind === "path" && (isTerminalUrl(trimmed) || hasQueryString(line, start))) {
-      continue;
-    }
+    if (kind === "path" && isTerminalUrl(trimmed)) continue;
 
     const candidate: TerminalLinkMatch = {
       kind,
@@ -112,13 +102,21 @@ function collectMatches(
 }
 
 export function extractTerminalLinks(line: string): TerminalLinkMatch[] {
+  const requestRoutes = Array.from(line.matchAll(REQUEST_ROUTE_PATTERN), (match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
   const urlMatches = collectMatches(line, "url", URL_PATTERN, []);
   const quotedMatches = collectMatches(line, "path", QUOTED_FILE_PATH_PATTERN, urlMatches);
   const pathMatches = collectMatches(line, "path", FILE_PATH_PATTERN, [
     ...urlMatches,
     ...quotedMatches,
   ]);
-  return [...urlMatches, ...quotedMatches, ...pathMatches].toSorted((a, b) => a.start - b.start);
+  return [...urlMatches, ...quotedMatches, ...pathMatches]
+    .filter(
+      (match) => match.kind === "url" || !requestRoutes.some((route) => overlaps(match, route)),
+    )
+    .toSorted((a, b) => a.start - b.start);
 }
 
 export function isTerminalUrl(value: string): boolean {
