@@ -1166,29 +1166,24 @@ it.effect("stops rapid restart loops but allows repeated restarts after normal w
         run.id === first ? { ...run, restartContinuationOfRunId: RunId.make("run:root") } : run,
       ),
     } as unknown as OrchestrationV2ThreadProjection;
-    assert.lengthOf(yield* continuationTexts(withThreeLinks), 0);
-    const atRequestCutoff = {
-      ...withThreeLinks,
-      runs: withThreeLinks.runs.map((run, index) => ({
-        ...run,
-        completedAt: null,
-        requestedAt: DateTime.subtract(now, { minutes: [1, 2, 6][index] ?? 0 }),
-      })),
-    } as unknown as OrchestrationV2ThreadProjection;
-    assert.lengthOf(yield* continuationTexts(atRequestCutoff), 0);
-    const afterRequestWindow = {
-      ...atRequestCutoff,
-      runs: atRequestCutoff.runs.map((run, index) => ({
-        ...run,
-        requestedAt: DateTime.subtract(now, { minutes: [1, 2, 7][index] ?? 0 }),
-      })),
-    } as unknown as OrchestrationV2ThreadProjection;
-    assert.lengthOf(yield* continuationTexts(afterRequestWindow), 1);
-    const afterNormalWork = {
-      ...atRequestCutoff,
-      runs: atRequestCutoff.runs.map((run) => ({ ...run, completedAt: now })),
-    };
-    assert.lengthOf(yield* continuationTexts(afterNormalWork), 1);
+    for (const { completedAt, oldestRequestAge, expected } of [
+      { completedAt: null, oldestRequestAge: { minutes: 6 }, expected: 0 },
+      { completedAt: null, oldestRequestAge: { minutes: 6, milliseconds: 1 }, expected: 1 },
+      { completedAt: now, oldestRequestAge: { minutes: 6 }, expected: 1 },
+    ]) {
+      const projection = {
+        ...withThreeLinks,
+        runs: withThreeLinks.runs.map((run, index) => ({
+          ...run,
+          completedAt,
+          requestedAt: DateTime.subtract(
+            now,
+            run.id === first ? oldestRequestAge : { minutes: index + 1 },
+          ),
+        })),
+      };
+      assert.lengthOf(yield* continuationTexts(projection), expected);
+    }
   }),
 );
 
