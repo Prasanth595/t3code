@@ -2686,57 +2686,53 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
     );
 
-  const openOrAttachForStream = (input: TerminalAttachInput) =>
-    withThreadLock(
-      input.threadId,
-      Effect.gen(function* () {
-        const terminalId = input.terminalId;
-        const existing = yield* getSession(input.threadId, terminalId);
+  const openOrAttachForStream = Effect.fnUntraced(function* (input: TerminalAttachInput) {
+    const terminalId = input.terminalId;
+    const existing = yield* getSession(input.threadId, terminalId);
 
-        if (Option.isNone(existing)) {
-          if (!input.cwd) {
-            return yield* new TerminalSessionLookupError({
-              threadId: input.threadId,
-              terminalId,
-            });
-          }
+    if (Option.isNone(existing)) {
+      if (!input.cwd) {
+        return yield* new TerminalSessionLookupError({
+          threadId: input.threadId,
+          terminalId,
+        });
+      }
 
-          const resolvedInput = yield* resolveLaunchInputEnvironment({
-            ...input,
-            terminalId,
-            cwd: input.cwd,
-          });
-          return yield* openLocked(resolvedInput);
-        }
+      const resolvedInput = yield* resolveLaunchInputEnvironment({
+        ...input,
+        terminalId,
+        cwd: input.cwd,
+      });
+      return yield* openLocked(resolvedInput);
+    }
 
-        const session = existing.value;
-        const targetCols = input.cols ?? session.cols;
-        const targetRows = input.rows ?? session.rows;
+    const session = existing.value;
+    const targetCols = input.cols ?? session.cols;
+    const targetRows = input.rows ?? session.rows;
 
-        if (!session.process && input.cwd && input.restartIfNotRunning === true) {
-          const resolvedInput = yield* resolveLaunchInputEnvironment({
-            ...input,
-            terminalId,
-            cwd: input.cwd,
-          });
-          return yield* openLocked(resolvedInput);
-        }
+    if (!session.process && input.cwd && input.restartIfNotRunning === true) {
+      const resolvedInput = yield* resolveLaunchInputEnvironment({
+        ...input,
+        terminalId,
+        cwd: input.cwd,
+      });
+      return yield* openLocked(resolvedInput);
+    }
 
-        if (
-          session.process &&
-          session.status === "running" &&
-          (session.cols !== targetCols || session.rows !== targetRows)
-        ) {
-          const process = session.process;
-          yield* resizePtyProcess(session, process, targetCols, targetRows);
-          session.cols = targetCols;
-          session.rows = targetRows;
-          session.updatedAt = yield* nowIso;
-        }
+    if (
+      session.process &&
+      session.status === "running" &&
+      (session.cols !== targetCols || session.rows !== targetRows)
+    ) {
+      const process = session.process;
+      yield* resizePtyProcess(session, process, targetCols, targetRows);
+      session.cols = targetCols;
+      session.rows = targetRows;
+      session.updatedAt = yield* nowIso;
+    }
 
-        return snapshot(session);
-      }),
-    );
+    return snapshot(session);
+  });
 
   const readAllTerminalMetadata = () =>
     readManagerState.pipe(
@@ -2768,6 +2764,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       };
     });
 
+  // Subscribe after taking the lock so lock contention cannot accumulate an unbounded replay.
   const streamSession = (
     input: TerminalObserveInput,
     initial: Effect.Effect<TerminalSessionSnapshot | null, TerminalError>,
@@ -2778,7 +2775,6 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return Effect.gen(function* () {
       const bufferedEvents: TerminalEvent[] = [];
       let deliverLive = false;
-      // Only the sequence: keeping the snapshot would retain its history.
       let snapshotFloor: number | null = null;
 
       unsubscribe = yield* subscribe((event) => {
@@ -2791,9 +2787,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           return Effect.void;
         }
 
-        // A publication already in flight when this stream subscribed can
-        // still arrive after the snapshot that contains it. Sequences restart
-        // with each session, so the floor holds until a session starts or ends.
+        // Fanout can finish after a snapshot that already includes the event.
+        // Keep only its sequence, not its history, until the session changes.
         if (snapshotFloor !== null) {
           if (
             event.type === "started" ||
@@ -2839,6 +2834,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         unsubscribe = null;
       };
     }).pipe(
+      (effect) => withThreadLock(input.threadId, effect),
       Effect.catchCause((cause) =>
         Effect.flatMap(
           Effect.sync(() => {
@@ -2857,25 +2853,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const observeStream: TerminalManager["Service"]["observeStream"] = (input, listener) =>
     streamSession(
       input,
-      withThreadLock(
-        input.threadId,
-        requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
-      ),
+      requireSession(input.threadId, input.terminalId).pipe(Effect.map(snapshot)),
       listener,
     );
 
-  // Lifecycle events publish under the thread lock, so subscribing inside it
-  // buffers no output while waiting and no event from an older session.
   const resyncStream: TerminalManager["Service"]["resyncStream"] = (input, listener) =>
-    withThreadLock(
-      input.threadId,
-      streamSession(
-        input,
-        getSession(input.threadId, input.terminalId).pipe(
-          Effect.map((session) => (Option.isSome(session) ? snapshot(session.value) : null)),
-        ),
-        listener,
+    streamSession(
+      input,
+      getSession(input.threadId, input.terminalId).pipe(
+        Effect.map((session) => (Option.isSome(session) ? snapshot(session.value) : null)),
       ),
+      listener,
     );
 
   const metadataEventFromTerminalEvent = (

@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -237,6 +238,35 @@ describe("terminal output stream", () => {
       if (!legacy) assert.deepEqual(yield* takeChunk(stalled), [after]);
       assert.equal(yield* Queue.size(stalled), 0);
     }).pipe(Effect.provide(RpcSerialization.layerJson), Effect.scoped),
+  );
+
+  it.effect("interrupts recovery while its subscription is still waiting", () =>
+    Effect.gen(function* () {
+      const publisher = makePublisher();
+      const recovering = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      const pull = yield* Stream.toPull(
+        terminalOutputStream(
+          attach(publisher, ""),
+          () =>
+            Deferred.succeed(recovering, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            ),
+          1024,
+        ),
+      );
+      yield* pull;
+      yield* publisher.publish(output("x".repeat(1024)));
+      yield* publisher.publish(output("x".repeat(1024)));
+      assert.equal(publisher.listeners.size, 0);
+
+      const recovery = yield* pull.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(recovering);
+      yield* Fiber.interrupt(recovery);
+      yield* Deferred.await(interrupted);
+      assert.equal(publisher.listeners.size, 0);
+    }).pipe(Effect.scoped),
   );
 
   it.effect("caps each delivered batch at the output window in UTF-8 bytes", () =>
