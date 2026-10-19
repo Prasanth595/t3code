@@ -1,7 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
-  ACP_REGISTRY_MAX_AGENTS,
+  AcpRegistrySearchInput,
+  AcpRegistrySearchResult,
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -30,6 +31,8 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 const registryUrl = "https://registry.test/registry.json";
 const archiveUrl = "https://registry.test/example-agent.bin";
 const decodeAcpRegistrySettings = Schema.decodeSync(AcpRegistrySettings);
+const decodeSearchInput = Schema.decodeEffect(AcpRegistrySearchInput);
+const decodeSearchResult = Schema.decodeEffect(AcpRegistrySearchResult);
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function makeAgent(
@@ -1051,13 +1054,13 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("returns up to the requested limit and 20 agents without one", () => {
+  it.effect("keeps default searches at 20 and honors larger catalog limits", () => {
     const base = makeAgent({
       binary: {
         "linux-x86_64": { archive: archiveUrl, cmd: "example-agent" },
       },
     });
-    const agents = Array.from({ length: 25 }, (_, index) => {
+    const agents = Array.from({ length: 26 }, (_, index) => {
       const suffix = String(index).padStart(2, "0");
       return { ...base, id: `example-agent-${suffix}`, name: `Example Agent ${suffix}` };
     });
@@ -1071,12 +1074,15 @@ describe("AcpRegistrySupport", () => {
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
       });
-      const catalog = yield* resolver.search({ query: "", limit: ACP_REGISTRY_MAX_AGENTS });
-      const unlimited = yield* resolver.search({ query: "" });
+      const input = yield* decodeSearchInput({ query: "", limit: 512 });
+      const catalog = yield* resolver.search(input).pipe(Effect.flatMap(decodeSearchResult));
+      const limited = yield* resolver.search({ query: "", limit: 25 });
+      const defaultCatalog = yield* resolver.search({ query: "" });
       const matches = yield* resolver.search({ query: "example" });
 
-      expect(catalog.agents).toHaveLength(25);
-      expect(unlimited.agents).toHaveLength(20);
+      expect(catalog.agents).toHaveLength(26);
+      expect(limited.agents).toHaveLength(25);
+      expect(defaultCatalog.agents).toHaveLength(20);
       expect(matches.agents).toHaveLength(20);
     }).pipe(
       Effect.scoped,

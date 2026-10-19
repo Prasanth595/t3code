@@ -1,5 +1,4 @@
 import {
-  ACP_REGISTRY_DEFAULT_SEARCH_LIMIT,
   ACP_REGISTRY_MAX_AGENTS,
   AcpRegistryOperationError,
   AcpRegistryOperationErrorReason,
@@ -53,6 +52,8 @@ const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
+// Older clients omit the limit and validate responses against a 20-agent cap.
+const DEFAULT_SEARCH_LIMIT = 20;
 const REGISTRY_REQUEST_TIMEOUT = "30 seconds";
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
@@ -1615,7 +1616,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           compareText(left.agent.name.toLowerCase(), right.agent.name.toLowerCase()) ||
           compareText(left.agent.id, right.agent.id),
       );
-      const limit = input.limit ?? ACP_REGISTRY_DEFAULT_SEARCH_LIMIT;
+      const limit = input.limit ?? DEFAULT_SEARCH_LIMIT;
       return {
         agents: ranked.slice(0, limit).map(({ agent, distribution }) => ({
           id: agent.id,
