@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
@@ -273,9 +274,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
     return Option.getOrThrow(mtime).getTime();
   });
 
-  const provideReleaseHarness =
-    (harness: ReleaseHarness) =>
-    <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  const provideReleaseHarness = (harness: ReleaseHarness) => {
+    const linkStateLock = Semaphore.makeUnsafe(1);
+    return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provide(CloudLink.layer),
         Effect.provideService(HttpServer.HttpServer, idleHttpServer),
@@ -307,7 +308,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
             tunnelConnected: Stream.empty,
-            withLinkStateLock: (effect) => effect,
+            withLinkStateLock: linkStateLock.withPermits(1),
           }),
         ),
         Effect.provideService(
@@ -347,6 +348,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         Effect.scoped,
       );
+  };
 
   const managedLinkSecrets = [
     [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
@@ -731,6 +733,124 @@ describe("releaseManagedTunnelOnShutdown", () => {
       }),
     );
   });
+
+  it.effect("does not let a delayed relay success undo a newer revocation", () =>
+    Effect.gen(function* () {
+      const outcomes = yield* Effect.forEach(
+        ["registration", "recovery"] as const,
+        (acceptedRequest) =>
+          Effect.gen(function* () {
+            const config = {
+              providerKind: "cloudflare_tunnel",
+              connectorToken: "existing-token",
+              tunnelId: "existing-tunnel",
+            } as const;
+            const { store, values } = makeMemorySecretStore([
+              [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+              [RELAY_URL_SECRET, "https://relay.example.test"],
+              [CLOUD_LINKED_USER_ID, "user-123"],
+              [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+            ]);
+            const applyConfigCalls: Array<unknown> = [];
+            const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+            const requestStarted = yield* Deferred.make<void>();
+            const response = yield* Deferred.make<Response>();
+
+            return yield* Effect.gen(function* () {
+              const link = yield* CloudLink.CloudLink;
+              const localOrigin = "http://127.0.0.1:3773";
+              expect(
+                yield* link.startManagedTunnelIfOriginConfirmed(localOrigin, {
+                  requireConfirmedOrigin: false,
+                }),
+              ).toBe(true);
+              const pending = yield* (
+                acceptedRequest === "registration"
+                  ? link.registerManagedTunnelRecovery(localOrigin).pipe(Effect.asVoid)
+                  : link.recoverManagedTunnel(localOrigin, config).pipe(Effect.asVoid)
+              ).pipe(Effect.forkChild());
+              yield* Deferred.await(requestStarted);
+
+              if (acceptedRequest === "registration") {
+                const error = yield* Effect.flip(link.recoverManagedTunnel(localOrigin, config));
+                expect(error).toMatchObject({
+                  _tag: "RelayRequestError",
+                  rejection: "unauthorized",
+                });
+                expect(CloudLink.shouldRetryCloudLink(error)).toBe(false);
+              } else {
+                expect(yield* link.registerManagedTunnelRecovery(localOrigin)).toEqual({
+                  status: "revoked",
+                });
+              }
+              expect(values.has(CLOUD_LINK_REVOKED)).toBe(true);
+              expect(applyConfigCalls).toEqual([config, null]);
+              expect(requests.map((request) => request.headers.authorization)).toEqual([
+                "Bearer environment-credential",
+                "Bearer environment-credential",
+              ]);
+              const stoppedAt = applyConfigCalls.length;
+
+              yield* Deferred.succeed(
+                response,
+                Response.json(
+                  acceptedRequest === "registration"
+                    ? { status: "ready" }
+                    : {
+                        endpoint: {
+                          httpBaseUrl: "https://environment.example.test/",
+                          wsBaseUrl: "wss://environment.example.test/ws",
+                          providerKind: "cloudflare_tunnel",
+                        },
+                        endpointRuntime: {
+                          ...config,
+                          connectorToken: "new-token",
+                          tunnelId: "new-tunnel",
+                        },
+                      },
+                ),
+              );
+              yield* Fiber.join(pending);
+
+              return {
+                acceptedRequest,
+                revoked: values.has(CLOUD_LINK_REVOKED),
+                configsAfterStop: applyConfigCalls
+                  .slice(stoppedAt)
+                  .filter((config) => config !== null),
+              };
+            }).pipe(
+              provideReleaseHarness({
+                store,
+                applyConfigCalls,
+                requests,
+                onRequest: () => Deferred.succeed(requestStarted, undefined),
+                respondEffect: Effect.suspend(() =>
+                  requests.length === 1
+                    ? Deferred.await(response)
+                    : Effect.succeed(
+                        Response.json(
+                          {
+                            _tag: "RelayAuthInvalidError",
+                            code: "auth_invalid",
+                            reason: "not_authorized",
+                            traceId: "trace-revoked",
+                          },
+                          { status: 401, headers: { date: "Thu, 01 Jan 1970 00:00:00 GMT" } },
+                        ),
+                      ),
+                ),
+              }),
+            );
+          }),
+      );
+
+      expect(outcomes).toEqual([
+        { acceptedRequest: "registration", revoked: true, configsAfterStop: [] },
+        { acceptedRequest: "recovery", revoked: true, configsAfterStop: [] },
+      ]);
+    }),
+  );
 
   it.effect("keeps registering a skewed host and reconnects after its clock is corrected", () => {
     const config = {
