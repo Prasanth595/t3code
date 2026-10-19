@@ -11,6 +11,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -62,7 +63,7 @@ const cancelBackgroundOnlyTask = (
   background: "subagent" | "command",
   {
     cancelAt = "settled",
-  }: { readonly cancelAt?: "settled" | "checkpoint" | "turn" | "recorded" } = {},
+  }: { readonly cancelAt?: "settled" | "checkpoint" | "turn" | "recorded" | "monitor" } = {},
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -403,8 +404,25 @@ const cancelBackgroundOnlyTask = (
           yield* Fiber.join(waiting);
         });
         if (cancelAt !== "turn") yield* endTurn;
-        const turnSettled = cancelAt === "settled" || cancelAt === "recorded";
+        const turnSettled = cancelAt !== "checkpoint" && cancelAt !== "turn";
         if (turnSettled) yield* worker.drain();
+        if (cancelAt === "monitor") {
+          // A monitor notification then ran and completed while the shell kept running.
+          const { runs, messages } = yield* orchestrator.getThreadProjection(task.childThreadId!);
+          const run = { ...runs[0]!, id: RunId.make("run:monitor"), ordinal: 2 };
+          const source = { kind: "monitor" } as const;
+          const notification = { source, outcome: "updated", summary: "Ran" } as const;
+          const user = { ...messages[0]!, id: MessageId.make("message:monitor"), runId: run.id };
+          const message = { ...user, notification };
+          const at = { threadId: run.threadId, runId: run.id, occurredAt: now };
+          yield* (yield* EventSink.EventSinkV2).write({
+            commandId: CommandId.make("command:runtime-reconcile:monitor"),
+            events: [
+              { ...at, id: EventId.make("event:m1"), type: "message.updated", payload: message },
+              { ...at, id: EventId.make("event:m2"), type: "run.updated", payload: run },
+            ],
+          });
+        }
 
         const scope: McpInvocationScope = {
           environmentId: EnvironmentId.make("environment:task-cancel"),
@@ -436,7 +454,7 @@ const cancelBackgroundOnlyTask = (
                 threadId: parentThreadId,
                 nodeId: task.id,
                 occurredAt: now,
-                payload: { ...unsettled, cancelRequestedAt: now, cancelledRunId: child.turn.runId },
+                payload: { ...unsettled, cancelRequestedAt: now },
               },
             ],
           });
@@ -486,7 +504,7 @@ const cancelBackgroundOnlyTask = (
         );
         // Stop reached the provider turn that owns the shell.
         if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
-        assert.equal(childAfter.runs.length, 1);
+        assert.equal(childAfter.runs.length, cancelAt === "monitor" ? 2 : 1);
         assert.equal(childAfter.runs[0]!.status, "completed");
         assert.deepEqual(
           childAfter.runtimeRequests.map((request) => [request.id, request.status]),
@@ -539,6 +557,10 @@ it.effect("task_cancel ends background work while the child's run captures its c
 
 it.effect("task_cancel ends background work left by a turn that finishes after Stop", () =>
   cancelBackgroundOnlyTask("command", { cancelAt: "turn" }),
+);
+
+it.effect("task_cancel ends the shell's question though a monitor ran after the turn", () =>
+  cancelBackgroundOnlyTask("command", { cancelAt: "monitor" }),
 );
 
 it.effect("a recorded cancel settles at startup when the server exited before settling it", () =>
