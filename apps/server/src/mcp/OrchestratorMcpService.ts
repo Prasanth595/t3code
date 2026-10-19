@@ -1323,21 +1323,19 @@ const make = Effect.gen(function* () {
 
       const inheritsOptions =
         instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
-      const options =
-        requestedOptions === undefined
-          ? inheritsOptions
-            ? inheritedSelection.options
-            : undefined
-          : requestedOptions.length === 0 || !inheritsOptions
-            ? requestedOptions
-            : [
-                ...new Map(
-                  [...(inheritedSelection.options ?? []), ...requestedOptions].map((selection) => [
-                    selection.id,
-                    selection,
-                  ]),
-                ).values(),
-              ];
+      let options = inheritsOptions ? inheritedSelection.options : undefined;
+      if (requestedOptions !== undefined) {
+        const selections = new Map(
+          (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
+            selection.id,
+            selection,
+          ]),
+        );
+        for (const selection of requestedOptions) {
+          selections.set(selection.id, selection);
+        }
+        options = [...selections.values()];
+      }
       return {
         modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
         supportedRuntimeModes: provider.supportedRuntimeModes,
