@@ -288,7 +288,10 @@ export const layer = Layer.effectDiscard(
         ) {
           return;
         }
-        setError(environmentId, REPAIRING_MESSAGE);
+        // A retry keeps the reason of an earlier failure, such as a refused token, on screen.
+        if (appAtomRegistry.get(appTokenRepairErrorAtom(environmentId)) === null) {
+          setError(environmentId, REPAIRING_MESSAGE);
+        }
         const paired = yield* pair(origin, environmentId).pipe(Effect.exit);
         if (paired._tag === "Success") {
           setError(environmentId, null);

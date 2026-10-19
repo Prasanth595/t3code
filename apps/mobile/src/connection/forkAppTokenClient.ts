@@ -84,10 +84,11 @@ export function planMachineSync(input: {
   };
 }
 
+// The action comes first, because the lists cut a long reason after a few words.
 export const TOKEN_REFUSED_MESSAGE =
-  "The portal no longer accepts the app token of this phone. In the portal, open this phone under Clients and use Invite an app, then scan the new invite.";
+  "Invite this phone again: the portal refused its app token. In the portal, open this phone under Clients and use Invite an app.";
 
 export const REPAIRING_MESSAGE = "Pairing again with the app token of this phone...";
 
 export const NO_ACCESS_MESSAGE =
-  "This phone has no access to this machine now. Give it access in the portal.";
+  "No access to this machine now. Give this phone access in the portal.";
