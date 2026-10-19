@@ -125,7 +125,7 @@ describe("sidebar collision detection", () => {
     expect(detector(collisionArgs())[0]?.id).toBe("blocked");
   });
 
-  it("prepends a drop on the collapsed toggle despite the clamped card overlapping the divider", () => {
+  it("prepends a drop on the pinned toggle despite the clamped card overlapping the divider", () => {
     const items = [pinnedHeader, thread("p2", "pinned"), divider, thread("source", "active")];
     const { rects, activeIndex } = layout(items, "source", sidebarMarkerId("pinned-divider"));
     const sourceRect = rects[activeIndex]!;
@@ -159,7 +159,6 @@ describe("sidebar collision detection", () => {
     expect(closestCenter(args)[0]?.id).toBe(sidebarMarkerId("pinned-divider"));
     const detector = createSidebarCollisionDetection(() => true, {
       items,
-      pinnedCollapsed: true,
     });
     const overId = String(detector(args)[0]?.id);
     expect(overId).toBe(sidebarMarkerId("pinned-header"));

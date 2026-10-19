@@ -3694,7 +3694,6 @@ export default function Sidebar() {
       {
         items: sidebarListItems,
         activationY: dragActivationY ?? null,
-        pinnedCollapsed: !pinnedShelfExpanded,
       },
     );
   })();
