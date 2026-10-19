@@ -1,0 +1,205 @@
+import "~/index.css";
+
+import type { EnvironmentId, ProjectId, PullRequestListResult } from "@t3tools/contracts";
+import { act, type ReactNode } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+
+const fixture = vi.hoisted(() => ({
+  search: { state: "open", involvement: "all", sort: "updated" },
+  primaryConfigured: false,
+  remoteConfigured: true,
+  revision: 1,
+  targets: new Set<string>(),
+}));
+
+vi.mock(import("@tanstack/react-router"), async (original) => ({
+  ...(await original()),
+  createFileRoute: (() => (options: { component: () => ReactNode }) => ({
+    options,
+    useSearch: () => fixture.search,
+    fullPath: "/pull-requests",
+  })) as never,
+  useNavigate: (() => vi.fn()) as never,
+}));
+vi.mock(import("../../state/entities"), async (original) => ({
+  ...(await original()),
+  useProjects: (() =>
+    ["env-1", "env-2"].map((environmentId) => ({
+      id: `project-${environmentId}`,
+      environmentId,
+      title: "Widget",
+      workspaceRoot: `/srv/${environmentId}/widget`,
+      repositoryIdentity: {
+        canonicalKey: "bitbucket.org/acme/widget",
+        provider: "bitbucket",
+        owner: "acme",
+        name: "widget",
+        locator: { remoteUrl: "https://bitbucket.org/acme/widget.git" },
+      },
+    }))) as never,
+  useAllEnvironmentShellsBootstrapped: () => true,
+}));
+vi.mock(import("../../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironments: (() => ({
+    environments: ["env-1", "env-2"].map((environmentId) => ({
+      environmentId,
+      label: environmentId === "env-1" ? "Local server" : "Remote server",
+      serverConfig: {
+        environment: { capabilities: { pullRequests: true }, platform: { machine: "server" } },
+      },
+    })),
+  })) as never,
+}));
+vi.mock(import("../../state/pullRequests"), async (original) => {
+  const actual = await original();
+  const { mergePullRequestLists } = await import("./pullRequestList.logic");
+  const cache = new Map<string, ReturnType<typeof actual.usePullRequestList>>();
+  const refresh = vi.fn();
+  const emptyStats = { stats: null, isPending: false, refresh };
+  const noRefreshes: ReadonlyArray<readonly [EnvironmentId, number]> = [];
+  return {
+    ...actual,
+    usePullRequestTurnRefreshes: () => noRefreshes,
+    usePullRequestListStats: () => emptyStats,
+    usePullRequestList: (targets) => {
+      const key = JSON.stringify([fixture.revision, targets]);
+      const cached = cache.get(key);
+      if (cached) return cached;
+      const values = targets.map(({ environmentId }) => {
+        fixture.targets.add(environmentId);
+        return [environmentId, answer(environmentId)] as const;
+      });
+      const result = {
+        data: mergePullRequestLists(values),
+        error: null,
+        isPending: false,
+        observations: values.map(([id, value]) => [id, value, fixture.revision] as const),
+        refresh,
+      };
+      cache.set(key, result);
+      return result;
+    },
+  };
+});
+vi.mock(import("../../state/use-atom-command"), async () => {
+  const { AsyncResult } = await import("effect/reactivity");
+  return {
+    useAtomCommand: (() => async () => {
+      fixture.revision++;
+      return AsyncResult.success(undefined);
+    }) as never,
+  };
+});
+vi.mock(import("../../hooks/useNavigateBack"), () => ({ useEscapeToGoBack: () => undefined }));
+vi.mock(import("../../hooks/useSidebarProjectGroups"), () => ({
+  useSidebarProjectGroups: () => [],
+}));
+vi.mock(import("../../hooks/useLiveRefresh"), () => ({ useLiveRefresh: () => undefined }));
+vi.mock(import("../ui/sidebar"), async (original) => ({
+  ...(await original()),
+  SidebarInset: ({ children }: { children?: ReactNode }) => <main>{children}</main>,
+}));
+
+import { Route } from "../../routes/_chat.pull-requests";
+
+function answer(environmentId: EnvironmentId): PullRequestListResult {
+  const configured =
+    environmentId === "env-1" ? fixture.primaryConfigured : fixture.remoteConfigured;
+  const projectId = `project-${environmentId}` as ProjectId;
+  return {
+    viewers: configured ? { "bitbucket.org": "reviewer" } : {},
+    providers: [
+      {
+        host: "bitbucket.org",
+        kind: "bitbucket" as never,
+        searchesOnHost: false,
+        projectCount: 1,
+        configured,
+        detail: configured ? null : "Bitbucket rejected the configured credentials.",
+      },
+    ],
+    entries: configured
+      ? [
+          {
+            provider: "bitbucket" as never,
+            host: "bitbucket.org",
+            projectId,
+            projectTitle: "Widget",
+            repository: "acme/widget",
+            number: 42,
+            title: "Handle reconnects without dropping pending work",
+            url: "https://bitbucket.org/acme/widget/pull-requests/42",
+            author: { login: "reviewer", name: null, avatarUrl: null },
+            headBranch: "fix/reconnect",
+            baseBranch: "main",
+            state: "open",
+            isDraft: false,
+            mergeability: "mergeable",
+            additions: 14,
+            deletions: 3,
+            createdAt: "2026-10-18T09:00:00Z",
+            updatedAt: "2026-10-18T10:00:00Z",
+            viewerReviewRequested: false,
+            labels: [],
+          },
+        ]
+      : [],
+    errors: configured
+      ? []
+      : [{ projectId, projectTitle: "Widget", message: "Credentials rejected" }],
+    truncated: false,
+    nextCursors: {},
+  };
+}
+
+let root: Root;
+let container: HTMLDivElement;
+const View = Route.options.component!;
+await View.preload?.();
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  fixture.primaryConfigured = false;
+  fixture.remoteConfigured = true;
+  fixture.revision++;
+  fixture.targets.clear();
+  window.localStorage.clear();
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+});
+
+it("shows the shared repository from the server that can read it", async () => {
+  await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Handle reconnects without dropping pending work");
+  expect(container.textContent).toContain("Remote server");
+  expect([...fixture.targets]).toEqual(["env-1", "env-2"]);
+});
+
+it("stops falling back when neither server can read the host", async () => {
+  fixture.remoteConfigured = false;
+  await act(async () => root.render(<View />));
+  expect(container.textContent).not.toContain("Handle reconnects without dropping pending work");
+  expect([...fixture.targets]).toEqual(["env-1", "env-2"]);
+});
+
+it("retries the preferred server on refresh after its credentials are fixed", async () => {
+  await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Remote server");
+  fixture.primaryConfigured = true;
+  const refresh = container.querySelector<HTMLButtonElement>(
+    '[aria-label="Refresh pull requests"]',
+  );
+  expect(refresh).not.toBeNull();
+  await act(async () => refresh!.click());
+  expect(container.textContent).toContain("Handle reconnects without dropping pending work");
+  expect(container.textContent).toContain("Local server");
+  expect(container.textContent).not.toContain("Remote server");
+});

@@ -9,6 +9,7 @@ import type {
   EnvironmentId,
   ProjectId,
   PullRequestListInput,
+  PullRequestListResult,
   PullRequestListStatsInput,
   PullRequestListEntry,
   PullRequestRef,
@@ -331,6 +332,7 @@ export interface MergedPullRequestListView {
   readonly data: MergedPullRequestList | null;
   readonly error: string | null;
   readonly isPending: boolean;
+  readonly observations: ReadonlyArray<readonly [EnvironmentId, PullRequestListResult, number]>;
   readonly refresh: (targets?: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>>) => void;
 }
 
@@ -355,7 +357,13 @@ export function usePullRequestList(
     }
   }, [query.observations]);
   const data = mergePullRequestLists(query.values);
-  return { data, error: query.error, isPending: query.isPending, refresh: query.refresh };
+  return {
+    data,
+    error: query.error,
+    isPending: query.isPending,
+    observations: query.observations,
+    refresh: query.refresh,
+  };
 }
 
 export function usePullRequestListStats(

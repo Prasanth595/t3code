@@ -1,8 +1,9 @@
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestProviderSummary } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   assignProjectsToEnvironments,
+  rememberPullRequestHosts,
   resolvePickableEnvironments,
   type AssignableProject,
 } from "./pullRequestProjectAssignment.logic";
@@ -22,6 +23,59 @@ const envs = (...ids: ReadonlyArray<string>) => ids as ReadonlyArray<Environment
 
 const plain = (assignment: Map<EnvironmentId, ProjectId[]>) =>
   Object.fromEntries([...assignment].map(([id, projectIds]) => [id, projectIds]));
+
+const provider = (host: string, configured: boolean): PullRequestProviderSummary => ({
+  host,
+  kind: "bitbucket" as PullRequestProviderSummary["kind"],
+  searchesOnHost: false,
+  projectCount: 1,
+  configured,
+  detail: configured ? null : "Credentials rejected",
+});
+
+describe("host read results", () => {
+  const environmentId = "env-1" as EnvironmentId;
+
+  it("remembers a failed host after the assignment stops requesting it", () => {
+    const failed = rememberPullRequestHosts(new Map(), [
+      [environmentId, { providers: [provider("BITBUCKET.org", false)] }, 100],
+    ]);
+    const next = rememberPullRequestHosts(failed, [
+      [environmentId, { providers: [provider("github.com", true)] }, 200],
+    ]);
+    expect([...next.get(environmentId)!.hosts]).toEqual([
+      ["bitbucket.org", false],
+      ["github.com", true],
+    ]);
+    expect([...failed.get(environmentId)!.hosts]).toEqual([["bitbucket.org", false]]);
+  });
+
+  it("does not replay cached failures after refresh clears availability", () => {
+    const cleared = new Map([
+      [environmentId, { observedAt: 100, hosts: new Map<string, boolean>() }],
+    ]);
+    expect(
+      rememberPullRequestHosts(cleared, [
+        [environmentId, { providers: [provider("bitbucket.org", false)] }, 100],
+      ]),
+    ).toBe(cleared);
+    const refreshed = rememberPullRequestHosts(cleared, [
+      [environmentId, { providers: [provider("bitbucket.org", true)] }, 200],
+    ]);
+    expect(refreshed.get(environmentId)!.hosts.get("bitbucket.org")).toBe(true);
+  });
+
+  it("ignores an older answer when a newer read has already succeeded", () => {
+    const readable = rememberPullRequestHosts(new Map(), [
+      [environmentId, { providers: [provider("bitbucket.org", true)] }, 200],
+    ]);
+    expect(
+      rememberPullRequestHosts(readable, [
+        [environmentId, { providers: [provider("bitbucket.org", false)] }, 100],
+      ]),
+    ).toBe(readable);
+  });
+});
 
 describe("one server per repository", () => {
   it("lets the first server list a repository both hold", () => {
@@ -48,6 +102,74 @@ describe("one server per repository", () => {
       "env-2" as EnvironmentId,
     );
     expect(plain(assignment)).toEqual({ "env-2": ["a2"] });
+  });
+
+  it("falls back from an unreadable host without moving other repositories", () => {
+    const assignment = assignProjectsToEnvironments(
+      [
+        project("a1", "env-1", "bitbucket.org/acme/app"),
+        project("b1", "env-1", "github.com/acme/tools"),
+        project("a2", "env-2", "bitbucket.org/acme/app"),
+        project("b2", "env-2", "github.com/acme/tools"),
+      ],
+      envs("env-1", "env-2"),
+      "env-1" as EnvironmentId,
+      new Map([["env-1" as EnvironmentId, new Map([["bitbucket.org", false]])]]),
+    );
+    expect(plain(assignment)).toEqual({ "env-1": ["b1"], "env-2": ["a2"] });
+  });
+
+  it("tries the next server when its host has not been read yet", () => {
+    const projects = [
+      project("a1", "env-1", "git.example.com/acme/app"),
+      project("a2", "env-2", "git.example.com/acme/app"),
+      project("a3", "env-3", "git.example.com/acme/app"),
+    ];
+    const availability = new Map([
+      ["env-1" as EnvironmentId, new Map([["git.example.com", false]])],
+    ]);
+    expect(
+      plain(
+        assignProjectsToEnvironments(projects, envs("env-1", "env-2", "env-3"), null, availability),
+      ),
+    ).toEqual({ "env-2": ["a2"] });
+    availability.set("env-2" as EnvironmentId, new Map([["git.example.com", false]]));
+    expect(
+      plain(
+        assignProjectsToEnvironments(projects, envs("env-1", "env-2", "env-3"), null, availability),
+      ),
+    ).toEqual({ "env-3": ["a3"] });
+  });
+
+  it("keeps one stable owner and its error when every copy is unreadable", () => {
+    const projects = [
+      project("a1", "env-1", "bitbucket.org/acme/app"),
+      project("a2", "env-2", "bitbucket.org/acme/app"),
+      project("only1", "env-1", "bitbucket.org/acme/only"),
+    ];
+    const availability = new Map(
+      envs("env-1", "env-2").map((id) => [id, new Map([["bitbucket.org", false]])]),
+    );
+    expect(
+      plain(
+        assignProjectsToEnvironments(
+          projects,
+          envs("env-1", "env-2"),
+          "env-1" as EnvironmentId,
+          availability,
+        ),
+      ),
+    ).toEqual({ "env-1": ["a1", "only1"] });
+    expect(
+      plain(
+        assignProjectsToEnvironments(
+          projects,
+          envs("env-2"),
+          "env-2" as EnvironmentId,
+          availability,
+        ),
+      ),
+    ).toEqual({ "env-2": ["a2"] });
   });
 
   it("drops a server with nothing of its own", () => {

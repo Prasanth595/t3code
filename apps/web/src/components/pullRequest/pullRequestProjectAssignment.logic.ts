@@ -1,9 +1,48 @@
-import type { EnvironmentId, EnvironmentMachineKind, ProjectId } from "@t3tools/contracts";
+import {
+  pullRequestHostOf,
+  type EnvironmentId,
+  type EnvironmentMachineKind,
+  type ProjectId,
+  type PullRequestProviderSummary,
+  type RepositoryIdentity,
+  type SourceControlProviderKind,
+} from "@t3tools/contracts";
 
 export interface AssignableProject {
   readonly id: ProjectId;
   readonly environmentId: EnvironmentId;
-  readonly repositoryIdentity?: { readonly canonicalKey?: string | undefined } | null | undefined;
+  readonly repositoryIdentity?:
+    | Partial<Pick<RepositoryIdentity, "canonicalKey" | "provider" | "locator">>
+    | null
+    | undefined;
+}
+
+export type PullRequestHostAvailability = ReadonlyMap<EnvironmentId, ReadonlyMap<string, boolean>>;
+
+export type PullRequestHostRead = {
+  readonly observedAt: number;
+  readonly hosts: ReadonlyMap<string, boolean>;
+};
+
+export function rememberPullRequestHosts(
+  previous: ReadonlyMap<EnvironmentId, PullRequestHostRead>,
+  observations: ReadonlyArray<
+    readonly [
+      EnvironmentId,
+      { readonly providers: ReadonlyArray<PullRequestProviderSummary> },
+      number,
+    ]
+  >,
+): ReadonlyMap<EnvironmentId, PullRequestHostRead> {
+  let next = previous;
+  for (const [environmentId, { providers }, observedAt] of observations) {
+    const before = next.get(environmentId);
+    if (before !== undefined && observedAt <= before.observedAt) continue;
+    const hosts = new Map(before?.hosts);
+    for (const provider of providers) hosts.set(provider.host.toLowerCase(), provider.configured);
+    next = new Map(next).set(environmentId, { observedAt, hosts });
+  }
+  return next;
 }
 
 function repositoryKey(project: AssignableProject): string | undefined {
@@ -14,9 +53,19 @@ export function assignProjectsToEnvironments(
   projects: ReadonlyArray<AssignableProject>,
   environmentIds: ReadonlyArray<EnvironmentId>,
   preferredEnvironmentId?: EnvironmentId | null,
+  hostAvailability?: PullRequestHostAvailability,
 ): Map<EnvironmentId, ProjectId[]> {
   const rank = new Map(environmentIds.map((id, index) => [id, index] as const));
   const owner = new Map<string, EnvironmentId>();
+  const unreadable = (project: AssignableProject, environmentId: EnvironmentId) =>
+    hostAvailability
+      ?.get(environmentId)
+      ?.get(
+        pullRequestHostOf(
+          project.repositoryIdentity,
+          (project.repositoryIdentity?.provider ?? "unknown") as SourceControlProviderKind,
+        ),
+      ) === false;
   for (const project of projects) {
     const key = repositoryKey(project);
     if (!key) continue;
@@ -25,6 +74,12 @@ export function assignProjectsToEnvironments(
     const current = owner.get(key);
     if (current === undefined) {
       owner.set(key, project.environmentId);
+      continue;
+    }
+    const currentUnreadable = unreadable(project, current);
+    const candidateUnreadable = unreadable(project, project.environmentId);
+    if (currentUnreadable !== candidateUnreadable) {
+      if (currentUnreadable) owner.set(key, project.environmentId);
       continue;
     }
     if (current === preferredEnvironmentId) continue;

@@ -102,7 +102,12 @@ import {
   type PullRequestListSort,
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
-import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
+import {
+  assignProjectsToEnvironments,
+  rememberPullRequestHosts,
+  type PullRequestHostAvailability,
+  type PullRequestHostRead,
+} from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
@@ -345,6 +350,9 @@ function PullRequestsRouteView() {
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
   const navigate = useNavigate({ from: Route.fullPath });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const [hostReads, setHostReads] = useState<ReadonlyMap<EnvironmentId, PullRequestHostRead>>(
+    () => new Map(),
+  );
   const {
     capableEnvironments,
     scopedEnvironmentId,
@@ -363,7 +371,10 @@ function PullRequestsRouteView() {
     linkedSelection,
     expectedHosts,
     projectsKnown,
-  } = usePullRequestScope(search);
+  } = usePullRequestScope(
+    search,
+    new Map([...hostReads].map(([environmentId, read]) => [environmentId, read.hosts])),
+  );
   const rightPanelRef = capableEnvironments.length === 0 ? null : PULL_REQUESTS_PANEL_REF;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(rightPanelRef);
   const rightPanelState = useRightPanelStore((state) =>
@@ -528,6 +539,8 @@ function PullRequestsRouteView() {
     } satisfies PullRequestListInput,
   }));
   const baselineQuery = usePullRequestList(baselineTargets);
+  const observedHosts = rememberPullRequestHosts(hostReads, baselineQuery.observations);
+  if (observedHosts !== hostReads) setHostReads(observedHosts);
   const baselineEmpty =
     baselineQuery.data?.entries.length === 0 &&
     baselineQuery.data.errors.length === 0 &&
@@ -1060,6 +1073,10 @@ function PullRequestsRouteView() {
   );
   const refreshFromHost = async () => {
     const requestedStatsScope = statsScope;
+    // Retry preferred servers after credentials change, without replaying cached failures.
+    setHostReads(
+      (previous) => new Map([...previous].map(([id, read]) => [id, { ...read, hosts: new Map() }])),
+    );
     setInvalidating(true);
     // Atom commands settle into results rather than throwing.
     await Promise.all(
@@ -1766,7 +1783,10 @@ function PullRequestsRouteView() {
 }
 
 /** Which servers and projects the page reads, from the URL and what this client knows. */
-function usePullRequestScope(search: PullRequestsSearch) {
+function usePullRequestScope(
+  search: PullRequestsSearch,
+  hostAvailability: PullRequestHostAvailability,
+) {
   const { environments } = useEnvironments();
   const allProjects = useProjects();
   const projectsKnown = useAllEnvironmentShellsBootstrapped();
@@ -1845,6 +1865,7 @@ function usePullRequestScope(search: PullRequestsSearch) {
       projects,
       queryEnvironmentIds,
       queryEnvironmentIds[0],
+      hostAvailability,
     );
     const totals = new Map<EnvironmentId, number>();
     for (const project of projects) {
