@@ -28,29 +28,30 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
 
-  // Azure DevOps Server can use any hostname; its `_git` pull request route identifies it.
-  const azure = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
-
   if (host === "git.cafe" || host === "staging.git.cafe") {
     const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    return claim(host, match ?? azure);
-  }
-  if (isHostOf(host, "github.com", "github")) {
-    const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
+  } else {
+    if (isHostOf(host, "github.com", "github")) {
+      const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
+      if (match) return claim(host, match);
+    }
+    const forgejo = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    if (forgejo) {
+      const link = claim(host, forgejo);
+      return link === null ? null : { ...link, authority: url.host.toLowerCase() };
+    }
+    const gitlab = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
+    if (gitlab) return claim(host, gitlab);
+    if (isHostOf(host, "bitbucket.org", "bitbucket")) {
+      const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
+      if (match) return claim(host, match);
+    }
   }
-  const forgejo = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (forgejo) {
-    const link = claim(host, forgejo);
-    return link === null ? null : { ...link, authority: url.host.toLowerCase() };
-  }
-  const gitlab = /^\/([^/]+(?:\/[^/]+)+)\/-\/merge_requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
-  if (gitlab) return claim(host, gitlab);
-  if (isHostOf(host, "bitbucket.org", "bitbucket")) {
-    const match = /^\/([^/]+\/[^/]+)\/pull-requests\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    return claim(host, match ?? azure);
-  }
-  return claim(host, azure);
+  // Azure DevOps Server can use any hostname; its `_git` pull request route identifies it.
+  const azure = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
+  const link = claim(host, azure);
+  return link === null ? null : { ...link, authority: url.host.toLowerCase() };
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {

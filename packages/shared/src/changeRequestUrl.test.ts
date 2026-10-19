@@ -66,10 +66,20 @@ describe("parseChangeRequestUrl", () => {
     });
     expect(
       parseChangeRequestUrl("https://dev.azure.com/acme/platform/_git/t3code/pullrequest/17"),
-    ).toEqual({ host: "dev.azure.com", repository: "acme/platform/_git/t3code", number: 17 });
+    ).toEqual({
+      host: "dev.azure.com",
+      authority: "dev.azure.com",
+      repository: "acme/platform/_git/t3code",
+      number: 17,
+    });
     expect(
       parseChangeRequestUrl("https://acme.visualstudio.com/platform/_git/t3code/pullrequest/17"),
-    ).toEqual({ host: "acme.visualstudio.com", repository: "platform/_git/t3code", number: 17 });
+    ).toEqual({
+      host: "acme.visualstudio.com",
+      authority: "acme.visualstudio.com",
+      repository: "platform/_git/t3code",
+      number: 17,
+    });
   });
 
   it("reads Azure DevOps Server links and keeps servers on different ports distinct", () => {
@@ -218,6 +228,7 @@ describe("changeRequestUrlFor", () => {
     expect(url).toBe("https://dev.azure.com/org/project/_git/web/pullrequest/42");
     expect(parseChangeRequestUrl(url!)).toEqual({
       host: "dev.azure.com",
+      authority: "dev.azure.com",
       repository: "org/project/_git/web",
       number: 42,
     });
