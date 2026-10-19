@@ -78,6 +78,8 @@ const FAKE_DEPLOY = [
 const commitToOrigin = (message: string) => {
   NodeFS.writeFileSync(NodePath.join(work, "change.txt"), `${message}\n`);
   git(work, "add", "-A");
+  // The server's test setup turns core.filemode off, which would commit deploy.sh without +x.
+  git(work, "add", "--chmod=+x", "factory/scripts/deploy.sh");
   git(work, "commit", "-q", "-m", message);
   git(work, "push", "-q", "origin", "HEAD:main");
   return git(work, "rev-parse", "HEAD");
@@ -168,7 +170,7 @@ describe("autodeploy.sh", () => {
     const result = await runAutodeploy();
     expect(result.status).toBe(0);
     expect(result.deploys).toEqual([
-      `--build-only ${short} io.github.rawphp.t3fac.autodeploy lock`,
+      `--build-only ${short} io.github.rawphp.t3fac.autodeploy no-lock`,
       `install ${short} io.github.rawphp.t3fac.autodeploy lock`,
     ]);
     expect(current()).toBe(`versions/0.0.1+fac.${short}`);
@@ -176,6 +178,16 @@ describe("autodeploy.sh", () => {
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toContain(`deployed ${short}`);
     expect(statusAuth.every((auth) => auth === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
+  it("deploys on a machine with no version installed yet", async () => {
+    NodeFS.rmSync(NodePath.join(root(), "current"));
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.deploys).toHaveLength(2);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
   });
 
   it("matches an installed short sha of any length", async () => {
@@ -192,7 +204,7 @@ describe("autodeploy.sh", () => {
     ["a building run", status([{ state: "building" }])],
     ["a run in triage", status([{ state: "triage" }])],
     ["a run with no state yet", status([{ state: null }])],
-    ["a run whose file cannot be read", status([{ state: null, unreadable: true }])],
+    ["a run whose file cannot be read", status([{ state: "pr-open", unreadable: true }])],
     ["a pass running", status([], true)],
   ])("waits without deploying while there is %s", async (_name, body) => {
     commitToOrigin("second");
@@ -219,7 +231,9 @@ describe("autodeploy.sh", () => {
     statusBodies = [IDLE, status([{ state: "building" }])];
     const first = await runAutodeploy();
     expect(first.status).toBe(0);
-    expect(first.deploys).toEqual([`--build-only ${short} io.github.rawphp.t3fac.autodeploy lock`]);
+    expect(first.deploys).toEqual([
+      `--build-only ${short} io.github.rawphp.t3fac.autodeploy no-lock`,
+    ]);
     expect(current()).not.toContain(short);
     expect(lines(first.output)).toHaveLength(1);
 
@@ -258,8 +272,10 @@ describe("autodeploy.sh", () => {
     commitToOrigin("second");
     writeEnv([`T3FAC_AUTODEPLOY_CLONE="${clone}"`, "T3FAC_AUTODEPLOY_TOKEN=wrong"]);
     const result = await runAutodeploy();
+    expect(result.status).toBe(0);
     expect(result.deploys).toEqual([]);
     expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("/api/factory/status");
   });
 
   it("records a failed sha, names it in one line and does not retry it until main moves", async () => {
@@ -283,42 +299,62 @@ describe("autodeploy.sh", () => {
     expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", good)}`);
   });
 
-  // The deploy lock is a symlink to its holder's pid, shared with install.sh and rollback.sh.
-  const lockPath = () => NodePath.join(root(), "deploy.lock");
-  const lockExists = () => {
+  // Two locks, each a symlink to its holder's pid: autodeploy.lock for a whole tick (the clone and
+  // the build), and deploy.lock, shared with install.sh and rollback.sh, for the install only.
+  const lockPath = (name = "deploy.lock") => NodePath.join(root(), name);
+  const lockExists = (name?: string) => {
     try {
-      NodeFS.readlinkSync(lockPath());
+      NodeFS.readlinkSync(lockPath(name));
       return true;
     } catch {
       return false;
     }
   };
+  const deadPid = () =>
+    NodeChildProcess.spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
 
-  it("does nothing while another deploy holds the lock", async () => {
+  it("does nothing while another autodeploy holds its lock", async () => {
     commitToOrigin("second");
-    NodeFS.symlinkSync(String(process.pid), lockPath());
+    NodeFS.symlinkSync(String(process.pid), lockPath("autodeploy.lock"));
     const result = await runAutodeploy();
     expect(result.status).toBe(0);
     expect(result.deploys).toEqual([]);
     expect(lines(result.output)).toHaveLength(1);
     expect(result.output).toContain(`pid ${process.pid}`);
-    expect(NodeFS.readlinkSync(lockPath())).toBe(String(process.pid));
+    expect(NodeFS.readlinkSync(lockPath("autodeploy.lock"))).toBe(String(process.pid));
   });
 
-  it("takes over a lock whose holder is gone, and releases it", async () => {
+  it("builds but waits to install while another deploy holds the deploy lock", async () => {
     const sha = commitToOrigin("second");
-    const gone = NodeChildProcess.spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" });
-    NodeFS.symlinkSync(gone.stdout.trim(), lockPath());
+    const short = git(clone, "rev-parse", "--short", sha);
+    NodeFS.symlinkSync(String(process.pid), lockPath());
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.deploys).toEqual([
+      `--build-only ${short} io.github.rawphp.t3fac.autodeploy no-lock`,
+    ]);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain(`pid ${process.pid}`);
+    expect(NodeFS.existsSync(failedFile())).toBe(false);
+    expect(NodeFS.readlinkSync(lockPath())).toBe(String(process.pid));
+    expect(lockExists("autodeploy.lock")).toBe(false);
+  });
+
+  it("takes over locks whose holders are gone, and releases them", async () => {
+    const sha = commitToOrigin("second");
+    NodeFS.symlinkSync(deadPid(), lockPath());
+    NodeFS.symlinkSync(deadPid(), lockPath("autodeploy.lock"));
     const result = await runAutodeploy();
     expect(result.status).toBe(0);
     expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
     expect(lockExists()).toBe(false);
+    expect(lockExists("autodeploy.lock")).toBe(false);
   });
 
-  it("releases the lock when it has nothing to do", async () => {
+  it("releases its lock when it has nothing to do", async () => {
     const result = await runAutodeploy();
     expect(result.status).toBe(0);
-    expect(lockExists()).toBe(false);
+    expect(lockExists("autodeploy.lock")).toBe(false);
   });
 
   it("does nothing and prints nothing when no clone is configured", async () => {

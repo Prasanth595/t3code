@@ -300,6 +300,9 @@ describe("install.sh and rollback.sh", () => {
   });
 
   it("copies autodeploy.sh but leaves its job loaded when autodeploy.sh runs the install", () => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    expect(run("install.sh", archives[v1]!).status).toBe(0);
     const installed = NodePath.join(root(), "autodeploy.sh");
     const inode = NodeFS.statSync(installed).ino;
     const result = runWith({ T3FAC_SKIP_RELOAD: autodeployLabel }, "install.sh", archives[v1]!);
