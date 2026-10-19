@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
+  EnvironmentId,
+  ThreadId,
   PluginInstallationId,
   pluginInstallationStatus,
   type PluginId,
@@ -25,6 +27,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PluginCatalog from "./PluginCatalog.ts";
 import type { PluginRegistration } from "./PluginManifestLoader.ts";
 import * as PluginSupervisor from "./PluginSupervisor.ts";
+import * as PluginTools from "./PluginTools.ts";
 
 // Children run the real CLI entry, which routes `__plugin-host` to the child runtime.
 const BIN_PATH = `${import.meta.dirname}/../bin.ts`;
@@ -667,6 +670,69 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
           expect(yield* storedRows).toMatchObject([{ enabled: true }]);
           expect(stub.registrations.size).toBe(1);
           yield* Scope.close(before, Exit.void);
+        }),
+      ),
+    );
+
+    it.effect("prepares tool grants after startup restores registration generations", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const before = yield* Scope.make();
+          const first = yield* startStubCatalog(before, (yield* makeStubSupervisor).service);
+          const { directory } = yield* preparePlugin("test.startup-tools");
+          yield* fs.writeFileString(
+            path.join(directory, "t3-plugin.json"),
+            toJson({
+              id: "test.startup-tools",
+              name: "Startup tools",
+              version: "1.0.0",
+              apiVersion: 1,
+              entry: "main.mjs",
+              proposedApi: true,
+              capabilities: ["tools"],
+              tools: [
+                {
+                  name: "ping",
+                  description: "Ping",
+                  inputSchema: { type: "object" },
+                  sideEffect: "read",
+                },
+              ],
+            }),
+          );
+          const { installation } = yield* first.add({ directory });
+          const installationId = installation.installationId;
+          yield* first.consent({ installationId, digest: installation.source!.digest });
+          yield* first.enable({ installationId });
+          yield* Scope.close(before, Exit.void);
+
+          const stub = yield* makeStubSupervisor;
+          const registering = yield* makeHold;
+          stub.holds.enable = registering;
+          const catalog = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+          yield* Effect.addFinalizer(() => Deferred.succeed(registering.release, undefined));
+          yield* Deferred.await(registering.reached);
+          const tools = yield* PluginTools.make.pipe(
+            Effect.provideService(PluginCatalog.PluginCatalog, catalog),
+          );
+          const preparing = yield* tools.grants.pipe(Effect.forkChild({ startImmediately: true }));
+          expect(preparing.pollUnsafe()).toBeUndefined();
+          yield* Deferred.succeed(registering.release, undefined);
+          const grants = yield* Fiber.join(preparing);
+          expect(grants).toEqual([{ installationId, generation: 2 }]);
+          expect((yield* tools.list(grants)).tools).toHaveLength(1);
+          expect(
+            yield* tools.call(grants, {
+              tool: "test.startup-tools/ping",
+              input: {},
+              context: {
+                environmentId: EnvironmentId.make("test"),
+                threadId: ThreadId.make("test"),
+              },
+            }),
+          ).toBe(directory);
         }),
       ),
     );
