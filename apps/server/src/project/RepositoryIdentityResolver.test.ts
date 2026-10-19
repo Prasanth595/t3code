@@ -130,23 +130,20 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   });
 
   it.effect("retries Git root discovery after the negative TTL", () => {
-    const calls: Array<ReadonlyArray<string>> = [];
-    let rootAttempts = 0;
+    let attempts = 0;
+    let unavailable = true;
     const layerProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
       run: (input) =>
         Effect.sync(() => {
-          calls.push(input.args);
-          const bareProbe = input.args.includes("--is-bare-repository");
-          const rootLookup = input.args.includes("--show-toplevel");
-          const failed = bareProbe || (rootLookup && rootAttempts++ === 0);
+          attempts++;
           return {
-            stdout: failed
+            stdout: unavailable
               ? ""
-              : rootLookup
-                ? "/repo\n"
-                : "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
-            stderr: failed ? "temporary Git failure" : "",
-            code: ChildProcessSpawner.ExitCode(failed ? 1 : 0),
+              : input.args.includes("remote")
+                ? "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n"
+                : "/repo\n",
+            stderr: unavailable ? "temporary Git failure" : "",
+            code: ChildProcessSpawner.ExitCode(unavailable ? 1 : 0),
             timedOut: false,
             stdoutTruncated: false,
             stderrTruncated: false,
@@ -163,28 +160,26 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
+      const failedAttempts = attempts;
+      unavailable = false;
       expect(yield* resolver.resolve("/repo/packages/web")).toBeNull();
+      expect(attempts).toBe(failedAttempts);
 
       yield* TestClock.adjust(Duration.minutes(1));
       const recovered = yield* resolver.resolve("/repo/packages/web");
       expect(recovered?.rootPath).toBe("/repo");
-      expect(calls).toEqual([
-        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
-        ["-C", "/repo/packages/web", "rev-parse", "--is-bare-repository", "--absolute-git-dir"],
-        ["-C", "/repo/packages/web", "rev-parse", "--show-toplevel"],
-        ["-C", "/repo", "remote", "-v"],
-      ]);
+      expect(recovered?.canonicalKey).toBe("github.com/t3tools/t3code");
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
 
   it.effect.each(["times out", "cannot start"] as const)(
     "skips the bare repository probe when Git root discovery %s",
     (failure) => {
-      const calls: Array<ReadonlyArray<string>> = [];
+      let attempts = 0;
       const layerProcessRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
         run: (input) =>
           Effect.suspend(() => {
-            calls.push(input.args);
+            attempts++;
             return failure === "times out"
               ? Effect.succeed({
                   stdout: "",
@@ -213,7 +208,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       return Effect.gen(function* () {
         const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
         expect(yield* resolver.resolve("/repo")).toBeNull();
-        expect(calls).toEqual([["-C", "/repo", "rev-parse", "--show-toplevel"]]);
+        expect(attempts).toBe(1);
       }).pipe(Effect.provide(layerResolver));
     },
   );
@@ -221,6 +216,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-repository-identity-test-",
       });
@@ -243,6 +239,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.provider).toBe("github");
       expect(identity?.owner).toBe("T3Tools");
       expect(identity?.name).toBe("t3code");
+      expect(yield* resolver.resolve(path.join(cwd, ".git"))).toBeNull();
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
@@ -274,7 +271,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   );
 
   it.effect.each(["bare clone", "dot-bare"] as const)(
-    "groups a %s repository with checkouts of the same remote",
+    "resolves a %s to its Git directory and the same identity as a checkout",
     (layout) =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -293,7 +290,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         if (layout === "dot-bare") {
           yield* fileSystem.writeFileString(path.join(root, ".git"), "gitdir: ./.bare\n");
         }
-        yield* git(bareGitDir, [
+        yield* git(root, [
+          "--git-dir",
+          bareGitDir,
           "remote",
           "add",
           "origin",
@@ -302,8 +301,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
         const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
         const checkoutIdentity = yield* resolver.resolve(checkout);
+        expect(checkoutIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
         const resolvedBareGitDir = NodeFS.realpathSync.native(bareGitDir);
-        // Users open a dot-bare layout from its container or from .bare itself.
         const projectRoots = layout === "dot-bare" ? [root, bareGitDir] : [root];
 
         for (const projectRoot of projectRoots) {
@@ -317,24 +316,12 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
             normalizeResolvedPath(resolvedBareGitDir),
           );
         }
+
+        yield* git(root, ["--git-dir", bareGitDir, "remote", "remove", "origin"]);
+        for (const projectRoot of projectRoots) {
+          expect(yield* resolver.resolve(projectRoot, { refresh: true })).toBeNull();
+        }
       }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
-  );
-
-  it.effect("returns null for the .git folder of a checkout", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-dot-git-",
-      });
-
-      yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
-
-      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
-      expect(yield* resolver.resolve(cwd)).not.toBeNull();
-      expect(yield* resolver.resolve(path.join(cwd, ".git"))).toBeNull();
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
   it.effect("returns null for non-git folders and repos without remotes", () =>
@@ -346,21 +333,15 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const gitDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-repository-identity-no-remote-",
       });
-      const bareGitDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-bare-no-remote-",
-      });
 
       yield* git(gitDir, ["init"]);
-      yield* git(bareGitDir, ["init", "--bare"]);
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const nonGitIdentity = yield* resolver.resolve(nonGitDir);
       const noRemoteIdentity = yield* resolver.resolve(gitDir);
-      const bareNoRemoteIdentity = yield* resolver.resolve(bareGitDir);
 
       expect(nonGitIdentity).toBeNull();
       expect(noRemoteIdentity).toBeNull();
-      expect(bareNoRemoteIdentity).toBeNull();
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
