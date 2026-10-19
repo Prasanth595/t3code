@@ -6,6 +6,8 @@ import { beforeEach, vi } from "vite-plus/test";
 
 const safeStorage = vi.hoisted(() => ({
   isEncryptionAvailable: vi.fn(),
+  encryptString: vi.fn(),
+  decryptString: vi.fn(),
   isAsyncEncryptionAvailable: vi.fn(),
   encryptStringAsync: vi.fn(),
   decryptStringAsync: vi.fn(),
@@ -50,6 +52,36 @@ describe("ElectronSafeStorage", () => {
       safeStorage.isAsyncEncryptionAvailable.mockResolvedValue(false);
       assert.isFalse(yield* storage.isEncryptionAvailable);
     }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+  );
+
+  it.effect.each(["unavailable", "rejected"] as const)(
+    "round trips an encrypted catalog with synchronous storage when async availability is %s",
+    (availability) =>
+      Effect.gen(function* () {
+        safeStorage.isEncryptionAvailable.mockReturnValue(true);
+        if (availability === "unavailable") {
+          safeStorage.isAsyncEncryptionAvailable.mockResolvedValue(false);
+        } else {
+          safeStorage.isAsyncEncryptionAvailable.mockRejectedValue(
+            new Error("provider unavailable"),
+          );
+        }
+        safeStorage.encryptString.mockImplementation((value: string) =>
+          Buffer.from(`encrypted:${value}`),
+        );
+        safeStorage.decryptString.mockImplementation((value: Buffer) => {
+          const encoded = value.toString();
+          if (!encoded.startsWith("encrypted:")) throw new Error("invalid ciphertext");
+          return encoded.slice("encrypted:".length);
+        });
+        const storage = yield* ElectronSafeStorage.make;
+        assert.isTrue(yield* storage.isEncryptionAvailable);
+
+        const catalog = '{"schemaVersion":1,"targets":[]}';
+        const encrypted = yield* storage.encryptString(catalog);
+        assert.deepStrictEqual(encrypted, Buffer.from(`encrypted:${catalog}`));
+        assert.equal(yield* storage.decryptString(encrypted), catalog);
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
   );
 
   it.effect("preserves rejected provider errors as typed failures", () =>

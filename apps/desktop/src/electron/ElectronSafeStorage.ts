@@ -69,22 +69,40 @@ export class ElectronSafeStorage extends Context.Service<
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
 
-  // Keep connection credentials on the same async provider as Clerk's token storage.
+  // Match Clerk's async preference without losing storage on sync-only installations.
+  const isAsyncEncryptionAvailable = async () => {
+    try {
+      return await Electron.safeStorage.isAsyncEncryptionAvailable();
+    } catch (cause) {
+      if (!Electron.safeStorage.isEncryptionAvailable()) {
+        throw cause;
+      }
+      return false;
+    }
+  };
+
   return ElectronSafeStorage.of({
     isEncryptionAvailable: Effect.tryPromise({
-      try: () => Electron.safeStorage.isAsyncEncryptionAvailable(),
+      try: async () =>
+        (await isAsyncEncryptionAvailable()) || Electron.safeStorage.isEncryptionAvailable(),
       catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
     }),
     encryptString: (value) =>
       Effect.tryPromise({
-        try: () => Electron.safeStorage.encryptStringAsync(value),
+        try: async () =>
+          (await isAsyncEncryptionAvailable())
+            ? Electron.safeStorage.encryptStringAsync(value)
+            : Electron.safeStorage.encryptString(value),
         catch: (cause) => new ElectronSafeStorageEncryptError({ cause }),
       }),
     decryptString: (value) =>
       Effect.tryPromise({
-        try: () => Electron.safeStorage.decryptStringAsync(Buffer.from(value)),
+        try: async () =>
+          (await isAsyncEncryptionAvailable())
+            ? (await Electron.safeStorage.decryptStringAsync(Buffer.from(value))).result
+            : Electron.safeStorage.decryptString(Buffer.from(value)),
         catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
-      }).pipe(Effect.map(({ result }) => result)),
+      }),
     selectedStorageBackend: Effect.sync(() => {
       if (platform !== "linux") {
         return Option.none();
