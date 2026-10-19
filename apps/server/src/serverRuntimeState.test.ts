@@ -13,7 +13,6 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootService.ts";
-import { runServicePreflight } from "./cloud/servicePreflight.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -29,6 +28,9 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   readonly outputs: Readonly<Record<string, { readonly code: number; readonly stdout?: string }>>;
   readonly unitServesOtherHome?: boolean;
   readonly restartPending?: boolean;
+  readonly activeVersion?: string;
+  readonly npmRuntime?: boolean;
+  readonly missingServiceState?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
   const fs = yield* FileSystem.FileSystem;
@@ -40,14 +42,34 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
     yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
   }
   yield* fs.makeDirectory(path.join(serviceHome, "runtime"));
-  yield* fs.writeFileString(
-    path.join(serviceHome, "runtime", "service-state.json"),
-    JSON.stringify({ protocol: 3, activeVersion: input.restartPending ? "0.0.46" : "0.0.42" }),
-  );
-  if (input.restartPending) {
-    yield* fs.writeFileString(path.join(serviceHome, "runtime", ".restart-pending"), "0.0.46\n");
+  const activeVersion = input.activeVersion ?? "0.0.42";
+  if (!input.missingServiceState) {
+    yield* fs.writeFileString(
+      path.join(serviceHome, "runtime", "service-state.json"),
+      JSON.stringify({ protocol: input.npmRuntime ? 2 : 3, activeVersion }),
+    );
   }
-  const plan = { program: [], baseDir: serviceHome, logPath: "", unitPath: "" };
+  const versionDir = path.join(serviceHome, "runtime", "versions", activeVersion);
+  const entryPath = input.npmRuntime
+    ? path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs")
+    : path.join(versionDir, "t3");
+  yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+  yield* fs.writeFileString(entryPath, "");
+
+  if (input.restartPending) {
+    yield* fs.writeFileString(
+      path.join(serviceHome, "runtime", ".restart-pending"),
+      `${activeVersion}\n`,
+    );
+  }
+  const plan = {
+    program: input.npmRuntime
+      ? ["/usr/bin/node", path.join(serviceHome, "runtime", "service-launcher.mjs")]
+      : [],
+    baseDir: serviceHome,
+    logPath: "",
+    unitPath: "",
+  };
   const [unitPath, unit] =
     input.platform === "darwin"
       ? [
@@ -64,11 +86,14 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   const probes: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (run) =>
-      Effect.suspend(() => {
+      Effect.gen(function* () {
         const probe = `${path.basename(run.command)} ${run.args.find((arg) => !arg.startsWith("--"))}`;
         probes.push(probe);
-        const output = input.outputs[probe];
-        return output === undefined
+        const output =
+          path.isAbsolute(run.command) && !(yield* fs.exists(run.command).pipe(Effect.orDie))
+            ? undefined
+            : input.outputs[probe];
+        return yield* output === undefined
           ? Effect.fail(
               new ProcessRunner.ProcessSpawnError({
                 command: run.command,
@@ -120,8 +145,12 @@ const preLockPreflight = preflightOutput({
   reason:
     "This release requires a newer T3 Code service launcher. Update it on the server machine.",
 });
-const lockAwarePreflight = (launcherProtocol: number) =>
-  preflightOutput(runServicePreflight({ databasePath: "/unused", launcherProtocol }));
+// Stable 0.1.0 holds the ownership lock but predates the preflight ownership marker.
+const stablePreflight = preflightOutput({
+  status: "ready",
+  version: "0.1.0",
+  launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+});
 
 interface CapturedLog {
   readonly message: unknown;
@@ -289,32 +318,65 @@ describe("server ownership", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
+    it.effect(
+      "refuses an active npm-installed service with no standalone executable or runtime record",
+      () =>
+        Effect.gen(function* () {
+          const { result } = yield* startBesideBootService({
+            platform: "linux",
+            activeVersion: "0.0.40",
+            npmRuntime: true,
+            outputs: {
+              "systemctl is-active": { code: 0, stdout: "active\n" },
+              "t3 __service-preflight": preLockPreflight,
+            },
+          });
+          assert.equal(result._tag, "Failure");
+          if (result._tag !== "Failure") return;
+          assert.equal(result.failure._tag, "OlderBootServiceError");
+          assert.equal(Runtime.getErrorExitCode(result.failure), 78);
+        }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
     it.effect("refuses while the loaded service has not restarted into its lock-aware update", () =>
       Effect.gen(function* () {
         const { result } = yield* startBesideBootService({
           platform: "darwin",
           restartPending: true,
+          activeVersion: "0.1.0",
           outputs: {
             "launchctl print": { code: 0 },
-            "t3 __service-preflight": lockAwarePreflight(SERVICE_LAUNCHER_PROTOCOL),
+            "t3 __service-preflight": stablePreflight,
           },
         });
         assert.equal(result._tag === "Failure" && result.failure._tag, "OlderBootServiceError");
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("allows a lock-aware runtime regardless of launcher compatibility", () =>
+    it.effect("allows stable 0.1.0 services without a preflight ownership marker", () =>
       Effect.gen(function* () {
-        for (const launcherProtocol of [SERVICE_LAUNCHER_PROTOCOL, SERVICE_LAUNCHER_PROTOCOL + 1]) {
-          const { result } = yield* startBesideBootService({
+        const outcomes: string[] = [];
+        for (const fixture of [
+          {
             platform: "darwin",
             outputs: {
               "launchctl print": { code: 0 },
-              "t3 __service-preflight": lockAwarePreflight(launcherProtocol),
+              "t3 __service-preflight": stablePreflight,
             },
-          });
-          assert.equal(result._tag, "Success");
+          },
+          {
+            platform: "linux",
+            outputs: {
+              "systemctl is-active": { code: 3, stdout: "inactive\n" },
+              "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
+              "t3 __service-preflight": stablePreflight,
+            },
+          },
+        ] as const) {
+          const { result } = yield* startBesideBootService({ ...fixture, activeVersion: "0.1.0" });
+          outcomes.push(result._tag);
         }
+        assert.deepEqual(outcomes, ["Success", "Success"]);
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
@@ -354,17 +416,19 @@ describe("server ownership", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("allows startup when the manager or runtime probe is unavailable", () =>
+    it.effect("allows startup when the service configuration or manager is unavailable", () =>
       Effect.gen(function* () {
-        for (const outputs of [
-          {},
-          { "launchctl print": { code: 0 } },
+        for (const fixture of [
+          { outputs: {} },
           {
-            "launchctl print": { code: 0 },
-            "t3 __service-preflight": { ...preLockPreflight, code: 1 },
+            outputs: {
+              "launchctl print": { code: 113 },
+              "launchctl print-disabled": { code: 1 },
+            },
           },
+          { outputs: { "launchctl print": { code: 0 } }, missingServiceState: true },
         ]) {
-          const { result } = yield* startBesideBootService({ platform: "darwin", outputs });
+          const { result } = yield* startBesideBootService({ platform: "darwin", ...fixture });
           assert.equal(result._tag, "Success");
         }
       }).pipe(Effect.provide(NodeServices.layer)),
