@@ -237,7 +237,7 @@ const withPackagedWslHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
-  it.effect("enables Node environment proxies only for HTTP(S) proxy variables", () =>
+  it.effect("resolvePrimary opts the backend into HTTP(S) environment proxies", () =>
     Effect.gen(function* () {
       const names = [
         "HTTP_PROXY",
@@ -248,28 +248,32 @@ describe("DesktopBackendConfiguration", () => {
         "all_proxy",
         "NODE_USE_ENV_PROXY",
       ] as const;
-      const previous = new Map(names.map((name) => [name, process.env[name]]));
-      try {
-        for (const name of names) delete process.env[name];
+      const previous = names.map((name) => [name, process.env[name]] as const);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const [name, value] of previous) restoreEnv(name, value);
+        }),
+      );
+      for (const name of names) delete process.env[name];
 
-        yield* withHarness(
-          Effect.gen(function* () {
-            const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-            assert.notInclude((yield* configuration.resolvePrimary).args, "--use-env-proxy");
+      yield* withHarness(
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const usesEnvProxy = configuration.resolvePrimary.pipe(
+            Effect.map((config) => config.args.includes("--use-env-proxy")),
+          );
 
-            process.env.ALL_PROXY = "http://proxy.example.test:8080";
-            assert.notInclude((yield* configuration.resolvePrimary).args, "--use-env-proxy");
+          // Node's environment proxy support does not read ALL_PROXY.
+          process.env.ALL_PROXY = "http://proxy.example.test:8080";
+          assert.isFalse(yield* usesEnvProxy);
 
-            process.env.HTTPS_PROXY = "http://proxy.example.test:8080";
-            assert.include((yield* configuration.resolvePrimary).args, "--use-env-proxy");
+          process.env.HTTPS_PROXY = "http://proxy.example.test:8080";
+          assert.isTrue(yield* usesEnvProxy);
 
-            process.env.NODE_USE_ENV_PROXY = "0";
-            assert.notInclude((yield* configuration.resolvePrimary).args, "--use-env-proxy");
-          }),
-        );
-      } finally {
-        for (const name of names) restoreEnv(name, previous.get(name));
-      }
+          process.env.NODE_USE_ENV_PROXY = "0";
+          assert.isFalse(yield* usesEnvProxy);
+        }),
+      );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -80,11 +80,12 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_TAILSCALE_SERVE",
   "T3CODE_TAILSCALE_SERVE_PORT",
 ] as const;
+// The variables Node's own `--use-env-proxy` reads; it ignores ALL_PROXY.
 const NODE_ENV_PROXY_NAMES = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
 
-const shouldUseEnvironmentProxy = (): boolean =>
+const useEnvironmentProxy = () =>
   process.env.NODE_USE_ENV_PROXY !== "0" &&
-  NODE_ENV_PROXY_NAMES.some((name) => (process.env[name]?.trim().length ?? 0) > 0);
+  NODE_ENV_PROXY_NAMES.some((name) => Boolean(process.env[name]?.trim()));
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
 // across the wsl.exe boundary without WSLENV.
@@ -547,10 +548,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       // the backend starts.
       args: [
         ...(environment.isPackaged ? ["--require", environment.compileCachePath] : []),
-        // Node does not read HTTP(S)_PROXY for fetch unless this opt-in is
-        // present. ALL_PROXY is intentionally excluded because Node's
-        // environment-proxy support does not consume it.
-        ...(shouldUseEnvironmentProxy() ? ["--use-env-proxy"] : []),
+        // Node's fetch ignores HTTP(S)_PROXY without this opt-in. A flag rather
+        // than NODE_USE_ENV_PROXY so, like the compile cache, it stays out of
+        // the provider and terminal processes the backend starts.
+        ...(useEnvironmentProxy() ? ["--use-env-proxy"] : []),
         environment.backendEntryPath,
         "--bootstrap-fd",
         "3",

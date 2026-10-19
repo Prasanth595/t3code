@@ -243,12 +243,9 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("hydrates proxy settings from the login shell for provider CLIs", () =>
+  it.effect("hydrates proxy settings from the login shell", () =>
     Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
-        SHELL: "/bin/zsh",
-        PATH: "/usr/bin",
-      };
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
 
       yield* runShellEnvironment({
         env,
@@ -266,53 +263,35 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("keeps an inherited proxy group instead of mixing in login-shell values", () =>
+  it.effect("keeps inherited proxy settings ahead of the login shell", () =>
     Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
+      const handler = () =>
+        envOutput({
+          PATH: "/opt/homebrew/bin:/usr/bin",
+          https_proxy: "http://127.0.0.1:2080",
+          no_proxy: "shell.example.test",
+        });
+
+      const inheritedEndpoint: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
         PATH: "/usr/bin",
         HTTPS_PROXY: "http://inherited:8080",
       };
+      yield* runShellEnvironment({ env: inheritedEndpoint, platform: "darwin", handler });
+      assert.equal(inheritedEndpoint.HTTPS_PROXY, "http://inherited:8080");
+      assert.isUndefined(inheritedEndpoint.https_proxy);
+      assert.isUndefined(inheritedEndpoint.no_proxy);
 
-      yield* runShellEnvironment({
-        env,
-        platform: "darwin",
-        handler: () =>
-          envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
-            https_proxy: "http://127.0.0.1:2080",
-            no_proxy: "localhost",
-          }),
-      });
-
-      assert.equal(env.HTTPS_PROXY, "http://inherited:8080");
-      assert.equal(env.https_proxy, undefined);
-      assert.equal(env.no_proxy, undefined);
-    }),
-  );
-
-  it.effect("hydrates proxy endpoints without replacing an inherited NO_PROXY", () =>
-    Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = {
+      // A bypass list alone is not a proxy, so the shell's endpoint still applies.
+      const inheritedBypass: NodeJS.ProcessEnv = {
         SHELL: "/bin/zsh",
         PATH: "/usr/bin",
         NO_PROXY: "localhost,127.0.0.1",
       };
-
-      yield* runShellEnvironment({
-        env,
-        platform: "darwin",
-        handler: () =>
-          envOutput({
-            PATH: "/opt/homebrew/bin:/usr/bin",
-            https_proxy: "http://127.0.0.1:2080",
-            no_proxy: "shell.example.test",
-          }),
-      });
-
-      assert.equal(env.https_proxy, "http://127.0.0.1:2080");
-      assert.equal(env.NO_PROXY, "localhost,127.0.0.1");
-      assert.equal(env.no_proxy, undefined);
+      yield* runShellEnvironment({ env: inheritedBypass, platform: "darwin", handler });
+      assert.equal(inheritedBypass.https_proxy, "http://127.0.0.1:2080");
+      assert.equal(inheritedBypass.NO_PROXY, "localhost,127.0.0.1");
+      assert.isUndefined(inheritedBypass.no_proxy);
     }),
   );
 
