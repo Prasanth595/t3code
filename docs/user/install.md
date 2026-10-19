@@ -175,6 +175,31 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Antigravity](./providers-antigravity.md), [Pi](./providers-pi.md), and
 [Muse Code](./providers-muse.md).
 
+### Environment variables
+
+At startup, T3 Code reads `PATH` from your login shell (`$SHELL -ilc`) and adds
+its entries ahead of the `PATH` it was started with. The desktop app also reads
+`SSH_AUTH_SOCK` and display, locale, and certificate variables such as
+`SSL_CERT_FILE`. The shell must start within 5 seconds without waiting for
+input; otherwise T3 Code keeps the `PATH` it was started with.
+
+Other variables, such as API keys exported in `~/.zshrc`, are not read from the
+shell. Set them where T3 Code starts, or as provider instance environment
+variables. For the Linux background service, run
+`systemctl --user edit t3code.service`, add the variables, then run
+`t3 service restart`:
+
+```ini
+[Service]
+Environment=ANTHROPIC_API_KEY=...
+```
+
+To check what T3 Code will find on a host, run:
+
+```sh
+"$SHELL" -ilc 'printenv PATH'
+```
+
 ## Next steps
 
 - [Working with threads](./thread-sidebar.md): start tasks and organize parallel work.
