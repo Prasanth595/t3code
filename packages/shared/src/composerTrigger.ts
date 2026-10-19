@@ -51,24 +51,28 @@ export function continueComposerPathTrigger(
   cursorInput: number,
   previous: ComposerTrigger | null,
   previousText: string,
-): (ComposerTrigger & { kind: "path" }) | null {
+  previousQueryEnd: number,
+): { trigger: ComposerTrigger & { kind: "path" }; queryEnd: number } | null {
   if (previous?.kind !== "path") return null;
   const cursor = clampCursor(text, cursorInput);
   const start = previous.rangeStart;
-  const rangeEnd = previous.rangeEnd + text.length - previousText.length;
+  const queryEnd = previousQueryEnd + text.length - previousText.length;
   // Only edits within the active query may extend its range. A caret jump must
   // not absorb the unchanged suffix of the prompt into a mention replacement.
   if (
     text[start] !== "@" ||
     cursor <= start ||
-    cursor > rangeEnd ||
+    cursor > queryEnd ||
     text.slice(0, start + 1) !== previousText.slice(0, start + 1) ||
-    text.slice(rangeEnd) !== previousText.slice(previous.rangeEnd)
+    text.slice(queryEnd) !== previousText.slice(previousQueryEnd)
   )
     return null;
   const query = text.slice(start + 1, cursor);
   if (/[\r\n\t\uFFFC]/u.test(query)) return null;
-  return { kind: "path", query, rangeStart: start, rangeEnd: cursor };
+  return {
+    trigger: { kind: "path", query, rangeStart: start, rangeEnd: cursor },
+    queryEnd,
+  };
 }
 
 /**

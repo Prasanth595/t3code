@@ -2398,6 +2398,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolveTrigger: resolveComposerTrigger,
     dismissTrigger: dismissComposerTrigger,
     resetTrigger: resetComposerTrigger,
+    clearPathTriggerForSelection: clearComposerPathTriggerForSelection,
   } = useComposerTriggerState(prompt, !isLiteralPendingAnswer);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const composerSuggestionId = useId();
@@ -3495,13 +3496,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     syncComposerDraftPersistedAttachments,
   ]);
 
-  const clearComposerTriggerForSelection = () => {
-    const selection = composerEditorRef.current?.readSelectionRange();
-    if (!selection || selection.start === selection.end) return false;
-    setComposerTrigger(null);
-    return true;
-  };
-
   const expandComposerForEditorChange = () => {
     suppressActiveComposerScrollGesture(
       composerScrollGestureRef.current,
@@ -3512,7 +3506,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const onComposerVisibleSelectionChange = () => {
     expandComposerForEditorChange();
-    clearComposerTriggerForSelection();
+    clearComposerPathTriggerForSelection();
   };
   const onComposerVisibleSelectionChangeStable = useStableCallback(
     onComposerVisibleSelectionChange,
@@ -3541,9 +3535,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     contextIds: string[],
   ) => {
     expandComposerForEditorChange();
-    const suppressTrigger =
-      cursorAdjacentToMention ||
-      (nextPrompt === promptRef.current && clearComposerTriggerForSelection());
+    const hasSelection =
+      nextPrompt === promptRef.current && window.getSelection()?.isCollapsed === false;
     // Typing is when the menu is about to need skills, so it re-checks a
     // snapshot that has aged past its TTL.
     refreshWorkspaceSnapshotOnTyping();
@@ -3551,7 +3544,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        suppressTrigger ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
+        undefined,
+        hasSelection,
       );
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
@@ -3652,7 +3647,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      suppressTrigger ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
+      cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
+      undefined,
+      hasSelection,
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
@@ -3766,12 +3763,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger:
-        isLiteralPendingAnswer || clearComposerTriggerForSelection()
-          ? null
-          : resolveComposerTrigger(
-              detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
-            ),
+      trigger: isLiteralPendingAnswer
+        ? null
+        : resolveComposerTrigger(
+            detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
+            window.getSelection()?.isCollapsed === false,
+          ),
     };
   };
 
@@ -4175,7 +4172,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       toggleInteractionMode();
       return true;
     }
-    const { trigger } = resolveActiveComposerTrigger();
+    const { snapshot, trigger } = resolveActiveComposerTrigger();
     const menuIsActive =
       !isLiteralPendingAnswer && (composerMenuOpenRef.current || trigger !== null);
     if (key === "Escape") {
@@ -4222,13 +4219,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !event.isComposing &&
       (key === "Enter" || (key === "Tab" && !event.shiftKey))
     ) {
-      const selection = composerEditorRef.current?.readSelectionRange();
-      const snapshot = readComposerSnapshot();
-      if (selection && selection.start === selection.end && snapshot.value === promptRef.current) {
+      if (window.getSelection()?.isCollapsed && snapshot.value === promptRef.current) {
+        const cursor = snapshot.expandedCursor;
         const edit =
           key === "Enter"
-            ? listContinuationForEnter(snapshot.value, selection.start)
-            : listIndentForTab(snapshot.value, selection.start, selection.end);
+            ? listContinuationForEnter(snapshot.value, cursor)
+            : listIndentForTab(snapshot.value, cursor, cursor);
         if (
           edit &&
           applyPromptReplacement(
@@ -4236,7 +4232,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             edit.end,
             edit.replacement,
             key === "Tab"
-              ? { expandedCursorAfterReplace: selection.start + edit.replacement.length }
+              ? { expandedCursorAfterReplace: cursor + edit.replacement.length }
               : undefined,
           )
         ) {

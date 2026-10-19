@@ -338,6 +338,7 @@ export function useComposerCommandMenu({
     draftMessage,
     selection,
     cursor: selection.end,
+    queryEnd: selection.end,
     enabled,
     trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
   }));
@@ -348,25 +349,30 @@ export function useComposerCommandMenu({
     previousSearch.selection !== selection ||
     previousSearch.enabled !== enabled
   ) {
-    // Native text events can lead selection events by several edits. Accumulate
-    // those edits from the predicted cursor until native selection catches up.
+    // Draft updates can lead selection updates by several edits. Accumulate
+    // those edits from the predicted cursor until selection catches up.
     const cursor =
       previousSearch.ownerKey !== ownerKey
         ? draftMessage.length
         : previousSearch.selection === selection
           ? previousSearch.cursor + draftMessage.length - previousSearch.draftMessage.length
           : selection.end;
+    const continued = continueComposerPathTrigger(
+      draftMessage,
+      cursor,
+      previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
+      previousSearch.draftMessage,
+      previousSearch.queryEnd,
+    );
     trigger =
       enabled && selection.start === selection.end
-        ? (detectComposerTrigger(draftMessage, cursor) ??
-          continueComposerPathTrigger(
-            draftMessage,
-            cursor,
-            previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
-            previousSearch.draftMessage,
-          ))
+        ? (detectComposerTrigger(draftMessage, cursor) ?? continued?.trigger ?? null)
         : null;
-    setPreviousSearch({ ownerKey, draftMessage, selection, cursor, enabled, trigger });
+    const queryEnd =
+      trigger?.kind === "path" && trigger.rangeStart === continued?.trigger.rangeStart
+        ? continued.queryEnd
+        : (trigger?.rangeEnd ?? 0);
+    setPreviousSearch({ ownerKey, draftMessage, selection, cursor, queryEnd, enabled, trigger });
   }
   const pathSearch = useComposerPathSearch({
     environmentId,

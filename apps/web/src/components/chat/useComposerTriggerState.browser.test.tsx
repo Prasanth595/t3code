@@ -75,7 +75,23 @@ describe("composer suggestion dismissal", () => {
         rangeEnd: beforeCaret.length,
       });
     }
-    const text = `${prefix}@Release Notes.md${suffix}`;
+    let text = `${prefix}@Release Notes.md${suffix}`;
+    const end = text.length - suffix.length;
+    await updatePrompt(text, end - 1);
+    expect(composer.trigger).toMatchObject({ query: "Release Notes.m", rangeEnd: end - 1 });
+    await updatePrompt(text, end);
+    expect(composer.trigger?.query).toBe("Release Notes.md");
+    await updatePrompt(text, `${prefix}@Release`.length);
+    expect(composer.trigger?.query).toBe("Release");
+    await updatePrompt(text, `${prefix}@Release No`.length);
+    text = `${prefix}@Release Nootes.md${suffix}`;
+    await updatePrompt(text, `${prefix}@Release Noo`.length);
+    await updatePrompt(text, text.length - suffix.length);
+    expect(composer.trigger?.query).toBe("Release Nootes.md");
+    text = `${prefix}@Release Notes.md${suffix}`;
+    await updatePrompt(text, `${prefix}@Release No`.length);
+    await updatePrompt(text, end);
+    expect(composer.trigger?.query).toBe("Release Notes.md");
     const trigger = composer.resolveTrigger(
       composer.detectTrigger(text, text.length - suffix.length),
     );
@@ -116,17 +132,28 @@ describe("composer suggestion dismissal", () => {
 
   it("keeps Escape dismissal through spaces until a new mention starts", async () => {
     await updatePrompt("@Release");
-    await updatePrompt("@Release Notes");
     const trigger = composer.trigger;
-    expect(trigger?.query).toBe("Release Notes");
+    expect(trigger?.query).toBe("Release");
     await act(() => {
       composer.dismissTrigger(trigger);
       expect(composer.resolveTrigger(trigger)).toBeNull();
     });
-    await updatePrompt("@Release Notes ");
-    await updatePrompt("@Release Notes draft");
+    await act(() => {
+      composer.clearPathTriggerForSelection();
+      const selected = composer.detectTrigger("@Release", "@Releas".length);
+      composer.setTrigger(selected, undefined, true);
+      expect(composer.resolveTrigger(selected, true)).toBeNull();
+    });
+    await updatePrompt("@Release");
     expect(composer.trigger).toBeNull();
-    await updatePrompt("@Release Notes draft @src");
+    await updatePrompt("@Release @Release");
+    await updatePrompt("@Release @Release Notes");
+    expect(composer.trigger?.query).toBe("Release Notes");
+    await act(() => composer.dismissTrigger(composer.trigger));
+    await updatePrompt("@Release @Release Notes ");
+    await updatePrompt("@Release @Release Notes draft");
+    expect(composer.trigger).toBeNull();
+    await updatePrompt("@Release @Release Notes draft @src");
     expect(composer.trigger?.query).toBe("src");
   });
 
@@ -135,8 +162,8 @@ describe("composer suggestion dismissal", () => {
     expect(composer.trigger).toEqual(candidate);
 
     await act(() => {
-      composer.dismissTrigger(candidate);
-      expect(composer.resolveTrigger(candidate)).toBeNull();
+      composer.clearPathTriggerForSelection();
+      expect(composer.resolveTrigger(candidate, true)).toBeNull();
     });
     expect(composer.trigger).toBeNull();
   });
@@ -207,6 +234,13 @@ describe("composer suggestion dismissal", () => {
 
   it.each(["/plan", "$skill", "#123"])("also dismisses %s suggestions", async (text) => {
     await updatePrompt(text);
+    const candidate = composer.trigger;
+    await act(() => {
+      composer.clearPathTriggerForSelection();
+      composer.setTrigger(composer.detectTrigger(text, text.length - 1), undefined, true);
+    });
+    expect(composer.trigger?.kind).toBe(candidate?.kind);
+    expect(composer.resolveTrigger(candidate, true)).toEqual(candidate);
     await act(() => composer.dismissTrigger(composer.trigger));
     await updatePrompt(`${text}x`);
 

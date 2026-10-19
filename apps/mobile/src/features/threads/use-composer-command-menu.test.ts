@@ -383,6 +383,21 @@ describe("mobile mention search", () => {
     const end = `${prefix}@Release Notes.md`.length;
     await act(() => menu.onSelectionChange({ start: end, end }));
     expect(menu.trigger).toMatchObject({ query: "Release Notes.md", rangeEnd: end });
+    await act(() => menu.onSelectionChange({ start: end - 1, end: end - 1 }));
+    expect(menu.trigger?.query).toBe("Release Notes.m");
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger?.query).toBe("Release Notes.md");
+    await act(() => menu.onSelectionChange({ start: cursor, end: cursor }));
+    expect(menu.trigger?.query).toBe("Release");
+    const editCursor = `${prefix}@Release No`.length;
+    await act(() => menu.onSelectionChange({ start: editCursor, end: editCursor }));
+    await renderDraft(`${prefix}@Release Nootes.md${suffix}`);
+    await act(() => menu.onSelectionChange({ start: end + 1, end: end + 1 }));
+    expect(menu.trigger?.query).toBe("Release Nootes.md");
+    await act(() => menu.onSelectionChange({ start: editCursor + 1, end: editCursor + 1 }));
+    await renderDraft(`${prefix}@Release Notes.md${suffix}`);
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger).toMatchObject({ query: "Release Notes.md", rangeEnd: end });
     await act(() =>
       menu.onSelect({
         id: "path:docs/Release Notes.md",
