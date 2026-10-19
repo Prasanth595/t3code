@@ -828,30 +828,23 @@ it.effect("reads worktrees from git that rejects worktree list -z", () =>
 it.effect("does not report a separate git dir as the worktree of its branch", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const driver = yield* makeGitVcsDriverCore();
+      const driver = yield* GitVcsDriver.GitVcsDriver;
       const cwd = yield* makeTmpDir();
-      const gitDir = NodeFS.realpathSync(yield* makeTmpDir());
-      yield* git(cwd, ["init", `--separate-git-dir=${gitDir}`]).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-      );
-      yield* git(cwd, ["config", "user.email", "test@example.com"]).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-      );
-      yield* git(cwd, ["config", "user.name", "Test"]).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-      );
-      yield* git(cwd, ["commit", "--allow-empty", "-m", "init"]).pipe(
-        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-      );
-      const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const gitDir = yield* makeTmpDir();
+      yield* git(cwd, ["init", `--separate-git-dir=${gitDir}`]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* git(cwd, ["commit", "--allow-empty", "-m", "init"]);
 
-      assert.isTrue(refs.isRepo);
-      const current = refs.refs.find((ref) => ref.current);
-      assert.isDefined(current);
-      assert.notEqual(current?.worktreePath, gitDir);
-      assert.equal(current?.worktreePath, NodeFS.realpathSync(cwd));
+      const refs = yield* driver.listRefs({ cwd, refresh: true });
+      const worktreePath = refs.refs.find((ref) => ref.current)?.worktreePath;
+
+      assert.equal(
+        worktreePath && NodeFS.realpathSync.native(worktreePath),
+        NodeFS.realpathSync.native(cwd),
+      );
     }),
-  ).pipe(Effect.provide(ServerConfigLayer.pipe(Layer.provideMerge(NodeServices.layer)))),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("refreshes the current branch after an external checkout", () =>

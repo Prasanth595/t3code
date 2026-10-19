@@ -3236,17 +3236,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               [branchName, path.normalize(path.resolve(worktreePath))] as const,
           )
         : [];
-    // With a separate git dir lacking `core.worktree`, git lists the git dir itself as the
-    // main worktree. It is not a checkout, so it must never be offered as one.
+    // Without `core.worktree`, Git reports a separate git dir as the main checkout.
     const normalizedGitCommonDir = path.normalize(path.resolve(gitCommonDir));
     const existingWorktreeEntries = yield* Effect.filter(
       parsedWorktreeEntries,
       ([, worktreePath]) =>
-        worktreePath !== normalizedGitCommonDir &&
-        fileSystem.stat(worktreePath).pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        ),
+        worktreePath === normalizedGitCommonDir
+          ? Effect.succeed(false)
+          : fileSystem.stat(worktreePath).pipe(
+              Effect.as(true),
+              Effect.orElseSucceed(() => false),
+            ),
       { concurrency: 16 },
     );
     const worktreeMap = new Map(existingWorktreeEntries);
@@ -3437,13 +3437,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         snapshot.localBranches.some((ref) => ref.worktreePath === repositoryPaths.worktreeRoot);
       const localBranches = snapshot.localBranches.map((ref) => ({
         ...ref,
-        // A separate git dir is filtered out of the worktree list, which leaves the
-        // current branch without a path; fall back to the folder the user opened.
         worktreePath:
           ref.worktreePath ??
-          (!ref.isRemote && ref.name === repositoryPaths.currentBranch
-            ? repositoryPaths.worktreeRoot
-            : null),
+          (ref.name === repositoryPaths.currentBranch ? repositoryPaths.worktreeRoot : null),
         current: hasCurrentWorktreeBranch
           ? ref.worktreePath === repositoryPaths.worktreeRoot
           : ref.name === repositoryPaths.currentBranch,
