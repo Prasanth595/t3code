@@ -8480,6 +8480,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            !existing.signedOut &&
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {

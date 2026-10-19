@@ -526,6 +526,7 @@ function makeReplayQueryRunner(
   ): AsyncGenerator<SDKMessage, void> {
     while (true) {
       throwIfFailed();
+      if (signal.aborted) return;
 
       const entry = transcript.entries[cursor];
       if (entry === undefined) {
@@ -623,9 +624,9 @@ function makeReplayQueryRunner(
 
   const replayMessagesWithGateCleanup = (
     options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions,
+    abortController: AbortController,
   ): AsyncIterable<SDKMessage> => ({
     [Symbol.asyncIterator]: () => {
-      const abortController = new AbortController();
       iteratorAbortControllers.add(abortController);
       const iterator = replayMessages(options, abortController.signal);
       return {
@@ -808,9 +809,11 @@ function makeReplayQueryRunner(
   return {
     open: (input) => {
       assertNextOutboundFrame(makeClaudeQueryOpenFrame(input));
+      const abortController = new AbortController();
       return {
-        messages: Stream.fromAsyncIterable(replayMessagesWithGateCleanup(input.options), (cause) =>
-          replayQueryRunnerError(transcript, cause),
+        messages: Stream.fromAsyncIterable(
+          replayMessagesWithGateCleanup(input.options, abortController),
+          (cause) => replayQueryRunnerError(transcript, cause),
         ),
         offer: (message) =>
           replayEffect(() => {
@@ -848,7 +851,7 @@ function makeReplayQueryRunner(
         interrupt: replayEffect(() => {
           assertNextOutboundFrame({ type: "query.interrupt" });
         }),
-        close: Effect.void,
+        close: Effect.sync(() => abortController.abort()),
       };
     },
     forkSession: (input) => {
