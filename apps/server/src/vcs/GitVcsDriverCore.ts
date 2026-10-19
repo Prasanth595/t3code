@@ -1682,11 +1682,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return remoteBase.exitCode === 0 ? { baseRef, comparisonRef } : null;
   });
 
-  // The branch's remote copy is the one it tracks: a default branch following
-  // `upstream/main` while `origin` is a fork compares with `upstream/main`, so a
-  // clean checkout level with it reads +0 −0. Git resolves `@{upstream}` from
-  // branch config, so a local branch or tag named like the remote ref cannot
-  // shadow it.
+  // Tracking may point to a different remote than the primary one. Resolve its
+  // full ref so a similarly named local branch or tag cannot shadow it.
   const resolveTrackedRemoteBaseRef = Effect.fn("resolveTrackedRemoteBaseRef")(function* (
     cwd: string,
     refName: string,
