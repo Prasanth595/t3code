@@ -98,6 +98,7 @@ it.effect("keeps non-deletable Forgejo heads but allows writable fork branches",
     for (const [repo, expectedDeletion] of [
       [{ ...fork, permissions: { push: false, admin: false } }, false],
       [{ ...fork, default_branch: "feature" }, false],
+      [{ ...fork, default_branch: undefined }, false],
       [null, false],
       [fork, true],
     ] as const) {
