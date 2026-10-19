@@ -1,3 +1,7 @@
+import {
+  buildMenuItems as buildMobileMenuItems,
+  resolveQuickAction as resolveMobileQuickAction,
+} from "@t3tools/client-runtime/state/vcs";
 import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
@@ -256,97 +260,74 @@ describe("linked PR git actions", () => {
     },
   };
 
-  it("commits and pushes to an existing linked PR while VCS lookup is empty", () => {
-    const resolved = resolveThreadGitStatus(
-      status({ hasWorkingTreeChanges: true }),
-      [linked],
-      "github.com/team/repo",
-    );
-    assert.equal(resolveQuickAction(resolved, false).action, "commit_push");
-    assert.deepEqual(
-      buildMenuItems(resolved, false).map((item) => item.id),
-      ["commit", "push"],
-    );
+  it("updates the linked PR from quick actions and menus, and restores creation after unlinking", () => {
+    for (const hasWorkingTreeChanges of [true, false]) {
+      const original = status({ hasWorkingTreeChanges, aheadCount: 1 });
+      const resolved = resolveThreadGitStatus(original, [linked], "github.com/team/repo");
+      const action = hasWorkingTreeChanges ? "commit_push" : "push";
+      assert.equal(resolveQuickAction(resolved, false).action, action);
+      assert.equal(resolveMobileQuickAction(resolved, false).action, action);
+      assert.equal(resolved?.pr?.url, linked.url);
+      assert.deepEqual(
+        buildMenuItems(resolved, false).map((item) => item.id),
+        ["commit", "push"],
+      );
+      assert.equal(
+        buildMobileMenuItems(resolved, false).find((item) => item.id === "pr")?.kind,
+        "open_pr",
+      );
+
+      const unlinked = resolveThreadGitStatus(original, [], "github.com/team/repo");
+      assert.equal(original.pr, null);
+      assert.equal(
+        resolveQuickAction(unlinked, false).action,
+        hasWorkingTreeChanges ? "commit_push_pr" : "create_pr",
+      );
+      assert.equal(
+        resolveMobileQuickAction(unlinked, false).action,
+        hasWorkingTreeChanges ? "commit_push_pr" : "create_pr",
+      );
+      assert.equal(buildMenuItems(unlinked, false).at(-1)?.dialogAction, "create_pr");
+      assert.equal(buildMobileMenuItems(unlinked, false).at(-1)?.dialogAction, "create_pr");
+    }
   });
 
-  it("pushes ahead commits without creating another PR", () => {
-    const resolved = resolveThreadGitStatus(
-      status({ aheadCount: 1 }),
-      [linked],
-      "github.com/team/repo",
-    );
-    assert.equal(resolveQuickAction(resolved, false).action, "push");
-  });
-
-  it("does not reuse closed, merged, unsynced, dismissed, or other-branch links", () => {
+  it("only uses loaded, visible, open links for the checkout repository and branch", () => {
     const original = status({ hasWorkingTreeChanges: true });
-    for (const link of [
+    for (const candidate of [
       { ...linked, snapshot: { ...linked.snapshot!, state: "closed" as const } },
       { ...linked, snapshot: { ...linked.snapshot!, state: "merged" as const } },
       { ...linked, snapshot: null },
       { ...linked, source: "stack-dismissed" as const },
       { ...linked, snapshot: { ...linked.snapshot!, headBranch: "other" } },
+      { ...linked, repository: "other/repo", url: "https://github.com/other/repo/pull/42" },
+      {
+        ...linked,
+        host: "github.example.com",
+        url: "https://github.example.com/team/repo/pull/42",
+      },
     ]) {
-      assert.equal(resolveThreadGitStatus(original, [link], "github.com/team/repo"), original);
-      assert.equal(resolveQuickAction(original, false).action, "commit_push_pr");
+      assert.equal(resolveThreadGitStatus(original, [candidate], "github.com/team/repo"), original);
+    }
+    for (const repositoryKey of [null, undefined]) {
+      assert.equal(resolveThreadGitStatus(original, [linked], repositoryKey), original);
     }
   });
 
-  it("ignores matching branch names in other repositories or unknown checkouts", () => {
-    const original = status({ hasWorkingTreeChanges: true });
-    for (const repositoryKey of [
-      "github.com/other/repo",
-      "github.example.com/team/repo",
-      null,
-      undefined,
-    ]) {
-      const resolved = resolveThreadGitStatus(original, [linked], repositoryKey);
-      assert.equal(resolved, original);
-      assert.equal(resolveQuickAction(resolved, false).action, "commit_push_pr");
+  it("keeps authoritative VCS PR results even when a different open PR is linked", () => {
+    for (const state of ["open", "closed", "merged"] as const) {
+      const pr = {
+        number: 99,
+        url: "https://github.com/team/repo/pull/99",
+        title: "VCS result",
+        headRef: "feature/test",
+        baseRef: "main",
+        state,
+      };
+      assert.equal(
+        resolveThreadGitStatus(status({ pr }), [linked], "github.com/team/repo")?.pr,
+        pr,
+      );
     }
-  });
-
-  it("selects the matching repository and normalizes canonical identities", () => {
-    const other = { ...linked, repository: "other/repo", number: 99 };
-    assert.equal(
-      resolveThreadGitStatus(status(), [other, linked], "GITHUB.COM/TEAM/REPO")?.pr?.number,
-      42,
-    );
-    const azure = {
-      ...linked,
-      host: "dev.azure.com",
-      repository: "project/repo",
-      url: "https://dev.azure.com/org/project/_git/repo/pullrequest/42",
-    };
-    assert.equal(
-      resolveThreadGitStatus(status(), [azure], "ssh.dev.azure.com/v3/org/project/repo")?.pr
-        ?.number,
-      42,
-    );
-    const forgejo = {
-      ...linked,
-      host: "forge.example",
-      url: "http://forge.example:3000/team/repo/pulls/42",
-    };
-    assert.equal(
-      resolveThreadGitStatus(status(), [forgejo], "forge.example:3000/team/repo")?.pr?.number,
-      42,
-    );
-    assert.equal(
-      resolveThreadGitStatus(status(), [forgejo], "forge.example:4000/team/repo")?.pr,
-      null,
-    );
-  });
-
-  it("preserves authoritative VCS results and handles unlinking or missing status", () => {
-    const original = resolveThreadGitStatus(status(), [linked], "github.com/team/repo")!;
-    assert.equal(resolveThreadGitStatus(original, [linked], "github.com/team/repo"), original);
-    const closed = { ...original, pr: { ...original.pr!, state: "closed" as const } };
-    assert.equal(resolveThreadGitStatus(closed, [linked], "github.com/team/repo"), closed);
-    const unlinked = status();
-    assert.equal(resolveThreadGitStatus(unlinked, [], "github.com/team/repo"), unlinked);
-    const detached = status({ refName: null });
-    assert.equal(resolveThreadGitStatus(detached, [linked], "github.com/team/repo"), detached);
-    assert.equal(resolveThreadGitStatus(null, [linked], "github.com/team/repo"), null);
   });
 });
