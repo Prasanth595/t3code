@@ -181,15 +181,12 @@ export interface CommandPaletteView {
   readonly initialQuery?: string;
 }
 
-// File and content search replace the palette, so Escape remounts it. Keep
-// its input and linked-thread data to restore, not views whose actions
-// belonged to the unmounted palette.
+// Child search unmounts the palette; retain search data without its view closures.
 export interface CommandPaletteReturnContext {
   readonly query: string;
   readonly linkedThreadSearch: Extract<CommandPaletteOpenIntent, { kind: "search" }> | null;
 }
 
-// Each nested view remembers the query that led into it, so Back restores it.
 export interface CommandPaletteSearchState {
   readonly query: string;
   readonly views: ReadonlyArray<{
