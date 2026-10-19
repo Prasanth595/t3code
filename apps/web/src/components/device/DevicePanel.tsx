@@ -154,7 +154,10 @@ export function DevicePanel(props: {
 
   return (
     <PreviewPanelShell mode={props.mode}>
-      {hostReady && !activeDevice && state.hostStatusDetail ? (
+      {hostReady &&
+      !activeDevice &&
+      state.hostStatusDetail &&
+      !state.hostStatuses.local?.androidDiscoveryIncomplete ? (
         <div
           role="status"
           aria-label="Device host diagnostics"

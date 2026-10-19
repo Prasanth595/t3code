@@ -18,7 +18,12 @@ export function DeviceHostUpdates({
     <div className="space-y-2">
       {state.hosts.map((host) => {
         const status = state.hostStatuses[host.id];
-        if (!status || !["installing", "starting", "failed"].includes(status.status)) return null;
+        if (
+          !status ||
+          (!["installing", "starting", "failed"].includes(status.status) &&
+            !(status.status === "ready" && status.androidDiscoveryIncomplete))
+        )
+          return null;
         const failed = status.status === "failed";
         return (
           <div
