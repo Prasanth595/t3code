@@ -1,17 +1,19 @@
 diff --git a/dist/ImageViewing.js b/dist/ImageViewing.js
-index 3d7641a..7b63722 100644
+index 3d7641a9a94864415d207c678b71f8c592c90aa1..5c4a558040916f09e91117812f125e6abe69dcd1 100644
 --- a/dist/ImageViewing.js
 +++ b/dist/ImageViewing.js
-@@ -6,7 +6,7 @@
+@@ -5,8 +5,8 @@
+  * LICENSE file in the root directory of this source tree.
   *
   */
- import React, { useCallback, useRef, useEffect } from "react";
+-import React, { useCallback, useRef, useEffect } from "react";
 -import { Animated, Dimensions, StyleSheet, View, VirtualizedList, Modal, } from "react-native";
++import React, { useCallback, useRef, useEffect, useLayoutEffect } from "react";
 +import { Animated, Dimensions, StyleSheet, View, VirtualizedList, Modal, Platform, useWindowDimensions, } from "react-native";
  import ImageItem from "./components/ImageItem/ImageItem";
  import ImageDefaultHeader from "./components/ImageDefaultHeader";
  import StatusBarManager from "./components/StatusBarManager";
-@@ -17,11 +17,13 @@ const DEFAULT_ANIMATION_TYPE = "fade";
+@@ -17,35 +17,47 @@ const DEFAULT_ANIMATION_TYPE = "fade";
  const DEFAULT_BG_COLOR = "#000";
  const DEFAULT_DELAY_LONG_PRESS = 800;
  const SCREEN = Dimensions.get("screen");
@@ -20,19 +22,34 @@ index 3d7641a..7b63722 100644
  function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClose, onLongPress = () => { }, onImageIndexChange, animationType = DEFAULT_ANIMATION_TYPE, backgroundColor = DEFAULT_BG_COLOR, presentationStyle, swipeToCloseEnabled, doubleTapToZoomEnabled, delayLongPress = DEFAULT_DELAY_LONG_PRESS, HeaderComponent, FooterComponent, }) {
 +    const viewport = useViewingDimensions();
 +    const SCREEN_WIDTH = viewport.width;
++    const viewportKey = Platform.OS === "android" ? `${viewport.width}:${viewport.height}` : undefined;
      const imageList = useRef(null);
      const [opacity, onRequestCloseEnhanced] = useRequestClose(onRequestClose);
 -    const [currentImageIndex, onScroll] = useImageIndexChange(imageIndex, SCREEN);
+-    const [headerTransform, footerTransform, toggleBarsVisible] = useAnimatedComponents();
 +    const [currentImageIndex, onScroll] = useImageIndexChange(imageIndex, viewport);
-     const [headerTransform, footerTransform, toggleBarsVisible] = useAnimatedComponents();
++    const [headerTransform, footerTransform, toggleBarsVisible] = useAnimatedComponents(viewportKey);
      useEffect(() => {
          if (onImageIndexChange) {
-@@ -33,19 +35,20 @@ function ImageViewing({ images, keyExtractor, imageIndex, visible, onRequestClos
+             onImageIndexChange(currentImageIndex);
+         }
+     }, [currentImageIndex]);
+-    const onZoom = useCallback((isScaled) => {
++    const activeZoom = useRef(null);
++    const onZoom = useCallback(function handleZoom(isScaled) {
++        if (Platform.OS === "android" && activeZoom.current !== handleZoom) {
++            return;
++        }
+         var _a, _b;
          // @ts-ignore
          (_b = (_a = imageList) === null || _a === void 0 ? void 0 : _a.current) === null || _b === void 0 ? void 0 : _b.setNativeProps({ scrollEnabled: !isScaled });
          toggleBarsVisible(!isScaled);
 -    }, [imageList]);
 +    }, [imageList, toggleBarsVisible]);
++    useLayoutEffect(() => {
++        activeZoom.current = onZoom;
++        return () => { activeZoom.current = null; };
++    }, [onZoom]);
      if (!visible) {
          return null;
      }
@@ -40,14 +57,14 @@ index 3d7641a..7b63722 100644
        <StatusBarManager presentationStyle={presentationStyle}/>
 -      <View style={[styles.container, { opacity, backgroundColor }]}>
 +      {/* Reset Android image gestures and controls when the available window changes. */}
-+      <View key={Platform.OS === "android" ? `${viewport.width}:${viewport.height}` : undefined} style={[styles.container, { opacity, backgroundColor }]}>
++      <View key={viewportKey} style={[styles.container, { opacity, backgroundColor }]}>
          <Animated.View style={[styles.header, { transform: headerTransform }]}>
            {typeof HeaderComponent !== "undefined" ? (React.createElement(HeaderComponent, {
          imageIndex: currentImageIndex,
      })) : (<ImageDefaultHeader onRequestClose={onRequestCloseEnhanced}/>)}
          </Animated.View>
 -        <VirtualizedList ref={imageList} data={images} horizontal pagingEnabled windowSize={2} initialNumToRender={1} maxToRenderPerBatch={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} initialScrollIndex={imageIndex} getItem={(_, index) => images[index]} getItemCount={() => images.length} getItemLayout={(_, index) => ({
-+        <VirtualizedList ref={imageList} data={images} horizontal pagingEnabled windowSize={2} initialNumToRender={1} maxToRenderPerBatch={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} initialScrollIndex={currentImageIndex} getItem={(_, index) => images[index]} getItemCount={() => images.length} getItemLayout={(_, index) => ({
++        <VirtualizedList ref={imageList} onScroll={Platform.OS === "android" ? onScroll : undefined} scrollEventThrottle={Platform.OS === "android" ? 16 : undefined} data={images} horizontal pagingEnabled windowSize={2} initialNumToRender={1} maxToRenderPerBatch={1} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={false} initialScrollIndex={currentImageIndex} getItem={(_, index) => images[index]} getItemCount={() => images.length} getItemLayout={(_, index) => ({
          length: SCREEN_WIDTH,
          offset: SCREEN_WIDTH * index,
          index,
@@ -144,6 +161,101 @@ index 9770f7db158a2fb2b1c69a49e5fcbc89d8624603..995fab7524bb8673258d44e5eda361c6
 -        height: SCREEN_HEIGHT,
 -    },
  });
+diff --git a/dist/hooks/useAnimatedComponents.d.ts b/dist/hooks/useAnimatedComponents.d.ts
+index de5957458fea62f33743103acaa170a2c90d3638..dbafa8c5c5f3f86161e8520822cf10e19e88ea25 100644
+--- a/dist/hooks/useAnimatedComponents.d.ts
++++ b/dist/hooks/useAnimatedComponents.d.ts
+@@ -6,7 +6,7 @@
+  *
+  */
+ import { Animated } from "react-native";
+-declare const useAnimatedComponents: () => readonly [{
++declare const useAnimatedComponents: (resetKey?: string) => readonly [{
+     [key: string]: Animated.Value;
+ }[], {
+     [key: string]: Animated.Value;
+diff --git a/dist/hooks/useAnimatedComponents.js b/dist/hooks/useAnimatedComponents.js
+index 4730fe40735bd80afc97abdd14150a2fb4abf3e5..0ed2100744ccc9bcee7f1b15b0328a729d47bb16 100644
+--- a/dist/hooks/useAnimatedComponents.js
++++ b/dist/hooks/useAnimatedComponents.js
+@@ -5,16 +5,19 @@
+  * LICENSE file in the root directory of this source tree.
+  *
+  */
++import { useCallback, useMemo } from "react";
+ import { Animated } from "react-native";
+ const INITIAL_POSITION = { x: 0, y: 0 };
+ const ANIMATION_CONFIG = {
+     duration: 200,
+     useNativeDriver: true,
+ };
+-const useAnimatedComponents = () => {
+-    const headerTranslate = new Animated.ValueXY(INITIAL_POSITION);
+-    const footerTranslate = new Animated.ValueXY(INITIAL_POSITION);
+-    const toggleVisible = (isVisible) => {
++const useAnimatedComponents = (resetKey) => {
++    const [headerTranslate, footerTranslate] = useMemo(() => [
++        new Animated.ValueXY(INITIAL_POSITION),
++        new Animated.ValueXY(INITIAL_POSITION),
++    ], [resetKey]);
++    const toggleVisible = useCallback((isVisible) => {
+         if (isVisible) {
+             Animated.parallel([
+                 Animated.timing(headerTranslate.y, { ...ANIMATION_CONFIG, toValue: 0 }),
+@@ -33,7 +36,7 @@ const useAnimatedComponents = () => {
+                 }),
+             ]).start();
+         }
+-    };
++    }, [headerTranslate, footerTranslate]);
+     const headerTransform = headerTranslate.getTranslateTransform();
+     const footerTransform = footerTranslate.getTranslateTransform();
+     return [headerTransform, footerTransform, toggleVisible];
+diff --git a/dist/hooks/useImageIndexChange.js b/dist/hooks/useImageIndexChange.js
+index cb5f0f798e5cfeedf459b7d22e92871db3092020..38595e8f25bbe7ede8441b606c1314bd29100824 100644
+--- a/dist/hooks/useImageIndexChange.js
++++ b/dist/hooks/useImageIndexChange.js
+@@ -5,16 +5,36 @@
+  * LICENSE file in the root directory of this source tree.
+  *
+  */
+-import { useState } from "react";
++import { useCallback, useLayoutEffect, useRef, useState } from "react";
++import { Dimensions, Platform } from "react-native";
+ const useImageIndexChange = (imageIndex, screen) => {
+     const [currentImageIndex, setImageIndex] = useState(imageIndex);
+-    const onScroll = (event) => {
++    const indexRef = useRef(imageIndex);
++    const activeScroll = useRef(null);
++    const onScroll = useCallback(function handleScroll(event) {
++        if (Platform.OS === "android") {
++            const window = Dimensions.get("window");
++            // A resized list can still deliver events queued for its previous viewport.
++            if (activeScroll.current !== handleScroll ||
++                window.width !== screen.width || window.height !== screen.height ||
++                event.nativeEvent.layoutMeasurement.width !== screen.width) {
++                return;
++            }
++        }
+         const { nativeEvent: { contentOffset: { x: scrollX }, }, } = event;
+         if (screen.width) {
+             const nextIndex = Math.round(scrollX / screen.width);
+-            setImageIndex(nextIndex < 0 ? 0 : nextIndex);
++            const boundedIndex = nextIndex < 0 ? 0 : nextIndex;
++            if (boundedIndex !== indexRef.current) {
++                indexRef.current = boundedIndex;
++                setImageIndex(boundedIndex);
++            }
+         }
+-    };
++    }, [screen]);
++    useLayoutEffect(() => {
++        activeScroll.current = onScroll;
++        return () => { activeScroll.current = null; };
++    }, [onScroll]);
+     return [currentImageIndex, onScroll];
+ };
+ export default useImageIndexChange;
 diff --git a/dist/hooks/usePanResponder.js b/dist/hooks/usePanResponder.js
 index 99dcbc7efea4eba86a8bc2bad71dde73c8ebf1b4..3a374c0923879548ec3826a78be16f79c6e01432 100644
 --- a/dist/hooks/usePanResponder.js
