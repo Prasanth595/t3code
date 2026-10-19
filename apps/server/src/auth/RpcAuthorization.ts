@@ -280,6 +280,7 @@ export const layer = (
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
 ) =>
   Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) =>
+    // A synchronous scope-calculation throw would fail every pending request on the connection.
     Effect.suspend(() => {
       const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
       const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));

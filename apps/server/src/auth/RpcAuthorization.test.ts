@@ -324,7 +324,7 @@ describe("settings mutation authorization", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("saves settings with decoded duration intervals through RPC authorization", () =>
+  it.effect("authorizes settings with decoded duration intervals", () =>
     Effect.gen(function* () {
       const client = yield* RpcTest.makeClient(group).pipe(
         Effect.provide(
