@@ -208,10 +208,9 @@ export function createPageScrollController({
     state.holdActive = false;
   };
 
-  const smoothScrollBy = (container: PageScrollContainer, deltaY: number) => {
+  const scrollBy = (container: PageScrollContainer, deltaY: number) => {
     cancelDiscreteAnimation();
 
-    // Read per press so a preference change applies without a reload.
     if (env.prefersReducedMotion()) {
       container.scrollTop += deltaY;
       return;
@@ -287,7 +286,7 @@ export function createPageScrollController({
       state.activeKey = key;
       onScrollStart?.(key);
 
-      smoothScrollBy(container, readPageScrollDistance(container) * getDirection(key));
+      scrollBy(container, readPageScrollDistance(container) * getDirection(key));
 
       state.holdDelayTimeout = env.setTimeout(() => {
         state.holdDelayTimeout = 0;

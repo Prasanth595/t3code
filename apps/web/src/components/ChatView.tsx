@@ -4383,8 +4383,6 @@ export default function ChatView(props: ChatViewProps) {
         };
         const fallbackTimer = window.setTimeout(finishAnimatedPositioning, 750);
         scrollNode.addEventListener("scrollend", finishAnimatedPositioning, { once: true });
-        // An instant scroll also ends with `scrollend` (or the fallback when nothing moved), so it
-        // settles the same way.
         void list.scrollToIndex({
           index: anchorIndex,
           animated: !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
