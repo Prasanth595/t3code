@@ -2957,7 +2957,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             for (const pendingTurn of pendingTurns) {
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
-            if (task.model === null) {
+            if (
+              task.model === null ||
+              getModelSelectionStringOptionValue(task.modelSelection, "reasoningEffort") ===
+                undefined
+            ) {
               yield* client.raw
                 .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
                 .pipe(
@@ -2985,7 +2989,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   Effect.timeout("5 seconds"),
                   Effect.flatMap((response) =>
                     response.thread.id === input.nativeThreadId &&
-                    !subagentSelections.has(input.nativeThreadId)
+                    subagentSelections.get(input.nativeThreadId) === reportedSelection
                       ? updateSubagentSelection(
                           input.nativeThreadId,
                           response.model,
