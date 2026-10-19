@@ -68,9 +68,8 @@ export function GuideTour({
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [engaged, setEngaged] = useState(() =>
-    Boolean(document.activeElement?.closest("[data-right-panel-surface-content]")),
-  );
+  // Opening the guide precedes this lazy mount, so its listeners miss that interaction.
+  const [engaged, setEngaged] = useState(true);
   useEffect(() => {
     const panel =
       scrollRef.current?.closest("[data-right-panel-surface-content]") ?? scrollRef.current;

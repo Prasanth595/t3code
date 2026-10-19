@@ -467,7 +467,7 @@ describe("review guide keyboard ownership beside chat", () => {
     );
   }
 
-  async function mountGuide(focusableHost = false) {
+  async function mountGuide(focusableHost = false, keepBodyFocus = false) {
     guideResult = {
       currentHeadSha: "head",
       run: null,
@@ -492,7 +492,17 @@ describe("review guide keyboard ownership beside chat", () => {
     const root = createRoot(container);
     roots.push(root);
     await act(async () => root.render(<BesideChat focusableHost={focusableHost} />));
-    await tab("Guide").click();
+    if (keepBodyFocus) {
+      await act(async () => {
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+        expect(document.activeElement).toBe(document.body);
+        // Safari button clicks can open the guide without moving focus into the panel.
+        (tab("Guide").element() as HTMLElement).click();
+      });
+      expect(document.activeElement).toBe(document.body);
+    } else {
+      await tab("Guide").click();
+    }
     await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
     return root;
   }
@@ -564,8 +574,14 @@ describe("review guide keyboard ownership beside chat", () => {
   });
 
   it("returns J/K to typing when the guide tab is inactive or its panel is closing", async () => {
-    const root = await mountGuide(true);
+    const root = await mountGuide(true, true);
     const composer = page.getByRole("textbox", { name: "Test composer" });
+    await press("j");
+    await expect.element(page.getByRole("heading", { name: "Second change" })).toBeVisible();
+    await expect.element(composer).toHaveValue("");
+    await press("k");
+    await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
+
     await tab("Summary").click();
     await page.getByTestId("summary-scroller").click();
     await press("k");
