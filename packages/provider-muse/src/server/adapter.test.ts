@@ -1766,6 +1766,29 @@ describe("MuseAdapterV2", () => {
         assert.isFalse(
           yield* harness.runtime.hasPendingBackgroundWorkForThread!(recovered.providerThread),
         );
+
+        const olderHost = yield* makeFakeMuse();
+        const olderHarness = yield* makeHarness(olderHost);
+        const plainTurn = yield* startConversation(olderHarness, olderHost);
+        const unsupported = new MspError({
+          code: -32601,
+          message: "method not found",
+          data: { kind: "methodNotFound" },
+        });
+        olderHost.queueResponse("task/list", unsupported);
+        yield* olderHost.emit("turn/completed", {
+          turnId: plainTurn.nativeId,
+          terminal: "completed",
+        });
+        yield* olderHarness.takeEvent("turn.terminal");
+        const ingestionPending = yield* olderHarness.runtime.hasPendingBackgroundWorkForThread!(
+          olderHarness.providerThread,
+        );
+        olderHost.queueResponse("task/list", unsupported);
+        assert.deepStrictEqual(
+          { hostPending: yield* olderHarness.runtime.hasPendingBackgroundWork!, ingestionPending },
+          { hostPending: false, ingestionPending: false },
+        );
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 });

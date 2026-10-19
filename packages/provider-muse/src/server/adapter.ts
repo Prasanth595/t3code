@@ -707,19 +707,27 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       // under the event permit, without request()'s host-closing timeout handling.
       const refreshTasks = Effect.fnUntraced(function* () {
         const wasUncertain = taskInventoryUncertain;
-        const result = yield* Effect.tryPromise(() =>
-          host.connection.request("task/list", { sessionId: nativeSessionId }),
-        ).pipe(
+        const result = yield* Effect.tryPromise({
+          try: () => host.connection.request("task/list", { sessionId: nativeSessionId }),
+          catch: (cause) => (cause instanceof MspError ? cause : new Cause.UnknownError(cause)),
+        }).pipe(
           Effect.timeout(options.requestTimeoutMs ?? 30_000),
           Effect.flatMap((value) => decode(MuseTaskList, value)),
-          Effect.catch((cause) =>
-            Effect.logWarning("Could not read Muse's background tasks", cause).pipe(
+          Effect.catch((cause) => {
+            if (cause instanceof MspError && cause.kind === "methodNotFound") {
+              taskInventoryUncertain = false;
+              registryTasks.clear();
+              // Unsupported discovery says nothing about directly observed items' lifetimes.
+              return Effect.succeed(undefined);
+            }
+            taskInventoryUncertain = true;
+            return Effect.logWarning("Could not read Muse's background tasks", cause).pipe(
               Effect.as(undefined),
-            ),
-          ),
+            );
+          }),
         );
-        taskInventoryUncertain = result === undefined;
         if (result) {
+          taskInventoryUncertain = false;
           registryTasks.clear();
           for (const task of result.tasks)
             if (!observedChildren.has(task.taskId))
