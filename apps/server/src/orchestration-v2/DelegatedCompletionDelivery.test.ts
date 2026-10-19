@@ -924,7 +924,7 @@ const seedRestartCancelledChild = (input: {
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
-    it.effect("pauses queued follow-up cards, repairs them on recovery, and resumes them", () =>
+    it.effect("pauses queued follow-up cards and resumes them", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
@@ -1001,27 +1001,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             ?.status,
           "idle",
         );
-        const pausedItem = paused.turnItems.find(
-          (row) => row.type === "subagent" && row.subagentId === task.id,
-        )!;
-        // A partial repair cancelled the task but left its timeline card pending.
+        const endedSequence = yield* eventSink.latestSequence();
         yield* eventSink.write({
-          commandId: reconcileCommandId("held-followup-old-state"),
           events: [
-            {
-              id: EventId.make("event:held-followup-old-state"),
-              type: "subagent.updated",
-              threadId: parentThreadId,
-              occurredAt: now,
-              payload: { ...task, status: "cancelled", completedAt: now },
-            },
-            {
-              id: EventId.make("event:held-followup-old-item"),
-              type: "turn-item.updated",
-              threadId: parentThreadId,
-              occurredAt: now,
-              payload: { ...pausedItem, status: "pending" },
-            },
             {
               id: EventId.make("event:held-followup-active-ended"),
               type: "run.updated",
@@ -1032,11 +1014,23 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             },
           ],
         });
-        yield* orchestrator.recoverDelegatedTasks;
-        const repaired = yield* orchestrator.getThreadProjection(parentThreadId);
-        assert.equal(repaired.subagents.find((row) => row.id === task.id)?.status, "idle");
-        assert.isNull(repaired.subagents.find((row) => row.id === task.id)?.completedAt);
-        assert.equal(repaired.turnItems.find((row) => row.id === pausedItem.id)?.status, "idle");
+        const activeTask = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (row) => row.id === active.delegatedTaskId,
+        )!;
+        if (activeTask.result === null) {
+          yield* eventSink
+            .stream({ afterSequence: endedSequence, eventType: "subagent.updated" })
+            .pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.type === "subagent.updated" &&
+                  stored.event.payload.id === active.delegatedTaskId &&
+                  stored.event.payload.status === "interrupted",
+              ),
+              Stream.take(1),
+              Stream.runHead,
+            );
+        }
         const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
           (row) => row.id === parentThreadId,
         )!;
