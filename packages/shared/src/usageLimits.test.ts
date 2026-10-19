@@ -1381,7 +1381,7 @@ describe("/usage-limits", () => {
     );
     expect(remoteOnly?.accounts.map((account) => account.id)).toEqual([
       "codex",
-      "remote-hub:pooled",
+      "hub-environment:remote-hub:pooled",
     ]);
     expect(remoteOnly?.accounts[0]).toMatchObject({
       resetCreditInput: { sourceId: "remote-hub", accountId: "duplicate", creditId: "dup-credit" },
@@ -1428,7 +1428,7 @@ describe("/usage-limits", () => {
     );
     expect(unreadableLocal?.accounts.map((account) => account.id)).toEqual([
       "codex",
-      "remote-hub:pooled",
+      "hub-environment:remote-hub:pooled",
     ]);
   });
 

@@ -775,7 +775,8 @@ export function collectProviderUsageLimits(
       const picked = key ? hubPicks.get(key) : undefined;
       if (key && (picked?.source !== source || picked.account !== account)) continue;
       accounts.push({
-        id: `${source.id}:${account.id}`,
+        // Hub ids come from the hub URL, so two environments' loopback hubs can share one.
+        id: `${source.environmentId ? `${source.environmentId}:` : ""}${source.id}:${account.id}`,
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
