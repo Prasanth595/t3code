@@ -7,10 +7,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
-import {
-  preserveRunRecordedFields,
-  terminalRunProjectionStatuses,
-} from "@t3tools/shared/orchestrationV2RunProjection";
+import { preserveRunRecordedFields } from "@t3tools/shared/orchestrationV2RunProjection";
 import {
   latestRootProviderFailure,
   latestUnheldRun,
@@ -82,7 +79,6 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
@@ -1820,20 +1816,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    // For run upserts: a snapshot without `path` keeps the value another event recorded there.
-    const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
-      CASE
-        WHEN json_type(excluded.payload_json, ${path}) IS NULL
-          AND json_type(orchestration_v2_projection_runs.payload_json, ${path}) IS NOT NULL
-        THEN json_set(
-          ${payload},
-          ${path},
-          json_extract(orchestration_v2_projection_runs.payload_json, ${path})
-        )
-        ELSE ${payload}
-      END
-    `;
-
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
@@ -1919,61 +1901,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }
           case "run.created":
           case "run.updated": {
-            const payloadJson = yield* encodeRunPayload(event.payload);
-            const payload = parseEncodedPayload(payloadJson);
-            // A delivery snapshot can race checkpoint capture. New attempts may
-            // restart the run, but the same attempt cannot become active again.
-            const olderAttempt = sql`
-              json_extract(orchestration_v2_projection_runs.payload_json, '$.activeAttemptId') IS NOT NULL AND (
-                json_extract(excluded.payload_json, '$.activeAttemptId') IS NULL OR (
-                  (SELECT attempt_ordinal FROM orchestration_v2_projection_run_attempts
-                    WHERE attempt_id = json_extract(excluded.payload_json, '$.activeAttemptId')
-                      AND run_id = excluded.run_id) <
-                  (SELECT attempt_ordinal FROM orchestration_v2_projection_run_attempts
-                    WHERE attempt_id = json_extract(orchestration_v2_projection_runs.payload_json, '$.activeAttemptId')
-                      AND run_id = excluded.run_id)
-                )
-              )
+            // EventSink serializes projection writes in the event transaction.
+            const rows = yield* sql<{
+              readonly payload_json: string;
+              readonly attempt_id: RunAttemptId | null;
+              readonly attempt_ordinal: number | null;
+            }>`
+              SELECT run.payload_json, attempt.attempt_id, attempt.attempt_ordinal
+              FROM orchestration_v2_projection_runs AS run
+              LEFT JOIN orchestration_v2_projection_run_attempts AS attempt
+                ON attempt.attempt_id IN (
+                  json_extract(run.payload_json, '$.activeAttemptId'), ${event.payload.activeAttemptId}
+                ) AND attempt.run_id = run.run_id
+              WHERE run.run_id = ${event.payload.id}
             `;
-            const sameAttempt = sql`
-              json_extract(orchestration_v2_projection_runs.payload_json, '$.activeAttemptId')
-                IS json_extract(excluded.payload_json, '$.activeAttemptId')
-            `;
-            const currentTerminal = sql.in(
-              "orchestration_v2_projection_runs.status",
-              terminalRunProjectionStatuses,
-            );
-            const nextTerminal = sql.in("excluded.status", terminalRunProjectionStatuses);
-            const staleLifecycle = sql`
-              ${sameAttempt} AND ${currentTerminal}
-                AND NOT (orchestration_v2_projection_runs.status = 'failed' AND excluded.status = 'preparing') AND (
-                NOT (${nextTerminal}) OR (
-                  orchestration_v2_projection_runs.status = 'rolled_back' AND excluded.status <> 'rolled_back'
-                )
-              )
-            `;
-            const keepCompletedAt = sql`${staleLifecycle} OR (
-              ${sameAttempt} AND ${currentTerminal} AND ${nextTerminal} AND excluded.completed_at IS NULL
-            )`;
-            const keepCheckpoint = sql`${sameAttempt}
-              AND json_extract(excluded.payload_json, '$.checkpointId') IS NULL
-              AND json_extract(orchestration_v2_projection_runs.payload_json, '$.checkpointId') IS NOT NULL`;
-            const incomingPayload = keepRecordedRunField(
-              keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-              "$.restartCancelledBackgroundWork",
-            );
-            // Attempt-independent metadata still applies when its lifecycle snapshot is old.
-            const applyIncomingMetadata = (payload: Statement.Fragment, path: string) => sql`
-              CASE WHEN json_type(excluded.payload_json, ${path}) IS NULL THEN ${payload}
-              ELSE json_set(${payload}, ${path}, json_extract(excluded.payload_json, ${path})) END
-            `;
-            const olderAttemptPayload = applyIncomingMetadata(
-              applyIncomingMetadata(
-                sql`orchestration_v2_projection_runs.payload_json`,
-                "$.delegatedCompletion",
+            const current =
+              rows[0] === undefined ? undefined : yield* decodeRunPayload(rows[0].payload_json);
+            const run = preserveRunRecordedFields(
+              current,
+              event.payload,
+              rows.flatMap((row) =>
+                row.attempt_id === null || row.attempt_ordinal === null
+                  ? []
+                  : [
+                      {
+                        id: row.attempt_id,
+                        runId: event.payload.id,
+                        attemptOrdinal: row.attempt_ordinal,
+                      },
+                    ],
               ),
-              "$.restartCancelledBackgroundWork",
             );
+            const payloadJson = yield* encodeRunPayload(run);
+            const payload = parseEncodedPayload(payloadJson);
             yield* sql`
               INSERT INTO orchestration_v2_projection_runs (
                 run_id,
@@ -1988,37 +1948,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 payload_json
               )
               VALUES (
-                ${event.payload.id},
-                ${event.payload.threadId},
-                ${event.payload.ordinal},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerThreadId},
-                ${event.payload.status},
+                ${run.id},
+                ${run.threadId},
+                ${run.ordinal},
+                ${run.providerInstanceId},
+                ${run.providerInstanceId},
+                ${run.providerThreadId},
+                ${run.status},
                 ${stringField(payload, "requestedAt")},
                 ${nullableStringField(payload, "completedAt")},
                 ${payloadJson}
               )
               ON CONFLICT(run_id)
               DO UPDATE SET
-                thread_id = CASE WHEN ${olderAttempt} THEN orchestration_v2_projection_runs.thread_id ELSE excluded.thread_id END,
-                ordinal = CASE WHEN ${olderAttempt} THEN orchestration_v2_projection_runs.ordinal ELSE excluded.ordinal END,
-                provider = CASE WHEN ${olderAttempt} THEN orchestration_v2_projection_runs.provider ELSE excluded.provider END,
-                provider_instance_id = CASE WHEN ${olderAttempt} THEN orchestration_v2_projection_runs.provider_instance_id ELSE excluded.provider_instance_id END,
-                provider_thread_id = CASE WHEN ${olderAttempt} THEN orchestration_v2_projection_runs.provider_thread_id ELSE excluded.provider_thread_id END,
-                status = CASE WHEN ${olderAttempt} OR ${staleLifecycle} THEN orchestration_v2_projection_runs.status ELSE excluded.status END,
-                requested_at = CASE WHEN ${olderAttempt} THEN orchestration_v2_projection_runs.requested_at ELSE excluded.requested_at END,
-                completed_at = CASE WHEN ${olderAttempt} OR ${keepCompletedAt} THEN orchestration_v2_projection_runs.completed_at ELSE excluded.completed_at END,
-                payload_json = CASE WHEN ${olderAttempt} THEN ${olderAttemptPayload} ELSE json_set(
-                  ${incomingPayload},
-                  '$.status', CASE WHEN ${olderAttempt} OR ${staleLifecycle} THEN orchestration_v2_projection_runs.status ELSE excluded.status END,
-                  '$.completedAt', CASE WHEN ${keepCompletedAt}
-                    THEN json_extract(orchestration_v2_projection_runs.payload_json, '$.completedAt')
-                    ELSE json_extract(excluded.payload_json, '$.completedAt') END,
-                  '$.checkpointId', CASE WHEN ${keepCheckpoint}
-                    THEN json_extract(orchestration_v2_projection_runs.payload_json, '$.checkpointId')
-                    ELSE json_extract(excluded.payload_json, '$.checkpointId') END
-                ) END
+                thread_id = excluded.thread_id,
+                ordinal = excluded.ordinal,
+                provider = excluded.provider,
+                provider_instance_id = excluded.provider_instance_id,
+                provider_thread_id = excluded.provider_thread_id,
+                status = excluded.status,
+                requested_at = excluded.requested_at,
+                completed_at = excluded.completed_at,
+                payload_json = excluded.payload_json
             `;
             break;
           }

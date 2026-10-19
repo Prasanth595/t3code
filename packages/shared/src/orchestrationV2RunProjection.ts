@@ -1,14 +1,13 @@
 import type { OrchestrationV2Run, OrchestrationV2RunAttempt } from "@t3tools/contracts";
 
-export const terminalRunProjectionStatuses: ReadonlyArray<OrchestrationV2Run["status"]> = [
+const terminalRunProjectionStatuses = new Set<OrchestrationV2Run["status"]>([
   "completed",
   "failed",
   "cancelled",
   "interrupted",
   "rolled_back",
-];
+]);
 
-/** Merge full snapshots without letting concurrent metadata writes undo an attempt's finish. */
 export function preserveRunRecordedFields(
   current: OrchestrationV2Run | undefined,
   next: OrchestrationV2Run,
@@ -39,10 +38,16 @@ export function preserveRunRecordedFields(
     };
   }
   const sameAttempt = current.activeAttemptId === next.activeAttemptId;
-  const currentTerminal = terminalRunProjectionStatuses.includes(current.status);
-  const nextTerminal = terminalRunProjectionStatuses.includes(next.status);
-  // Workspace setup retry is the one intentional same-attempt revival.
-  const workspaceRetry = current.status === "failed" && next.status === "preparing";
+  const currentTerminal = terminalRunProjectionStatuses.has(current.status);
+  const nextTerminal = terminalRunProjectionStatuses.has(next.status);
+  // Workspace preparation reuses its attempt on retry, before provider work starts.
+  const workspaceRetry =
+    current.status === "failed" &&
+    next.status === "preparing" &&
+    current.workspacePreparation !== undefined &&
+    current.startedAt === null &&
+    next.startedAt === null &&
+    current.checkpointId === null;
   const staleLifecycle =
     sameAttempt &&
     currentTerminal &&
