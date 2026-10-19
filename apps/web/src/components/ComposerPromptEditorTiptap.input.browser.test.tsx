@@ -141,7 +141,7 @@ it.each([false, true])(
   },
 );
 
-it("pastes a continued file query literally before resuming ordinary markdown paste", async () => {
+it("pastes a continued file query literally while preserving ordinary markdown paste and drop", async () => {
   let active = true;
   const editor = await mountEditor("@Foreign", true, () => active);
   async function paste(text: string) {
@@ -164,4 +164,23 @@ it("pastes a continued file query literally before resuming ordinary markdown pa
   active = false;
   await paste(" __ordinary__");
   expect(editor.view.dom.querySelector("strong")?.textContent).toBe("ordinary");
+  await act(async () => {
+    editor.commands.setContent("<p>Drop here</p>");
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    typeText(editor, editor.state.selection.from, editor.state.selection.to, " ");
+    const caret = editor.view.coordsAtPos(editor.state.selection.from);
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData("text/plain", "__dropped__");
+    editor.view.dom.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer,
+        clientX: caret.left,
+        clientY: (caret.top + caret.bottom) / 2,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  expect(editor.view.dom.querySelector("strong")).not.toBeNull();
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("Drop here **dropped**");
 });

@@ -1084,8 +1084,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const editor = useEditor(
     {
       extensions: richText ? RICH_TEXT_EXTENSIONS : PLAIN_TEXT_EXTENSIONS,
-      // handlePaste already parses markdown while keeping filename queries literal.
-      enablePasteRules: false,
       content: buildDocJson(
         value,
         (name) => {
