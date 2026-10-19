@@ -1252,17 +1252,24 @@ it.effect("reports invalid tool arguments as a tool error to 2025-11-25 clients"
               "application/json",
             ),
           });
-          return { negotiated, body: (yield* response.json) as Record<string, any> };
+          const body = (yield* response.json) as {
+            readonly result?: {
+              readonly isError: boolean;
+              readonly content: [{ readonly text: string }];
+            };
+            readonly error?: { readonly code: number };
+          };
+          return { negotiated, body };
         });
 
       const current = yield* callWithBadArguments("2025-11-25");
       expect(current.negotiated).toBe("2025-11-25");
-      expect(current.body.result.isError).toBe(true);
-      expect(current.body.result.content[0].text).toContain("Invalid parameters for tool 'count'");
+      expect(current.body.result?.isError).toBe(true);
+      expect(current.body.result?.content[0].text).toContain("Invalid parameters for tool 'count'");
 
       const legacy = yield* callWithBadArguments("2025-06-18");
       expect(legacy.negotiated).toBe("2025-06-18");
-      expect(legacy.body.error.code).toBe(-32602);
+      expect(legacy.body.error?.code).toBe(-32602);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
