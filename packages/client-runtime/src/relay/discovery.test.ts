@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import * as ManagedRelay from "./managedRelay.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
@@ -20,6 +21,7 @@ import { ConnectionBlockedError, type NetworkStatus } from "../connection/model.
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as RelayEnvironmentDiscovery from "./discovery.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { createRelayEnvironmentDiscoveryAtoms } from "../state/relayDiscovery.ts";
 
 const environments = [
   {
@@ -59,6 +61,8 @@ function status(
 const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   const networkStatus = yield* SubscriptionRef.make<NetworkStatus>("online");
   const listCalls = yield* Ref.make(0);
+  const listedEnvironments =
+    yield* Ref.make<ReadonlyArray<RelayClientEnvironmentRecord>>(environments);
   const listFailure = yield* Ref.make<ManagedRelay.ManagedRelayClientError | null>(null);
   const secondListCall = yield* Deferred.make<void>();
   const clerkToken = yield* Ref.make<string | null>("clerk-token");
@@ -100,7 +104,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
         if (failure) {
           return yield* failure;
         }
-        return environments;
+        return yield* Ref.get(listedEnvironments);
       }),
     getEnvironmentStatus: ({ environmentId }) =>
       Ref.get(statusRequests).pipe(
@@ -162,6 +166,7 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
   return {
     layer,
     listCalls,
+    listedEnvironments,
     listFailure,
     clerkToken,
     networkStatus,
@@ -176,6 +181,51 @@ const makeHarness = Effect.fn("RelayDiscoveryTest.makeHarness")(function* () {
 });
 
 describe("RelayEnvironmentDiscovery", () => {
+  it.effect("fetches a fresh list after removal while an older refresh is checking statuses", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* Effect.gen(function* () {
+          const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
+          const atoms = createRelayEnvironmentDiscoveryAtoms(
+            Atom.runtime(
+              Layer.succeed(RelayEnvironmentDiscovery.RelayEnvironmentDiscovery, discovery),
+            ),
+          );
+          const registry = AtomRegistry.make();
+          yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+
+          const refresh = atoms.refresh.run(registry, undefined);
+          yield* SubscriptionRef.changes(discovery.state).pipe(
+            Stream.filter((state) => state.environments.size === environments.length),
+            Stream.runHead,
+          );
+          const coalescedRefresh = atoms.refresh.run(registry, undefined);
+          yield* Ref.set(harness.listedEnvironments, [environments[1]!]);
+          const mutationRefresh = atoms.refreshAfterMutation.run(registry, undefined);
+
+          const requests = yield* Ref.get(harness.statusRequests);
+          for (const environment of environments) {
+            yield* Deferred.succeed(
+              requests.get(environment.environmentId)!,
+              status(environment, "online"),
+            );
+          }
+          const results = yield* Effect.promise(() =>
+            Promise.all([refresh, coalescedRefresh, mutationRefresh]),
+          );
+          for (const result of results) {
+            expect(result._tag).toBe("Success");
+          }
+          expect(yield* Ref.get(harness.listCalls)).toBe(2);
+          const complete = yield* SubscriptionRef.get(discovery.state);
+          expect([...complete.environments.keys()]).toEqual([environments[1]!.environmentId]);
+          expect(complete.refreshing).toBe(false);
+        }).pipe(Effect.provide(harness.layer));
+      }),
+    ),
+  );
+
   it.effect("publishes each environment status as soon as that lookup completes", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
