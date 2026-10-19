@@ -9,7 +9,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import {
-  backgroundActivityReporterLayer,
+  layer,
   observeBackgroundActivitySubscription,
   retainedBackgroundScopes,
   wasRecentlyInteracted,
@@ -78,58 +78,47 @@ describe("wasRecentlyInteracted", () => {
   );
 });
 
-beforeEach(() => {
-  const target = new EventTarget();
-  vi.stubGlobal("window", {
-    addEventListener: target.addEventListener.bind(target),
-    removeEventListener: target.removeEventListener.bind(target),
-    localStorage: { getItem: () => "client", setItem: () => undefined },
+describe("layer", () => {
+  beforeEach(() => {
+    const target = new EventTarget();
+    const listeners = {
+      addEventListener: target.addEventListener.bind(target),
+      removeEventListener: target.removeEventListener.bind(target),
+    };
+    vi.stubGlobal("window", {
+      ...listeners,
+      localStorage: { getItem: () => "client", setItem: () => undefined },
+    });
+    vi.stubGlobal("document", { ...listeners, visibilityState: "visible", hasFocus: () => true });
   });
-  vi.stubGlobal("document", {
-    visibilityState: "visible",
-    hasFocus: () => true,
-    addEventListener: target.addEventListener.bind(target),
-    removeEventListener: target.removeEventListener.bind(target),
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
-});
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe("backgroundActivityReporterLayer", () => {
-  const keepsReportingAfter = (firstReport: Effect.Effect<void, string>) =>
+  // As when an environment's connection is torn down while its report is in flight.
+  it.effect("keeps reporting after a report is interrupted", () =>
     Effect.gen(function* () {
       const entries = yield* SubscriptionRef.make(
-        new Map([[EnvironmentId.make("environment-reporter-test"), {}]]) as never,
+        new Map([[EnvironmentId.make("environment-reporter-test"), {}]]),
       );
       let calls = 0;
       const registry = EnvironmentRegistry.EnvironmentRegistry.of({
         entries,
         run: () => {
           calls += 1;
-          return calls === 1 ? firstReport : Effect.void;
+          return calls === 1 ? Effect.failCause(Cause.interrupt()) : Effect.void;
         },
-      } as never);
+      } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
 
       yield* Layer.build(
-        backgroundActivityReporterLayer.pipe(
-          Layer.provide(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry)),
-        ),
+        layer.pipe(Layer.provide(Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, registry))),
       );
       yield* TestClock.adjust("1 second");
       expect(calls).toBe(1);
 
-      yield* TestClock.adjust("60 seconds");
-      expect(calls).toBeGreaterThan(1);
-    }).pipe(Effect.scoped);
-
-  it.effect("keeps reporting after one report fails", () =>
-    keepsReportingAfter(Effect.fail("unreachable")),
-  );
-
-  // As when an environment's connection is torn down while its report is in flight.
-  it.effect("keeps reporting after one report is interrupted", () =>
-    keepsReportingAfter(Effect.failCause(Cause.interrupt())),
+      yield* TestClock.adjust("25 seconds");
+      expect(calls).toBe(2);
+    }).pipe(Effect.scoped),
   );
 });

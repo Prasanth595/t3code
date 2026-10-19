@@ -205,8 +205,8 @@ export const layer = Layer.effectDiscard(
                 createActivityReport(environmentId, lastInteractionAtMs, observedAtMs),
               ),
             )
-            // An environment torn down mid-request interrupts its report; that must not
-            // end the reporting loop, or provider-status leases lapse until reload.
+            // Not `ignore`: tearing down an environment mid-request interrupts its report,
+            // and an interrupt leaking out here would end the reporting loop for good.
             .pipe(Effect.ignoreCause),
         { concurrency: "unbounded", discard: true },
       );
