@@ -1698,7 +1698,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       configuredBaseRef?.startsWith("refs/remotes/")
     ) {
       const base = yield* resolveComparisonBaseRef(cwd, configuredBaseRef);
-      if (base !== null) return base;
+      if (base !== null) {
+        const shortRef = configuredBaseRef.replace(/^refs\/remotes\//, "");
+        return {
+          ...base,
+          baseRef: (yield* branchExists(cwd, shortRef)) ? configuredBaseRef : shortRef,
+        };
+      }
     }
 
     const configuredBaseBranch =
@@ -3635,12 +3641,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           `branch.${input.newRefName}.gh-merge-base`,
           base.branchName,
         ]);
-        // gh consumes its key as a provider branch; T3 also needs the exact comparison ref.
-        yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
-          "config",
-          `branch.${input.newRefName}.t3-merge-base-ref`,
-          base.baseRef,
-        ]);
+        if (base.baseRef.startsWith("refs/remotes/")) {
+          // gh consumes its key as a provider branch; T3 also needs the selected remote.
+          yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
+            "config",
+            `branch.${input.newRefName}.t3-merge-base-ref`,
+            base.baseRef,
+          ]);
+        }
       }
     }
 
