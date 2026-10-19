@@ -60,11 +60,19 @@ it("only offers notice details when the description cannot fit", async () => {
   expect(hasDetails()).toBe(true);
 });
 
-it("keeps urgent, warning and error notices visible while ordinary notices collapse behind activity", async () => {
+it("keeps only the usage limit attached while an active goal waits in the collapsible stack", async () => {
   await act(async () =>
     root.render(
       <ComposerBannerStack
         items={[
+          {
+            id: "goal",
+            variant: "default",
+            priority: "activity",
+            icon: null,
+            title: "Goal active",
+            description: "Finish the banner fix",
+          },
           {
             id: "limit",
             variant: "default",
@@ -72,34 +80,32 @@ it("keeps urgent, warning and error notices visible while ordinary notices colla
             icon: null,
             title: "Usage limit reached",
           },
-          { id: "usage", variant: "info", priority: "notice", icon: null, title: "Usage limits" },
-          { id: "offline", variant: "warning", icon: null, title: "Server is reconnecting" },
-          { id: "clone", variant: "error", icon: null, title: "Failed to clone repo" },
-          {
-            id: "work",
-            variant: "default",
-            priority: "activity",
-            icon: null,
-            title: "Waiting on 2 subagents",
-          },
         ]}
       />,
     ),
   );
 
-  for (const title of ["Usage limit reached", "Server is reconnecting", "Failed to clone repo"]) {
-    await expect.element(page.getByText(title, { exact: true })).toBeVisible();
-  }
-  await expect.element(page.getByText("Waiting on 2 subagents", { exact: true })).toBeVisible();
+  const visibleBanners = () =>
+    Array.from(container.querySelectorAll('[data-slot="composer-banner"]')).filter((banner) =>
+      banner.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }),
+    );
+  const limit = page.getByText("Usage limit reached", { exact: true });
+  const goal = page.getByText("Goal active", { exact: true });
+
+  expect(visibleBanners()).toHaveLength(1);
+  await expect.element(limit).toBeVisible();
+  await expect.element(goal).not.toBeVisible();
   expect(container.querySelector('[data-slot="composer-banner-attachment"]')?.textContent).toBe(
-    "Waiting on 2 subagents",
+    "Usage limit reached",
   );
 
-  const ordinaryNotice = page.getByText("Usage limits", { exact: true });
-  await expect.element(ordinaryNotice).not.toBeVisible();
   await act(async () => page.getByRole("button", { name: "Show other notices" }).click());
-  await expect.element(ordinaryNotice).toBeVisible();
+  await expect.element(goal).toBeVisible();
+  await expect.element(limit).toBeVisible();
+  await expect.poll(visibleBanners).toHaveLength(2);
+
   await act(async () => userEvent.keyboard("{Escape}"));
-  await expect.element(ordinaryNotice).not.toBeVisible();
-  await expect.element(page.getByText("Usage limit reached", { exact: true })).toBeVisible();
+  await expect.element(goal).not.toBeVisible();
+  await expect.element(limit).toBeVisible();
+  expect(visibleBanners()).toHaveLength(1);
 });

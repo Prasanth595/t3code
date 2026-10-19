@@ -31,10 +31,10 @@ export type ComposerBannerStackContent = Pick<
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
 function bannerPriority(item: ComposerBannerStackEntry) {
-  if (item.priority === "activity") {
+  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
     return 0;
   }
-  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
+  if (item.priority === "activity") {
     return 1;
   }
   return 2;
@@ -68,16 +68,8 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     };
   }, []);
 
-  const [frontItem, ...stackedItems] = items.toSorted(
-    (a, b) => bannerPriority(a) - bannerPriority(b),
-  );
-  // Keep notices needing attention visible while activity occupies the attached slot.
-  const pinnedItems = stackedItems.filter((item) => bannerPriority(item) === 1);
-  const collapsibleItems = stackedItems.filter((item) => bannerPriority(item) !== 1);
-  const hasStack = collapsibleItems.length > 0;
-
-  // A stack with nothing left to collapse closes, so the next stack starts collapsed.
-  if (!hasStack && stackExpanded) {
+  // A stack that shrinks to one banner collapses, so the next stack starts collapsed.
+  if (items.length < 2 && stackExpanded) {
     setStackExpanded(false);
   }
 
@@ -94,6 +86,8 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }
   }, [stackExpanded]);
 
+  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
+  const frontItem = orderedItems[0];
   if (!frontItem) {
     return (
       <>
@@ -103,8 +97,10 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
       </>
     );
   }
+  const stackedItems = orderedItems.slice(1);
+  const hasStack = stackedItems.length > 0;
   const showCollapsedStackCap = hasStack && exitingItemId !== frontItem.id;
-  const firstCollapsibleItem = collapsibleItems[0];
+  const firstStackedItem = stackedItems[0];
 
   const requestDismiss = (item: ComposerBannerStackEntry) => {
     if (!("onDismiss" in item) || !item.onDismiss || exitingItemId) {
@@ -120,30 +116,8 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }, DISMISS_TRANSITION_MS);
   };
 
-  const renderStackedItem = (item: ComposerBannerStackEntry) => (
-    <div
-      key={item.id}
-      className={cn(
-        "transition-[opacity,translate] duration-220 ease-in",
-        exitingItemId === item.id ? "pointer-events-none translate-y-28 opacity-0" : "opacity-100",
-      )}
-    >
-      <ComposerBannerStackAlert
-        item={item}
-        attached={false}
-        exiting={exitingItemId === item.id}
-        onDismissRequest={() => requestDismiss(item)}
-      />
-    </div>
-  );
-
   return (
     <>
-      {pinnedItems.length > 0 ? (
-        <div data-chat-composer-collapsed-controls="true" className="relative z-20 space-y-2 pb-2">
-          {pinnedItems.map(renderStackedItem)}
-        </div>
-      ) : null}
       {hasStack ? (
         <div
           ref={noticesRef}
@@ -175,10 +149,10 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
             setStackExpanded(false);
           }}
         >
-          {showCollapsedStackCap && firstCollapsibleItem ? (
+          {showCollapsedStackCap && firstStackedItem ? (
             <ComposerBanner.Peek
               ref={peekRef}
-              variant={firstCollapsibleItem.variant}
+              variant={firstStackedItem.variant}
               aria-label="Show other notices"
               aria-expanded={stackExpanded}
               aria-controls={expandedItemsId}
@@ -215,7 +189,24 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
                     : "pointer-events-none invisible translate-y-1 opacity-0",
                 )}
               >
-                {collapsibleItems.map(renderStackedItem)}
+                {stackedItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      "transition-[opacity,translate] duration-220 ease-in",
+                      exitingItemId === item.id
+                        ? "pointer-events-none translate-y-28 opacity-0"
+                        : "opacity-100",
+                    )}
+                  >
+                    <ComposerBannerStackAlert
+                      item={item}
+                      attached={false}
+                      exiting={exitingItemId === item.id}
+                      onDismissRequest={() => requestDismiss(item)}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           </div>
