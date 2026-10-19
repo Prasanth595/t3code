@@ -398,6 +398,8 @@ function timelineListStateFor(identity: string): {
   };
 }
 
+// Matches the 0.75rem fade above the composer in `timeline-scroll-bottom-fade`.
+const TIMELINE_BOTTOM_FADE_HEIGHT = 12;
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
@@ -725,7 +727,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
       rowBottom: bounds.bottom,
       viewportTop: viewport.top,
       viewportBottom: viewport.bottom,
-      composerOverlayHeight,
+      composerOverlayHeight:
+        composerOverlayHeight > 0 ? composerOverlayHeight + TIMELINE_BOTTOM_FADE_HEIGHT : 0,
       anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
     });
     if (delta > 0) {
