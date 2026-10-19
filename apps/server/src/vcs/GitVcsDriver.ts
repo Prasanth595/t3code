@@ -795,74 +795,55 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       return path.resolve(cwd, result.stdout.trim());
     });
 
-  // Moves a successful capture's new objects into the repository the way Git's own
-  // quarantine migration does: never replacing an object, and each pack before its index.
-  const publishQuarantinedObjects = (quarantine: string, objectDirectory: string) => {
-    // Files this capture created for packs whose index is not published yet.
-    const incompletePacks = new Map<string, Array<string>>();
-    return Effect.gen(function* () {
-      const objectFiles = (yield* fileSystem.readDirectory(quarantine, { recursive: true }))
-        .flatMap((entry) => {
-          const rank = quarantinedObjectRank(entry.replaceAll("\\", "/"));
-          return rank === undefined ? [] : [{ entry, rank }];
-        })
-        .toSorted((left, right) => left.rank - right.rank);
-      const readyDirectories = new Set<string>();
-      for (const { entry } of objectFiles) {
-        const directory = path.dirname(entry);
-        if (!readyDirectories.has(directory)) {
-          const target = path.join(objectDirectory, directory);
-          // Git created the quarantine's directory with core.sharedRepository permissions.
-          yield* fileSystem.makeDirectory(target).pipe(
-            Effect.andThen(fileSystem.stat(path.join(quarantine, directory))),
-            Effect.flatMap((info) => fileSystem.chmod(target, info.mode & 0o7777)),
-            Effect.catchIf(
-              (error) => error.reason._tag === "AlreadyExists",
-              () => Effect.void,
-            ),
-          );
-          readyDirectories.add(directory);
-        }
-        const source = path.join(quarantine, entry);
-        const target = path.join(objectDirectory, entry);
-        // Objects are content-addressed, so an existing file already holds these bytes. Without
-        // hard links, Git renames instead, unless the object already exists.
-        const created = yield* fileSystem.link(source, target).pipe(
-          Effect.as(true),
+  // Published files are shared immediately: another capture can adopt a pack before we
+  // install its index. Even on failure, only the private quarantine is ours to remove.
+  const publishQuarantinedObjects = Effect.fnUntraced(function* (
+    quarantine: string,
+    objectDirectory: string,
+  ) {
+    const objectFiles = (yield* fileSystem.readDirectory(quarantine, { recursive: true }))
+      .flatMap((entry) => {
+        const rank = quarantinedObjectRank(entry.replaceAll("\\", "/"));
+        return rank === undefined ? [] : [{ entry, rank }];
+      })
+      .toSorted((left, right) => left.rank - right.rank);
+    const readyDirectories = new Set<string>();
+    for (const { entry } of objectFiles) {
+      const directory = path.dirname(entry);
+      if (!readyDirectories.has(directory)) {
+        const target = path.join(objectDirectory, directory);
+        // Git created the quarantine's directory with core.sharedRepository permissions.
+        yield* fileSystem.makeDirectory(target).pipe(
+          Effect.andThen(fileSystem.stat(path.join(quarantine, directory))),
+          Effect.flatMap((info) => fileSystem.chmod(target, info.mode & 0o7777)),
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.void,
+          ),
+        );
+        readyDirectories.add(directory);
+      }
+      const source = path.join(quarantine, entry);
+      const target = path.join(objectDirectory, entry);
+      // Objects are content-addressed, so an existing file already holds these bytes. Without
+      // hard links, Git renames instead, unless the object already exists.
+      yield* fileSystem
+        .link(source, target)
+        .pipe(
           Effect.catch((error) =>
             error.reason._tag === "AlreadyExists"
-              ? Effect.succeed(false)
+              ? Effect.void
               : fileSystem
                   .exists(target)
                   .pipe(
                     Effect.flatMap((exists) =>
-                      exists
-                        ? Effect.succeed(false)
-                        : fileSystem.rename(source, target).pipe(Effect.as(true)),
+                      exists ? Effect.void : fileSystem.rename(source, target),
                     ),
                   ),
           ),
         );
-        if (directory === "pack") {
-          const pack = path.basename(entry, path.extname(entry));
-          // A published index makes the pack visible, so other captures may already use it.
-          if (entry.endsWith(".idx")) incompletePacks.delete(pack);
-          else if (created)
-            incompletePacks.set(pack, [...(incompletePacks.get(pack) ?? []), target]);
-        }
-      }
-    }).pipe(
-      // Git ignores a pack without its index, and gc never removes one. Complete packs and
-      // loose objects that were already published are unreachable objects that gc removes.
-      Effect.tapError(() =>
-        Effect.forEach(
-          [...incompletePacks.values()].flat(),
-          (file) => fileSystem.remove(file, { force: true }).pipe(Effect.ignore),
-          { discard: true },
-        ),
-      ),
-    );
-  };
+    }
+  });
 
   // Git renames loose objects and refs into place without fsync by default, so
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
@@ -920,14 +901,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         { discard: true },
       );
 
-      const storageError = (cause: { readonly message: string }) =>
-        new VcsProcessExitError({
-          operation,
-          command: "git checkpoint storage",
-          cwd: input.cwd,
-          exitCode: 0,
-          detail: `Could not store checkpoint objects: ${cause.message}`,
-        });
       const removeQuarantine = fileSystem
         .remove(quarantine, { recursive: true, force: true })
         .pipe(
@@ -937,7 +910,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         );
 
       yield* Effect.gen(function* () {
-        yield* fileSystem.makeDirectory(quarantine).pipe(Effect.mapError(storageError));
+        yield* fileSystem.makeDirectory(quarantine).pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsProcessExitError({
+                operation,
+                command: "git checkpoint storage",
+                cwd: input.cwd,
+                exitCode: 0,
+                detail: "Could not create checkpoint object storage.",
+                cause,
+              }),
+          ),
+        );
         const headExists = yield* hasHeadCommit(input.cwd);
         const sparseConfig = yield* execute({
           operation,
@@ -1168,12 +1153,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
-        // Both steps are quick. An interruption between a pack and its index would strand a pack
-        // that gc never removes, and one before the ref would strand the published objects.
+        // Finish publishing objects and their ref together when cancellation arrives.
         yield* Effect.uninterruptible(
           Effect.gen(function* () {
             yield* publishQuarantinedObjects(quarantine, objectDirectory).pipe(
-              Effect.mapError(storageError),
+              Effect.mapError(
+                (cause) =>
+                  new VcsProcessExitError({
+                    operation,
+                    command: "git checkpoint storage",
+                    cwd: input.cwd,
+                    exitCode: 0,
+                    detail: "Could not publish checkpoint objects.",
+                    cause,
+                  }),
+              ),
             );
             yield* execute({
               operation,
