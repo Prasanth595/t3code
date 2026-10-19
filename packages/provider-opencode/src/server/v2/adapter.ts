@@ -12,6 +12,7 @@ import {
   type OpenCodeEvent,
 } from "@opencode/client/effect";
 import { Mcp } from "@opencode/schema/mcp";
+import { Shell } from "@opencode/schema/shell";
 import {
   isOrchestrationV2WorkActive,
   type OrchestrationV2AppThread,
@@ -2225,8 +2226,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (stringField(metadata, "source") !== "shell") return;
         const shellId = stringField(metadata, "shellID");
         if (shellId !== undefined && !state.shells.delete(shellId)) state.endedShells.add(shellId);
-        // Its end keeps the session until delivered, even for a job not tracked
-        // (a reconnect forgets running jobs).
         state.queuedShells.add(event.data.inboxID);
       } else if (
         event.type === "session.inbox.delivered" ||
@@ -2570,9 +2569,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         for (const session of sessionsOf(state)) {
           discardWakes(session, session.wakes.splice(0));
           session.reports.clear();
-          session.shells.clear();
-          session.endedShells.clear();
-          session.queuedShells.clear();
+        }
+      }
+      for (const state of threads.values()) {
+        if (state.shells.size === 0 && state.queuedShells.size === 0) continue;
+        // Executions do not own background shells. Read each known job before
+        // its inbox, so a completion lost with the stream cannot pin it forever.
+        const running = yield* Effect.forEach(state.shells, (id) =>
+          client.shell
+            .get({ id: Shell.ID.make(id), location: { directory: state.directory } })
+            .pipe(
+              Effect.map(({ data }) => (data.status === "running" ? id : undefined)),
+              Effect.catchTags({ ShellNotFoundError: () => Effect.void }),
+            ),
+        );
+        const inbox = yield* client.session.inbox.list({
+          sessionID: Session.ID.make(state.sessionId),
+        });
+        state.shells.clear();
+        for (const id of running) if (id !== undefined) state.shells.add(id);
+        state.queuedShells.clear();
+        for (const item of inbox) {
+          if (
+            item.type !== "synthetic" ||
+            stringField(item.payload.metadata, "source") !== "shell"
+          ) {
+            continue;
+          }
+          const shellId = stringField(item.payload.metadata, "shellID");
+          if (shellId !== undefined) state.shells.delete(shellId);
+          state.queuedShells.add(item.id);
         }
       }
       // Stopped off the lock this reconcile holds; one still running waits for a Stop.

@@ -977,27 +977,31 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ...shellIDs.flatMap((shellID) => shellLaunch(`call-${shellID}`, shellID)),
     event("session.execution.succeeded", { sessionID: SESSION }),
   ];
-  const shellEnded = (inboxID: string, shellID: string) =>
-    event("session.inbox.enqueued", {
-      inboxID,
-      sessionID: SESSION,
-      item: {
-        type: "synthetic",
-        payload: {
-          text: `<shell id="${shellID}" state="completed" command="${SHELL_COMMAND}">\nfinished\n</shell>`,
-          description: SHELL_COMMAND,
-          metadata: {
-            source: "shell",
-            shellID,
-            jobID: shellID,
-            state: "completed",
-            truncated: false,
-            exit: 0,
+  const shellEnded = (inboxID: string, shellID: string, label?: string) =>
+    event(
+      "session.inbox.enqueued",
+      {
+        inboxID,
+        sessionID: SESSION,
+        item: {
+          type: "synthetic",
+          payload: {
+            text: `<shell id="${shellID}" state="completed" command="${SHELL_COMMAND}">\nfinished\n</shell>`,
+            description: SHELL_COMMAND,
+            metadata: {
+              source: "shell",
+              shellID,
+              jobID: shellID,
+              state: "completed",
+              truncated: false,
+              exit: 0,
+            },
           },
+          delivery: "steer",
         },
-        delivery: "steer",
       },
-    });
+      label,
+    );
   /** A model change the thread reports: once it is seen, every event before it was read. */
   const readMarker = (name: string) =>
     event("session.model.selected", {
@@ -1049,10 +1053,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const { runtime, thread } = yield* resumed(
           [
             ...shellTurn("sh_1", "sh_2"),
-            { ...shellEnded("msg_shell_1", "sh_1"), label: "first-end" },
+            shellEnded("msg_shell_1", "sh_1", "first-end"),
             event("session.inbox.cancelled", { sessionID: SESSION, inboxID: "msg_shell_1" }),
             readMarker("remaining"),
-            { ...shellEnded("msg_shell_2", "sh_2"), label: "last-end" },
+            shellEnded("msg_shell_2", "sh_2", "last-end"),
             readMarker("queued"),
             event("session.execution.started", { sessionID: SESSION }, "wake"),
             event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_shell_2" }),
@@ -1126,19 +1130,70 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  const shellStatus = (
+    id: string,
+    status: "running" | "exited",
+  ): ReadonlyArray<ProviderReplayEntry> => [
+    out("shell.get", { id, "location[directory]": WORK }),
+    reply("shell.get", {
+      location: { directory: WORK },
+      data: {
+        id,
+        status,
+        command: SHELL_COMMAND,
+        cwd: WORK,
+        shell: "/bin/sh",
+        file: `/tmp/${id}.log`,
+        metadata: { sessionID: SESSION },
+        time: { started: 1 },
+      },
+    }),
+  ];
+
   it.effect("keeps a running background shell pending across a successful stream reconnect", () =>
     Effect.gen(function* () {
-      const gate = makeProviderReplayGate(["drop"]);
+      const gate = makeProviderReplayGate(["drop", "queued-drop", "delivered-drop"]);
       const { runtime, thread } = yield* resumed(
         [
-          ...shellTurn("sh_1"),
+          ...shellTurn("sh_1", "sh_2"),
           event("session.usage.updated", { sessionID: SESSION }, "drop"),
           { type: "runtime_exit", status: "success" },
           out("event.subscribe"),
           out("session.active"),
           // Background shells outlive executions, so their parent need not be active.
           replyData("session.active", {}),
+          ...shellStatus("sh_1", "running"),
+          // This shell completed and its result was delivered during the gap.
+          ...shellStatus("sh_2", "exited"),
+          out("session.inbox.list", { sessionID: SESSION }),
+          replyData("session.inbox.list", []),
           readMarker("reconnected"),
+          event("session.usage.updated", { sessionID: SESSION }, "queued-drop"),
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", {}),
+          ...shellStatus("sh_1", "exited"),
+          out("session.inbox.list", { sessionID: SESSION }),
+          replyData("session.inbox.list", [
+            {
+              id: "msg_shell_1",
+              sessionID: SESSION,
+              type: "synthetic",
+              payload: { text: "finished", metadata: { source: "shell", shellID: "sh_1" } },
+              delivery: "steer",
+              time: { created: 1 },
+            },
+          ]),
+          readMarker("recovered-result"),
+          event("session.usage.updated", { sessionID: SESSION }, "delivered-drop"),
+          { type: "runtime_exit", status: "success" },
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", {}),
+          out("session.inbox.list", { sessionID: SESSION }),
+          replyData("session.inbox.list", []),
+          readMarker("delivered-result"),
         ],
         { replayGate: gate },
       );
@@ -1151,6 +1206,14 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.seen.models.has("opencode/reconnected"));
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      gate.release("queued-drop");
+      yield* watch.until(() => watch.seen.models.has("opencode/recovered-result"));
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+      gate.release("delivered-drop");
+      yield* watch.until(() => watch.seen.models.has("opencode/delivered-result"));
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
     }).pipe(Effect.scoped),
   );
 
