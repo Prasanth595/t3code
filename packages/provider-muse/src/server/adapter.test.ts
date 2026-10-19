@@ -1202,6 +1202,61 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("refreshes an absorbed child approval stage after its automatic decision fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const acknowledgement = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("approval/decide", acknowledgement.promise);
+      const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+      yield* fake.emit("approval/requested", childApproval);
+      const first = (yield* harness.takeEvent("runtime_request.updated")).runtimeRequest;
+      yield* fake.takeCall("approval/decide");
+      const nextStage = {
+        ...childApproval,
+        currentRequirementId: { approvalId: "approval-1", sourceIndex: 1 },
+        subject: { kind: "shell", command: "touch next-stage.txt" },
+        change: { kind: "stageResolved" },
+      };
+      yield* fake.emit("approval/updated", nextStage);
+      yield* fake.emit("item/completed", {
+        turnId: nativeId,
+        item: {
+          itemId: "frontier-ingested",
+          turnId: nativeId,
+          kind: "agentMessage",
+          revision: 1,
+          status: "completed",
+          text: "frontier ingested",
+        },
+      });
+      yield* harness.takeEvent(
+        "message.updated",
+        (event) => event.message.text === "frontier ingested",
+      );
+      acknowledgement.reject(new Error("Decision acknowledgement failed"));
+      const refreshed = (yield* harness.takeEvent("runtime_request.updated")).runtimeRequest;
+      assert.strictEqual(refreshed.id, first.id);
+      assert.strictEqual(refreshed.status, "pending");
+      const card = yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) =>
+          event.turnItem.type === "approval_request" &&
+          event.turnItem.prompt === nextStage.subject.command,
+      );
+      assert.strictEqual(card.turnItem.nodeId, first.nodeId);
+      const nextDecision = yield* fake.takeCall("approval/decide");
+      assert.deepStrictEqual(nextDecision.params.requirementId, nextStage.currentRequirementId);
+      assert.strictEqual(nextDecision.params.choiceId, "once");
+      yield* fake.emit("approval/resolved", nextStage);
+      yield* harness.takeEvent(
+        "runtime_request.updated",
+        (event) => event.runtimeRequest.status === "resolved",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("keeps a workflow child's approval pending for the user past the turn's end", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

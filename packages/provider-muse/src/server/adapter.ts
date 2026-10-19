@@ -1102,6 +1102,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               roundTrip.terminal ||= exit._tag === "Success" && exit.value.terminal === true;
               if (exit._tag === "Failure" && owner === "adapter" && !roundTrip.terminal) {
                 delete entry.response;
+                if (
+                  entry.native.type === "approval" &&
+                  (entry.native.value.currentRequirementId.approvalId !==
+                    roundTrip.requirementId.approvalId ||
+                    entry.native.value.currentRequirementId.sourceIndex !==
+                      roundTrip.requirementId.sourceIndex)
+                )
+                  yield* publishRequest(entry.native);
                 return;
               }
               // Notifications keep flowing during the RPC; release an absorbed stage only now.
