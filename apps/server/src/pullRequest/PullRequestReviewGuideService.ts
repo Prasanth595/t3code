@@ -160,12 +160,7 @@ const make = Effect.gen(function* () {
     stack: PullRequestStack | null,
     runId: string,
   ) {
-    // The remote for the pull request's own repository, not the checkout's primary one: in a
-    // fork's checkout that is `upstream`, and the fork's `origin` may have a base branch far
-    // behind the one the pull request targets. Found by URL among the remotes as they are now,
-    // since the identity is cached and its remote may have been renamed since. `ls-remote
-    // --get-url` reports the URL git would fetch from, as the identity's was read, and unlike
-    // `remote get-url` it also answers for a remote configured outside the repository.
+    // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
     const names = yield* git
       .execute({
         operation: "PullRequestReviewGuideService.listRemotes",
@@ -180,7 +175,7 @@ const make = Effect.gen(function* () {
           .execute({
             operation: "PullRequestReviewGuideService.remoteUrl",
             cwd: workspaceRoot,
-            args: ["ls-remote", "--get-url", "--", name],
+            args: ["remote", "get-url", "--", name],
           })
           .pipe(
             Effect.map((result) => result.stdout.trim() === locator.remoteUrl),

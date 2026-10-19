@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -147,7 +148,6 @@ const stack = (repositories: {
 
 const makeLayer = (input: {
   readonly root: string;
-  /** The repository the workspace was cloned from, which the project's identity points at. */
   readonly remote: string;
   readonly workspace: string;
   readonly headSha: string;
@@ -660,18 +660,22 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     ),
   );
 
-  it.effect("measures a fork checkout's change from the upstream base, not the fork's", () =>
+  it.effect("measures only the PR change using the renamed verified remote's fetch URL", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repositories = yield* makeRepositories;
-        // The checkout becomes a fork's: `origin` is a copy whose base branch never took the
-        // commit the change is built on, and the pull request's repository is `upstream`. The
-        // project's identity still names it `origin`, as a cached one does after the rename.
         const fork = `${repositories.root}/fork`;
-        yield* git(repositories.root, ["clone", "--quiet", "--bare", repositories.remote, fork]);
-        yield* git(fork, ["update-ref", "refs/heads/stack-base", "refs/heads/main~1"]);
+        yield* git(repositories.root, ["clone", "--quiet", repositories.remote, fork]);
+        yield* git(fork, ["branch", "stack-base", "main~1"]);
+        // The cached identity still names origin, which now belongs to the stale fork.
         yield* git(repositories.workspace, ["remote", "rename", "origin", "upstream"]);
         yield* git(repositories.workspace, ["remote", "add", "origin", fork]);
+        yield* git(repositories.workspace, [
+          "config",
+          `url.${repositories.remote}.insteadOf`,
+          "review-upstream:",
+        ]);
+        yield* git(repositories.workspace, ["remote", "set-url", "upstream", "review-upstream:"]);
         const changed = yield* Deferred.make<string>();
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const stored = yield* Deferred.make<void>();
@@ -693,20 +697,61 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
         yield* service.generate(reference);
-        const failedRun = service.get(reference).pipe(
-          Effect.flatMap((result) =>
-            result.run?._tag === "Failed"
-              ? Effect.die(`run failed: ${result.run.detail}`)
-              : Effect.fail("still running" as const),
+        assert.strictEqual(yield* Deferred.await(changed), "feature.txt");
+        yield* Deferred.await(stored);
+        const result = yield* service.get(reference);
+        assert.strictEqual(result.guide?.headSha, repositories.headSha);
+        assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+      }),
+    ),
+  );
+
+  it.effect("refuses generation when the verified remote disappeared despite a usable origin", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fork = `${repositories.root}/fork`;
+        yield* git(repositories.root, ["clone", "--quiet", repositories.remote, fork]);
+        yield* git(fork, ["branch", "stack-base", repositories.lowerSha]);
+        yield* git(repositories.workspace, ["remote", "set-url", "origin", fork]);
+        const started = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+        const stored = yield* Deferred.make<void>();
+        const generated = yield* Ref.make(false);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            generate: () => Ref.set(generated, true).pipe(Effect.as({ stops: [] })),
+          }).pipe(
+            Layer.provide(
+              Layer.succeed(GitVcsDriver.GitVcsDriver, {
+                ...driver,
+                execute: (call) =>
+                  Effect.withFiber((fiber) =>
+                    Deferred.succeed(started, fiber).pipe(Effect.andThen(driver.execute(call))),
+                  ),
+              }),
+            ),
           ),
-          Effect.retry(Schedule.spaced("20 millis")),
         );
-        // Measured from the fork's stale base this would also name lower.txt.
-        assert.strictEqual(
-          yield* Effect.raceFirst(Deferred.await(changed), failedRun),
-          "feature.txt",
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
-        yield* Effect.raceFirst(Deferred.await(stored), failedRun);
+        const before = yield* service.get(reference);
+        yield* service.generate(reference);
+        // Join the background run so its failure is visible without polling service state.
+        yield* Fiber.await(yield* Deferred.await(started));
+        const result = yield* service.get(reference);
+        assert.strictEqual(result.run?._tag, "Failed");
+        assert.include(
+          result.run?._tag === "Failed" ? result.run.detail : "",
+          "no longer has a remote for the pull request's repository",
+        );
+        assert.deepStrictEqual(result.guide, before.guide);
+        assert.isFalse(yield* Deferred.isDone(stored));
+        assert.isFalse(yield* Ref.get(generated));
       }),
     ),
   );
