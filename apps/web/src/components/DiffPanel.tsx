@@ -96,7 +96,6 @@ import { vcsEnvironment } from "../state/vcs";
 import { buildBaseRefChoices, filterBaseRefChoices } from "../lib/baseRefChoices";
 import { createGitDiffFileContentsLoader } from "../lib/diffFileContents";
 
-import { reviewDiffViewerKey } from "./diffs/reviewFileDiffRetention";
 import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
@@ -373,13 +372,13 @@ export default function DiffPanel({
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
     : null;
 
-  const selectedGitSource = branchDiffPreview.data?.sources.find(
+  const preview = branchDiffPreview.isSuccess ? branchDiffPreview.data : null;
+  const selectedGitSource = preview?.sources.find(
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
   const refreshPreviewQuery = branchDiffPreview.refresh;
   const refreshDiffFromUserAction = refreshPreviewQuery;
 
-  const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 
   const toolCallPreview =
@@ -387,7 +386,9 @@ export default function DiffPanel({
   const selectedPatch = toolCallSelection
     ? toolCallPreview?.patch
     : selectedTurn
-      ? activeCheckpointDiff.data?.diff
+      ? activeCheckpointDiff.error === null
+          ? activeCheckpointDiff.data?.diff
+          : undefined
       : gitDiff;
   const isSelectedPatchTruncated =
     toolCallPreview?.truncated === true ||
@@ -507,10 +508,11 @@ export default function DiffPanel({
     settledFileCount,
     loadNextFiles,
   } = useReviewFilePatches({
+    reviewKey: collapseScopeKey,
     environmentId: activeThread?.environmentId,
     cwd: branchDiffPreview.data?.cwd,
-    source: lazySource,
-    baseRef: lazySource?.baseRef ?? selectedBaseRef,
+    source: selectedGitSource ?? null,
+    baseRef: selectedGitSource?.baseRef ?? selectedBaseRef,
     ignoreWhitespace: diffIgnoreWhitespace,
     theme: resolvedTheme,
     previewInput: branchDiffPreviewInput,
@@ -1156,10 +1158,7 @@ export default function DiffPanel({
                   <AnnotatableCodeView
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={codeViewReveal.attach}
-                    codeViewKey={reviewDiffViewerKey(
-                      codeViewMountKey,
-                      lazySource ? filePatchFamily : null,
-                    )}
+                    codeViewKey={`${codeViewMountKey}:${filePatchFamily}`}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}

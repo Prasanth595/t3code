@@ -987,10 +987,6 @@ export default function ChatView(props: ChatViewProps) {
     explicitDiffOpenRef.current = null;
     const previous = diffPanelOpenContextRef.current;
     diffPanelOpenContextRef.current = { threadKey: activeThreadKey, diffOpen };
-    // Generic openings show Changes: the first time the diff is on screen, a tab
-    // fallback, or a switch to another thread. A timeline click keeps its turn.
-    // An agent turn replaces the thread shell without closing the diff, and that
-    // refresh must leave Uncommitted or the selected turn alone.
     if (
       activeThreadRef &&
       shouldResetDiffSelectionToChanges({
