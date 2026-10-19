@@ -34,6 +34,10 @@ import {
 } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
+import {
+  type DeregisteringEnvironments,
+  settleDeregisteringEnvironments,
+} from "./deregisteringEnvironments";
 import { environmentStatusText } from "./environmentStatusText";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
@@ -77,14 +81,19 @@ function CloudEnvironmentRowsContent(
 ) {
   const controller = useConnectionController();
   const discoveryAvailable = props.discoveryAvailable ?? true;
-  // Rows hide while their deregistration and the discovery refresh after it
-  // run, so a listing fetched before the unlink cannot bring them back.
-  const [deregisteringIds, setDeregisteringIds] = useState<ReadonlySet<EnvironmentId>>(new Set());
-  const availableCloudEnvironments = (
-    discoveryAvailable
-      ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
-      : []
-  ).filter((entry) => !deregisteringIds.has(entry.environment.environmentId));
+  const [deregistering, setDeregistering] = useState<DeregisteringEnvironments>(new Map());
+  const listedCloudEnvironments = discoveryAvailable
+    ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
+    : [];
+  const listedIds = new Set(
+    listedCloudEnvironments.map((entry) => entry.environment.environmentId),
+  );
+  if (settleDeregisteringEnvironments(deregistering, listedIds) !== deregistering) {
+    setDeregistering((current) => settleDeregisteringEnvironments(current, listedIds));
+  }
+  const availableCloudEnvironments = listedCloudEnvironments.filter(
+    (entry) => !deregistering.has(entry.environment.environmentId),
+  );
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
@@ -111,23 +120,21 @@ function CloudEnvironmentRowsContent(
         );
         return;
       }
-      const showRow = () =>
-        setDeregisteringIds((current) => {
-          const next = new Set(current);
-          next.delete(environmentId);
-          return next;
-        });
-      setDeregisteringIds((current) => new Set(current).add(environmentId));
+      setDeregistering((current) => new Map(current).set(environmentId, "pending"));
       const result = await deregisterEnvironment({ accountId, environmentId });
       if (result._tag === "Success") {
+        setDeregistering((current) =>
+          current.has(environmentId) ? new Map(current).set(environmentId, "unlinked") : current,
+        );
+        void controller.refreshRelayEnvironments();
         refreshManagedRelayEnvironments(accountId);
-        // Discovery refreshes run one at a time, so this listing is fetched
-        // after the unlink. A later re-link can then show the row again.
-        await controller.refreshRelayEnvironments();
-        showRow();
         return;
       }
-      showRow();
+      setDeregistering((current) => {
+        const next = new Map(current);
+        next.delete(environmentId);
+        return next;
+      });
       if (isAtomCommandInterrupted(result)) return;
       alertDeregisterFailure(environmentId, squashAtomCommandFailure(result));
     });
