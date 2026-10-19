@@ -114,6 +114,9 @@ const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+const decodeReleasePackageManifest = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 const decodeWorkspaceConfig = Schema.decodeEffect(fromYaml(WorkspaceConfig));
 const encodeStageWorkspaceConfig = Schema.encodeEffect(fromYaml(StageWorkspaceConfig));
 
@@ -1813,7 +1816,7 @@ export class DesktopBuildAlreadyRunningError extends Schema.TaggedError<DesktopB
   { lockPath: Schema.String },
 ) {
   override get message(): string {
-    return `Another desktop build owns '${this.lockPath}'. Wait for it to finish. If a build was killed, remove this lock only after confirming no desktop build is running.`;
+    return `Another desktop build owns '${this.lockPath}'. Wait for it to finish. If a build was killed, confirm no desktop build is running, inspect and restore any changed release manifests, then remove this lock.`;
   }
 }
 
@@ -1856,10 +1859,18 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
   const path = yield* Path.Path;
   const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
   yield* Effect.acquireUseRelease(
-    Effect.forEach(releasePackageFiles, (relativePath) => {
-      const filePath = path.join(repoRoot, relativePath);
-      return fs.readFileString(filePath).pipe(Effect.map((contents) => ({ filePath, contents })));
-    }),
+    Effect.forEach(releasePackageFiles, (relativePath) =>
+      Effect.gen(function* () {
+        const filePath = path.join(repoRoot, relativePath);
+        const contents = yield* fs.readFileString(filePath);
+        const needsRestore = yield* decodeReleasePackageManifest(contents).pipe(
+          Effect.map((manifest) => manifest.version !== appVersion),
+          // Let alignment report invalid manifests after any preceding writes.
+          Effect.orElseSucceed(() => false),
+        );
+        return { filePath, contents, needsRestore };
+      }),
+    ),
     () =>
       Effect.gen(function* () {
         yield* updateReleasePackageVersions(appVersion, { rootDir: repoRoot });
@@ -1876,14 +1887,17 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
       }),
     (originals, exit) =>
       Effect.gen(function* () {
-        const [, failures] = yield* Effect.partition(originals, ({ filePath, contents }) =>
-          fs
-            .writeFileString(filePath, contents)
-            .pipe(
-              Effect.mapError(
-                (cause) => new ReleasePackageManifestError({ operation: "write", filePath, cause }),
+        const [, failures] = yield* Effect.partition(
+          originals.filter(({ needsRestore }) => needsRestore),
+          ({ filePath, contents }) =>
+            fs
+              .writeFileString(filePath, contents)
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ReleasePackageManifestError({ operation: "write", filePath, cause }),
+                ),
               ),
-            ),
         );
         if (failures.length === 0) return;
         const error = new DesktopBuildManifestRestoreError({ failures });
