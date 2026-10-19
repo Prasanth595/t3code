@@ -187,7 +187,7 @@ const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSett
 const decodeEnabledPluginSettings = Schema.decodeUnknownEffect(
   fromLenientJson(
     Schema.Struct({
-      enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
+      enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
     }),
   ),
 );
@@ -254,7 +254,12 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
       Effect.orElseSucceed(() => undefined),
     );
     for (const [key, enabled] of Object.entries(pluginSettings?.enabledPlugins ?? {})) {
-      enabledPlugins.set(key, enabled);
+      if (typeof enabled === "boolean") {
+        enabledPlugins.set(key, enabled);
+      } else {
+        // Extended formats replace lower-precedence values without enabling the plugin here.
+        enabledPlugins.delete(key);
+      }
     }
   }
 
@@ -460,19 +465,16 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      // Plain skills use directory names; plugins also expose their frontmatter alias.
       const directoryName = entry.trim();
       if (!directoryName) continue;
-      const pluginName =
-        frontmatter.kind === "parsed" && frontmatter.name
-          ? frontmatter.name
-          : entry.replace(/[^a-zA-Z0-9_-]/g, "-");
-      const name = root.prefix
-        ? pluginName.startsWith(`${root.prefix}:`)
-          ? pluginName
-          : `${root.prefix}:${pluginName}`
-        : directoryName;
+      let name = directoryName;
       if (root.prefix) {
+        // Native folder skills use their folder; only a single SKILL.md uses its name field.
+        const declaredName = singleSkill && frontmatter.kind === "parsed" ? frontmatter.name : "";
+        const unprefixedName = declaredName?.startsWith(`${root.prefix}:`)
+          ? declaredName.slice(root.prefix.length + 1)
+          : declaredName;
+        name = `${root.prefix}:${(unprefixedName || entry).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
         // Advertise only exact native names the shared composer grammar can invoke.
         const [mention] = `$${name}`.matchAll(SKILL_MENTION_PATTERN);
         if (mention?.[2] !== name) continue;
@@ -482,7 +484,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      const override = skillOverrides.get(name);
+      const override = root.prefix ? undefined : skillOverrides.get(name);
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
