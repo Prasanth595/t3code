@@ -38,4 +38,15 @@ describe("limitRecoveryCommand arming", () => {
     const arm = limitRecoveryCommand(thread, true, nowMs);
     assert.equal(arm?.type, "thread.metadata.update");
   });
+
+  it("arms a reset that is exactly 24 hours overdue", () => {
+    const thread = failedThread(30 * HOUR_MS, 24 * HOUR_MS);
+    const arm = limitRecoveryCommand(thread, true, nowMs);
+    assert.equal(arm?.type, "thread.metadata.update");
+  });
+
+  it("does not arm a reset that is 24 hours and 1ms overdue", () => {
+    const thread = failedThread(30 * HOUR_MS, 24 * HOUR_MS + 1);
+    assert.isNull(limitRecoveryCommand(thread, true, nowMs));
+  });
 });
