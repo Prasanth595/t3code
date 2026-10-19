@@ -222,6 +222,7 @@ export interface AcpAdapterV2Flavor {
     EffectAcpErrors.AcpError,
     ChildProcessSpawner.ChildProcessSpawner | Crypto.Crypto | Scope.Scope
   >;
+  readonly customModels?: ReadonlyArray<string>;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   readonly getModelContextWindow?: (
     selection: ModelSelection,
@@ -5846,14 +5847,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               modelSelection,
             });
           } else if (requestedModel.length > 0) {
-            // Stored choices can outlive the catalog. Use the live options and
-            // keep the agent's current model when the requested id is absent.
+            // Stored catalog choices can expire; explicitly configured custom IDs
+            // are validated by the agent instead.
+            const isCustomModel = flavor.customModels?.includes(requestedModel) === true;
             const modelOption = (yield* runtime.getConfigOptions).find(
               (option) => option.category === "model" && option.type === "select",
             );
             const modelState = startResult.sessionSetupResult.models;
             if (modelOption?.type === "select") {
               if (
+                isCustomModel ||
                 modelOption.options.some((entry) =>
                   "value" in entry
                     ? entry.value === requestedModel
@@ -5865,7 +5868,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             } else if (
               modelState != null &&
-              modelState.availableModels.some((model) => model.modelId === requestedModel)
+              (isCustomModel ||
+                modelState.availableModels.some((model) => model.modelId === requestedModel))
             ) {
               if (modelState.currentModelId !== requestedModel) {
                 yield* runtime.setSessionModel(requestedModel);

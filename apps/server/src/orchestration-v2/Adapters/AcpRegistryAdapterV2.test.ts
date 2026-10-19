@@ -170,6 +170,7 @@ describe("AcpRegistryAdapterV2", () => {
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
+      readonly customModels?: ReadonlyArray<string>;
       readonly storedModel?: string;
       readonly storedModePick?: string;
       readonly turnModels?: ReadonlyArray<string>;
@@ -209,9 +210,11 @@ describe("AcpRegistryAdapterV2", () => {
         settings: yield* decodeAcpRegistryAdapterSettings({
           agentId: "fixture-agent",
           authMethodId: "test",
+          customModels: input.customModels ?? [],
         }),
         environment: {},
         makeRuntime: makeAcpReplayRuntime({
+          customModels: input.customModels,
           transcript,
           statusPath,
           scriptPath: yield* path.fromFileUrl(
@@ -285,7 +288,13 @@ describe("AcpRegistryAdapterV2", () => {
           );
           yield* runtime.events.pipe(
             Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runDrain,
+            Stream.runForEach((event) =>
+              Effect.sync(() => {
+                if (event.type === "turn.terminal") {
+                  assert.equal(event.status, "completed", event.failure?.message);
+                }
+              }),
+            ),
           );
           configurations.push(published);
           current = target;
@@ -374,11 +383,25 @@ describe("AcpRegistryAdapterV2", () => {
                 })),
               },
             },
+            customModels: ["custom-model"],
             storedModel: "default",
-            turnModels: ["hermes", "auto", "default", "hermes", "auto", "default", "hermes"],
+            turnModels: [
+              "hermes",
+              "custom-model",
+              "auto",
+              "default",
+              "hermes",
+              "custom-model",
+              "auto",
+              "custom-model",
+              "default",
+              "hermes",
+            ],
             pickFrames: [
               ...setModel("default"),
               ...setModel("hermes"),
+              ...prompt(),
+              ...setModel("custom-model"),
               ...prompt(),
               ...setModel("auto"),
               ...prompt(),
@@ -389,10 +412,26 @@ describe("AcpRegistryAdapterV2", () => {
               outbound("session/set_config_option", {
                 sessionId: "agent-session",
                 configId: "live-model",
+                value: "custom-model",
+              }),
+              answer("session/set_config_option", { configOptions: [flatOption("custom-model")] }),
+              ...prompt(),
+              outbound("session/set_config_option", {
+                sessionId: "agent-session",
+                configId: "live-model",
                 value: "auto",
               }),
               answer("session/set_config_option", { configOptions: [flatOption("auto")] }),
               ...prompt(configOptionUpdate([groupedOption("auto")])),
+              outbound("session/set_config_option", {
+                sessionId: "agent-session",
+                configId: "replacement-model",
+                value: "custom-model",
+              }),
+              answer("session/set_config_option", {
+                configOptions: [groupedOption("custom-model")],
+              }),
+              ...prompt(),
               outbound("session/set_config_option", {
                 sessionId: "agent-session",
                 configId: "replacement-model",
@@ -412,9 +451,12 @@ describe("AcpRegistryAdapterV2", () => {
             [
               { models: ["hermes", "auto", "default"], current: "default" },
               { models: ["hermes", "auto", "default"], current: "hermes" },
+              { models: ["hermes", "auto", "default"], current: null },
               { models: ["hermes", "auto", "default"], current: "auto" },
               { models: ["hermes", "auto", "default"], current: "default" },
               { models: ["auto"], current: null },
+              { models: ["auto"], current: null },
+              { models: ["default"], current: null },
               { models: ["default"], current: null },
               { models: ["hermes", "auto", "default"], current: "default" },
               { models: ["hermes", "auto", "default"], current: "hermes" },
