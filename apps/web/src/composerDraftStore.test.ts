@@ -17,7 +17,9 @@ import {
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
+  type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import {
   collectAssistantCitations,
@@ -73,11 +75,11 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  deriveEffectiveComposerModelState,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
-import { draftModelSelectionApplies } from "./lib/chatThreadActions";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import { insertInlineContextReference } from "./lib/composerContextReferences";
 import { terminalContextReference, threadContextRecord } from "./lib/composerContextRecords";
@@ -1963,82 +1965,100 @@ describe("composerDraftStore modelSelection", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
   });
 
-  it("lets only an explicit draft selection override a started thread", () => {
-    expect(draftModelSelectionApplies(undefined, false)).toBe(true);
-    expect(draftModelSelectionApplies({}, false)).toBe(true);
-    expect(draftModelSelectionApplies(undefined, true)).toBe(false);
-    expect(draftModelSelectionApplies({}, true)).toBe(false);
-    expect(draftModelSelectionApplies({ modelSelectionExplicit: true }, true)).toBe(true);
-  });
+  describe("effective selection on a started thread", () => {
+    const codexModels = ["gpt-5.4", "gpt-5.3-codex"];
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        instanceId: CODEX_INSTANCE,
+        driver: CODEX_DRIVER,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: codexModels.map((slug) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {},
+        })),
+        slashCommands: [],
+        skills: [],
+      },
+    ];
+    const threadSelection = modelSelection(CODEX_DRIVER, "gpt-5.3-codex", {
+      reasoningEffort: "low",
+    });
+    const effective = (threadStarted: boolean) =>
+      deriveEffectiveComposerModelState({
+        draft: useComposerDraftStore.getState().getComposerDraft(threadRef),
+        threadStarted,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        selectedInstanceId: CODEX_INSTANCE,
+        threadModelSelection: threadSelection,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      });
 
-  it("does not let a seeded model ride along when traits change on a started thread", () => {
-    const store = useComposerDraftStore.getState();
-    // New-thread seeding: not explicit.
-    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
-    // The started thread shows its own model, so the traits picker passes it.
-    store.setProviderModelOptions(
-      threadRef,
-      CODEX_DRIVER,
-      toSelections({ reasoningEffort: "high" }),
-      { instanceId: CODEX_INSTANCE, model: "gpt-5.3-codex", persistSticky: true },
-    );
+    it("follows the thread until the user picks a model", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(
+        threadRef,
+        modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+      );
 
-    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.modelSelectionExplicit).toBe(true);
-    expect(draft?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
-      modelSelection(CODEX_DRIVER, "gpt-5.3-codex", { reasoningEffort: "high" }),
-    );
-  });
+      expect(effective(false)).toEqual({
+        selectedModel: "gpt-5.4",
+        modelOptions: { [CODEX_INSTANCE]: toSelections({ reasoningEffort: "high" }) },
+      });
+      expect(effective(true)).toEqual({
+        selectedModel: "gpt-5.3-codex",
+        modelOptions: { [CODEX_INSTANCE]: toSelections({ reasoningEffort: "low" }) },
+      });
 
-  it("keeps the shown model when traits are cleared on a started thread", () => {
-    const store = useComposerDraftStore.getState();
-    store.setModelSelection(
-      threadRef,
-      modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "low" }),
-    );
-    store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
-      instanceId: CODEX_INSTANCE,
-      model: "gpt-5.3-codex",
+      store.setModelSelection(
+        threadRef,
+        modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" }),
+        { explicit: true },
+      );
+      expect(effective(true).selectedModel).toBe("gpt-5.4");
     });
 
-    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.modelSelectionExplicit).toBe(true);
-    expect(draft?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
-      modelSelection(CODEX_DRIVER, "gpt-5.3-codex"),
-    );
-  });
+    it("keeps the shown model when the user changes traits over a seed", () => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+      store.setProviderModelOptions(
+        threadRef,
+        CODEX_DRIVER,
+        toSelections({ reasoningEffort: "high" }),
+        { instanceId: CODEX_INSTANCE, model: "gpt-5.3-codex", persistSticky: true },
+      );
 
-  it("keeps the shown model when traits are cleared over an option-less seed", () => {
-    const store = useComposerDraftStore.getState();
-    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
-    store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
-      instanceId: CODEX_INSTANCE,
-      model: "gpt-5.3-codex",
+      expect(effective(true)).toEqual({
+        selectedModel: "gpt-5.3-codex",
+        modelOptions: { [CODEX_INSTANCE]: toSelections({ reasoningEffort: "high" }) },
+      });
     });
 
-    expect(
-      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
-    ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.3-codex"));
-  });
+    it("does not bring back the thread's traits after the user clears them", () => {
+      for (const seeded of [false, true]) {
+        resetComposerDraftStore();
+        const store = useComposerDraftStore.getState();
+        if (seeded) {
+          store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+        }
+        store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
+          instanceId: CODEX_INSTANCE,
+          model: "gpt-5.3-codex",
+        });
 
-  it("marks a trait choice explicit even when it matches the seeded state", () => {
-    const store = useComposerDraftStore.getState();
-    const seeded = modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" });
-    store.setStickyModelSelection(seeded);
-    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6"));
-    store.setModelSelection(threadRef, seeded);
-    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
-
-    store.setProviderModelOptions(
-      threadRef,
-      CODEX_DRIVER,
-      toSelections({ reasoningEffort: "high" }),
-      { instanceId: CODEX_INSTANCE, model: "gpt-5.4", persistSticky: true },
-    );
-
-    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.modelSelectionExplicit).toBe(true);
-    expect(draft?.activeProvider).toBe(CODEX_INSTANCE);
+        const state = effective(true);
+        expect(state.selectedModel).toBe("gpt-5.3-codex");
+        expect(state.modelOptions?.[CODEX_INSTANCE] ?? []).toEqual([]);
+      }
+    });
   });
 
   it("persists the explicit marker through storage round-trips", async () => {

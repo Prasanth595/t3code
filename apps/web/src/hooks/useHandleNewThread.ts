@@ -34,6 +34,7 @@ import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  threadShellHasStarted,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -107,16 +108,9 @@ export function useNewThreadHandler() {
             : currentRouteTarget.draftId,
         )
       : null;
-    // A started thread's seeded draft model is not what it runs on; carry the
-    // thread's own model instead.
-    const carrySourceStarted =
-      carrySourceShell != null &&
-      (carrySourceShell.latestRun !== null ||
-        carrySourceShell.latestUserMessageAt !== null ||
-        carrySourceShell.runtime !== null);
     const composerActiveProvider = draftModelSelectionApplies(
       carrySourceComposer,
-      carrySourceStarted,
+      threadShellHasStarted(carrySourceShell),
     )
       ? (carrySourceComposer?.activeProvider ?? null)
       : null;

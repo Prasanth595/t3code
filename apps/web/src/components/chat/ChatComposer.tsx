@@ -101,8 +101,8 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   threadHasStarted,
-  threadShellHasStarted,
 } from "../ChatView.logic";
+import { draftModelSelectionApplies, threadShellHasStarted } from "../../lib/chatThreadActions";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -130,7 +130,6 @@ import {
   deriveEffectiveComposerModelState,
   useComposerDraftModelState,
 } from "../../composerDraftStore";
-import { draftModelSelectionApplies } from "../../lib/chatThreadActions";
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
@@ -1807,7 +1806,7 @@ function useComposerProviderModel(
     lockedInstanceId,
     threadStarted,
   } = input;
-  const draftModelState = useComposerDraftModelState(threadRef, { threadStarted });
+  const draftModelState = useComposerDraftModelState(threadRef);
   const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(providerStatuses),
@@ -1827,6 +1826,7 @@ function useComposerProviderModel(
     selection.selectedProviderEntry?.driverKind ?? selection.requestedDriverKind;
   const modelState = deriveEffectiveComposerModelState({
     draft: draftModelState,
+    threadStarted,
     providers: providerStatuses,
     selectedProvider,
     selectedInstanceId,
