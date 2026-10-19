@@ -60,6 +60,8 @@ import {
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const LITELLM_RATES_API_URL =
+  "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main";
 
 const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -225,6 +227,18 @@ export const make = Effect.gen(function* () {
     knownModels: rates.size,
   });
 
+  const fetchRates = (url: string, accept = "application/json") =>
+    httpClient.get(url, { headers: { accept } }).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.map((document) => {
+        const parsed = parseRateTable(document);
+        return parsed.size > 0 ? { document, parsed } : null;
+      }),
+      Effect.timeout(10_000),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
+
   const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
     const maxAgeMs = force ? RATES_REFRESH_FLOOR_MS : RATES_TTL_MS;
@@ -248,26 +262,22 @@ export const make = Effect.gen(function* () {
 
     if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_RETRY_FLOOR_MS) return;
 
-    const fetched = yield* httpClient.get(LITELLM_RATES_URL).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.timeout(10_000),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
-    const parsed = fetched === null ? null : parseRateTable(fetched);
-    if (parsed === null || parsed.size === 0) {
+    let fetched = yield* fetchRates(LITELLM_RATES_URL);
+    if (fetched === null) {
+      fetched = yield* fetchRates(LITELLM_RATES_API_URL, "application/vnd.github.raw+json");
+    }
+    if (fetched === null) {
       ratesLastFailedAtMs = yield* Clock.currentTimeMillis;
       if (rates.size > 0) ratesStatus = "cached";
       return;
     }
 
-    ratesLastFailedAtMs = null;
-
-    rates = parsed;
+    rates = fetched.parsed;
     ratesFetchedAtMs = now;
+    ratesLastFailedAtMs = null;
     ratesStatus = "fresh";
 
-    yield* encodeRatesCache({ fetchedAtMs: now, document: fetched }).pipe(
+    yield* encodeRatesCache({ fetchedAtMs: now, document: fetched.document }).pipe(
       Effect.flatMap((contents) => writeCacheFile(ratesCachePath, contents)),
       Effect.ignoreCause,
     );
