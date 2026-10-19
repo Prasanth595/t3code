@@ -23,7 +23,6 @@ export const deviceHubDescription =
 export const agentDeviceDescription =
   "Allow new agent sessions in this environment to start and control local and remote devices, with required tools set up automatically.";
 
-// AVD enumeration failures leave Android discovery incomplete independently of hub diagnostics.
 export const isAndroidDiscoveryUncertain = (state: DeviceServiceState) =>
   Object.values(state.hostStatuses).some(
     (status) => status.status === "ready" && status.androidDiscoveryIncomplete,
