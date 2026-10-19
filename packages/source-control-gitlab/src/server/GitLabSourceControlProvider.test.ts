@@ -1,4 +1,11 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { changeRequestUrlFor } from "@t3tools/shared/changeRequestUrl";
+import {
+  detectSourceControlProviderFromGitRemoteUrl,
+  normalizeGitRemoteUrl,
+} from "@t3tools/shared/git";
+import { refineUnknownRemoteProvider } from "@t3tools/source-control-core/server/discovery";
+import { processOutput } from "@t3tools/source-control-testing/TestSourceControlHost";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -241,65 +248,77 @@ it("tells a host glab has no login for apart from output that cannot say", () =>
   assert.strictEqual(refine("git.example.test\n  x API call failed: 503"), undefined);
 });
 
-it.effect("settles unknown identities served by a GitLab login for their host", () =>
-  Effect.gen(function* () {
-    const provider = yield* makeProvider({});
-    const refine = provider.refineRepositoryIdentity;
-    assert.isDefined(refine);
-    const identity = (remoteUrl: string, provider?: string) => ({
-      canonicalKey: "code.example.test/team/repo",
-      locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
-      rootPath: "/repo",
-      ...(provider === undefined ? {} : { provider }),
-    });
-    const askedHosts: string[] = [];
-    const servedBy =
-      (kind: string) =>
-      (input: { readonly context: { readonly provider: { readonly name: string } } }) => {
-        askedHosts.push(input.context.provider.name);
-        return Effect.succeed({
-          provider: { kind: SourceControlProviderKind.make(kind), name: "", baseUrl: "" },
-          remoteName: "origin",
-          remoteUrl: "",
-        });
+it.effect.each([
+  [
+    "https://code.example.test:8443@Code.Example.Test:8443/Team/Repo.git",
+    true,
+    "gitlab",
+    "Code.Example.Test:8443",
+  ],
+  ["git@code.example.test:team/repo.git", true, "gitlab"],
+  ["code.example.test:team/repo.git", true, "gitlab"],
+  ["git@code.example.test:/team/repo.git", true, "gitlab"],
+  ["https://code.example.test/team/repo.git", false, "unknown"],
+  ["https://github.com/team/repo.git", true, "github"],
+] as const)(
+  "resolves MR numbers for %s with authenticated=%s as %s",
+  ([remoteUrl, authenticated, expectedProvider, expectedAuthHost = "code.example.test"]) =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      const identity = {
+        canonicalKey: normalizeGitRemoteUrl(remoteUrl),
+        locator: { source: "git-remote" as const, remoteName: "upstream", remoteUrl },
+        rootPath: "/repo",
+        provider: detectSourceControlProviderFromGitRemoteUrl(remoteUrl)?.kind ?? "unknown",
       };
-
-    for (const remoteUrl of [
-      "https://code.example.test/team/repo.git",
-      "git@code.example.test:team/repo.git",
-      "code.example.test:team/repo.git",
-    ]) {
-      assert.deepStrictEqual(
-        yield* refine!({ identity: identity(remoteUrl), resolveContext: servedBy("gitlab") }),
-        { ...identity(remoteUrl), provider: SourceControlProviderKind.make("gitlab") },
+      let authCalls = 0;
+      const refined = yield* (
+        provider.refineRepositoryIdentity?.({
+          identity,
+          resolveContext: (input) =>
+            refineUnknownRemoteProvider({
+              ...input,
+              specs: [GitLabSourceControlProvider.discovery],
+              process: {
+                run: ({ command, args, cwd }) => {
+                  authCalls++;
+                  assert.deepStrictEqual(
+                    { command, args, cwd },
+                    {
+                      command: "glab",
+                      args: ["auth", "status", "--hostname", expectedAuthHost],
+                      cwd: "/repo",
+                    },
+                  );
+                  return Effect.succeed(
+                    processOutput(
+                      authenticated
+                        ? `${expectedAuthHost}\n  ✓ Logged in to ${expectedAuthHost} as gitlab-user\n`
+                        : "x code.example.test has not been authenticated with glab.",
+                      { exitCode: ChildProcessSpawner.ExitCode(authenticated ? 0 : 1) },
+                    ),
+                  );
+                },
+              },
+            }).pipe(
+              Effect.map(({ provider }) =>
+                provider ? { ...input.context, provider } : input.context,
+              ),
+            ),
+        }) ?? Effect.succeed(identity)
       );
-    }
-    // `glab` logins are matched against the provider name, so it has to be the host.
-    assert.deepStrictEqual(askedHosts, [
-      "code.example.test",
-      "code.example.test",
-      "code.example.test",
-    ]);
-
-    // A Windows drive path is not a remote, even if a login matches its drive letter.
-    const drivePath = identity("C:/repos/project");
-    assert.strictEqual(
-      yield* refine!({ identity: drivePath, resolveContext: () => Effect.die("not asked") }),
-      drivePath,
-    );
-
-    // A host no GitLab login serves, or an identity another host already owns, is left alone.
-    const unserved = identity("https://code.example.test/team/repo.git", "unknown");
-    assert.strictEqual(
-      yield* refine!({ identity: unserved, resolveContext: servedBy("unknown") }),
-      unserved,
-    );
-    const github = identity("https://github.com/team/repo.git", "github");
-    assert.strictEqual(
-      yield* refine!({ identity: github, resolveContext: () => Effect.die("not asked") }),
-      github,
-    );
-  }),
+      const [host, ...repository] = refined.canonicalKey.split("/");
+      assert.strictEqual(
+        changeRequestUrlFor(refined.provider, host!, repository.join("/"), 42),
+        expectedProvider === "gitlab"
+          ? "https://code.example.test/team/repo/-/merge_requests/42"
+          : expectedProvider === "github"
+            ? "https://github.com/team/repo/pull/42"
+            : null,
+      );
+      assert.deepStrictEqual(refined, { ...identity, provider: expectedProvider });
+      if (expectedProvider === "github") assert.strictEqual(authCalls, 0);
+    }),
 );
 
 it("parses authenticated GitLab auth status hosts with ports and single-label names", () => {

@@ -102,22 +102,16 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   } as const;
 }
 
-/** The provider an unknown remote reads as, named by its host, which is what `glab` logins match. */
 function unknownRemoteProvider(remoteUrl: string) {
-  const detected = detectSourceControlProviderFromRemoteUrl(remoteUrl);
-  if (detected) return detected.kind === "unknown" ? detected : null;
-  // An SCP remote with no user (`host:group/project.git`) is not detected. A one-letter host is
-  // a Windows drive (`C:/repos/project`), not a remote.
-  const host = /^([^@:/]{2,}):.+/.exec(remoteUrl.trim())?.[1]?.toLowerCase();
-  return host
-    ? { kind: SourceControlProviderKind.make("unknown"), name: host, baseUrl: `https://${host}` }
-    : null;
+  // The shared detector does not recognize userless SCP remotes.
+  const scpHost = /^([^@:/\\\s]{2,}):\/?[^/\s]+(?:\/[^/\s]+)+$/u.exec(remoteUrl.trim())?.[1];
+  const provider = detectSourceControlProviderFromRemoteUrl(
+    scpHost ? `ssh://${scpHost}` : remoteUrl,
+  );
+  return provider?.kind === "unknown" ? provider : null;
 }
 
-/**
- * A self-hosted GitLab whose host name does not say "gitlab" reads as `unknown`, so clients
- * cannot build its merge request URLs. A `glab` login for the remote's host settles it.
- */
+// A glab login confirms a self-hosted GitLab whose hostname does not identify its provider.
 const refineRepositoryIdentity: NonNullable<
   SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
 > = Effect.fn("GitLabSourceControlProvider.refineRepositoryIdentity")(function* ({
@@ -150,8 +144,13 @@ export const discovery = {
   authArgs: ["auth", "status"],
   // glab matches its configured hosts by exact name, so ask with the remote's own spelling.
   remoteRefinementArgs: ({ provider, remoteUrl }) => {
-    const at = remoteUrl.toLowerCase().indexOf(provider.name.toLowerCase());
-    const host = at < 0 ? provider.name : remoteUrl.slice(at, at + provider.name.length);
+    const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
+    const remoteHost = authority
+      ? authority.slice(authority.lastIndexOf("@") + 1)
+      : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
+    const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
+      ? remoteHost.slice(0, provider.name.length)
+      : provider.name;
     return ["auth", "status", "--hostname", host];
   },
   parseAuth: parseGitLabAuth,
