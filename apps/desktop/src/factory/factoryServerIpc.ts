@@ -41,8 +41,8 @@ const credentialFromInput = (input: string): string | null => {
 /**
  * What the pairing page shows for a failed exchange. Only the server turning the credential
  * down says "rejected"; an unreachable server and any other failure each get their own reason.
- * The token endpoint declares 400 and 401, and an older or foreign server may send a plain
- * OAuth error with 400, 401 or 403, which arrives as an undeclared status.
+ * The token endpoint answers a bad or stale credential with 401 auth_invalid. A 400 is an
+ * invalid request, not a rejected link. A foreign server may send an undeclared 401 or 403.
  */
 const pairingFailureReason = (error: RemoteEnvironmentAuthError): string => {
   switch (error._tag) {
@@ -50,13 +50,13 @@ const pairingFailureReason = (error: RemoteEnvironmentAuthError): string => {
     case "RemoteEnvironmentAuthTimeoutError":
       return `Could not reach the factory server at ${FORK_FACTORY_SERVER_URL}. Is it running?`;
     case "EnvironmentAuthInvalidError":
-    case "EnvironmentRequestInvalidError":
       return REJECTED_REASON;
     case "RemoteEnvironmentAuthUndeclaredStatusError":
-      return error.status === 400 || error.status === 401 || error.status === 403
+      return error.status === 401 || error.status === 403
         ? REJECTED_REASON
         : COULD_NOT_COMPLETE_REASON;
     case "RemoteEnvironmentAuthInvalidJsonError":
+    case "EnvironmentRequestInvalidError":
     case "EnvironmentScopeRequiredError":
     case "EnvironmentOperationForbiddenError":
     case "EnvironmentResourceNotFoundError":
