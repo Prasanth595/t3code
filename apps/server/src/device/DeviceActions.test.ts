@@ -113,7 +113,10 @@ describe("runDeviceAction", () => {
           "acceleration",
           "9.81:0:0",
         ]);
-        const phone = makeReady();
+        // A device that refuses `wm size` keeps the portrait-native mapping.
+        const phone = makeReady((call) =>
+          call.args.join(" ").endsWith("shell wm size") ? { code: 1 } : {},
+        );
         yield* runDeviceAction(phone.ready, "android", {
           type: "setOrientation",
           deviceId: "R5CT1234",
