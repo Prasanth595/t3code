@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -1013,6 +1014,7 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly hasMoreHistory?: boolean;
 }): Map<ChatMessage["id"], number> {
@@ -1023,21 +1025,30 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       rewindableCheckpointByRunId.set(checkpoint.runId, checkpoint);
     }
   }
-  const byUserMessageId = new Map<ChatMessage["id"], number>();
-  // A partial transcript cannot identify the first loaded message's predecessor.
+  const targetByRunId = new Map<RunId, number>();
+  // Wake runs and folded answers can survive without a visible user message.
   let predecessorTurnCount: number | null = input.hasMoreHistory ? null : 0;
+  let nextOrdinal = 1;
+  for (const run of input.runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
+    // Paging older messages does not load their run/checkpoint metadata.
+    if (run.ordinal !== nextOrdinal) predecessorTurnCount = null;
+    nextOrdinal = run.ordinal + 1;
+    if (run.status === "rolled_back" || run.status === "queued") continue;
+    const checkpoint = rewindableCheckpointByRunId.get(run.id);
+    if (checkpoint !== undefined && predecessorTurnCount !== null) {
+      targetByRunId.set(run.id, predecessorTurnCount);
+    }
+    predecessorTurnCount = checkpoint?.checkpointTurnCount ?? null;
+  }
+  const byUserMessageId = new Map<ChatMessage["id"], number>();
   for (const entry of input.timelineEntries) {
     if (entry.kind !== "message" || entry.message.role !== "user") continue;
     if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
       continue;
     }
     if (entry.message.runId === null) continue;
-    const checkpoint = rewindableCheckpointByRunId.get(entry.message.runId);
-    // Run ordinals keep increasing after rewind; only visible predecessors survive.
-    if (checkpoint !== undefined && predecessorTurnCount !== null) {
-      byUserMessageId.set(entry.message.id, predecessorTurnCount);
-    }
-    predecessorTurnCount = checkpoint?.checkpointTurnCount ?? null;
+    const target = targetByRunId.get(entry.message.runId);
+    if (target !== undefined) byUserMessageId.set(entry.message.id, target);
   }
   return byUserMessageId;
 }

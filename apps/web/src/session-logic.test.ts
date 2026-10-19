@@ -364,6 +364,9 @@ describe("V2 session presentation", () => {
     ]);
     expect(targets([1, 4], survivingRuns, true)).toEqual([["message-4", 1]]);
     expect(targets([4], [run(4, "completed")], true)).toEqual([]);
+    // Loading all transcript rows does not fill gaps in bounded run metadata.
+    expect(targets([1, 3], [run(3, "completed")])).toEqual([]);
+    expect(targets([1, 3], [run(1, "completed"), run(3, "completed")])).toEqual([["message-1", 0]]);
     expect([
       ...deriveRevertTurnCountByUserMessageId({
         timelineEntries: timeline([1, 2]),
@@ -1214,6 +1217,7 @@ describe("native provider presentation in the v2 timeline", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(rows.map((row) => row.kind)).toEqual(["message"]);
@@ -1432,6 +1436,7 @@ describe("HTML renders in the timeline", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     }).map((row) => row.kind);
 

@@ -144,6 +144,7 @@ describe("runtime diagnostics in the v2 work log", () => {
         completedAt: null,
       },
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     const diagnostic = rows.find((row) => row.id === baseItem.id);
