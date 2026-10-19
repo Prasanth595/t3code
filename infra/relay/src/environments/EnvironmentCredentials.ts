@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -128,66 +129,95 @@ const make = Effect.gen(function* () {
         ),
       );
       const now = DateTime.formatIso(yield* DateTime.now);
-      const createError =
-        (stage: EnvironmentCredentialCreatePersistenceError["stage"]) => (cause: unknown) =>
-          new EnvironmentCredentialCreatePersistenceError({
-            stage,
-            environmentId: input.environmentId,
-            credentialId: credential.credentialId,
-            cause,
-          });
-      // Concurrent links for one environment key must rotate one at a time:
-      // otherwise each request revokes the other's fresh credential and none
-      // survives. The transaction-scoped advisory lock serializes them across
-      // Workers, so the last request to commit keeps the only valid credential.
-      const lockCredentials = db
-        .execute(
-          sql`select pg_advisory_xact_lock(hashtext(${input.environmentId}::text), hashtext(${input.environmentPublicKey}::text))`,
-        )
-        .pipe(Effect.mapError(createError("lock-credentials")));
-      const insertCredential = db
-        .insert(relayEnvironmentCredentials)
-        .values({
-          credentialId: credential.credentialId,
-          environmentId: input.environmentId,
-          environmentPublicKey: input.environmentPublicKey,
-          credentialHash,
-          revokedAt: null,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .pipe(Effect.mapError(createError("insert-credential")));
-      const revokePreviousCredentials = db
-        .update(relayEnvironmentCredentials)
-        .set({
-          revokedAt: now,
-          updatedAt: now,
-        })
-        .where(
-          and(
-            eq(relayEnvironmentCredentials.environmentId, input.environmentId),
-            eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
-            ne(relayEnvironmentCredentials.credentialId, credential.credentialId),
-            isNull(relayEnvironmentCredentials.revokedAt),
-          ),
-        )
-        .pipe(Effect.mapError(createError("revoke-previous-credentials")));
+      // Serialize rotations across workers so the last commit keeps a valid credential.
       yield* db.$client
         .withTransaction(
-          lockCredentials.pipe(
-            Effect.andThen(insertCredential),
-            Effect.andThen(revokePreviousCredentials),
-          ),
+          Effect.gen(function* () {
+            yield* db
+              .execute(
+                sql`select pg_advisory_xact_lock(hashtext(${input.environmentId}::text), hashtext(${input.environmentPublicKey}::text))`,
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new EnvironmentCredentialCreatePersistenceError({
+                      stage: "lock-credentials",
+                      environmentId: input.environmentId,
+                      credentialId: credential.credentialId,
+                      cause,
+                    }),
+                ),
+              );
+            yield* db
+              .insert(relayEnvironmentCredentials)
+              .values({
+                credentialId: credential.credentialId,
+                environmentId: input.environmentId,
+                environmentPublicKey: input.environmentPublicKey,
+                credentialHash,
+                revokedAt: null,
+                createdAt: now,
+                updatedAt: now,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new EnvironmentCredentialCreatePersistenceError({
+                      stage: "insert-credential",
+                      environmentId: input.environmentId,
+                      credentialId: credential.credentialId,
+                      cause,
+                    }),
+                ),
+              );
+            yield* db
+              .update(relayEnvironmentCredentials)
+              .set({
+                revokedAt: now,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(relayEnvironmentCredentials.environmentId, input.environmentId),
+                  eq(relayEnvironmentCredentials.environmentPublicKey, input.environmentPublicKey),
+                  ne(relayEnvironmentCredentials.credentialId, credential.credentialId),
+                  isNull(relayEnvironmentCredentials.revokedAt),
+                ),
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new EnvironmentCredentialCreatePersistenceError({
+                      stage: "revoke-previous-credentials",
+                      environmentId: input.environmentId,
+                      credentialId: credential.credentialId,
+                      cause,
+                    }),
+                ),
+              );
+          }),
         )
         .pipe(
-          // A failed COMMIT or ROLLBACK surfaces as a defect; it is still a
-          // persistence failure the link response should report.
-          Effect.catchDefect((defect) =>
-            SqlError.isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect),
-          ),
-          Effect.mapError((cause) =>
-            SqlError.isSqlError(cause) ? createError("transaction")(cause) : cause,
-          ),
+          Effect.catchCause((cause) => {
+            // SQL finalizers can die; keep compound rollback causes and interruptions intact.
+            const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined;
+            const normalized =
+              reason && Cause.isDieReason(reason) && SqlError.isSqlError(reason.defect)
+                ? Cause.fail(reason.defect)
+                : cause;
+            return Effect.failCause(
+              Cause.map(normalized, (error) =>
+                SqlError.isSqlError(error)
+                  ? new EnvironmentCredentialCreatePersistenceError({
+                      stage: "transaction",
+                      environmentId: input.environmentId,
+                      credentialId: credential.credentialId,
+                      cause: error,
+                    })
+                  : error,
+              ),
+            );
+          }),
         );
       return credential.token;
     }),
