@@ -211,7 +211,7 @@ describe("registered Device panel", () => {
     );
   });
 
-  it("hides a failed pick that settles after the panel moved, even back again", async () => {
+  it("shows a late failed pick when returning to its starting scope", async () => {
     const pick = deferred();
     mocks.open.mockReturnValue(pick.promise);
     await mount(picking);
@@ -221,7 +221,7 @@ describe("registered Device panel", () => {
     await act(async () => root.render(render(picking)));
     await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
 
-    expect(errors()).toHaveLength(0);
+    expect(errors()).toHaveLength(1);
     expect(mocks.openDevice).not.toHaveBeenCalled();
   });
 
