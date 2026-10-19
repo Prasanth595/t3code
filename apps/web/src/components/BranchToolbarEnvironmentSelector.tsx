@@ -1,7 +1,6 @@
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
-import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -118,7 +117,6 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         <TooltipPopup>
           {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
-          <ShortcutHint command="composer.host" />
         </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>

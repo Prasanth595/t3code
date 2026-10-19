@@ -20,7 +20,6 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import { useAtomValue } from "@effect/atom-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -146,7 +145,6 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
             ? resolveEnvModeLabel("worktree")
             : resolveCurrentWorkspaceLabel(activeWorktreePath)}
           {shortcutLabel ? ` · ${shortcutLabel}` : null}
-          <ShortcutHint command="composer.workspace" />
         </TooltipPopup>
       </Tooltip>
       <SelectPopup
