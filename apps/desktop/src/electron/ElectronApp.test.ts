@@ -1,13 +1,16 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The relaunch regression needs a separate parent process that really exits.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
-import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { beforeEach, vi } from "vite-plus/test";
 
 const {
@@ -90,32 +93,7 @@ vi.mock("electron", () => ({
 
 import * as ElectronApp from "./ElectronApp.ts";
 
-const spawnedCommands: Array<ChildProcess.StandardCommand> = [];
-const electronAppLayer = ElectronApp.layer.pipe(
-  Layer.provide(
-    Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
-          spawnedCommands.push(command as ChildProcess.StandardCommand);
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(0),
-            exitCode: Effect.never,
-            isRunning: Effect.succeed(true),
-            kill: () => Effect.void,
-            stdin: undefined as never,
-            stdout: undefined as never,
-            stderr: undefined as never,
-            all: undefined as never,
-            getInputFd: () => undefined as never,
-            getOutputFd: () => undefined as never,
-            unref: Effect.succeed(Effect.void),
-          });
-        }),
-      ),
-    ),
-  ),
-);
+const electronAppLayer = ElectronApp.layer.pipe(Layer.provide(NodeServices.layer));
 
 describe("ElectronApp", () => {
   beforeEach(() => {
@@ -126,7 +104,6 @@ describe("ElectronApp", () => {
     onMock.mockClear();
     quitMock.mockClear();
     relaunchMock.mockClear();
-    spawnedCommands.length = 0;
     removeListenerMock.mockClear();
     removeSwitchMock.mockClear();
     setPathMock.mockClear();
@@ -251,48 +228,134 @@ describe("ElectronApp", () => {
       yield* electronApp.relaunch({ args: ["--flag"] });
 
       assert.deepEqual(relaunchMock.mock.calls, [[{ args: ["--flag"] }]]);
-      assert.equal(spawnedCommands.length, 0);
     }).pipe(
       Effect.provide(electronAppLayer),
       Effect.provideService(HostProcess.Platform, "darwin"),
     ),
   );
 
-  it.effect("relaunches on Linux after this process exits without app.relaunch()", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3 relaunch " });
-      const output = path.join(directory, "argv");
-
-      yield* Effect.gen(function* () {
-        const electronApp = yield* ElectronApp.ElectronApp;
-        yield* electronApp.relaunch({
-          execPath: "/bin/sh",
-          args: ["-c", 'printf "%s\\n" "$@" > "$0"', output, "two words", "$HOME", "(Nightly)"],
+  it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "keeps the detached Linux relaunch alive until parent exit without setting NoNewPrivs",
+    async () => {
+      const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3 relaunch "));
+      const executable = NodePath.join(directory, "node $HOME (Nightly)");
+      await NodeFSP.symlink(process.execPath, executable);
+      const server = NodeNet.createServer();
+      const listening = NodeEvents.EventEmitter.once(server, "listening");
+      server.listen(0, "127.0.0.1");
+      await listening;
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("Missing TCP port");
+      let restarted = false;
+      const result = new Promise<string>((resolve, reject) => {
+        server.once("connection", (socket) => {
+          restarted = true;
+          let output = "";
+          socket.setEncoding("utf8");
+          socket.on("data", (chunk) => {
+            output += chunk;
+          });
+          socket.once("end", () => resolve(output));
+          socket.once("error", reject);
         });
-      }).pipe(
-        Effect.provide(electronAppLayer),
-        Effect.provideService(HostProcess.Platform, "linux"),
+      });
+      const args = ["two words", "$HOME", "$(printf expanded)", "'quoted'", "", "line\nbreak"];
+      // Node stands in for the relaunched executable; Electron itself is never launched.
+      const restartedScript = `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        const socket = net.connect(Number(process.argv[1]), "127.0.0.1", () => {
+          socket.end(JSON.stringify({
+            args: process.argv.slice(2),
+            status: fs.readFileSync("/proc/self/status", "utf8"),
+          }));
+        });
+      `;
+      const parentScript = `
+        import * as Effect from "effect/Effect";
+        import * as Layer from "effect/Layer";
+        import * as NodeServices from "@effect/platform-node/NodeServices";
+        import * as Spawner from "effect/process/ChildProcessSpawner";
+        import * as App from "./src/electron/ElectronApp.ts";
+        import { readFileSync } from "node:fs";
+        let handle;
+        const capture = Layer.effect(Spawner.ChildProcessSpawner, Effect.gen(function* () {
+          const actual = yield* Spawner.ChildProcessSpawner;
+          return Spawner.make(command => actual.spawn(command).pipe(Effect.tap(value => {
+            handle = value;
+            return Effect.void;
+          })));
+        })).pipe(Layer.provide(NodeServices.layer));
+        await Effect.runPromise(Effect.gen(function* () {
+          const app = yield* App.ElectronApp;
+          yield* app.relaunch(${JSON.stringify({ execPath: executable, args: ["-e", restartedScript, String(address.port), ...args] })});
+        }).pipe(Effect.provide(App.layer.pipe(Layer.provide(capture)))));
+        process.stdout.write(JSON.stringify({
+          pid: handle.pid,
+          running: await Effect.runPromise(handle.isRunning),
+          status: readFileSync("/proc/self/status", "utf8"),
+          uid: process.getuid(),
+        }) + "\\n");
+        process.stdin.resume();
+        process.stdin.once("end", () => process.exit(0));
+      `;
+      const parent = NodeChildProcess.spawn(
+        process.execPath,
+        ["--input-type=module", "-e", parentScript],
+        {
+          cwd: NodeURL.fileURLToPath(new URL("../..", import.meta.url)),
+          stdio: ["pipe", "pipe", "pipe"],
+        },
       );
-      assert.equal(relaunchMock.mock.calls.length, 0);
-      const [relauncher] = spawnedCommands;
-      assert.isDefined(relauncher);
+      const exited = NodeEvents.EventEmitter.once(parent, "exit");
+      let stderr = "";
+      parent.stderr.setEncoding("utf8").on("data", (chunk) => {
+        stderr += chunk;
+      });
+      let shellPid: number | undefined;
+      try {
+        const ready = await Promise.race([
+          NodeEvents.EventEmitter.once(parent.stdout, "data").then(([data]) =>
+            JSON.parse(String(data)),
+          ),
+          exited.then(([code]) => {
+            throw new Error(`Relaunch parent exited: ${code} ${stderr}`);
+          }),
+        ]);
+        shellPid = ready.pid;
+        assert.isNumber(shellPid);
+        assert.isTrue(ready.running, "relauncher survives its Effect scope closing");
+        assert.notEqual(ready.uid, 0, "the original parent must be unprivileged");
+        assert.match(ready.status, /^NoNewPrivs:\s+0$/m);
+        const stat = await NodeFSP.readFile(`/proc/${shellPid}/stat`, "utf8");
+        const [, ppid, group, session] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+        assert.equal(Number(ppid), parent.pid);
+        assert.equal(Number(group), shellPid, "detached process group");
+        assert.equal(Number(session), shellPid, "detached session");
+        assert.equal(
+          await NodeFSP.readlink(`/proc/${shellPid}/exe`),
+          await NodeFSP.realpath("/bin/sh"),
+          "the shell must still be waiting, even if the replacement executable starts slowly",
+        );
+        assert.isFalse(restarted, "stdin remains open after the relaunch scope closes");
 
-      // Ending the relauncher's stdin stands in for this process exiting.
-      const waiting = yield* spawner.spawn(
-        ChildProcess.make(relauncher!.command, relauncher!.args, {
-          ...relauncher!.options,
-          detached: false,
-        }),
-      );
-      assert.isTrue(yield* waiting.isRunning);
-      assert.isFalse(yield* fileSystem.exists(output));
-
-      yield* Stream.run(Stream.empty, waiting.stdin);
-      assert.equal(yield* waiting.exitCode, 0);
-      assert.equal(yield* fileSystem.readFileString(output), "two words\n$HOME\n(Nightly)\n");
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        parent.stdin.end();
+        assert.deepEqual(await exited, [0, null]);
+        const launched = JSON.parse(await result);
+        assert.deepEqual(launched.args, args);
+        assert.match(launched.status, /^NoNewPrivs:\s+0$/m);
+      } finally {
+        if (parent.exitCode === null) parent.kill();
+        if (shellPid !== undefined) {
+          try {
+            process.kill(shellPid, "SIGKILL");
+          } catch {
+            // The stand-in normally exits as soon as it sends its result.
+          }
+        }
+        server.close();
+        await NodeFSP.rm(directory, { recursive: true, force: true });
+      }
+    },
   );
 });

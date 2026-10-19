@@ -220,14 +220,8 @@ export const make = Effect.gen(function* () {
 
   return ElectronApp.of({
     ...electronApp,
-    // app.relaunch() starts the new instance with the no_new_privs flag
-    // (electron/electron#41463). The flag is permanent, so that instance can
-    // never gain root through pkexec and every .deb update it installs fails.
-    // A plain spawn doesn't set it. Like app.relaunch(), the new instance
-    // starts once this process exits, so it can take the single-instance lock.
-    // The shell waits for EOF on a stdin pipe that only this process can write
-    // to, which arrives when this process exits however it exits. Polling the
-    // PID instead could wait on an unrelated process that reused it.
+    // Electron's Linux relauncher sets irreversible no_new_privs, breaking pkexec updates.
+    // Keep stdin open until this process exits so the replacement can take its instance lock.
     relaunch: (options) =>
       Effect.scoped(
         Effect.gen(function* () {
