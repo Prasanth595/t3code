@@ -5,7 +5,11 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import FileBrowserPanel from "./FileBrowserPanel";
-import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+import {
+  selectActiveRightPanelSurface,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "~/rightPanelStore";
 
 const threadRef = scopeThreadRef(
   EnvironmentId.make("test-environment"),
@@ -15,23 +19,37 @@ const threadRef = scopeThreadRef(
 type PanelProps = Omit<
   ComponentProps<typeof FileBrowserPanel>,
   "selectedPathRevealHandled" | "onSelectedPathRevealHandled"
->;
+> & { followActiveSurface?: boolean };
 
-function TestPanel(props: PanelProps) {
+function TestPanel({ followActiveSurface = false, ...props }: PanelProps) {
   const surface = useRightPanelStore((state) =>
-    selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces.find(
-      (entry) => entry.kind === "file" && entry.relativePath === props.selectedPath,
-    ),
+    followActiveSurface
+      ? selectActiveRightPanelSurface(state.byThreadKey, threadRef)
+      : selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces.find(
+          (entry) => entry.kind === "file" && entry.relativePath === props.selectedPath,
+        ),
   );
+  const selectedPath = followActiveSurface
+    ? surface?.kind === "file"
+      ? surface.relativePath
+      : null
+    : props.selectedPath;
+  const selectedPathRevealId = followActiveSurface
+    ? surface?.kind === "file"
+      ? surface.revealRequestId
+      : 0
+    : props.selectedPathRevealId;
   return (
     <FileBrowserPanel
       {...props}
+      selectedPath={selectedPath}
+      selectedPathRevealId={selectedPathRevealId}
       selectedPathRevealHandled={surface?.kind === "file" && surface.explorerRevealHandled === true}
       onSelectedPathRevealHandled={() => {
-        if (props.selectedPath) {
+        if (selectedPath) {
           useRightPanelStore
             .getState()
-            .markExplorerRevealHandled(threadRef, props.selectedPath, props.selectedPathRevealId);
+            .markExplorerRevealHandled(threadRef, selectedPath, selectedPathRevealId);
         }
       }}
     />
@@ -130,10 +148,14 @@ describe("Files panel", () => {
     await render(overrides);
   }
 
-  async function toggleFolder(path: string) {
-    const row = container!
+  function treeRow(path: string) {
+    return container!
       .querySelector("file-tree-container")!
-      .shadowRoot!.querySelector<HTMLButtonElement>(`button[data-item-path="${path}/"]`);
+      .shadowRoot!.querySelector<HTMLButtonElement>(`button[data-item-path="${path}"]`);
+  }
+
+  async function toggleFolder(path: string) {
+    const row = treeRow(`${path}/`);
     expect(row).not.toBeNull();
     await act(async () => row!.click());
   }
@@ -172,6 +194,7 @@ describe("Files panel", () => {
     localStorage.clear();
     useRightPanelStore.setState({ byThreadKey: {} });
     vi.clearAllMocks();
+    files.load.mockReset().mockResolvedValue(undefined);
     files.loadedDirectories = new Set(["", "src"]);
     files.loadingDirectories = new Set();
     files.directoryEntries = [
@@ -357,27 +380,129 @@ describe("Files panel", () => {
     expect(visiblePaths()).toContain("src/components/Button.tsx");
   });
 
-  it("still reveals an externally selected file when no expansion was saved", async () => {
+  it("reveals external opens and keeps selection in sync when returning to an acknowledged file tab", async () => {
     files.directoryEntries = [{ path: "src", kind: "directory" }];
     files.loadedDirectories = new Set([""]);
-    await render({ selectedPath: "src/app.ts", selectedPathRevealId: 1 });
+    const panelProps = {
+      followActiveSurface: true,
+      onOpenFile: vi.fn((path: string) => useRightPanelStore.getState().openFile(threadRef, path)),
+    };
+    useRightPanelStore.getState().openFile(threadRef, "src/app.ts");
+    await render(panelProps);
     expect(files.load).toHaveBeenCalledWith("src");
 
-    files.directoryEntries = [...files.directoryEntries, { path: "src/app.ts", kind: "file" }];
+    files.directoryEntries = [
+      ...files.directoryEntries,
+      { path: "src/app.ts", kind: "file" },
+      { path: "src/other.ts", kind: "file" },
+    ];
     files.loadedDirectories = new Set(["", "src"]);
     const storageWrite = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("Storage unavailable");
     });
     try {
-      await render({ selectedPath: "src/app.ts", selectedPathRevealId: 1 });
+      await render(panelProps);
     } finally {
       storageWrite.mockRestore();
     }
     expect(visiblePaths()).toContain("src/app.ts");
-    const selected = container!
-      .querySelector("file-tree-container")!
-      .shadowRoot!.querySelector('[data-item-path="src/app.ts"]');
-    expect(selected?.getAttribute("aria-selected")).toBe("true");
-    expect(props.onOpenFile).not.toHaveBeenCalled();
+    expect(treeRow("src/app.ts")?.getAttribute("aria-selected")).toBe("true");
+    expect(panelProps.onOpenFile).not.toHaveBeenCalled();
+
+    const tree = container!.querySelector("file-tree-container")!;
+    await act(async () => useRightPanelStore.getState().openFile(threadRef, "src/other.ts"));
+    expect(treeRow("src/other.ts")?.getAttribute("aria-selected")).toBe("true");
+    const surfaces = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      threadRef,
+    ).surfaces;
+    expect(
+      surfaces.every((surface) => surface.kind === "file" && surface.explorerRevealHandled),
+    ).toBe(true);
+
+    await act(async () =>
+      useRightPanelStore.getState().activateSurface(threadRef, "file:src/app.ts"),
+    );
+    expect(container!.querySelector("file-tree-container")).toBe(tree);
+    expect.soft(treeRow("src/app.ts")?.getAttribute("aria-selected")).toBe("true");
+    expect.soft(treeRow("src/other.ts")?.getAttribute("aria-selected")).toBe("false");
+    await act(async () => treeRow("src/other.ts")!.click());
+    expect(panelProps.onOpenFile).toHaveBeenCalledExactlyOnceWith("src/other.ts");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef)?.id,
+    ).toBe("file:src/other.ts");
+  });
+
+  it("keeps a selected deep search result revealed after its directory listings finish and search closes", async () => {
+    const path = "src/one/two/three/four/five/target.ts";
+    const segments = path.split("/");
+    const directories = segments
+      .slice(0, -1)
+      .map((_, index) => segments.slice(0, index + 1).join("/"));
+    const entries: ProjectEntry[] = [
+      ...directories.map((path) => ({ path, kind: "directory" as const })),
+      ...directories.map((path) => ({ path: `${path}/sibling.txt`, kind: "file" as const })),
+      { path, kind: "file" },
+    ];
+    files.directoryEntries = [{ path: "src", kind: "directory" }];
+    files.loadedDirectories = new Set([""]);
+    const pending = new Map<string, { promise: Promise<void>; finish: () => void }>();
+    files.load.mockImplementation((directory) => {
+      if (files.loadedDirectories.has(directory)) return Promise.resolve();
+      const existing = pending.get(directory);
+      if (existing) return existing.promise;
+      let resolveListing!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        resolveListing = resolve;
+      });
+      pending.set(directory, {
+        promise,
+        finish: () => {
+          files.directoryEntries = [
+            ...files.directoryEntries,
+            ...entries.filter(
+              (entry) => entry.path.slice(0, entry.path.lastIndexOf("/")) === directory,
+            ),
+          ];
+          files.loadedDirectories = new Set([...files.loadedDirectories, directory]);
+          pending.delete(directory);
+          resolveListing();
+        },
+      });
+      return promise;
+    });
+    const panelProps = {
+      followActiveSurface: true,
+      onOpenFile: vi.fn((path: string) => useRightPanelStore.getState().openFile(threadRef, path)),
+    };
+    await render(panelProps);
+    files.searchEntries = [{ path, kind: "file" }];
+    await search("target.ts");
+    expect(visiblePaths()).toContain(path);
+    await act(async () => treeRow(path)!.click());
+    expect(panelProps.onOpenFile).toHaveBeenCalledExactlyOnceWith(path);
+    // Pierre closes search on a row click. Searching again before listings finish
+    // exposes the selected file from search data before its ancestors have loaded.
+    await search("target.ts");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef),
+    ).toMatchObject({ relativePath: path });
+    await search("target.ts");
+    expect(searchInput().value).toBe("target.ts");
+
+    // Only requested listings can contribute entries; a search hit is not a loaded directory.
+    for (let batch = 0; pending.size > 0 && batch < directories.length; batch++) {
+      await act(async () => {
+        for (const request of pending.values()) request.finish();
+      });
+      await render(panelProps);
+    }
+    expect(pending.size).toBe(0);
+    await act(async () =>
+      searchInput().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+    expect(searchInput().value).toBe("");
+    expect(visiblePaths()).toContain(path);
+    expect(treeRow(path)?.getAttribute("aria-selected")).toBe("true");
   });
 });
