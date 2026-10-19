@@ -40,6 +40,7 @@ const state = vi.hoisted(() => ({
   metadataRequests: [] as { environmentId: string; branch: string }[],
   toasts: [] as Toast[],
   afterGitAction: undefined as (() => void) | undefined,
+  editorOpens: [] as { environmentId: string; input: { cwd: string; editor: string } }[],
 }));
 
 vi.mock(import("~/state/session"), async (original) => {
@@ -88,21 +89,45 @@ vi.mock(import("~/state/filesystem"), async (original) => ({
   ...(await original()),
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
 }));
-vi.mock(import("~/state/use-atom-command"), async (original) => ({
-  ...(await original()),
-  // The only command whose result matters here is the thread's branch metadata update.
-  useAtomCommand: ((_command: unknown, options: unknown) =>
-    options === "thread branch metadata update"
-      ? async ({ environmentId, input }: { environmentId: string; input: { branch: string } }) => {
-          state.metadataRequests.push({ environmentId, branch: input.branch });
-          if (!state.scopes.has(AuthOrchestrationOperateScope))
-            return AsyncResult.failure(Cause.fail(new Error("Task denied")));
-          if (state.shell) state.shell = { branch: input.branch };
-          if (state.detail) state.detail = { branch: input.branch };
-          return AsyncResult.success(undefined);
-        }
-      : async () => AsyncResult.success(undefined)) as never,
-}));
+vi.mock(import("~/state/use-atom-command"), async (original) => {
+  const { shellEnvironment } = await import("~/state/shell");
+  return {
+    ...(await original()),
+    // Only the thread's branch metadata update and editor opens are observed here.
+    useAtomCommand: ((command: unknown, options: unknown) =>
+      options === "thread branch metadata update"
+        ? async ({
+            environmentId,
+            input,
+          }: {
+            environmentId: string;
+            input: { branch: string };
+          }) => {
+            state.metadataRequests.push({ environmentId, branch: input.branch });
+            if (!state.scopes.has(AuthOrchestrationOperateScope))
+              return AsyncResult.failure(Cause.fail(new Error("Task denied")));
+            if (state.shell) state.shell = { branch: input.branch };
+            if (state.detail) state.detail = { branch: input.branch };
+            return AsyncResult.success(undefined);
+          }
+        : command === shellEnvironment.openInEditor
+          ? async (request: (typeof state.editorOpens)[number]) => {
+              state.editorOpens.push(request);
+              return AsyncResult.success(undefined);
+            }
+          : async () => AsyncResult.success(undefined)) as never,
+  };
+});
+// The preferred-editor flow needs one editor the environment reports as installed.
+vi.mock(import("~/state/server"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const config = Atom.make(() => ({ availableEditors: ["cursor"] }));
+  return {
+    ...actual,
+    serverEnvironment: { ...actual.serverEnvironment, configValueAtom: (() => config) as never },
+  };
+});
 vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
   ...(await original()),
   useSourceControlActionRunning: () => false,
@@ -222,6 +247,7 @@ beforeEach(() => {
   state.metadataRequests = [];
   state.toasts = [];
   state.afterGitAction = undefined;
+  state.editorOpens = [];
   useComposerDraftStore.setState({
     getDraftSession: () => state.draft as never,
     getDraftThreadByRef: () => state.draft as never,
@@ -354,6 +380,51 @@ describe("Git actions while thread details load", () => {
     await vi.waitFor(() => expect(state.draft?.branch).toBe("feature"));
     expect(commits()).toBe(1);
     expect(state.metadataRequests).toEqual([]);
+  });
+});
+
+describe("Changed-file editor targets", () => {
+  beforeEach(() => {
+    state.scopes.add(AuthOrchestrationOperateScope);
+    state.status = {
+      ...state.status,
+      workingTree: {
+        ...state.status.workingTree,
+        files: [
+          { path: "nested/new.txt", insertions: 0, deletions: 0 },
+          { path: "nested/tracked.txt", insertions: 1, deletions: 0 },
+        ],
+      },
+    };
+  });
+
+  it("resolves repository-relative paths against the status root, not the project cwd", async () => {
+    state.status = {
+      ...state.status,
+      workingTree: { ...state.status.workingTree, rootPath: "/repo" },
+    };
+    await render("thread", "/repo/nested");
+    await openCommitDialog();
+
+    await userEvent.click(button("Open nested/new.txt in editor"));
+    await userEvent.click(button("Open nested/tracked.txt in editor"));
+
+    await vi.waitFor(() => expect(state.editorOpens).toHaveLength(2));
+    expect(state.editorOpens).toEqual([
+      { environmentId: "environment", input: { cwd: "/repo/nested/new.txt", editor: "cursor" } },
+      {
+        environmentId: "environment",
+        input: { cwd: "/repo/nested/tracked.txt", editor: "cursor" },
+      },
+    ]);
+  });
+
+  it("does not guess a file location when the server reports no root", async () => {
+    await render("thread", "/repo/nested");
+    await openCommitDialog();
+
+    await expect.element(button("Open nested/new.txt in editor")).toBeDisabled();
+    expect(state.editorOpens).toEqual([]);
   });
 });
 

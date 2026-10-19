@@ -3958,6 +3958,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Target run ${targetRun.id} is ${targetRun.status} and cannot be steered.`,
         });
       }
+      // The run reads as running until its provider stops, but a steer accepted
+      // after Stop never reaches the agent.
+      if (yield* stopReachedRun(input.command, input.command.threadId, targetRun.id)) {
+        return yield* new OrchestratorDispatchError({
+          commandId: input.command.commandId,
+          commandType: input.command.type,
+          cause: `Target run ${targetRun.id} is stopping and cannot be steered.`,
+        });
+      }
       const providerThread = input.projection.providerThreads.find(
         (candidate) => candidate.id === targetRun.providerThreadId,
       );
@@ -4694,6 +4703,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
+      if (projection.thread.lastVisitedAt === null && !isNativeMaintenanceCommand(command)) {
+        const now = yield* DateTime.now;
+        // Null keeps imported history read. The first fresh dispatch establishes
+        // a read watermark so its completion can be unread on every client.
+        // Offset it so a completion in the same millisecond is still unread.
+        const event = yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            lastVisitedAt: DateTime.subtract(now, { milliseconds: 1 }),
+          },
+        });
+        projection = applyToProjection(projection, event);
+      }
+
       const continuedTaskId = projection.runs.find(
         (run) => run.id === command.restartContinuationOfRunId,
       )?.delegatedTaskId;
@@ -4803,6 +4833,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) {
           dispatchMode = { type: "start_immediately" };
         }
+      }
+      // Stop leaves the run reading as running until its provider stops. A plain
+      // send in that window queues behind the stopped queue instead of steering
+      // text the agent never receives, and like any user send it releases the
+      // hold; an explicit steer or restart still fails below.
+      if (
+        command.deliveryIntent === "auto" &&
+        (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") &&
+        (yield* stopReachedRun(command, command.threadId, dispatchMode.targetRunId))
+      ) {
+        dispatchMode = { type: "queue_after_active" };
       }
       if (
         command.notification !== undefined &&
@@ -4999,11 +5040,48 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : undefined;
       const queueBehindRun = activeRun ?? worktreeMissingRun;
       const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
-      const shouldQueue =
-        queueBehindRun !== undefined &&
-        (dispatchMode.type === "defer_start" ||
-          dispatchMode.type === "start_immediately" ||
-          dispatchMode.type === "queue_after_active");
+      const startsOrQueuesRun =
+        dispatchMode.type === "defer_start" ||
+        dispatchMode.type === "start_immediately" ||
+        dispatchMode.type === "queue_after_active";
+      const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
+      // A message the user sends from a client means they are back, so the
+      // queue a stop or a restart held runs again, in its order, rather than
+      // waiting for a Resume.
+      // Continuations and scheduled tasks the server sends for them are not
+      // them coming back. Starting the queue still re-holds it for a failed
+      // provider or a usage limit; a queue held after worktree setup failed
+      // keeps its hold until a worktree exists, even once later messages have
+      // run, since its messages would start in the project checkout.
+      const worktreeSetupUnresolved =
+        projection.thread.worktreePath === null &&
+        projection.runs.some(
+          (run) =>
+            (run.status === "failed" || run.status === "interrupted") &&
+            run.workspacePreparation?.type === "worktree",
+        );
+      const sentByUserFromClient =
+        command.createdBy === "user" &&
+        (command.creationSource === "web" || command.creationSource === "mobile") &&
+        command.scheduledTaskId === undefined;
+      const heldRunsToRelease =
+        sentByUserFromClient && startsOrQueuesRun && !worktreeSetupUnresolved
+          ? projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true)
+          : [];
+      const releasedAt = yield* DateTime.now;
+      for (const held of heldRunsToRelease) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "run.updated",
+          threadId: command.threadId,
+          runId: held.id,
+          providerInstanceId: held.providerInstanceId,
+          occurredAt: releasedAt,
+          payload: { ...held, queueHeld: false },
+        });
+      }
       if (shouldQueue) {
         if (pendingMergeBackTransfers.length > 0) {
           return yield* new OrchestratorDispatchError({
@@ -5113,9 +5191,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           activeAttemptId: attemptId,
           status: "queued",
           ...(worktreeMissingRun !== undefined ||
-          projection.runs.some(
-            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
-          )
+          (heldRunsToRelease.length === 0 &&
+            projection.runs.some(
+              (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
+            ))
             ? { queueHeld: true }
             : {}),
           queuePosition:
