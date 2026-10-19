@@ -243,6 +243,40 @@ const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 it.layer(NodeServices.layer)("PluginSettings", (it) => {
   describe("values", () => {
+    it.effect("ends a removed subscription after unrelated settings overflow", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { catalog, settings } = yield* startPlugins(
+            yield* Scope.Scope,
+            makeSecretStore().service,
+          );
+          const { installation } = yield* catalog.add({ directory: yield* preparePlugin() });
+          const other = (yield* catalog.add({
+            directory: yield* preparePlugin({ id: "test.other" }),
+          })).installation;
+          const received = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          const stopped = yield* settings.subscribe(installation.installationId).pipe(
+            Stream.runForEach(() =>
+              Deferred.succeed(received, undefined).pipe(Effect.andThen(Deferred.await(release))),
+            ),
+            Effect.flip,
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Deferred.await(received);
+          yield* catalog.remove({ installationId: installation.installationId });
+          for (let index = 0; index < 300; index++) {
+            yield* settings.update({
+              installationId: other.installationId,
+              changes: [{ key: "verbose", value: index % 2 === 0 }],
+            });
+          }
+          yield* Deferred.succeed(release, undefined);
+          expect((yield* Fiber.join(stopped)).reason).toBe("not-found");
+        }),
+      ),
+    );
+
     it.effect("saves what the plugin reads and never sends a secret back", () =>
       withDatabase(
         Effect.gen(function* () {
@@ -611,6 +645,7 @@ it.layer(NodeServices.layer)("PluginSettings", (it) => {
             Effect.sync(() => void methods.set(method, handler)),
         });
         const catalog = PluginCatalog.PluginCatalog.of({
+          ready: Effect.void,
           list: Effect.succeed({ installations: [] }),
           revision: Effect.succeed(0),
           subscribe: Stream.empty,
