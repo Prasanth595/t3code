@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+// Fork: the installed app badge loads the settings store, too slow to reload in every test.
+vi.mock("./installedApp", () => ({ setInstalledAppBadge: () => undefined }));
+
 const SOUND_SECONDS = 0.6;
 
 const audio = { currentTime: 0, started: 0 };

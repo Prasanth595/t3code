@@ -92,7 +92,9 @@ export function TooltipShortcutsSettingsRow() {
           <SettingResetButton
             label="shortcuts in tooltips"
             onClick={() =>
-              void updateClientSettings({ tooltipShortcuts: DEFAULT_CLIENT_SETTINGS.tooltipShortcuts })
+              void updateClientSettings({
+                tooltipShortcuts: DEFAULT_CLIENT_SETTINGS.tooltipShortcuts,
+              })
             }
           />
         ) : null
@@ -100,7 +102,9 @@ export function TooltipShortcutsSettingsRow() {
       control={
         <Switch
           checked={enabled}
-          onCheckedChange={(checked) => void updateClientSettings({ tooltipShortcuts: Boolean(checked) })}
+          onCheckedChange={(checked) =>
+            void updateClientSettings({ tooltipShortcuts: Boolean(checked) })
+          }
           aria-label="Shortcuts in tooltips"
         />
       }

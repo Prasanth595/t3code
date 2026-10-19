@@ -1241,7 +1241,10 @@ it.effect.each([
         "turnItems",
       ])).turnItems.filter((item) => item.type === "system_notice");
       assert.equal(notices.length, Option.isSome(testCase.scratchFolder) ? 0 : 1);
-      assert.equal(harness.runSetup.mock.calls.length, Option.isSome(testCase.scratchFolder) ? 1 : 0);
+      assert.equal(
+        harness.runSetup.mock.calls.length,
+        Option.isSome(testCase.scratchFolder) ? 1 : 0,
+      );
     }).pipe(Effect.provide(harness.layer));
   }),
 );

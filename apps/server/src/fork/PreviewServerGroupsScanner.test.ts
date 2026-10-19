@@ -50,7 +50,9 @@ it.effect.each(["linux", "darwin", "win32"] as const)(
           FetchHttpClient.layer.pipe(
             Layer.provide(
               Layer.succeed(FetchHttpClient.Fetch, () =>
-                Promise.resolve(new Response("hello", { headers: { "content-type": "text/html" } })),
+                Promise.resolve(
+                  new Response("hello", { headers: { "content-type": "text/html" } }),
+                ),
               ),
             ),
           ),
