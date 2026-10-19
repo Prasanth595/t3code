@@ -481,7 +481,7 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   {},
 ) {
   override get message(): string {
-    return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
+    return "Claude is still running background agents or commands, and starting a new Claude process would end them. Wait for them to finish, or press Stop, then send the message again.";
   }
 }
 
@@ -7895,7 +7895,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : limitedCompaction !== null
                 ? "failed"
                 : terminalStatusFromResult(message, failureHint);
-            if (status === "failed" && context.authenticationFailureMessage !== undefined) {
+            if (
+              status === "failed" &&
+              context.authenticationFailureMessage !== undefined &&
+              !permissionDenied
+            ) {
               liveQuery.signedOut = true;
             }
             yield* finalizeActiveTurn({

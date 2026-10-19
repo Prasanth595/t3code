@@ -3580,11 +3580,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    { failure: "authentication_failed", opensFreshProcess: true },
-    { failure: "server_error", opensFreshProcess: false },
+    { failure: "authentication_failed", apiErrorStatus: undefined, opensFreshProcess: true },
+    { failure: "server_error", apiErrorStatus: undefined, opensFreshProcess: false },
+    { failure: "authentication_failed", apiErrorStatus: 403, opensFreshProcess: false },
   ] as const)(
-    "after a turn fails with $failure, the next turn opens a fresh process: $opensFreshProcess",
-    ({ failure, opensFreshProcess }) =>
+    "after a turn fails with $failure (API status: $apiErrorStatus), the next turn opens a fresh process: $opensFreshProcess",
+    ({ failure, apiErrorStatus, opensFreshProcess }) =>
       Effect.gen(function* () {
         let closeCount = 0;
         const harness = yield* makeWakeHarnessWithOptions({
@@ -3613,6 +3614,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000612",
             result: "API Error",
+            ...(apiErrorStatus === undefined ? {} : { apiErrorStatus }),
             terminalReason: "api_error",
             isError: true,
           }),
