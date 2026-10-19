@@ -33,6 +33,7 @@ import {
   type RuntimeRequestId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
@@ -536,6 +537,10 @@ const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
+const FORK_WAIT = 60_000;
+const FORK_POLL = "1 second";
+const OPENCODE_2_FORK_SOURCE_RUNNING =
+  "The thread you forked from is still running. Send your message again when it finishes.";
 /** Answers that mean the server refused a prompt; any other failure may have been accepted. */
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
   "InvalidRequestError",
@@ -582,6 +587,7 @@ const boundaryAfter = (
   providerThreadId: OrchestrationV2ProviderThread["id"],
   kept: OrchestrationV2ProviderTurn | undefined,
   prompts: ReadonlySet<string>,
+  history?: ReadonlyArray<{ readonly id: string }>,
 ) => {
   const later = turns
     .filter(
@@ -599,10 +605,40 @@ const boundaryAfter = (
       }),
     );
   }
+  const candidates = new Set(later.map(promptOf));
   return Effect.succeed(
-    later.map(promptOf).find((messageId) => messageId !== undefined && prompts.has(messageId)) ??
-      null,
+    history === undefined
+      ? ([...candidates].find((messageId) => messageId !== undefined && prompts.has(messageId)) ??
+          null)
+      : (history.findLast((item) => prompts.has(item.id) && candidates.has(item.id))?.id ?? null),
   );
+};
+
+/** History items that record input or a switch, never what an execution wrote. */
+const INPUT_ITEMS: ReadonlySet<string> = new Set([
+  "user",
+  "synthetic",
+  "system",
+  "skill",
+  "agent-switched",
+  "model-switched",
+  "location-switched",
+]);
+
+/**
+ * OpenCode runs one execution at a time and ends each with an `idle` item, so
+ * the newest item before the cut that is not input decides. A fork copies only
+ * the items before its cut and a run only adds items, so a fork before such a
+ * cut copies nothing the running execution still writes.
+ */
+const endedBefore = (
+  history: ReadonlyArray<{ readonly id: string; readonly type: string }>,
+  cut: string,
+) => {
+  const at = history.findIndex((item) => item.id === cut);
+  if (at < 0) return false;
+  const last = history.slice(at + 1).find((item) => !INPUT_ITEMS.has(item.type));
+  return last === undefined || last.type === "idle";
 };
 
 const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error);
@@ -2754,24 +2790,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
      * A rollback also waits for background subagents, whose reports wake the
      * session into the history it would cut.
      */
-    const ensureQuiet = Effect.fnUntraced(function* (
-      sessionId: string,
-      verb: "roll back" | "fork",
-    ) {
+    const isWorking = Effect.fnUntraced(function* (sessionId: string, verb: "roll back" | "fork") {
       const state = threads.get(sessionId);
       const busyHere =
         state !== undefined &&
         (state.active !== undefined ||
           busy.has(sessionId) ||
           (verb === "roll back" && hasBackground(state)));
-      const busyThere =
-        !busyHere &&
-        (state === undefined || state.unsettled) &&
-        sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT)));
-      if (busyHere || busyThere) {
+      return (
+        busyHere ||
+        ((state === undefined || state.unsettled) &&
+          sessionId in (yield* client.session.active().pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT))))
+      );
+    });
+
+    const ensureQuiet = Effect.fnUntraced(function* (sessionId: string) {
+      if (yield* isWorking(sessionId, "roll back")) {
         return yield* new ProviderAdapter.ProviderAdapterProtocolError({
           driver: OPENCODE_PROVIDER,
-          detail: `Cannot ${verb} OpenCode session ${sessionId} while it is still working`,
+          detail: `Cannot roll back OpenCode session ${sessionId} while it is still working`,
         });
       }
     });
@@ -2838,24 +2875,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
-    /**
-     * The list takes one type, so it reads all.
-     */
-    const userMessages = (sessionId: string) =>
+    /** Newest first. The list takes one type, so it reads all. */
+    const historyOf = (sessionId: string) =>
       OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), limit: 100 },
+        { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 100 },
         client.message.list,
-      ).pipe(
-        Stream.runCollect,
-        Effect.map(
-          (messages) =>
-            new Set(
-              messages.flatMap((message) =>
-                message.type === "user" || message.type === "synthetic" ? [String(message.id)] : [],
-              ),
-            ),
+      ).pipe(Stream.runCollect);
+
+    const cutPoints = (history: ReadonlyArray<{ readonly id: string; readonly type: string }>) =>
+      new Set(
+        history.flatMap((message) =>
+          message.type === "user" || message.type === "synthetic" ? [message.id] : [],
         ),
       );
+    const userMessages = (sessionId: string) => historyOf(sessionId).pipe(Effect.map(cutPoints));
 
     const snapshotOf = Effect.fnUntraced(function* (
       providerThread: OrchestrationV2ProviderThread,
@@ -3802,10 +3835,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           const { providerThread, target } = rollbackInput;
           const sessionId = yield* sessionIdOf(providerThread);
-          yield* ensureQuiet(sessionId, "roll back");
+          yield* ensureQuiet(sessionId);
           if (!threads.has(sessionId)) {
             yield* runtime.resumeThread({ providerThread });
-            yield* ensureQuiet(sessionId, "roll back");
+            yield* ensureQuiet(sessionId);
           }
           const boundary = yield* boundaryAfter(
             rollbackInput.providerThreadTurns,
@@ -3849,9 +3882,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         Effect.gen(function* () {
           const source = forkInput.sourceProviderThread;
           const sourceId = yield* sessionIdOf(source);
-          // OpenCode forks whatever history the source has, so a fork taken
-          // while anything writes to it would copy a run half done.
-          yield* ensureQuiet(sourceId, "fork");
           const selected =
             forkInput.providerTurnId === undefined
               ? undefined
@@ -3862,57 +3892,115 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               detail: `OpenCode fork boundary turn ${forkInput.providerTurnId} was not found`,
             });
           }
-          const before =
-            selected === undefined
-              ? null
-              : yield* boundaryAfter(
-                  forkInput.sourceProviderTurns ?? [],
-                  source.id,
-                  selected,
-                  yield* userMessages(sourceId),
-                );
-          // A fork copies the source's history, model, location and rules; its
-          const forked = yield* client.session.fork({
-            sessionID: Session.ID.make(sourceId),
-            ...(before === null ? {} : { before: SessionMessage.ID.make(before) }),
-          });
-          const createdAt = yield* DateTime.now;
-          const providerThread: OrchestrationV2ProviderThread = {
-            id: idAllocator.derive.providerThread({ driver, nativeThreadId: forked.id }),
+          const sourceRunning = new ProviderAdapter.ProviderAdapterForkThreadError({
             driver,
-            providerInstanceId: instanceId,
-            providerSessionId: input.providerSessionId,
-            appThreadId: forkInput.targetThreadId,
-            ownerNodeId: forkInput.ownerNodeId ?? null,
-            nativeThreadRef: ref(forked.id),
-            nativeConversationHeadRef: null,
-            status: "idle",
-            firstRunOrdinal: null,
-            lastRunOrdinal: null,
-            handoffIds: [],
-            forkedFrom: {
-              providerThreadId: source.id,
-              ...(forkInput.providerTurnId === undefined
-                ? {}
-                : { providerTurnId: forkInput.providerTurnId }),
-            },
-            createdAt,
-            updatedAt: createdAt,
-          };
-          // inherits that worktree too, but its first turn starts without a
-          // resume, so a target in another worktree takes the session there now.
-          const cwd = forkInput.runtimePolicy?.cwd;
-          const state = register(providerThread, forked, cwd ?? forked.location.directory);
-          yield* writeRules(state, forkInput.runtimePolicy ?? state.policy);
-          if (cwd != null && forked.location.directory !== cwd) {
-            yield* client.session.move({
-              sessionID: Session.ID.make(forked.id),
-              directory: AbsolutePath.make(cwd),
+            providerThreadId: source.id,
+            cause: OPENCODE_2_FORK_SOURCE_RUNNING,
+            retryable: false,
+          });
+          const deadline = (yield* Clock.currentTimeMillis) + FORK_WAIT;
+          return yield* Effect.gen(function* () {
+            const remaining = deadline - (yield* Clock.currentTimeMillis);
+            if (remaining <= 0) return yield* sourceRunning;
+            const before = yield* Effect.gen(function* () {
+              const working = yield* isWorking(sourceId, "fork");
+              const history = selected === undefined ? [] : yield* historyOf(sourceId);
+              const cuts = cutPoints(history);
+              const selectedAt =
+                selected === undefined
+                  ? -1
+                  : history.findIndex((item) => item.id === promptOf(selected));
+              // Ended wakes can outlive later user turns.
+              const laterCuts = cutPoints(history.slice(0, Math.max(0, selectedAt)));
+              // The caller's snapshot can predate turns observed during the wait.
+              const loaded = threads.get(sourceId);
+              const turns = new Map(
+                [
+                  ...(forkInput.sourceProviderTurns ?? []),
+                  ...(loaded?.providerTurns.values() ?? []),
+                  ...(loaded?.active === undefined ? [] : [loaded.active.providerTurn]),
+                ].map((turn) => [turn.id, turn] as const),
+              );
+              const recorded =
+                selected === undefined
+                  ? null
+                  : yield* boundaryAfter(
+                      [...turns.values()],
+                      source.id,
+                      selected,
+                      selectedAt < 0 ? cuts : laterCuts,
+                      history,
+                    );
+              // Unrecorded wakes cut before their first report, just like continuations.
+              const before =
+                history.findLast(
+                  (item) =>
+                    laterCuts.has(item.id) &&
+                    (item.id === recorded || loaded?.wakes.some((wake) => wake.first === item.id)),
+                )?.id ?? recorded;
+              // A busy source needs an immutable prefix before the exclusive cut.
+              if (working && (before === null || !endedBefore(history, before))) return undefined;
+              return before;
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: remaining,
+                orElse: () => Effect.fail(sourceRunning),
+              }),
+            );
+            if (before === undefined) return undefined;
+            // The polling deadline must not interrupt a fork that OpenCode may have created.
+            const forked = yield* client.session.fork({
+              sessionID: Session.ID.make(sourceId),
+              ...(before === null ? {} : { before: SessionMessage.ID.make(before) }),
             });
-          }
-          return state.providerThread;
+            const createdAt = yield* DateTime.now;
+            const providerThread: OrchestrationV2ProviderThread = {
+              id: idAllocator.derive.providerThread({ driver, nativeThreadId: forked.id }),
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId: input.providerSessionId,
+              appThreadId: forkInput.targetThreadId,
+              ownerNodeId: forkInput.ownerNodeId ?? null,
+              nativeThreadRef: ref(forked.id),
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: {
+                providerThreadId: source.id,
+                ...(forkInput.providerTurnId === undefined
+                  ? {}
+                  : { providerTurnId: forkInput.providerTurnId }),
+              },
+              createdAt,
+              updatedAt: createdAt,
+            };
+            // A fork inherits the source worktree and starts without a resume,
+            // so move it to the target worktree before its first turn.
+            const cwd = forkInput.runtimePolicy?.cwd;
+            const state = register(providerThread, forked, cwd ?? forked.location.directory);
+            yield* writeRules(state, forkInput.runtimePolicy ?? state.policy);
+            if (cwd != null && forked.location.directory !== cwd) {
+              yield* client.session.move({
+                sessionID: Session.ID.make(forked.id),
+                directory: AbsolutePath.make(cwd),
+              });
+            }
+            return state.providerThread;
+          }).pipe(
+            // Release the source gate between attempts so its next turn can start.
+            exclusive(forkInput.sourceProviderThread),
+            Effect.repeat({
+              until: (forked) => forked !== undefined,
+              schedule: Schedule.spaced(FORK_POLL),
+            }),
+            Effect.filterOrFail(
+              (forked): forked is OrchestrationV2ProviderThread => forked !== undefined,
+              () => sourceRunning,
+            ),
+          );
         }).pipe(
-          exclusive(forkInput.sourceProviderThread),
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause
