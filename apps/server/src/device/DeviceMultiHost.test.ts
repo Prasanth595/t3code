@@ -50,19 +50,23 @@ it.effect("keeps hosts independent when serials collide and another host fails",
       Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          Response.json({
-            simulators: [],
-            emulators: [
-              {
-                id: "emulator-5554",
-                name: "Pixel",
-                version: "36",
-                platform: "android",
-                booted: true,
-                physical: false,
-              },
-            ],
-          }),
+          Response.json(
+            request.url.endsWith("/rpc")
+              ? { result: { ok: true } }
+              : {
+                  simulators: [],
+                  emulators: [
+                    {
+                      id: "emulator-5554",
+                      name: "Pixel",
+                      version: "36",
+                      platform: "android",
+                      booted: true,
+                      physical: false,
+                    },
+                  ],
+                },
+          ),
         ),
       ),
     );

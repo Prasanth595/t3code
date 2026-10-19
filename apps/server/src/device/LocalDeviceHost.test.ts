@@ -201,6 +201,7 @@ describe("AgentDevice startup", () => {
       expect((yield* host.ensureAgentReady(() => Effect.void)).agentDevice).toEqual(
         ready.agentDevice,
       );
+      expect((yield* host.current)?.agentDevice).toEqual(ready.agentDevice);
       expect(attempts).toBe(1);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

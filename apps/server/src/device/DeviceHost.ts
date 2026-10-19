@@ -73,6 +73,8 @@ export interface AgentDeviceEndpoint {
 
 export interface DeviceHostReady {
   readonly nodePath: string;
+  /** Present only while the agent daemon is running; cleanup must not start it. */
+  readonly agentDevice?: AgentDeviceEndpoint | null;
   readonly hub: DeviceHubEndpoint;
   readonly run: (
     command: string,

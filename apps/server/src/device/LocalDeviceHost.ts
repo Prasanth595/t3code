@@ -785,6 +785,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     nodePath: running.hub.nodePath,
     run,
     helpers: running.helpers,
+    agentDevice: running.agentDevice,
   });
 
   const current: DeviceHost.DeviceHost["Service"]["current"] = Ref.get(runningRef).pipe(
