@@ -2424,8 +2424,9 @@ function useChatMarkdownState({
     source: string,
     resolvedFilePath?: string,
     clickedImage?: HTMLImageElement | null,
-    requestId = ++mediaRequestId.current,
+    claimedRequestId?: number,
   ) => {
+    const requestId = claimedRequestId ?? ++mediaRequestId.current;
     if (mediaRequestId.current !== requestId) return;
     void resolveMarkdownMediaPreview({
       source,
