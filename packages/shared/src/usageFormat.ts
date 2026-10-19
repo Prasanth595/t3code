@@ -28,7 +28,7 @@ const TOKEN_UNITS = [
 
 export function formatTokens(value: number): string {
   const rounded = Math.round(value);
-  if (Number.isNaN(rounded) || Math.abs(rounded) < 1e3) return INTEGER.format(rounded);
+  if (Number.isNaN(rounded) || Math.round(Math.abs(value)) < 1e3) return INTEGER.format(rounded);
   // Pick the unit after rounding, so 999,600 reads "1M" rather than "1000K".
   for (const [size, suffix] of TOKEN_UNITS) {
     const scaled = trim(value / size);
