@@ -195,8 +195,8 @@ it.each([
     const chip = page.getByRole("button", { name: /Build box|Copy update command/ });
     await expect.element(chip).toBeVisible();
     await userEvent.hover(chip);
-    await expect.element(page.getByRole("tooltip")).toHaveTextContent("0.0.30");
-    await expect.element(page.getByRole("tooltip")).toHaveTextContent("0.0.31");
+    await expect.element(page.getByRole("tooltip")).toMatchTextContent("0.0.30");
+    await expect.element(page.getByRole("tooltip")).toMatchTextContent("0.0.31");
     await userEvent.click(chip);
     await vi.waitFor(() =>
       expect(state.writeTextToClipboard).toHaveBeenCalledWith(

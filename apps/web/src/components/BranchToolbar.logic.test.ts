@@ -442,6 +442,17 @@ describe("shouldShowComposerContextStrip", () => {
         hostsRestingComposerControls: false,
       }),
     ).toBe(true);
+    expect(
+      shouldShowComposerContextStrip({
+        isDraftHeroState: false,
+        persistInActiveThreads: false,
+        hasActiveProject: true,
+        isGitRepo: false,
+        showEnvironmentIndicator,
+        serverUpdateAvailable: true,
+        hostsRestingComposerControls: false,
+      }),
+    ).toBe(true);
   });
 
   it.each([false, true])(
