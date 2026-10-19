@@ -27,6 +27,12 @@ describe("settleDeregisteringEnvironments", () => {
     expect([...settled]).toEqual([[studio, "unlinked"]]);
   });
 
+  it("keeps an unlinked environment hidden while a refresh has emptied the list", () => {
+    const deregistering: DeregisteringEnvironments = new Map([[attic, "unlinked"]]);
+
+    expect(settleDeregisteringEnvironments(deregistering, null)).toBe(deregistering);
+  });
+
   it("keeps a pending environment hidden while the unlink is still running", () => {
     const deregistering: DeregisteringEnvironments = new Map([[attic, "pending"]]);
 

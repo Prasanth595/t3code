@@ -85,9 +85,13 @@ function CloudEnvironmentRowsContent(
   const listedCloudEnvironments = discoveryAvailable
     ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
     : [];
-  const listedIds = new Set(
-    listedCloudEnvironments.map((entry) => entry.environment.environmentId),
-  );
+  const listingComplete =
+    props.showcaseAvailableEnvironments !== undefined ||
+    !discoveryAvailable ||
+    (!controller.relayDiscovery.isRefreshing && controller.relayDiscovery.error === null);
+  const listedIds = listingComplete
+    ? new Set(listedCloudEnvironments.map((entry) => entry.environment.environmentId))
+    : null;
   if (settleDeregisteringEnvironments(deregistering, listedIds) !== deregistering) {
     setDeregistering((current) => settleDeregisteringEnvironments(current, listedIds));
   }

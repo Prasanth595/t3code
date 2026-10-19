@@ -8,11 +8,16 @@ import type { EnvironmentId } from "@t3tools/contracts";
  */
 export type DeregisteringEnvironments = ReadonlyMap<EnvironmentId, "pending" | "unlinked">;
 
-/** Drops unlinked entries the listing no longer has, so a later re-link shows again. */
+/**
+ * Drops unlinked entries a finished listing no longer has, so a later re-link
+ * shows again. Pass `null` while discovery is refreshing or failed: a refresh
+ * empties the list before it fetches, and that gap is not proof of removal.
+ */
 export function settleDeregisteringEnvironments(
   deregistering: DeregisteringEnvironments,
-  listedIds: ReadonlySet<EnvironmentId>,
+  listedIds: ReadonlySet<EnvironmentId> | null,
 ): DeregisteringEnvironments {
+  if (listedIds === null) return deregistering;
   const next = new Map(
     [...deregistering].filter(
       ([environmentId, phase]) => phase === "pending" || listedIds.has(environmentId),
