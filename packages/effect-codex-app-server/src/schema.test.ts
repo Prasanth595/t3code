@@ -29,7 +29,7 @@ it("keeps async questions in live notifications and thread history", () => {
     CodexSchema.V2ThreadReadResponse__ThreadItem,
     CodexSchema.V2ThreadResumeResponse__ThreadItem,
   ]) {
-    assert.deepEqual(Schema.decodeUnknownSync(schema)(item), item);
+    assert.deepEqual(Schema.decodeSync(schema)(item), item);
   }
 });
 
@@ -201,13 +201,15 @@ it("accepts Codex misalignment policy errors for thread responses", () => {
   );
 });
 
-it("accepts Codex 0.150 account plan values", () => {
+it("accepts account plan slugs newer than the pinned protocol", () => {
   const planTypes = [
     "self_serve_business_prolite",
     "ent26",
     "enterprise_cbp_automation",
     "edu_plus",
     "edu_pro",
+    "promax",
+    "some_future_plan",
   ];
 
   for (const planType of planTypes) {
