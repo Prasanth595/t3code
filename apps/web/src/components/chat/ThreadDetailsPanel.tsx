@@ -39,7 +39,6 @@ export interface ThreadDetailsPanelProps extends Pick<
   availableEditors: ReadonlyArray<EditorId>;
   showOpenInPicker: boolean;
   gitCwd: string | null;
-  workspaceMutationId?: string | null;
   isGitRepo: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
@@ -163,7 +162,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                     displayMode="panel"
                     compact={density !== "full"}
                     gitCwd={props.gitCwd}
-                    workspaceMutationId={props.workspaceMutationId ?? null}
                     activeThreadRef={activeThreadRef}
                     {...(props.draftId ? { draftId: props.draftId } : {})}
                     {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}

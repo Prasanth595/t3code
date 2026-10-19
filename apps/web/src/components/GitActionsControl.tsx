@@ -135,7 +135,6 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
-  workspaceMutationId?: string | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -965,8 +964,7 @@ function ThreadChangesControl({
   activeThreadRef,
   gitStatus,
   onOpenChanges,
-  workspaceMutationId = null,
-}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef" | "workspaceMutationId"> & {
+}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef"> & {
   gitStatus: VcsStatusResult | null;
   onOpenChanges: GitActionsControlProps["onOpenChanges"];
 }) {
@@ -986,10 +984,20 @@ function ThreadChangesControl({
         })
       : null;
   const changesDiffPreview = useEnvironmentQuery(previewAtom);
+  const statusKey = gitStatus
+    ? JSON.stringify([
+        gitStatus.refName,
+        gitStatus.branchChanges?.baseRef ?? null,
+        gitStatus.branchChanges?.insertions ?? null,
+        gitStatus.branchChanges?.deletions ?? null,
+        gitStatus.workingTree.insertions,
+        gitStatus.workingTree.deletions,
+        gitStatus.workingTree.files.length,
+      ])
+    : null;
   const lastRefreshRef = useRef<{
     atom: typeof previewAtom;
-    gitStatus: typeof gitStatus;
-    workspaceMutationId: string | null;
+    statusKey: typeof statusKey;
   } | null>(null);
   const { refresh, isPending } = changesDiffPreview;
   useEffect(() => {
@@ -999,18 +1007,13 @@ function ThreadChangesControl({
     }
     const previous = lastRefreshRef.current;
     if (previous?.atom === previewAtom) {
-      if (
-        previous.gitStatus === gitStatus &&
-        previous.workspaceMutationId === workspaceMutationId
-      ) {
-        return;
-      }
+      if (previous.statusKey === statusKey) return;
       // A change during the fetch still needs a refresh after it settles.
       if (isPending) return;
     }
-    lastRefreshRef.current = { atom: previewAtom, gitStatus, workspaceMutationId };
+    lastRefreshRef.current = { atom: previewAtom, statusKey };
     if (!isPending) refresh();
-  }, [previewAtom, gitStatus, workspaceMutationId, isPending, refresh]);
+  }, [previewAtom, statusKey, isPending, refresh]);
   const changesTotals = resolveChangesTotals({
     gitStatus,
     useDiffPreview,
@@ -1048,7 +1051,6 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
-  workspaceMutationId = null,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -1923,7 +1925,6 @@ export default function GitActionsControl({
           activeThreadRef={activeThreadRef}
           gitStatus={gitStatusForActions}
           onOpenChanges={onOpenChanges}
-          workspaceMutationId={workspaceMutationId}
         />
       ) : null}
 
