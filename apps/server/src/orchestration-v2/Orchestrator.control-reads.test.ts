@@ -21,6 +21,9 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -954,10 +957,94 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );
 
-it.effect("settling spends a snoozed thread's wake ticket, including after re-snoozing", () =>
+it.effect.each([false, true])("rejects thread.create for an existing id (deleted: %s)", (deleted) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make(`thread:duplicate-create:${deleted}`);
+    const create = {
+      type: "thread.create",
+      commandId: CommandId.make(`create:${threadId}`),
+      threadId,
+      projectId: ProjectId.make("project:duplicate-create"),
+      title: "Original",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+      importedNativeThread: {
+        ref: { driver: adapter.driver, nativeId: "native-original", strength: "strong" },
+      },
+    } as const;
+    yield* orchestrator.dispatch(create);
+    if (deleted) {
+      yield* orchestrator.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make(`delete:${threadId}`),
+        threadId,
+      });
+    }
+    const before = yield* projections.getThread(threadId);
+    assert.isNotNull(before.activeProviderThreadId);
+    assert.equal(before.deletedAt !== null, deleted);
+    const sequence = yield* orchestrator.getThreadEventSequence(threadId);
+    yield* TestClock.adjust("1 second");
+    const duplicate = {
+      ...create,
+      commandId: CommandId.make(`duplicate:${threadId}`),
+      title: "Replacement",
+      importedNativeThread: undefined,
+    };
+    const outcome = yield* orchestrator.dispatch(duplicate).pipe(Effect.result);
+    assert.ok(Result.isFailure(outcome), "duplicate create must be rejected");
+    const refused = outcome.failure;
+    assert.equal(refused._tag, "OrchestratorThreadAlreadyExistsError");
+    assert.equal(refused.message, `Thread ${threadId} already exists. Use a new thread id.`);
+    assert.deepEqual(yield* projections.getThread(threadId), before);
+    assert.equal(yield* orchestrator.getThreadEventSequence(threadId), sequence);
+    const retried = yield* orchestrator.dispatch(duplicate).pipe(Effect.flip);
+    assert.equal(retried._tag, "OrchestratorCommandPreviouslyRejectedError");
+    assert.include(retried.message, refused.message);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("replays a thread.create receipt without changing the thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:create-receipt-replay");
+    const create = {
+      type: "thread.create",
+      commandId: CommandId.make("create:receipt-replay"),
+      threadId,
+      projectId: ProjectId.make("project:duplicate-create"),
+      title: "Original",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    } as const;
+    const original = yield* orchestrator.dispatch(create);
+    const before = yield* projections.getThread(threadId);
+    const replayed = yield* orchestrator.dispatch(create);
+    assert.equal(replayed.sequence, original.sequence);
+    assert.deepEqual(replayed, original);
+    assert.deepEqual(yield* projections.getThread(threadId), before);
+    assert.equal(yield* orchestrator.getThreadEventSequence(threadId), original.sequence);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("explicit settle clears snooze atomically and stays idempotent after re-snoozing", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
     const threadId = ThreadId.make("thread:settle-snoozed");
     yield* orchestrator.dispatch({
       type: "thread.create",
@@ -974,29 +1061,44 @@ it.effect("settling spends a snoozed thread's wake ticket, including after re-sn
       creationSource: "web",
     });
     const now = yield* DateTime.now;
-    const snoozedUntil = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+    const settledAt = DateTime.add(now, { seconds: 1 });
+    const snoozedUntil = DateTime.add(now, { hours: 1 });
     for (const round of [1, 2]) {
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make(`snooze-before-settle-${round}`),
         threadId,
-        snoozedUntil,
+        snoozedUntil: DateTime.formatIso(snoozedUntil),
       });
-      const snoozed = yield* projections.getThreadShell(threadId);
-      assert.ok(snoozed?.snoozedUntil);
+      assert.deepInclude(yield* projections.getThread(threadId), {
+        snoozedUntil,
+        snoozedAt: yield* DateTime.now,
+      });
+      yield* TestClock.adjust("1 second");
+      const commandId = CommandId.make(`settle-snoozed-${round}`);
+      yield* orchestrator.dispatch({ type: "thread.settle", commandId, threadId });
+      const expected = {
+        settledOverride: "settled",
+        settledAt,
+        snoozedUntil: null,
+        snoozedAt: null,
+        updatedAt: yield* DateTime.now,
+      } as const;
+      const committed = yield* events.readByCommandId({ commandId }).pipe(Stream.runCollect);
+      assert.lengthOf(committed, 1);
+      assert.equal(committed[0]?.event.type, "thread.settled");
+      assert.deepInclude(committed[0]?.event.payload, expected);
+      const settled = yield* projections.getThreadShell(threadId);
+      assert.deepInclude(settled, expected);
+      assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, expected);
+
+      yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.settle",
-        commandId: CommandId.make(`settle-snoozed-${round}`),
+        commandId: CommandId.make(`settle-again-${round}`),
         threadId,
       });
-      const settled = yield* projections.getThreadShell(threadId);
-      assert.ok(settled);
-      assert.equal(settled.settledOverride, "settled");
-      assert.equal(settled.snoozedUntil, null);
-      assert.equal(settled.snoozedAt, null);
-      const projection = yield* projections.getThreadProjection(threadId);
-      assert.equal(projection.thread.snoozedUntil, null);
-      assert.equal(projection.thread.snoozedAt, null);
+      assert.deepEqual(yield* projections.getThreadShell(threadId), settled);
     }
     yield* orchestrator.dispatch({
       type: "thread.unsettle",
@@ -1004,9 +1106,13 @@ it.effect("settling spends a snoozed thread's wake ticket, including after re-sn
       threadId,
       reason: "user",
     });
-    const active = yield* projections.getThreadShell(threadId);
-    assert.ok(active);
-    assert.equal(active.settledOverride, "active");
-    assert.equal(active.snoozedUntil, null);
+    const active = {
+      settledOverride: "active",
+      settledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+    } as const;
+    assert.deepInclude(yield* projections.getThreadShell(threadId), active);
+    assert.deepInclude((yield* projections.getThreadProjection(threadId)).thread, active);
   }).pipe(Effect.provide(layerTest)),
 );
