@@ -6,6 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 type SessionResult = AsyncResult.AsyncResult<AuthSessionState, Error>;
 const testState = vi.hoisted(() => ({
@@ -62,6 +63,7 @@ import {
   respondToConfirmDialog,
 } from "~/confirmDialog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { ConfirmDialogHost } from "./ConfirmDialogHost";
 import {
   ServerUpdateAction,
   ServerUpdateProgress,
@@ -304,11 +306,21 @@ describe("ServerUpdateAction", () => {
     expect(button()).toBeUndefined();
   });
 
-  it("updates remote desktop apps through the shared update flow after confirmation", async () => {
-    registerConfirmDialogHost();
+  it.each(["{Enter}", " "])("confirms a remote desktop update with %j", async (key) => {
     testState.updateServer.mockResolvedValue(success("desktop-app", "0.0.34"));
 
-    await renderAction({ selfUpdate: "desktop-managed", desktopAppUpdate: true });
+    await render(
+      <>
+        <ConfirmDialogHost />
+        <ServerUpdateAction
+          environmentId={"env-test" as EnvironmentId}
+          serverLabel="Test server"
+          selfUpdate="desktop-managed"
+          desktopAppUpdate
+          targetVersion="0.0.31"
+        />
+      </>,
+    );
     await click("Update");
     expect(readConfirmDialogState()).toEqual(
       expect.objectContaining({
@@ -316,7 +328,9 @@ describe("ServerUpdateAction", () => {
         message: expect.stringContaining("Test server"),
       }),
     );
-    await act(async () => respondToConfirmDialog(true));
+    expect(testState.updateServer).not.toHaveBeenCalled();
+    await expect.element(page.getByRole("button", { name: "Confirm", exact: true })).toHaveFocus();
+    await act(async () => userEvent.keyboard(key));
 
     expect(testState.updateServer).toHaveBeenCalledWith({
       environmentId: "env-test",
