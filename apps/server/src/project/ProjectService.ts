@@ -6,7 +6,6 @@ import {
   type Project,
   type ProjectCreatePayload,
   type ProjectScript,
-  type ProjectSettingsOverrides,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
   SCRIPT_RUN_COMMAND_PATTERN,
@@ -25,6 +24,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -186,6 +186,7 @@ export const make = Effect.gen(function* () {
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
+  const commandReceipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -223,54 +224,15 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  const hydrate = Effect.fn("ProjectService.hydrate")(function* (row: ProjectStore.ProjectRow) {
+  const hydrate = Effect.fn("ProjectService.hydrate")(function* (
+    row: ProjectStore.ProjectRow,
+    settings?: ServerSettingsValue,
+  ) {
     const enrichment =
       row.deletedAt === null
         ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
         : yield* projectEnrichment.peek(row.workspaceRoot);
-    return toProject(row, enrichment, yield* readSettings);
-  });
-
-  // A null model or thread mode removes the override, so the environment
-  // default applies again.
-  const saveProjectSettings = Effect.fn("ProjectService.saveProjectSettings")(function* (
-    projectId: ProjectId,
-    input: ProjectSettingsInput,
-  ) {
-    if (
-      input.defaultModelSelection === undefined &&
-      input.defaultThreadEnvMode === undefined &&
-      input.autoPull === undefined &&
-      input.scripts === undefined
-    ) {
-      return;
-    }
-    // A retried command replays its accepted receipt even after the project
-    // was deleted; its settings must not come back with it.
-    if (Option.isNone(yield* readRow(projectId))) return;
-    yield* serverSettings
-      .updateProjectSettingsOverride(projectId, (current) => {
-        const entry: {
-          -readonly [K in keyof ProjectSettingsOverrides]: ProjectSettingsOverrides[K];
-        } = { ...current };
-        if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
-        else if (input.defaultModelSelection !== undefined) {
-          entry.defaultModelSelection = input.defaultModelSelection;
-        }
-        if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
-        else if (input.defaultThreadEnvMode !== undefined) {
-          entry.defaultThreadEnvMode = input.defaultThreadEnvMode;
-        }
-        if (input.autoPull !== undefined) entry.defaultAutoPull = input.autoPull;
-        if (input.scripts !== undefined) entry.defaultProjectScripts = input.scripts;
-        return entry;
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProjectOperationError({ operation: "save-project-settings", projectId, cause }),
-        ),
-      );
+    return toProject(row, enrichment, settings ?? (yield* readSettings));
   });
 
   const rejectInvalidScripts = Effect.fn("ProjectService.rejectInvalidScripts")(function* (
@@ -314,11 +276,84 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  // `afterAccepted` runs under the project's lock once the command is accepted,
+  const handleReceipt = Effect.fn("ProjectService.handleReceipt")(function* (
+    command: Pick<ProjectCommand, "commandId" | "projectId" | "type">,
+    receipt: CommandReceiptStore.ProjectCommandReceiptV2,
+  ) {
+    const { projectId } = command;
+    const dispatchError = (cause: unknown) =>
+      new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
+    if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
+      return yield* dispatchError(
+        `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
+      );
+    }
+    if (receipt.status === "accepted") return;
+    const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
+    switch (rejection?._tag) {
+      case "ProjectWorkspaceConflictError":
+        return yield* new ProjectConflictError({
+          projectId,
+          workspaceRoot: rejection.workspaceRoot,
+          conflictingProjectId: rejection.conflictingProjectId,
+        });
+      case "ProjectCommandMissingProjectError":
+        return yield* new ProjectNotFoundError({ projectId });
+      default:
+        return yield* dispatchError(
+          rejection ?? receipt.error ?? "The command was previously rejected.",
+        );
+    }
+  });
+
+  // Receipts precede all fresh-request preflight, including filesystem work.
+  const replayCommand = Effect.fn("ProjectService.replayCommand")(
+    (command: Pick<ProjectCommand, "commandId" | "projectId" | "type">) =>
+      Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const dispatchError = (cause: unknown) =>
+            new ProjectOperationError({
+              operation: "dispatch-project-command",
+              projectId: command.projectId,
+              cause,
+            });
+          const receipt = yield* restore(
+            commandReceipts
+              .getProjectByCommandId(command.commandId)
+              .pipe(Effect.mapError(dispatchError)),
+          );
+          if (Option.isNone(receipt)) {
+            const threadReceipt = yield* restore(
+              commandReceipts
+                .getByCommandId(command.commandId)
+                .pipe(Effect.mapError(dispatchError)),
+            );
+            if (Option.isSome(threadReceipt)) {
+              return yield* dispatchError("The command ID belongs to a thread command.");
+            }
+            return false;
+          }
+          yield* handleReceipt(command, receipt.value);
+          yield* serverSettings.syncProjectSettings.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectOperationError({
+                  operation: "save-project-settings",
+                  projectId: command.projectId,
+                  cause,
+                }),
+            ),
+          );
+          return true;
+        }),
+      ),
+  );
+
+  // Settings synchronization runs under the project's lock after acceptance,
   // so a delete cannot clean up between the two and leave state behind.
   const commit = Effect.fn("ProjectService.commit")(function* (
     command: ProjectCommand,
-    afterAccepted: Effect.Effect<void, ProjectOperationError> = Effect.void,
+    settings?: ProjectSettingsInput,
   ) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
@@ -344,61 +379,60 @@ export const make = Effect.gen(function* () {
         eventId,
         now,
       });
-      if (Result.isSuccess(planned)) {
-        const { receipt } = yield* eventSink.commitProjectCommand({
-          commandId: command.commandId,
-          projectId,
-          commandType: command.type,
-          acceptedAt: now,
-          event: planned.success,
-        });
-        return receipt;
-      }
-      return yield* eventSink.commitRejectedProjectCommand({
-        commandId: command.commandId,
-        projectId,
-        commandType: command.type,
-        rejectedAt: now,
-        error: encodeProjectCommandRejection(planned.failure),
-      });
-    });
-    const committed = planAndCommit.pipe(
-      Effect.mapError(dispatchError),
-      Effect.tap((receipt) =>
-        receipt.status === "accepted" &&
-        receipt.projectId === projectId &&
-        receipt.commandType === command.type
-          ? afterAccepted
-          : Effect.void,
-      ),
-    );
-    const receipt = yield* projectLocks.withLock(
-      projectId,
-      workspaceRoot === undefined ? committed : workspaceLocks.withLock(workspaceRoot, committed),
-    );
-    if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
-      return yield* dispatchError(
-        `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
+      const commitResult = Result.isSuccess(planned)
+        ? eventSink.commitProjectCommand({
+            commandId: command.commandId,
+            projectId,
+            commandType: command.type,
+            acceptedAt: now,
+            event: {
+              ...planned.success,
+              metadata: {
+                ...planned.success.metadata,
+                ...(settings === undefined || Object.keys(settings).length === 0
+                  ? {}
+                  : { projectSettings: settings }),
+              },
+            },
+          })
+        : eventSink
+            .commitRejectedProjectCommand({
+              commandId: command.commandId,
+              projectId,
+              commandType: command.type,
+              rejectedAt: now,
+              error: encodeProjectCommandRejection(planned.failure),
+            })
+            .pipe(Effect.map((receipt) => ({ receipt, committed: false })));
+      // Once acceptance can commit, cancellation must also wait for settings visibility.
+      return yield* commitResult.pipe(
+        Effect.mapError(dispatchError),
+        Effect.tap(({ receipt, committed }) =>
+          settings !== undefined &&
+          (!committed || Object.keys(settings).length > 0) &&
+          receipt.status === "accepted" &&
+          receipt.projectId === projectId &&
+          receipt.commandType === command.type
+            ? serverSettings.syncProjectSettings.pipe(
+                Effect.asVoid,
+                Effect.mapError(
+                  (cause) =>
+                    new ProjectOperationError({
+                      operation: "save-project-settings",
+                      projectId,
+                      cause,
+                    }),
+                ),
+              )
+            : Effect.void,
+        ),
+        Effect.uninterruptible,
       );
-    }
-    // A retried command re-plans against the state it already produced, so its
-    // first receipt, not the new plan, decides the outcome.
-    if (receipt.status === "accepted") return;
-    const rejection = Option.getOrUndefined(decodeProjectCommandRejection(receipt.error));
-    switch (rejection?._tag) {
-      case "ProjectWorkspaceConflictError":
-        return yield* new ProjectConflictError({
-          projectId,
-          workspaceRoot: rejection.workspaceRoot,
-          conflictingProjectId: rejection.conflictingProjectId,
-        });
-      case "ProjectCommandMissingProjectError":
-        return yield* new ProjectNotFoundError({ projectId });
-      default:
-        return yield* dispatchError(
-          rejection ?? receipt.error ?? "The command was previously rejected.",
-        );
-    }
+    });
+    const { receipt } = yield* workspaceRoot === undefined
+      ? planAndCommit
+      : workspaceLocks.withLock(workspaceRoot, planAndCommit);
+    yield* handleReceipt(command, receipt);
   });
 
   const readCommitted = Effect.fn("ProjectService.readCommitted")(function* (projectId: ProjectId) {
@@ -442,12 +476,21 @@ export const make = Effect.gen(function* () {
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      if (
+        yield* replayCommand({
+          type: "project.create",
+          commandId: input.commandId,
+          projectId: input.projectId,
+        })
+      ) {
+        return yield* readCommitted(input.projectId);
+      }
+      yield* rejectInvalidScripts(input.projectId, [], input.scripts);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
-      yield* rejectInvalidScripts(input.projectId, [], input.scripts);
       yield* commit(
         {
           type: "project.create",
@@ -456,22 +499,40 @@ export const make = Effect.gen(function* () {
           title: input.title,
           workspaceRoot,
         },
-        saveProjectSettings(input.projectId, {
-          ...(input.defaultModelSelection === undefined
+        {
+          ...(input.defaultModelSelection == null
             ? {}
             : { defaultModelSelection: input.defaultModelSelection }),
           ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-        }),
+        },
       );
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
+    (effect, input) => projectLocks.withLock(input.projectId, effect),
   );
 
   const update: ProjectService["Service"]["update"] = Effect.fn("ProjectService.update")(
     function* (input) {
-      const existing = yield* readRow(input.projectId);
+      if (
+        yield* replayCommand({
+          type: "project.meta.update",
+          commandId: input.commandId,
+          projectId: input.projectId,
+        })
+      ) {
+        return yield* readCommitted(input.projectId);
+      }
+      const existing = yield* readRow(input.projectId, { includeDeleted: true });
       if (Option.isNone(existing)) {
+        return yield* new ProjectNotFoundError({ projectId: input.projectId });
+      }
+      if (existing.value.deletedAt !== null) {
+        yield* commit({
+          type: "project.meta.update",
+          commandId: input.commandId,
+          projectId: input.projectId,
+        });
         return yield* new ProjectNotFoundError({ projectId: input.projectId });
       }
       const previousRoot = existing.value.workspaceRoot;
@@ -501,13 +562,23 @@ export const make = Effect.gen(function* () {
           ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
           ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
         },
-        saveProjectSettings(input.projectId, input),
+        {
+          ...(input.defaultModelSelection === undefined
+            ? {}
+            : { defaultModelSelection: input.defaultModelSelection }),
+          ...(input.defaultThreadEnvMode === undefined
+            ? {}
+            : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+          ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
+          ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+        },
       );
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
       return yield* readCommitted(input.projectId);
     },
+    (effect, input) => projectLocks.withLock(input.projectId, effect),
   );
 
   const bootstrap: ProjectService["Service"]["bootstrap"] = Effect.fn("ProjectService.bootstrap")(
@@ -601,11 +672,8 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // A machine-disabled provider instance that a deleted project's override
-  // once turned on must not stay probed and alive forever. Nothing else
-  // removes the entry, so deletion is where it goes; best-effort because a
-  // settings write failure should not block the deletion it is cleaning up
-  // after, and a server crash before a replay never revisits this project.
+  // Stop probing providers enabled only by this project's override. Cleanup is
+  // best-effort because a settings failure must not block deletion.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
     serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
       Effect.asVoid,
@@ -631,7 +699,10 @@ export const make = Effect.gen(function* () {
       if (isFirstDelete) {
         yield* deleteChildThreads(input);
       }
-      yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+      yield* projectLocks.withLock(
+        projectId,
+        commit({ type: "project.delete", commandId: input.commandId, projectId }),
+      );
       if (isFirstDelete) {
         yield* clearProjectSettingsOverrides(projectId);
       }
@@ -682,7 +753,10 @@ export const make = Effect.gen(function* () {
           (cause) => new ProjectOperationError({ operation: "list-projects", cause }),
         ),
       );
-    const hydrated = yield* Effect.forEach(rows, hydrate, { concurrency: 8 });
+    const settings = yield* readSettings;
+    const hydrated = yield* Effect.forEach(rows, (row) => hydrate(row, settings), {
+      concurrency: 8,
+    });
     return {
       projects: hydrated,
       updatedAt: DateTime.formatIso(yield* DateTime.now),
