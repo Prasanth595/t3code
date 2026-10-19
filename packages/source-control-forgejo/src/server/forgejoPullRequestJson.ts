@@ -70,6 +70,7 @@ export const ForgejoComment = Schema.Struct({
   body: Schema.String,
   user: Schema.NullOr(ForgejoUser),
   created_at: Schema.String,
+  updated_at: Schema.optional(Schema.NullOr(Schema.String)),
   html_url: Schema.optional(Schema.String),
 });
 export const ForgejoReview = Schema.Struct({
@@ -151,12 +152,15 @@ export function forgejoChangeRequest(pr: typeof ForgejoPullRequest.Type) {
 }
 
 export function forgejoComment(comment: typeof ForgejoComment.Type): PullRequestComment {
+  const createdAt = toIsoUtc(comment.created_at);
+  const editedAt = comment.updated_at == null ? undefined : toIsoUtc(comment.updated_at);
   return {
     id: String(comment.id),
     kind: "issue-comment",
     author: forgejoActor(comment.user),
     body: comment.body,
-    createdAt: toIsoUtc(comment.created_at),
+    createdAt,
+    ...(editedAt === undefined || editedAt === createdAt ? {} : { editedAt }),
     url: comment.html_url || null,
     path: null,
     reviewState: null,
@@ -212,6 +216,7 @@ export function forgejoCommit(commit: typeof ForgejoCommit.Type): PullRequestCom
 
 export function forgejoChecks(
   statuses: ReadonlyArray<typeof ForgejoStatus.Type>,
+  pullRequestUrl: string,
 ): ReadonlyArray<PullRequestCheck> {
   return dedupeChecks(
     statuses.map((status) => ({
@@ -220,7 +225,9 @@ export function forgejoChecks(
       check: {
         name: status.context || "check",
         description: status.description || null,
-        url: status.target_url || null,
+        url: status.target_url
+          ? (URL.parse(status.target_url, pullRequestUrl)?.href ?? null)
+          : null,
         status:
           status.status === "success"
             ? "success"
