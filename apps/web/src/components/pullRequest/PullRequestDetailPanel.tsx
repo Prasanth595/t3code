@@ -693,9 +693,8 @@ export function PullRequestDetailPanel({
   }));
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
-  // Holds the absolute scrollTop to restore after the fold commits: near the bottom the browser has
-  // already clamped scrollTop by the fold's height, and refunding a delta on top of that lands at
-  // the hard top and reopens it.
+  // Save the target before collapse: the browser may clamp scrollTop as the viewport grows,
+  // so applying a delta afterward would compensate twice.
   const compensationRef = useRef<{
     tab: DetailTab;
     scroller: HTMLDivElement;
