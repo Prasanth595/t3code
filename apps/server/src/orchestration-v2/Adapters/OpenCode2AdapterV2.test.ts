@@ -4252,6 +4252,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           String(refused._tag === "ProviderAdapterForkThreadError" ? refused.cause : undefined),
           /still running.*Send your message again when it finishes/,
         );
+        assert.propertyVal(refused, "retryable", false);
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
@@ -4326,6 +4327,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     () =>
       Effect.gen(function* () {
         const FORK = "ses_f1484db83ffeLGtrRCFimo1H0e";
+        const EARLIER_FORK = "ses_f1484db83ffeLGtrRCFimo1H0g";
         const NEXT_FORK = "ses_f1484db83ffeLGtrRCFimo1H0f";
         const gate = makeProviderReplayGate(["wake-ended"]);
         const nextPrompt = `msg_t3_turn_${SESSION}:attempt:opencode2-adapter:2`;
@@ -4394,6 +4396,24 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               ],
               cursor: {},
             }),
+            out("session.fork", { sessionID: SESSION, before: "msg_report" }),
+            replyData("session.fork", sessionInfo({ id: EARLIER_FORK })),
+            out("session.update", { sessionID: EARLIER_FORK, permissions: "<any>" }),
+            reply("session.update", null),
+            out("message.list", "<any>"),
+            reply("message.list", {
+              data: [
+                idleItem("msg_next_idle", 10),
+                { ...firstTurnItems[0], id: "msg_next_answer", time: { created: 8, completed: 9 } },
+                { id: nextPrompt, time: { created: 7 }, text: "next", type: "user" },
+                idleItem("msg_wake_idle", 6),
+                { ...firstTurnItems[0], id: "msg_followup", time: { created: 5, completed: 6 } },
+                { id: "msg_report", time: { created: 4 }, text: "report", type: "synthetic" },
+                idleItem("msg_first_idle", 3),
+                { id: firstPrompt, time: { created: 1 }, text: "hi", type: "user" },
+              ],
+              cursor: {},
+            }),
             out("session.fork", { sessionID: SESSION, before: undefined }),
             replyData("session.fork", sessionInfo({ id: NEXT_FORK })),
             out("session.update", { sessionID: NEXT_FORK, permissions: "<any>" }),
@@ -4432,6 +4452,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* TestClock.adjust("0 seconds");
         yield* runtime.startTurn(secondTurn(thread));
         const next = yield* Deferred.await(nextEnded);
+        const earlierFork = yield* runtime.forkThread({
+          sourceProviderThread: thread,
+          targetThreadId: ThreadId.make("thread:opencode2-adapter:earlier-fork"),
+          providerTurnId: first.id,
+          sourceProviderTurns: [first, next],
+        });
+        assert.equal(earlierFork.nativeThreadRef?.nativeId, EARLIER_FORK);
         const latestFork = yield* runtime.forkThread({
           sourceProviderThread: thread,
           targetThreadId: ThreadId.make("thread:opencode2-adapter:next-fork"),

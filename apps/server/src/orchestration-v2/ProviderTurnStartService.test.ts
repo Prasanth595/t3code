@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextTransferId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -1001,6 +1002,103 @@ effectIt.effect("leaves the run starting when a thread-load failure will be retr
     expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("starting");
   }),
+);
+
+effectIt.effect.each([undefined, false])(
+  "honors fork retryability on the first start attempt (retryable: %s)",
+  (retryable) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue" });
+      const projection = harness.projection();
+      const run = projection.runs[0]!;
+      const sourceThreadId = ThreadId.make("thread-fork-source");
+      const sourceRun = {
+        ...run,
+        id: RunId.make("run-fork-source"),
+        threadId: sourceThreadId,
+        providerThreadId: ProviderThreadId.make("provider-thread-fork-source"),
+        status: "completed" as const,
+        completedAt: projection.updatedAt,
+      };
+      const sourceProviderThread = {
+        ...projection.providerThreads[0]!,
+        id: sourceRun.providerThreadId,
+        appThreadId: sourceThreadId,
+        nativeThreadRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "native-fork-source",
+          strength: "strong" as const,
+        },
+      };
+      const advice =
+        "The thread you forked from is still running. Send your message again when it finishes.";
+      const failure = Object.assign(
+        new ProviderAdapter.ProviderAdapterForkThreadError({
+          driver: sourceProviderThread.driver,
+          providerThreadId: sourceProviderThread.id,
+          cause: advice,
+        }),
+        retryable === undefined ? {} : { retryable },
+      );
+      const forkThread = vi.fn(() => Effect.fail(failure));
+      harness.open.mockImplementation(() =>
+        Effect.succeed({ driver: sourceProviderThread.driver, forkThread } as never),
+      );
+      harness.getThreadRecords.mockImplementation(() =>
+        Effect.succeed({
+          ...projection,
+          thread: { ...projection.thread, id: sourceThreadId },
+          runs: [sourceRun],
+          providerThreads: [sourceProviderThread],
+        }),
+      );
+      harness.setProjection({
+        ...projection,
+        contextTransfers: [
+          {
+            id: ContextTransferId.make("transfer-fork-source"),
+            type: "fork",
+            sourceThreadId,
+            targetThreadId: projection.thread.id,
+            sourcePoint: { threadId: sourceThreadId, runId: sourceRun.id },
+            basePoint: null,
+            sourceProviderInstanceId: run.providerInstanceId,
+            targetProviderInstanceId: run.providerInstanceId,
+            targetRunId: run.id,
+            status: "pending",
+            resolution: null,
+            createdBy: "user",
+            error: null,
+            createdAt: projection.updatedAt,
+            updatedAt: projection.updatedAt,
+            consumedAt: null,
+          },
+        ],
+      });
+
+      const result = yield* Effect.result(harness.startWithRetry);
+
+      expect(forkThread).toHaveBeenCalledOnce();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      const settled = harness.projection();
+      if (retryable === undefined) {
+        expect(result).toMatchObject({ _tag: "Failure", failure: { cause: failure } });
+        expect(harness.events).toEqual([]);
+        expect(settled.runs[0]?.status).toBe("starting");
+        return;
+      }
+      expect(result._tag).toBe("Success");
+      expect(settled.runs[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(settled.attempts[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(settled.nodes[0]).toMatchObject({ status: "failed", startedAt: null });
+      expect(settled.turnItems).toMatchObject([
+        {
+          type: "error",
+          title: "Provider turn failed to start",
+          failure: { class: "provider_error", message: advice },
+        },
+      ]);
+    }),
 );
 
 effectIt.effect("keeps a thread-load failure retryable when terminal persistence fails", () =>
