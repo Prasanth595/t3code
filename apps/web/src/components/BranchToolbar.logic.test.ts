@@ -328,30 +328,29 @@ describe("resolveCheckoutBranchMismatch", () => {
     ).toBeNull();
   });
 
-  it("detects a worktree checked out on another branch without offering a restore", () => {
-    expect(
-      resolveCheckoutBranchMismatch({
-        effectiveEnvMode: "worktree",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-thread",
-        activeThreadBranch: "feature/thread",
-        currentGitBranch: "feature/current",
-      }),
-    ).toEqual({
-      threadBranch: "feature/thread",
-      currentBranch: "feature/current",
-      canRestoreThreadBranch: false,
-    });
-  });
+  it("warns about worktree branch drift without restore, but ignores a pending rename status", () => {
+    const worktree = {
+      effectiveEnvMode: "worktree" as const,
+      activeWorktreePath: "/repo/.t3/worktrees/feature-thread",
+      activeThreadBranch: "t3code/fix-sidebar",
+    };
 
-  it("ignores a worktree status read from before its temporary branch was renamed", () => {
     expect(
       resolveCheckoutBranchMismatch({
-        effectiveEnvMode: "worktree",
-        activeWorktreePath: "/repo/.t3/worktrees/feature-thread",
-        activeThreadBranch: "t3code/fix-sidebar",
+        ...worktree,
         currentGitBranch: "t3code/1a2b3c4d",
       }),
     ).toBeNull();
+    expect(
+      resolveCheckoutBranchMismatch({
+        ...worktree,
+        currentGitBranch: "feature/checkout",
+      }),
+    ).toEqual({
+      threadBranch: worktree.activeThreadBranch,
+      currentBranch: "feature/checkout",
+      canRestoreThreadBranch: false,
+    });
   });
 
   it("ignores new-worktree base selection before a worktree exists", () => {

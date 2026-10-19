@@ -258,7 +258,7 @@ describe("resolveThreadMetadataUpdateForNextTurn", () => {
     model: "gpt-5.4",
   };
 
-  it("updates a stale thread branch to the active checkout without moving the thread", () => {
+  it("adopts the checkout branch without clearing the worktree attachment", () => {
     expect(
       resolveThreadMetadataUpdateForNextTurn({
         currentModelSelection: modelSelection,

@@ -231,16 +231,12 @@ export function resolveBranchToolbarPrBranch(input: {
   return input.activeThreadBranch === input.resolvedActiveBranch ? input.activeThreadBranch : null;
 }
 
-// A thread's recorded branch can fall behind its checkout: the user or an agent
-// switches branches, or a sibling thread sharing the worktree does. Only a local
-// checkout offers a restore; switching a worktree back could pull the branch
-// out from under a sibling thread.
 export function resolveCheckoutBranchMismatch(input: {
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
-}): { threadBranch: string; currentBranch: string; canRestoreThreadBranch: boolean } | null {
+}) {
   const { effectiveEnvMode, activeWorktreePath, activeThreadBranch, currentGitBranch } = input;
   const isLocalCheckout = effectiveEnvMode === "local" && activeWorktreePath === null;
   const isEstablishedWorktree = effectiveEnvMode === "worktree" && activeWorktreePath !== null;
@@ -250,8 +246,7 @@ export function resolveCheckoutBranchMismatch(input: {
   if (!activeThreadBranch || !currentGitBranch || activeThreadBranch === currentGitBranch) {
     return null;
   }
-  // A new worktree's temporary branch is renamed in the background, so a status
-  // read from before the rename is not drift.
+  // Cached status can predate the automatic rename of a temporary worktree branch.
   if (
     isEstablishedWorktree &&
     !isTemporaryWorktreeBranch(activeThreadBranch) &&
@@ -262,6 +257,7 @@ export function resolveCheckoutBranchMismatch(input: {
   return {
     threadBranch: activeThreadBranch,
     currentBranch: currentGitBranch,
+    // Restoring a worktree checkout could switch the branch for sibling threads.
     canRestoreThreadBranch: isLocalCheckout,
   };
 }
