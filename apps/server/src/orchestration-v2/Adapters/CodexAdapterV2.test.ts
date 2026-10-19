@@ -736,6 +736,75 @@ describe("CodexAdapterV2 process spawning", () => {
     ),
   );
 
+  it.effect("uses the opted-in workspace or physical metadata cwd in the production factory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-session-cwd-" });
+      const metadata = path.join(root, "metadata");
+      const workspace = path.join(root, "workspace-alias");
+      yield* fs.makeDirectory(metadata);
+      yield* fs.symlink(metadata, workspace);
+      const physicalMetadata = yield* fs.realPath(metadata);
+      const spawned: Array<ChildProcess.StandardCommand> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) spawned.push(command);
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+        );
+      });
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+        Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      );
+      const open = (settings: typeof DEFAULT_CODEX_SETTINGS, cwd: string | null) =>
+        factory
+          .open({
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            threadId: ThreadId.make("thread-metadata-cwd"),
+            providerSessionId: ProviderSessionId.make("session-metadata-cwd"),
+            settings,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd,
+            }),
+            environment: { HOME: root, CODEX_HOME: path.join(root, "isolated-home") },
+          })
+          .pipe(Effect.scoped, Effect.result);
+      const settings = Schema.decodeUnknownSync(CodexSettings)({
+        metadataCwd: metadata,
+        launchArgs: "--strict-config",
+      });
+      yield* open(settings, workspace);
+      yield* open(settings, null);
+      yield* open(DEFAULT_CODEX_SETTINGS, workspace);
+      assert.deepStrictEqual(
+        spawned.map((command) => command.options.cwd),
+        [workspace, physicalMetadata, undefined],
+      );
+      assert.deepStrictEqual(spawned[0]?.args, ["app-server", "--strict-config"]);
+      assert.deepStrictEqual(spawned[0]?.options.env, { ...spawned[1]?.options.env });
+
+      for (const metadataCwd of ["relative", path.join(root, "missing")]) {
+        const result = yield* open(
+          Schema.decodeUnknownSync(CodexSettings)({ metadataCwd }),
+          workspace,
+        );
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure")
+          assert.equal(result.failure._tag, "ProviderAdapterOpenSessionError");
+      }
+      assert.equal(spawned.length, 3);
+      yield* open(settings, path.join(root, "missing-workspace"));
+      assert.equal(spawned[3]?.options.cwd, path.join(root, "missing-workspace"));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("launches the app-server with the configured launch arguments", () =>
     Effect.gen(function* () {
       const spawnedArgs: Array<ReadonlyArray<string>> = [];

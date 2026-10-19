@@ -7,6 +7,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  CodexSettings,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
   resolveProjectProviderInstanceEnabled,
@@ -1201,5 +1202,26 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch({ migrateModelPreferences: input })).toEqual({
       migrateModelPreferences: input,
     });
+  });
+});
+
+describe("Codex metadata directory settings", () => {
+  const decode = Schema.decodeUnknownSync(CodexSettings);
+  const encode = Schema.encodeSync(CodexSettings);
+
+  it("preserves omission in existing settings and persisted config", () => {
+    expect(decode({})).not.toHaveProperty("metadataCwd");
+    expect(encode(decode({}))).not.toHaveProperty("metadataCwd");
+  });
+
+  it("round-trips a trimmed metadata directory", () => {
+    expect(encode(decode({ metadataCwd: "  ~/metadata  " }))).toHaveProperty(
+      "metadataCwd",
+      "~/metadata",
+    );
+  });
+
+  it.each(["", "   ", null])("rejects an explicit empty metadata directory %s", (metadataCwd) => {
+    expect(() => decode({ metadataCwd })).toThrow();
   });
 });

@@ -1,13 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { CodexSettings } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import { checkCodexProviderStatus } from "./CodexProvider.ts";
+import { checkCodexProviderStatus, probeCodexSkillsForCwd } from "./CodexProvider.ts";
 
 /**
  * Stand-in for Codex 0.162's app-server catalog behavior:
@@ -35,16 +37,24 @@ setTimeout(() => {
 }, 300);
 const write = (message) => process.stdout.write(JSON.stringify(message) + "\n");
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
-  const { id, method } = JSON.parse(line);
+  const { id, method, params } = JSON.parse(line);
+  if (process.env.FAKE_CWD_RECEIPT) {
+    fs.appendFileSync(process.env.FAKE_CWD_RECEIPT, JSON.stringify({ method, cwd: process.cwd(), cwds: params?.cwds, home: process.env.HOME, codexHome: process.env.CODEX_HOME }) + "\n");
+  }
   if (id === undefined) return;
   if (method === "initialize") {
     write({ id, result: { userAgent: "codex/0.162.0", codexHome: process.env.CODEX_HOME, platformFamily: "unix", platformOs: "macos" } });
   } else if (method === "account/read") {
-    write({ id, result: { account: { type: "chatgpt", email: "test@example.com", planType: "promax" }, requiresOpenaiAuth: false } });
+    write({ id, result: { account: process.env.FAKE_CWD_RECEIPT ? { type: "apiKey" } : { type: "chatgpt", email: "test@example.com", planType: "promax" }, requiresOpenaiAuth: false } });
   } else if (method === "skills/list") {
-    write({ id, result: { data: [] } });
+    const skill = (name) => ({ name, path: path.join(process.cwd(), name, "SKILL.md"), description: "", enabled: true, scope: "repo" });
+    const cwd = process.env.FAKE_EXPECTED_CWD;
+    write({ id, result: { data: cwd ? [
+      { cwd: "/unrelated-workspace", skills: [skill("decoy")], errors: [] },
+      { cwd, skills: [skill("selected")], errors: [] },
+    ] : [] } });
   } else if (method === "model/list") {
-    write({ id, result: { data: JSON.parse(fs.readFileSync(cachePath, "utf8")).models, nextCursor: null } });
+    write({ id, result: { data: process.env.FAKE_CWD_RECEIPT ? [model([])] : JSON.parse(fs.readFileSync(cachePath, "utf8")).models, nextCursor: null } });
   } else {
     write({ id, error: { code: -32601, message: "unsupported" } });
   }
@@ -106,5 +116,175 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(false), ["default", "priority"]);
     }).pipe(Effect.scoped),
+  );
+});
+
+const cwdReceipt = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Struct({
+      method: Schema.String,
+      cwd: Schema.String,
+      cwds: Schema.optionalKey(Schema.Array(Schema.String)),
+      home: Schema.String,
+      codexHome: Schema.String,
+    }),
+  ),
+);
+const decodeCwdReceipt = Schema.decodeUnknownSync(cwdReceipt);
+
+const makeCwdFixture = Effect.fnUntraced(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-cwd-" });
+  const home = path.join(root, "synthetic-home");
+  const metadata = path.join(home, "metadata");
+  const workspace = path.join(root, "workspace");
+  const codexHome = path.join(root, "isolated-codex-home");
+  const receipt = path.join(root, "cwd.jsonl");
+  const binaryPath = path.join(root, "fake-codex");
+  for (const directory of [metadata, workspace, codexHome, path.join(home, ".codex")]) {
+    yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  yield* fs.writeFileString(
+    path.join(home, ".codex", "config.toml"),
+    'model = "synthetic-native-sentinel"\n',
+  );
+  yield* fs.writeFileString(binaryPath, FAKE_CODEX_APP_SERVER);
+  yield* fs.chmod(binaryPath, 0o755);
+  const physicalMetadata = yield* fs.realPath(metadata);
+  const environment = {
+    HOME: home,
+    FAKE_CWD_RECEIPT: receipt,
+    FAKE_EXPECTED_CWD: physicalMetadata,
+  };
+  const readReceipt = fs
+    .readFileString(receipt)
+    .pipe(Effect.map((text) => decodeCwdReceipt(`[${text.trim().split("\n").join(",")}]`)));
+  return {
+    fs,
+    path,
+    home,
+    metadata,
+    workspace,
+    codexHome,
+    receipt,
+    binaryPath,
+    physicalMetadata,
+    environment,
+    readReceipt,
+  };
+});
+
+it.layer(NodeServices.layer, { excludeTestServices: true })("Codex metadata cwd", (it) => {
+  it.effect("uses one physical host-expanded directory for status spawn and skills selection", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeCwdFixture();
+      yield* fixture.fs.symlink(
+        fixture.metadata,
+        fixture.path.join(fixture.home, "metadata-alias"),
+      );
+      const provider = yield* checkCodexProviderStatus(
+        decodeCodexSettings({
+          binaryPath: fixture.binaryPath,
+          homePath: fixture.codexHome,
+          metadataCwd: "~/metadata-alias",
+        }),
+        undefined,
+        fixture.environment,
+      ).pipe(Effect.provideService(HostProcess.HomeDirectory, fixture.home));
+      assert.equal(provider.status, "ready", provider.message);
+      assert.deepStrictEqual(
+        provider.skills.map((skill) => skill.name),
+        ["selected"],
+      );
+      const receipt = yield* fixture.readReceipt;
+      assert.isTrue(receipt.length > 0);
+      for (const call of receipt) {
+        assert.equal(call.cwd, fixture.physicalMetadata);
+        assert.equal(call.home, fixture.home);
+        assert.equal(call.codexHome, fixture.codexHome);
+      }
+      assert.deepStrictEqual(receipt.find((call) => call.method === "skills/list")?.cwds, [
+        fixture.physicalMetadata,
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps the explicit workspace for workspace skills", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeCwdFixture();
+      const cwd = yield* fixture.fs.realPath(fixture.workspace);
+      const skills = yield* probeCodexSkillsForCwd({
+        binaryPath: fixture.binaryPath,
+        homePath: fixture.codexHome,
+        cwd,
+        environment: { ...fixture.environment, FAKE_EXPECTED_CWD: cwd },
+      });
+      assert.deepStrictEqual(
+        skills.map((skill) => skill.name),
+        ["selected"],
+      );
+      const receipt = yield* fixture.readReceipt;
+      assert.deepStrictEqual(receipt.find((call) => call.method === "skills/list")?.cwds, [cwd]);
+      assert.isTrue(receipt.every((call) => call.cwd === cwd));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps process cwd without new filesystem work when the option is absent", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeCwdFixture();
+      const provider = yield* checkCodexProviderStatus(
+        decodeCodexSettings({ binaryPath: fixture.binaryPath, homePath: fixture.codexHome }),
+        undefined,
+        { ...fixture.environment, FAKE_EXPECTED_CWD: process.cwd() },
+      ).pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            realPath: () => Effect.die("Absent metadata must not resolve a path"),
+            stat: () => Effect.die("Absent metadata must not stat a path"),
+          }),
+        ),
+      );
+      assert.equal(provider.status, "ready", provider.message);
+      assert.deepStrictEqual(
+        provider.skills.map((skill) => skill.name),
+        ["selected"],
+      );
+      assert.isTrue((yield* fixture.readReceipt).every((call) => call.cwd === process.cwd()));
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "reports relative, missing and non-directory metadata without spawning or falling back",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeCwdFixture();
+        const spawned: Array<string> = [];
+        for (const metadataCwd of [
+          "relative/metadata",
+          fixture.path.join(fixture.home, "missing"),
+          fixture.binaryPath,
+        ]) {
+          const provider = yield* checkCodexProviderStatus(
+            decodeCodexSettings({ binaryPath: fixture.binaryPath, metadataCwd }),
+            undefined,
+            fixture.environment,
+          ).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make(() => {
+                spawned.push(metadataCwd);
+                return Effect.die("Invalid metadata must not spawn");
+              }),
+            ),
+          );
+          assert.equal(provider.status, "error");
+          assert.isTrue(provider.installed);
+          assert.include(provider.message ?? "", "directory");
+          assert.notInclude(provider.message ?? "", "Could not start Codex CLI");
+        }
+        assert.deepStrictEqual(spawned, []);
+      }).pipe(Effect.scoped),
   );
 });

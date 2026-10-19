@@ -6,7 +6,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  CodexSettings,
+  EnvironmentId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -97,6 +103,92 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect("uses the metadata context for the fake account client and preserves omission", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-account-cwd-" });
+      const home = NodePath.join(root, "synthetic-home");
+      const metadata = NodePath.join(home, "metadata");
+      const codexHome = NodePath.join(root, "isolated-codex-home");
+      const binaryPath = NodePath.join(root, "fake-account-client");
+      const receipt = NodePath.join(root, "receipt.jsonl");
+      yield* fs.makeDirectory(metadata, { recursive: true });
+      yield* fs.makeDirectory(codexHome);
+      yield* fs.writeFileString(
+        binaryPath,
+        String.raw`#!/usr/bin/env node
+const fs = require("node:fs");
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const { id, method, params } = JSON.parse(line);
+  if (id === undefined) return;
+  if (method === "initialize") {
+    process.stdout.write(JSON.stringify({ id, result: { userAgent: "codex/0.163.0", codexHome: process.env.CODEX_HOME, platformFamily: "unix", platformOs: "macos" } }) + "\n");
+  } else if (method === "account/rateLimitResetCredit/consume") {
+    fs.appendFileSync(process.env.FAKE_ACCOUNT_RECEIPT, JSON.stringify({ cwd: process.cwd(), home: process.env.HOME, codexHome: process.env.CODEX_HOME, idempotencyKey: params.idempotencyKey }) + "\n");
+    process.stdout.write(JSON.stringify({ id, result: { outcome: "noCredit" } }) + "\n");
+  } else {
+    process.stdout.write(JSON.stringify({ id, error: { code: -32601, message: "unsupported fake request" } }) + "\n");
+  }
+});
+`,
+      );
+      yield* fs.chmod(binaryPath, 0o755);
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const onlyFake = ChildProcessSpawner.make((command) => {
+        if (!ChildProcess.isStandardCommand(command) || command.command !== binaryPath) {
+          return Effect.die("The account fixture must only execute its fake client");
+        }
+        return spawner.spawn(command);
+      });
+      for (const metadataCwd of ["~/metadata", undefined]) {
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make(
+            metadataCwd ? "fake-account-metadata" : "fake-account-default",
+          ),
+          displayName: "Fake account",
+          enabled: false,
+          environment: [
+            { name: "HOME", value: home, sensitive: false },
+            { name: "FAKE_ACCOUNT_RECEIPT", value: receipt, sensitive: false },
+          ],
+          config: Schema.decodeUnknownSync(CodexSettings)({
+            binaryPath,
+            homePath: codexHome,
+            ...(metadataCwd === undefined ? {} : { metadataCwd }),
+          }),
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, onlyFake),
+          Effect.provideService(HostProcess.HomeDirectory, home),
+        );
+        if (!instance.consumeResetCredit) return yield* Effect.die("Missing account operation");
+        expect(
+          yield* instance
+            .consumeResetCredit()
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home)),
+        ).toBe("noCredit");
+      }
+      const rows = (yield* fs.readFileString(receipt))
+        .trim()
+        .split("\n")
+        .map(
+          Schema.decodeUnknownSync(
+            Schema.fromJsonString(
+              Schema.Struct({
+                cwd: Schema.String,
+                home: Schema.String,
+                codexHome: Schema.String,
+                idempotencyKey: Schema.String,
+              }),
+            ),
+          ),
+        );
+      expect(rows.map((row) => row.cwd)).toEqual([yield* fs.realPath(metadata), process.cwd()]);
+      expect(rows.map((row) => row.home)).toEqual([home, home]);
+      expect(rows.map((row) => row.codexHome)).toEqual([codexHome, codexHome]);
+      expect(rows.every((row) => row.idempotencyKey.length > 0)).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
