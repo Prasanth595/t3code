@@ -560,11 +560,6 @@ function PullRequestCodeTab({
       ignoreWhitespace,
     ),
   );
-  // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
-  // not structure and so dropped. Neither says anything about there being more to fetch.
-  const withheldContent =
-    loadedSlices.some((slice) => slice.truncated) ||
-    parsedSlices.some((parsed) => parsed?.kind === "raw");
   const files = parsedSlices.flatMap((parsed) =>
     parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
   );
