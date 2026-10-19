@@ -141,37 +141,27 @@ describe("timeline scroll targets", () => {
   });
 });
 
-describe("createUpwardScrollDetector", () => {
-  it("reports a reader scrolling up, such as a scroll chained out of an embedded frame", () => {
-    const scrolledUp = createUpwardScrollDetector({ top: 6621, height: 7421 });
-    expect(scrolledUp({ top: 6471, height: 7421 })).toBe(true);
-    expect(scrolledUp({ top: 6321, height: 7421 })).toBe(true);
+describe("timeline scroll follow opt-out", () => {
+  it("detects iframe-only upward scrolling after following streaming content", () => {
+    const scrolledUp = createUpwardScrollDetector({ top: 1000, height: 1500 });
+    expect(scrolledUp({ top: 1000, height: 1800 })).toBe(false);
+    expect(scrolledUp({ top: 1300, height: 1800 })).toBe(false);
+    expect(scrolledUp({ top: 1200, height: 1700 })).toBe(false);
+
+    // Sandboxed frames deliver no wheel or touch event to the parent timeline.
+    expect(scrolledUp({ top: 1199.5, height: 1700 })).toBe(false);
+    expect(scrolledUp({ top: 1199, height: 1700 })).toBe(false);
+    expect(scrolledUp({ top: 1198.5, height: 1700 })).toBe(true);
   });
 
-  it("ignores moves toward the end and content growing while it follows", () => {
-    const scrolledUp = createUpwardScrollDetector({ top: 1000, height: 2000 });
-    expect(scrolledUp({ top: 1000, height: 2400 })).toBe(false);
-    expect(scrolledUp({ top: 1400, height: 2400 })).toBe(false);
-  });
-
-  it("ignores the offset clamping up when content above the end shrinks", () => {
+  it("preserves upward new-turn positioning, then detects the reader leaving that anchor", () => {
     const scrolledUp = createUpwardScrollDetector({ top: 1400, height: 2400 });
-    expect(scrolledUp({ top: 1100, height: 2100 })).toBe(false);
-    // The next upward move is measured from the clamped position.
-    expect(scrolledUp({ top: 900, height: 2100 })).toBe(true);
-  });
+    // The caller must distinguish its animated positioning from iframe scroll chaining.
+    const positioning = { top: 1200, height: 2400, programmatic: true };
+    expect(scrolledUp(positioning)).toBe(false);
+    expect(scrolledUp({ ...positioning, top: 1100 })).toBe(false);
 
-  it("ignores subpixel jitter", () => {
-    const scrolledUp = createUpwardScrollDetector({ top: 500.5, height: 2000 });
-    expect(scrolledUp({ top: 500, height: 2000 })).toBe(false);
-    expect(scrolledUp({ top: 500.5, height: 2000 })).toBe(false);
-    expect(scrolledUp({ top: 500, height: 2000 })).toBe(false);
-  });
-
-  it("adds up a slow scroll that moves under a pixel per event", () => {
-    const scrolledUp = createUpwardScrollDetector({ top: 500, height: 2000 });
-    expect(scrolledUp({ top: 499.5, height: 2000 })).toBe(false);
-    expect(scrolledUp({ top: 499, height: 2000 })).toBe(false);
-    expect(scrolledUp({ top: 498.5, height: 2000 })).toBe(true);
+    expect(scrolledUp({ top: 1100, height: 2400 })).toBe(false);
+    expect(scrolledUp({ top: 950, height: 2400 })).toBe(true);
   });
 });
