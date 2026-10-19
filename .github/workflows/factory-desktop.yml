@@ -14,9 +14,10 @@ on:
 permissions:
   contents: write
 
-# Only the newest commit on main is worth publishing.
+# Only the newest commit on main is worth publishing. A re-run gets a group of
+# its own, so re-running an old run never cancels the build of a newer commit.
 concurrency:
-  group: factory-desktop
+  group: factory-desktop${{ github.run_attempt > 1 && format('-rerun-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -50,7 +51,7 @@ jobs:
         run: factory/scripts/desktop-preflight.sh
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: true
@@ -60,7 +61,7 @@ jobs:
         run: vp i
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           targets: aarch64-apple-darwin
 
@@ -151,6 +152,13 @@ jobs:
           ZIP: ${{ steps.assets.outputs.zip }}
         run: |
           set -euo pipefail
+          # A re-run of an older run would otherwise publish stale code as the
+          # newest release, and installed apps would update back to it.
+          head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "::warning::main is at $head now, not $GITHUB_SHA; not publishing."
+            exit 0
+          fi
           tag="v$VERSION"
           gh release create "$tag" \
             --draft \

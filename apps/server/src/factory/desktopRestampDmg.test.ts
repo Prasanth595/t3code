@@ -53,6 +53,16 @@ const restamp = (...args: Array<string>) => {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 };
 
+// The sha512 and size listed under a file's url in the manifest.
+const entry = (url: string) => {
+  const text = NodeFS.readFileSync(yml, "utf8");
+  const match = new RegExp(
+    `^  - url: '?${url.replaceAll(".", "\\.")}'?\\r?\\n    sha512: (\\S+)\\r?\\n    size: (\\d+)$`,
+    "m",
+  ).exec(text);
+  return match ? { sha512: match[1], size: Number(match[2]) } : undefined;
+};
+
 const sha512 = (file: string) =>
   NodeCrypto.createHash("sha512").update(NodeFS.readFileSync(file)).digest("base64");
 
@@ -64,13 +74,25 @@ describe("desktop-restamp-dmg.ts", () => {
     const result = restamp(dmg, yml);
     expect(result.status, result.stderr).toBe(0);
 
-    expect(NodeFS.readFileSync(yml, "utf8")).toBe(manifest(sha512(dmg), 200_000));
+    expect(entry(DMG)).toEqual({ sha512: sha512(dmg), size: 200_000 });
+    expect(entry(ZIP)).toEqual({ sha512: "zipsha==", size: 1000 });
+    expect(NodeFS.readFileSync(yml, "utf8")).toContain("0.1.0-nightly.20261019.4");
 
     const blockmap = JSON.parse(
       NodeZlib.gunzipSync(NodeFS.readFileSync(`${dmg}.blockmap`)).toString("utf8"),
     ) as { version: string; files: Array<{ sizes: Array<number> }> };
     expect(blockmap.version).toBe("2");
     expect(blockmap.files[0]!.sizes.reduce((sum, size) => sum + size, 0)).toBe(200_000);
+  });
+
+  it("finds the dmg's entry when electron-builder quotes it and writes CRLF", () => {
+    NodeFS.writeFileSync(dmg, NodeCrypto.randomBytes(10_000));
+    const quoted = manifest("stale==", 1).replace(`url: ${DMG}`, `url: '${DMG}'`);
+    NodeFS.writeFileSync(yml, quoted.replaceAll("\n", "\r\n"));
+
+    const result = restamp(dmg, yml);
+    expect(result.status, result.stderr).toBe(0);
+    expect(entry(DMG)).toEqual({ sha512: sha512(dmg), size: 10_000 });
   });
 
   it("leaves the dmg itself untouched", () => {

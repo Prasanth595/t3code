@@ -126,7 +126,7 @@ Merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. 
 
 ## Desktop release scripts
 
-Run by `.github/workflows/factory-desktop.yml` on every push to `main`. All but `desktop-version.sh` and `desktop-restamp-dmg.ts` need macOS and read the signing secrets of the `desktop-release` environment from the environment; none prints them.
+Run by `.github/workflows/factory-desktop.yml` on every push to `main`. `desktop-preflight.sh` and `desktop-notarize-dmg.sh` read the signing secrets of the `desktop-release` environment from the environment and print none of them. Those two and `desktop-verify.sh` need macOS.
 
 | Script                                     | Does                                                                                                                                                  | Non-zero when                                                                          |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |

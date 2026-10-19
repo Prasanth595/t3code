@@ -2,14 +2,17 @@
 // Brings a mac update manifest and the dmg's blockmap back in line with a dmg that
 // changed after electron-builder wrote them, as stapling a notarization ticket does.
 // Rebuilds <dmg>.blockmap with electron-builder's own blockmap code, then rewrites
-// the sha512 and size of the manifest entry whose url is the dmg's file name. The
-// top-level path and sha512 are the zip's on mac (electron-builder puts the zip
-// first), so they stay. The dmg itself is not touched.
+// the sha512 and size of the manifest entry whose url is the dmg's file name. It
+// serializes with upstream's manifest code, which drops the top-level path and
+// sha512 as upstream's own mac manifests do; electron-updater reads them only when
+// files is empty. The dmg itself is not touched.
 //
 //   node factory/scripts/desktop-restamp-dmg.ts <dmg> <manifest.yml>
 import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
+
+import { parseUpdateManifest, serializeUpdateManifest } from "../../scripts/lib/update-manifest.ts";
 
 interface BlockMapInfo {
   readonly size: number;
@@ -27,36 +30,12 @@ const fail = (message: string): never => {
   process.exit(1);
 };
 
-// The manifest lines for the dmg, rewritten; undefined when no entry lists it.
-const restamp = (text: string, name: string, info: BlockMapInfo) => {
-  const lines = text.split("\n");
-  let found = false;
-  let inEntry = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (/^\s*- url: /.test(line)) {
-      inEntry = line.replace(/^\s*- url: /, "").trim() === name;
-      found ||= inEntry;
-      continue;
-    }
-    if (/^\S/.test(line)) {
-      inEntry = false;
-      continue;
-    }
-    if (!inEntry) continue;
-    const field = /^(\s+)(sha512|size): /.exec(line);
-    if (field?.[2] === "sha512") lines[i] = `${field[1]}sha512: ${info.sha512}`;
-    if (field?.[2] === "size") lines[i] = `${field[1]}size: ${info.size}`;
-  }
-  return found ? lines.join("\n") : undefined;
-};
-
 const [dmg, manifest] = process.argv.slice(2);
 if (!dmg || !manifest) fail("usage: desktop-restamp-dmg.ts <dmg> <manifest.yml>");
 
 const name = NodePath.basename(dmg!);
-const text = NodeFS.readFileSync(manifest!, "utf8");
-if (restamp(text, name, { size: 0, sha512: "" }) === undefined) {
+const parsed = parseUpdateManifest(NodeFS.readFileSync(manifest!, "utf8"), manifest!, "mac");
+if (!parsed.files.some((file) => file.url === name)) {
   fail(`${manifest} has no files entry for ${name}`);
 }
 
@@ -70,5 +49,11 @@ const blockmapModule = desktopRequire.resolve("app-builder-lib/out/targets/block
 const { buildBlockMap } = desktopRequire(blockmapModule) as { buildBlockMap: BuildBlockMap };
 
 const info = await buildBlockMap(dmg!, "gzip", `${dmg}.blockmap`);
-NodeFS.writeFileSync(manifest!, restamp(text, name, info)!);
+const files = parsed.files.map((file) =>
+  file.url === name ? { url: name, sha512: info.sha512, size: info.size } : file,
+);
+NodeFS.writeFileSync(
+  manifest!,
+  serializeUpdateManifest({ ...parsed, files }, { platformLabel: "mac" }),
+);
 console.log(`restamped ${name}: size ${info.size}`);

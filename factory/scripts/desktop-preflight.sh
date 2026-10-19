@@ -7,6 +7,8 @@
 set -euo pipefail
 
 app_id=io.github.original-solutions.t3code-factory
+# Overridable so the tests can stub it; PlistBuddy is not on PATH.
+plistbuddy=${PLISTBUDDY:-/usr/libexec/PlistBuddy}
 required=(
   APPLE_TEAM_ID
   CSC_LINK
@@ -58,12 +60,12 @@ if ! security cms -D -i "$profile_path" > "$plist"; then
   echo "::error::MACOS_PROVISIONING_PROFILE is not a provisioning profile."
   exit 1
 fi
-application_id="$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.application-identifier" "$plist")"
+application_id="$("$plistbuddy" -c "Print :Entitlements:com.apple.application-identifier" "$plist")"
 if [[ "$application_id" != "$APPLE_TEAM_ID.$app_id" ]]; then
   echo "::error::The profile is for $application_id, not $APPLE_TEAM_ID.$app_id."
   exit 1
 fi
-if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.associated-domains" "$plist" >/dev/null 2>&1; then
+if ! "$plistbuddy" -c "Print :Entitlements:com.apple.developer.associated-domains" "$plist" >/dev/null 2>&1; then
   echo "::error::The profile does not grant Associated Domains; enable it on the App ID and regenerate the profile."
   exit 1
 fi
