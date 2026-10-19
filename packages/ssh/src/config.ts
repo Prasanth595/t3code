@@ -191,12 +191,6 @@ function parseKnownHostsTargets(raw: string): ReadonlyArray<DesktopDiscoveredSsh
   return [...targets.values()].toSorted((left, right) => left.alias.localeCompare(right.alias));
 }
 
-export function parseKnownHostsHostnames(raw: string): ReadonlyArray<string> {
-  return [...new Set(parseKnownHostsTargets(raw).map((target) => target.hostname))].toSorted(
-    (left, right) => left.localeCompare(right),
-  );
-}
-
 const readKnownHostsTargets = Effect.fnUntraced(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
   if (!(yield* fs.exists(filePath))) return [];

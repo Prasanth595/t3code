@@ -5,11 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import {
-  discoverSshHosts,
-  parseKnownHostsHostnames,
-  resolveSshConfigIncludePattern,
-} from "./config.ts";
+import { discoverSshHosts, resolveSshConfigIncludePattern } from "./config.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -132,32 +128,42 @@ describe("ssh config", () => {
   );
 
   it.effect("parses known_hosts entries without returning hashed hosts", () =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      yield* fs.makeDirectory(sshDir);
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        [
+          "github.com ssh-ed25519 AAAA",
+          "gitlab.com,gitlab-alias ssh-ed25519 BBBB",
+          "|1|hashed|entry ssh-ed25519 CCCC",
+          "@cert-authority authority.example.com,*.example.com ssh-ed25519 DDDD",
+          "[ssh.example.com]:2200 ssh-ed25519 EEEE",
+          "port.example.com:22 ssh-ed25519 HHHH",
+          "::1 ssh-ed25519 FFFF",
+          "2001:db8::1 ssh-ed25519 GGGG",
+          "",
+        ].join("\n"),
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
       assert.deepEqual(
-        parseKnownHostsHostnames(
-          [
-            "github.com ssh-ed25519 AAAA",
-            "gitlab.com,gitlab-alias ssh-ed25519 BBBB",
-            "|1|hashed|entry ssh-ed25519 CCCC",
-            "@cert-authority *.example.com ssh-ed25519 DDDD",
-            "[ssh.example.com]:2200 ssh-ed25519 EEEE",
-            "port.example.com:22 ssh-ed25519 HHHH",
-            "::1 ssh-ed25519 FFFF",
-            "2001:db8::1 ssh-ed25519 GGGG",
-            "",
-          ].join("\n"),
-        ),
+        hosts.map(({ alias }) => alias),
         [
           "::1",
           "2001:db8::1",
+          "authority.example.com",
           "github.com",
           "gitlab-alias",
           "gitlab.com",
-          "port.example.com",
-          "ssh.example.com",
+          "ssh://port.example.com:22",
+          "ssh://ssh.example.com:2200",
         ],
       );
-    }),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("expands tilde-prefixed ssh config include patterns", () =>
