@@ -670,10 +670,11 @@ const make = Effect.gen(function* () {
   };
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(
-      Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
-    );
+    Effect.gen(function* () {
+      yield* ensureCommandTranscripts(command);
+      yield* assertDispatchTargetEnabled(command);
+      return yield* orchestrator.dispatch(command);
+    });
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
