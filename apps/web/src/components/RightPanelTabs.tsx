@@ -174,29 +174,19 @@ const SURFACE_DISABLED_REASONS = {
   device: "Devices are only available from a thread.",
 } as const;
 
-/**
- * Each popup matches only while open or animating closed. A closed popup can
- * stay mounted (`keepMounted`); matching it by slot alone made the chat header
- * actions menu swallow every launcher letter.
- */
+// Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
-  '[data-slot="dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="alert-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="command-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="menu-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="select-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="popover-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="combobox-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="autocomplete-popup"]:is([data-open],[data-ending-style])',
-].join(",");
-
-/**
- * Whether a launcher letter should be ignored because an overlay is open
- * or still animating closed. Closed popups that stay mounted do not count.
- */
-export function launcherShortcutBlockedByOverlay(root: ParentNode = document): boolean {
-  return root.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
-}
+  "dialog-popup",
+  "alert-dialog-popup",
+  "command-dialog-popup",
+  "menu-popup",
+  "select-popup",
+  "popover-popup",
+  "combobox-popup",
+  "autocomplete-popup",
+]
+  .map((slot) => `[data-slot="${slot}"]:is([data-open],[data-ending-style])`)
+  .join(",");
 
 const SURFACE_UNAVAILABLE_HINTS = {
   browser: "Only available in the desktop app.",
@@ -406,7 +396,7 @@ function RightPanelEmptyState(props: {
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const action = surfaceShortcutActionForKey(availableActions, event);
     if (!action) return;
-    if (launcherShortcutBlockedByOverlay()) return;
+    if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     const target = event.composedPath()[0] ?? event.target;
     if (target instanceof Element && surfaceShortcutTargetsTypingContext(target)) return;
     event.preventDefault();
@@ -992,7 +982,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       }) !== "rightPanel.new"
     )
       return;
-    if (!addSurfaceMenuOpen && launcherShortcutBlockedByOverlay()) return;
+    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) {
