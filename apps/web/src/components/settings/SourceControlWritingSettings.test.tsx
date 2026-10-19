@@ -3,11 +3,17 @@ import { act, StrictMode, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import type { ScopedSettingsPatch } from "./scopedSettings";
+import {
+  scopedDisplaySettings,
+  scopedSettingsAreMixed,
+  type ScopedSettingsPatch,
+} from "./scopedSettings";
+import type { ServerSettings } from "@t3tools/contracts";
 
 type WritingStyle = typeof DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle;
 const state = vi.hoisted(() => ({
   styles: [] as WritingStyle[],
+  unsupported: new Set<number>(),
   updateSettings: vi.fn<(patch: ScopedSettingsPatch) => void>(),
 }));
 
@@ -15,11 +21,10 @@ vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("./useScopedSettings", () => ({
   useScopedSettings: () => ({
     ...DEFAULT_UNIFIED_SETTINGS,
-    sourceControlWritingStyle: state.styles[0],
+    ...scopedDisplaySettings(targets()[0]!, targets()),
   }),
-  useScopedSettingsMixed: (keys: ReadonlyArray<string>) =>
-    !keys.includes("reviewGuidesEnabled") &&
-    JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
+  useScopedSettingsMixed: (keys: readonly (keyof ServerSettings)[]) =>
+    scopedSettingsAreMixed(targets(), keys),
   useUpdateScopedSettings: () => state.updateSettings,
 }));
 vi.mock("./SettingsScopeContext", () => ({
@@ -27,9 +32,7 @@ vi.mock("./SettingsScopeContext", () => ({
     scope: { kind: "all", environmentIds: [] },
     environment: null,
     connectedEnvironments: [],
-    targets: state.styles.map((style) => ({
-      settings: { ...DEFAULT_UNIFIED_SETTINGS, sourceControlWritingStyle: style },
-    })),
+    targets: targets(),
   }),
 }));
 vi.mock("./useScopedModelAvailability", () => ({
@@ -74,6 +77,15 @@ vi.mock("../ui/button", () => ({ Button: "button" }));
 
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 
+function targets() {
+  return state.styles.map((style, index) => ({
+    settings: { ...DEFAULT_UNIFIED_SETTINGS, sourceControlWritingStyle: style },
+    unsupportedSettingKeys: new Set(
+      state.unsupported.has(index) ? ["sourceControlWritingStyle"] : [],
+    ),
+  }));
+}
+
 let renderer: ReactTestRenderer | null;
 
 function button(label: string) {
@@ -94,6 +106,7 @@ function applyInstructions() {
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  state.unsupported = new Set();
   state.styles = [
     {
       ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle,
@@ -127,6 +140,29 @@ afterEach(async () => {
 });
 
 describe("mixed source control instructions", () => {
+  it("shows the supported environment's editor when the representative cannot store writing style", () => {
+    state.unsupported.add(0);
+    state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
+    act(() => {
+      renderer!.update(
+        <StrictMode>
+          <SourceControlWritingSettingsSection />
+        </StrictMode>,
+      );
+    });
+
+    expect(button("Write custom instructions for all")).toBeUndefined();
+    expect(renderer!.root.findByType("textarea").props.defaultValue).toBe(
+      "Second environment instructions",
+    );
+    expect(
+      renderer!.root
+        .findAllByType("input")
+        .find((input) => input.props["aria-label"] === "Follow change request templates")?.props,
+    ).toMatchObject({ mixed: false, checked: false });
+    expect(state.updateSettings).not.toHaveBeenCalled();
+  });
+
   it("resets mixed template preferences without replacing each environment's instructions", () => {
     const initialInstructions = state.styles.map(({ mode, customInstructions }) => ({
       mode,

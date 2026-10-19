@@ -1,13 +1,109 @@
+// @vitest-environment jsdom
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+const state = vi.hoisted(() => ({ unsupported: false }));
+
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
+  usePrimarySettingsAvailable: () => true,
+}));
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
+  usePrimaryEnvironmentId: () => "Server",
+  usePrimaryEnvironment: () => null,
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: () => new Set(["Server"]),
+}));
+vi.mock("./useScopedSettings", () => ({
+  useClearScopedSettings: () => vi.fn(),
+  useClearProjectOverrides: () => vi.fn(),
+}));
+vi.mock("./SettingsScopeContext", async () => {
+  const { DEFAULT_SERVER_SETTINGS, EnvironmentId } = await import("@t3tools/contracts");
+  const { resolveScopedSettingsTargets } = await import("./scopedSettings");
+  const { resolveSettingsScope } = await import("./settingsScope");
+  return {
+    useOptionalSettingsScope: () => {
+      if (!state.unsupported) return null;
+      const environment = {
+        environmentId: EnvironmentId.make("Server"),
+        label: "Server",
+        connection: { phase: "connected" as const },
+        unsupportedSettingKeys: new Set(["reviewGuidesEnabled"]),
+        serverConfig: {
+          settings: DEFAULT_SERVER_SETTINGS,
+          environment: { capabilities: {}, platform: { machine: "server" } },
+        },
+      };
+      const environments = [environment];
+      const scope = resolveSettingsScope({}, [], environments);
+      return {
+        scope,
+        environments,
+        connectedEnvironments: environments,
+        targets: resolveScopedSettingsTargets(scope, environments),
+        groups: [],
+      };
+    },
+  };
+});
 
 import { scrollToSettingsTarget, SettingsRow, SettingsUnavailableGroup } from "./settingsLayout";
 
 afterEach(() => {
+  state.unsupported = false;
   vi.unstubAllGlobals();
 });
 
 describe("unavailable settings", () => {
+  it("disables an unsupported row and explains support in its inheritance popover", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    state.unsupported = true;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () =>
+        root.render(
+          <SettingsRow
+            title="Review guides"
+            serverScoped
+            settingKeys={["reviewGuidesEnabled"]}
+            control={<button>Enable review guides</button>}
+          >
+            <textarea aria-label="Review guide preferences" />
+          </SettingsRow>,
+        ),
+      );
+      expect(container.textContent).toContain("Update T3 Code on Server to use this setting.");
+      expect(container.querySelector("textarea")?.closest("[inert]")).not.toBeNull();
+      const control = Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Enable review guides",
+      );
+      expect(control?.closest("[inert]")).not.toBeNull();
+      const inheritance = container.querySelector<HTMLButtonElement>(
+        'button[aria-label*="Show where this value comes from"]',
+      );
+      expect(inheritance?.getAttribute("aria-label")).toContain("Not supported on Server");
+      await act(async () => inheritance!.click());
+      const popup = document.querySelector('[data-slot="popover-popup"]');
+      expect(popup?.textContent).toContain(
+        "Not supported. Update T3 Code on this environment to use this setting.",
+      );
+      expect(popup?.textContent).not.toContain("Inherits");
+      expect(popup?.textContent).not.toContain("Default");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("groups disabled controls under one reason", () => {
     const markup = renderToStaticMarkup(
       <SettingsUnavailableGroup message="Only available in the desktop app.">
