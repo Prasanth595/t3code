@@ -243,6 +243,85 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates proxy settings from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            https_proxy: "http://127.0.0.1:2080",
+            no_proxy: "localhost,127.0.0.1",
+          }),
+      });
+
+      assert.equal(env.https_proxy, "http://127.0.0.1:2080");
+      assert.equal(env.no_proxy, "localhost,127.0.0.1");
+
+      // Node reads the lowercase alias first, so a blank inherited alias must
+      // not survive next to the uppercase settings the shell exports.
+      const blankAlias: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        https_proxy: "",
+        no_proxy: " ",
+      };
+      yield* runShellEnvironment({
+        env: blankAlias,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            HTTPS_PROXY: "http://127.0.0.1:2080",
+            NO_PROXY: "localhost,127.0.0.1",
+          }),
+      });
+      assert.equal(blankAlias.HTTPS_PROXY, "http://127.0.0.1:2080");
+      assert.equal(blankAlias.NO_PROXY, "localhost,127.0.0.1");
+      assert.isUndefined(blankAlias.https_proxy);
+      assert.isUndefined(blankAlias.no_proxy);
+    }),
+  );
+
+  it.effect("keeps inherited proxy settings ahead of the login shell", () =>
+    Effect.gen(function* () {
+      const handler = () =>
+        envOutput({
+          PATH: "/opt/homebrew/bin:/usr/bin",
+          https_proxy: "http://127.0.0.1:2080",
+          no_proxy: "shell.example.test",
+        });
+
+      const inheritedEndpoint: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        HTTPS_PROXY: "http://inherited:8080",
+        https_proxy: "",
+        NO_PROXY: "inherited.example.test",
+        no_proxy: " ",
+      };
+      yield* runShellEnvironment({ env: inheritedEndpoint, platform: "darwin", handler });
+      assert.equal(inheritedEndpoint.HTTPS_PROXY, "http://inherited:8080");
+      assert.equal(inheritedEndpoint.NO_PROXY, "inherited.example.test");
+      assert.isUndefined(inheritedEndpoint.https_proxy);
+      assert.isUndefined(inheritedEndpoint.no_proxy);
+
+      // A bypass list alone is not a proxy, so the shell's endpoint still applies.
+      const inheritedBypass: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        NO_PROXY: "localhost,127.0.0.1",
+      };
+      yield* runShellEnvironment({ env: inheritedBypass, platform: "darwin", handler });
+      assert.equal(inheritedBypass.https_proxy, "http://127.0.0.1:2080");
+      assert.equal(inheritedBypass.NO_PROXY, "localhost,127.0.0.1");
+      assert.isUndefined(inheritedBypass.no_proxy);
+    }),
+  );
+
   it.effect("hydrates the locale from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {

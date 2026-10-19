@@ -237,6 +237,46 @@ const withPackagedWslHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
+  it.effect("resolvePrimary opts the backend into HTTP(S) environment proxies", () =>
+    Effect.gen(function* () {
+      const names = [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "NODE_USE_ENV_PROXY",
+      ] as const;
+      const previous = names.map((name) => [name, process.env[name]] as const);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          for (const [name, value] of previous) restoreEnv(name, value);
+        }),
+      );
+      for (const name of names) delete process.env[name];
+
+      yield* withHarness(
+        Effect.gen(function* () {
+          const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+          const usesEnvProxy = configuration.resolvePrimary.pipe(
+            Effect.map((config) => config.args.includes("--use-env-proxy")),
+          );
+
+          // Node's environment proxy support does not read ALL_PROXY.
+          process.env.ALL_PROXY = "http://proxy.example.test:8080";
+          assert.isFalse(yield* usesEnvProxy);
+
+          process.env.HTTPS_PROXY = "http://proxy.example.test:8080";
+          assert.isTrue(yield* usesEnvProxy);
+
+          process.env.NODE_USE_ENV_PROXY = "0";
+          assert.isFalse(yield* usesEnvProxy);
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
@@ -247,11 +287,9 @@ describe("DesktopBackendConfiguration", () => {
         const second = yield* configuration.resolvePrimary;
 
         assert.equal(first.executablePath, process.execPath);
-        assert.deepEqual(first.args.slice(0, 3), [
-          "--require",
-          environment.compileCachePath,
-          environment.backendEntryPath,
-        ]);
+        assert.deepEqual(first.args.slice(0, 2), ["--require", environment.compileCachePath]);
+        assert.include(first.args, environment.backendEntryPath);
+        assert.deepEqual(first.args.slice(-2), ["--bootstrap-fd", "3"]);
         assert.equal(first.entryPath, environment.backendEntryPath);
         assert.equal(first.cwd, environment.backendCwd);
         assert.equal(first.captureOutput, true);

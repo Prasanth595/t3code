@@ -69,6 +69,15 @@ export class DesktopShellEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
+const PROXY_ENDPOINT_ENV_NAMES = [
+  "HTTPS_PROXY",
+  "https_proxy",
+  "HTTP_PROXY",
+  "http_proxy",
+  "ALL_PROXY",
+  "all_proxy",
+] as const;
+const PROXY_BYPASS_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "DBUS_SESSION_BUS_ADDRESS",
@@ -92,6 +101,8 @@ const LOGIN_SHELL_ENV_NAMES = [
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
   "__MISE_DIFF",
+  ...PROXY_ENDPOINT_ENV_NAMES,
+  ...PROXY_BYPASS_ENV_NAMES,
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -106,6 +117,23 @@ const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =
     Option.map((entry) => entry.trim()),
     Option.filter((entry) => entry.length > 0),
   );
+
+const hasNone = (env: NodeJS.ProcessEnv, names: ReadonlyArray<string>) =>
+  names.every((name) => Option.isNone(trimNonEmpty(env[name])));
+
+// Variables that only make sense together are hydrated as a group: the login
+// shell's values apply only when the process inherited none of them.
+const hydrateEnvGroup = (
+  env: NodeJS.ProcessEnv,
+  shellEnvironment: EnvironmentPatch,
+  names: ReadonlyArray<string>,
+) => {
+  if (!hasNone(env, names)) return;
+  for (const name of names) {
+    const value = trimNonEmpty(shellEnvironment[name]);
+    if (Option.isSome(value)) env[name] = value.value;
+  }
+};
 
 const pathDelimiter = (platform: NodeJS.Platform) => (platform === "win32" ? ";" : ":");
 
@@ -472,25 +500,32 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       }
     }
 
-    // Locale variables form one precedence group: LC_ALL can override an inherited
-    // LANG or LC_CTYPE, so only hydrate the group when the process has none of them.
-    if (
-      config.platform === "darwin" &&
-      LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))
-    ) {
-      for (const name of LOCALE_ENV_NAMES) {
-        const value = trimNonEmpty(shellEnvironment[name]);
-        if (Option.isSome(value)) {
-          config.env[name] = value.value;
-        }
-      }
+    // Node's own proxy support reads the lowercase alias before the uppercase
+    // name and treats a blank value as set, so an inherited `https_proxy=""`
+    // would hide a populated HTTPS_PROXY. Blank means unset here, so drop it.
+    for (const name of [...PROXY_ENDPOINT_ENV_NAMES, ...PROXY_BYPASS_ENV_NAMES]) {
+      if (Option.isNone(trimNonEmpty(config.env[name]))) delete config.env[name];
+    }
+
+    // Provider CLIs reach their APIs through the shell's proxy, which a Dock
+    // launch never sees. An inherited endpoint keeps its own bypass list rather
+    // than mixing in the shell's, but an inherited bypass list alone is not a
+    // proxy configuration and still takes the shell's endpoints.
+    if (hasNone(config.env, PROXY_ENDPOINT_ENV_NAMES)) {
+      hydrateEnvGroup(config.env, shellEnvironment, PROXY_ENDPOINT_ENV_NAMES);
+      hydrateEnvGroup(config.env, shellEnvironment, PROXY_BYPASS_ENV_NAMES);
+    }
+
+    // LC_ALL can override an inherited LANG or LC_CTYPE, so locale is one group.
+    if (config.platform === "darwin") {
+      hydrateEnvGroup(config.env, shellEnvironment, LOCALE_ENV_NAMES);
 
       // GUI launches inherit no locale from launchd, so spawned agents land in the C
       // locale and pbcopy decodes their UTF-8 output as MacRoman. Older supported
       // macOS releases do not provide C.UTF-8, so set only LC_CTYPE to a UTF-8 locale
       // available on those releases. Leaving LANG unset keeps C-stable collation and
       // formatting, so output parsing is unaffected.
-      if (LOCALE_ENV_NAMES.every((name) => Option.isNone(trimNonEmpty(config.env[name])))) {
+      if (hasNone(config.env, LOCALE_ENV_NAMES)) {
         config.env.LC_CTYPE = FALLBACK_LC_CTYPE;
       }
     }
