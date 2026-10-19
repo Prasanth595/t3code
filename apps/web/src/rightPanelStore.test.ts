@@ -286,57 +286,63 @@ describe("rightPanelStore", () => {
     );
   });
 
-  it.each([linkedPullRequest, { id: "pull-requests", kind: "pull-requests" } as const])(
-    "leaves an existing $kind tab alone when its thread is reopened",
-    (surface) => {
+  it.each([
+    {
+      surface: linkedPullRequest,
+      choose: () => useRightPanelStore.getState().openFile(refA, "notes.md"),
+    },
+    {
+      surface: { id: "pull-requests", kind: "pull-requests" } as const,
+      choose: () => useRightPanelStore.getState().openBrowser(refA, "tab-a"),
+    },
+  ])(
+    "preserves the selected tab and hidden panel when $surface.kind already exists",
+    ({ surface, choose }) => {
       const store = useRightPanelStore.getState();
-      expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(true);
-      store.openFile(refA, "notes.md");
+      store.openProactive(refA, surface, store.getUserActionRevision(refA));
+      choose();
       const chosen = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
 
-      // Reopening a thread reads a fresh revision, so the existing tab is what keeps the choice.
+      // Re-entry captures a fresh revision; the existing tab must still preserve the choice.
       expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(false);
-      expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
+      expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
         chosen,
       );
 
       store.close(refA);
       expect(store.openProactive(refA, surface, store.getUserActionRevision(refA))).toBe(false);
-      expect(
-        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).isOpen,
-      ).toBe(false);
+      expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+        ...chosen,
+        isOpen: false,
+      });
     },
   );
 
-  it("follows a changed link to a pull request that is already a tab", () => {
+  it("retargets an existing PR tab but respects a later manual choice", () => {
     const store = useRightPanelStore.getState();
-    const relinkedPullRequest = pullRequestSurface({
-      projectId: "project-a",
-      repository: "pingdotgg/t3code",
-      number: 43,
-    });
-    store.openProactive(refA, relinkedPullRequest, store.getUserActionRevision(refA));
-    store.openProactive(refA, linkedPullRequest, store.getUserActionRevision(refA));
+    const relinkedPullRequest = pullRequestSurface({ ...linkedPullRequest, number: 43 });
+    store.openPullRequest(refA, relinkedPullRequest);
+    store.openPullRequest(refA, linkedPullRequest);
+    const revision = store.getUserActionRevision(refA);
 
-    expect(
-      store.openProactive(refA, relinkedPullRequest, store.getUserActionRevision(refA), true),
-    ).toBe(true);
+    expect(store.openProactive(refA, relinkedPullRequest, revision, true)).toBe(true);
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
       relinkedPullRequest,
     );
+
+    store.close(refA);
+    expect(store.openProactive(refA, linkedPullRequest, revision, true)).toBe(false);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      activeSurfaceId: relinkedPullRequest.id,
+      isOpen: false,
+    });
   });
 
-  it("still focuses an existing diff tab for a later completed turn", () => {
+  it("refocuses an existing diff for a later turn after a manual choice", () => {
     const store = useRightPanelStore.getState();
     store.openProactive(refA, completedDiff, store.getUserActionRevision(refA));
-    store.openFile(refA, "notes.md");
-
-    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
-    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
-  });
-
-  it("allows automatic panels for a later turn after a manual choice", () => {
-    const store = useRightPanelStore.getState();
     const firstTurnRevision = store.getUserActionRevision(refA);
     store.openFile(refA, "src/app.ts");
     expect(store.openProactive(refA, completedDiff, firstTurnRevision)).toBe(false);
