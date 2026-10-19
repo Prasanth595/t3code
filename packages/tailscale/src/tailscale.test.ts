@@ -1,9 +1,15 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
@@ -15,6 +21,7 @@ import {
   readTailscaleStatus,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
+  TailscaleCommandTimeoutError,
   TailscaleStatusParseError,
 } from "./tailscale.ts";
 
@@ -219,4 +226,68 @@ describe("tailscale", () => {
       assertCarriesNoSecret(error, "tskey-auth-secret-token-value");
     });
   });
+});
+
+// The wrapper keeps the default SIGTERM disposition while its `sleep` child
+// inherits an ignored one, so SIGTERM ends the leader and leaves a group member.
+const sigtermIgnoringTailscale = (readyPath: string) => `#!/bin/sh
+trap '' TERM
+sleep 60 &
+child=$!
+trap - TERM
+echo "$$ $child" > '${readyPath}'
+wait
+`;
+
+const isProcessAlive = (pid: number) =>
+  Effect.try(() => process.kill(pid, 0)).pipe(
+    Effect.match({ onFailure: () => false, onSuccess: () => true }),
+  );
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("tailscale probe cleanup", () => {
+  it.effect("kills a timed-out status probe whose process group ignores SIGTERM", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-tailscale-" });
+      const readyPath = path.join(directory, "ready");
+      // The fixture reports its PIDs through a FIFO so the test blocks on the
+      // fixture being up instead of polling for a file.
+      yield* spawner.exitCode(ChildProcess.make("mkfifo", [readyPath]));
+      yield* fs.writeFileString(
+        path.join(directory, "tailscale"),
+        sigtermIgnoringTailscale(readyPath),
+        { mode: 0o700 },
+      );
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          const originalPath = process.env.PATH;
+          process.env.PATH = `${directory}:${originalPath ?? ""}`;
+          return originalPath;
+        }),
+        (originalPath) =>
+          Effect.sync(() => {
+            process.env.PATH = originalPath;
+          }),
+      );
+
+      const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
+      const pids = (yield* fs.readFileString(readyPath)).trim().split(" ").map(Number);
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(
+          pids,
+          (pid) => Effect.try(() => process.kill(pid, "SIGKILL")).pipe(Effect.ignore),
+          { discard: true },
+        ),
+      );
+      assert.deepEqual(yield* Effect.forEach(pids, isProcessAlive), [true, true]);
+
+      yield* TestClock.adjust("3500 millis");
+      const error = yield* Fiber.join(fiber);
+
+      assert.instanceOf(error, TailscaleCommandTimeoutError);
+      assert.deepEqual(yield* Effect.forEach(pids, isProcessAlive), [false, false]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
