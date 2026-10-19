@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it, vi } from "@effect/vitest";
 import { ProjectId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -6,8 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- The terminal harness collects real shell output and exit synchronously.
-import * as NodeChildProcess from "node:child_process";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -257,13 +258,28 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string, stdin = "
 
   // Enter becomes a newline at the terminal boundary; transport assertions below
   // cover line-editor submissions and canonical TTY limits that bash -c bypasses.
-  const child = NodeChildProcess.spawnSync(
-    "/bin/bash",
-    ["--noprofile", "--norc", "-c", submitted.replaceAll("\r", "\n")],
-    { cwd, env: { PATH: env.PATH }, input: stdin, encoding: "utf8" },
-  );
-  assert.isUndefined(child.error);
-  assert.isNotNull(child.status);
+  const child = yield* Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        "/bin/bash",
+        ["--noprofile", "--norc", "-c", submitted.replaceAll("\r", "\n")],
+        {
+          cwd,
+          env: { PATH: env.PATH },
+          stdin: Stream.make(new TextEncoder().encode(stdin)),
+        },
+      ),
+    );
+    return yield* Effect.all(
+      {
+        stdout: handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        stderr: handle.stderr.pipe(Stream.decodeText(), Stream.mkString),
+        exitCode: handle.exitCode,
+      },
+      { concurrency: "unbounded" },
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
   const terminal = { threadId: "thread-setup", terminalId: result.terminalId };
   yield* listener!({ type: "output", ...terminal, data: `${submitted}\n` });
   yield* listener!({ type: "output", ...terminal, data: child.stdout + child.stderr });
