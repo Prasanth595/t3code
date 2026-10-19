@@ -1,4 +1,4 @@
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -214,8 +214,8 @@ const electronApp = ElectronApp.of({
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnvironment;
+  const platform = yield* HostProcess.Platform;
+  const env = yield* HostProcess.Environment;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const appImagePath = env.APPIMAGE;
   if (platform !== "linux" || !Electron.app.isPackaged || !appImagePath?.trim()) {

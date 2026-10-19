@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -130,8 +130,8 @@ describe("ElectronApp", () => {
       ]);
     }).pipe(
       Effect.provide(electronAppLayer),
-      Effect.provideService(HostProcessPlatform, input.platform),
-      Effect.provideService(HostProcessEnvironment, { APPIMAGE: input.APPIMAGE }),
+      Effect.provideService(HostProcess.Platform, input.platform),
+      Effect.provideService(HostProcess.Environment, { APPIMAGE: input.APPIMAGE }),
     );
   });
 
@@ -181,8 +181,8 @@ describe("ElectronApp", () => {
       }).pipe(
         Effect.provide(ElectronApp.layer),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
-        Effect.provideService(HostProcessPlatform, "linux"),
-        Effect.provideService(HostProcessEnvironment, {
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Environment, {
           APPIMAGE: launcher,
           BASH_ENV: startup,
           PATH: process.env.PATH,
@@ -222,8 +222,8 @@ describe("ElectronApp", () => {
         assert.equal(relaunchMock.mock.calls.length, 0);
       }).pipe(
         Effect.provide(ElectronApp.layer),
-        Effect.provideService(HostProcessPlatform, "linux"),
-        Effect.provideService(HostProcessEnvironment, { APPIMAGE: "/tmp/app.AppImage" }),
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Environment, { APPIMAGE: "/tmp/app.AppImage" }),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>
