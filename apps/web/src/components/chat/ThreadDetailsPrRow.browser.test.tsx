@@ -22,11 +22,32 @@ const state = vi.hoisted(() => ({
   checkoutError: null as Error | null,
   addToast: vi.fn(),
   updateToast: vi.fn(),
+  serverConfigs: new Map() as Map<unknown, unknown>,
+  stack: null as null | {
+    readonly id: string;
+    readonly number: number;
+    readonly url: string;
+    readonly base: string;
+    readonly layers: ReadonlyArray<{
+      number: number;
+      headBranch: string;
+      headSha: string;
+      state: "open" | "merged";
+    }>;
+  },
 }));
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useServerConfigs: (() => new Map()) as never,
+  useServerConfigs: (() => state.serverConfigs) as never,
+}));
+vi.mock(import("~/state/usePullRequestStack"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  usePullRequestStackGate: (() => ({
+    stack: { data: state.stack, isFresh: true, error: null },
+    supportsStackActions: state.stack !== null,
+    canMergeSinglePullRequest: state.stack === null,
+  })) as never,
 }));
 const queryData = () => ({
   projectId: ProjectId.make("project"),
@@ -112,6 +133,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
   state.status = "success";
   state.extraStatus = null;
+  state.serverConfigs = new Map();
+  state.stack = null;
+});
+
+it("offers to merge a stacked pull request only with its whole stack", () => {
+  const environmentId = EnvironmentId.make("environment");
+  state.serverConfigs = new Map([
+    [environmentId, { environment: { capabilities: { pullRequests: true } } }],
+  ]);
+  state.stack = {
+    id: "stack",
+    number: 7,
+    url: "https://github.com/owner/repo/stacks/7",
+    base: "main",
+    layers: [
+      { number: 1, headBranch: "feature", headSha: "a1", state: "open" },
+      { number: 2, headBranch: "feature-2", headSha: "b2", state: "open" },
+    ],
+  };
+  act(() =>
+    root.render(
+      <ThreadDetailsPrRow
+        environmentId={environmentId}
+        pr={null}
+        number={1}
+        reference={{ host: "github.com", repository: "owner/repo", number: 1 }}
+        status={null}
+        project={{ id: ProjectId.make("project") } as never}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    ),
+  );
+  const labels = [...container.querySelectorAll("button")].map((button) =>
+    button.textContent?.trim(),
+  );
+  expect(labels).toContain("Merge stack");
+  expect(labels).not.toContain("Merge");
+
+  act(() =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Merge stack")!
+      .click(),
+  );
+  expect(document.body.textContent).toContain("Merge 2 pull requests?");
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {
