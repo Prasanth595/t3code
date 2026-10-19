@@ -403,7 +403,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<
-    void,
+    boolean,
     never,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   > {
@@ -422,8 +422,9 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       config.platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
+    const shellPath = trimNonEmpty(shellEnvironment.PATH);
     const mergedPath = mergePaths(config.platform, [
-      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
+      shellPath.pipe(Option.orElse(() => launchctlPath)),
       readEnvPath(config.env),
     ]);
 
@@ -510,6 +511,10 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
     }
+
+    // Only a login-shell PATH counts; a launchctl-only PATH still leaves
+    // server hydration enabled.
+    return Option.isSome(shellPath);
   },
 );
 
@@ -524,7 +529,7 @@ const installShellEnvironment = (
     return installWindowsEnvironment(config);
   }
   if (config.platform === "darwin" || config.platform === "linux") {
-    return installPosixEnvironment(config).pipe(Effect.as(true));
+    return installPosixEnvironment(config);
   }
   return Effect.succeed(false);
 };
