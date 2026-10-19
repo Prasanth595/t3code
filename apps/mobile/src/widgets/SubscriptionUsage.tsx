@@ -25,7 +25,9 @@ type UsageConfiguration = {
 
 function SubscriptionUsage(
   props: SubscriptionUsageProps,
-  widgetEnvironment: WidgetEnvironment<UsageConfiguration>,
+  widgetEnvironment: WidgetEnvironment<UsageConfiguration> & {
+    showsContainerBackground?: boolean;
+  },
 ) {
   "widget";
   // The extension evaluates this function without the app's module scope.
@@ -39,7 +41,6 @@ function SubscriptionUsage(
   const limit = family === "systemExtraLarge" ? 6 : family === "systemLarge" ? 4 : 2;
   const monochrome =
     widgetEnvironment.widgetRenderingMode !== "fullColor" || widgetEnvironment.isLuminanceReduced;
-  // Accessory and tinted widgets inherit the host's legible monochrome styles.
   const mode = props.theme?.mode;
   const appearance =
     mode === "light" || mode === "dark"
@@ -47,7 +48,11 @@ function SubscriptionUsage(
       : widgetEnvironment.colorScheme === "dark"
         ? "dark"
         : "light";
-  const palette = !accessory && !monochrome ? props.theme?.[appearance] : undefined;
+  // StandBy can remove the card even in full color; text must then follow the host.
+  const palette =
+    !accessory && !monochrome && widgetEnvironment.showsContainerBackground !== false
+      ? props.theme?.[appearance]
+      : undefined;
   const primary = palette?.foreground ?? "primary";
   const secondary = palette?.secondary ?? "secondary";
   const providers = props.providers ?? [
