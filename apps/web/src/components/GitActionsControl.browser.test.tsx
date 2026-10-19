@@ -462,13 +462,14 @@ function preview(insertions = 13): ReviewDiffPreviewResult {
   };
 }
 
-async function renderChanges() {
+async function renderChanges(workspaceMutationId = "initial") {
   await act(async () => {
     root.render(
       <RegistryContext.Provider value={registry}>
         <GitActionsControl
           gitCwd="/repo"
           activeThreadRef={{ ...threadRef }}
+          {...{ workspaceMutationId }}
           displayMode="panel"
           onOpenChanges={() => {}}
         />
@@ -563,11 +564,13 @@ describe("Changes totals for the selected comparison", () => {
         useDiffPanelStore.getState().selectBranchBaseRef(threadRef, null);
       });
       expect(changesText()).toBe("Changes+20-10");
+      await renderChanges("automatic-edit");
+      expect(state.previewRequests).toHaveBeenCalledTimes(requestsBeforeAutomatic);
       state.status = {
         ...state.status,
         branchChanges: { baseRef: "main", insertions: 21, deletions: 10 },
       };
-      await renderChanges();
+      await renderChanges("automatic-edit-with-status");
       expect(changesText()).toBe("Changes+21-10");
       expect(state.previewRequests).toHaveBeenCalledTimes(requestsBeforeAutomatic);
     },
@@ -589,17 +592,73 @@ describe("Changes totals for the selected comparison", () => {
     expect(changesText()).toBe("Changes+14-6");
   });
 
-  it("eventually shows fresh counts when the branch changes during a pending preview", async () => {
-    const pending = pendingPreview();
-    state.previewRequests.mockReturnValueOnce(pending.promise).mockResolvedValue(preview(14));
+  it("keeps the mounted comparison fresh across branch changes and workspace mutations", async () => {
+    const comparison = (lines: number): ReviewDiffPreviewResult => ({
+      ...preview(),
+      sources: [
+        {
+          ...preview().sources[1]!,
+          files:
+            lines === 0
+              ? []
+              : [{ path: "a.txt", previousPath: null, additions: lines, deletions: lines }],
+        },
+      ],
+    });
+    state.status = {
+      ...state.status,
+      branchChanges: { baseRef: "main", insertions: 1, deletions: 1 },
+      workingTree: {
+        files: [{ path: "a.txt", insertions: 1, deletions: 1 }],
+        insertions: 1,
+        deletions: 1,
+      },
+    };
+    const pendingBranch = pendingPreview();
+    state.previewRequests
+      .mockReturnValueOnce(pendingBranch.promise)
+      .mockResolvedValue(comparison(0));
     useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "origin/release");
     await renderChanges();
-    expect(changesText()).toBe("Changes+20-10");
+    expect(changesText()).toBe("Changes+1-1");
 
     state.status = { ...state.status, refName: "feature" };
     await renderChanges();
     expect(state.previewRequests).toHaveBeenCalledTimes(1);
-    await act(async () => pending.resolve(preview()));
-    expect(changesText()).toBe("Changes+14-6");
+    await act(async () => pendingBranch.resolve(comparison(2)));
+    expect(changesText()).toBe("Changes+0-0");
+    expect(state.previewRequests).toHaveBeenCalledTimes(2);
+
+    // release has "a", main has "b": edits from "a" to "c" both report +1/-1
+    // against main. The broadcaster emits nothing, but release changes from 0/0 to 1/1.
+    state.previewRequests.mockResolvedValue(comparison(1));
+    await renderChanges("edit-c");
+    expect(changesText()).toBe("Changes+1-1");
+    expect(state.previewRequests).toHaveBeenCalledTimes(3);
+
+    const pendingMutation = pendingPreview();
+    state.previewRequests.mockReturnValueOnce(pendingMutation.promise);
+    await renderChanges("edit-a");
+    expect(state.previewRequests).toHaveBeenCalledTimes(4);
+    await renderChanges("edit-c-again");
+    await renderChanges("edit-d");
+    expect(state.previewRequests).toHaveBeenCalledTimes(4);
+    await act(async () => pendingMutation.resolve(comparison(0)));
+    expect(changesText()).toBe("Changes+1-1");
+    expect(state.previewRequests).toHaveBeenCalledTimes(5);
+
+    state.previewRequests.mockResolvedValue(comparison(2));
+    state.status = {
+      ...state.status,
+      branchChanges: { baseRef: "main", insertions: 2, deletions: 2 },
+      workingTree: {
+        files: [{ path: "a.txt", insertions: 2, deletions: 2 }],
+        insertions: 2,
+        deletions: 2,
+      },
+    };
+    await renderChanges("edit-two-lines");
+    expect(changesText()).toBe("Changes+2-2");
+    expect(state.previewRequests).toHaveBeenCalledTimes(6);
   });
 });
