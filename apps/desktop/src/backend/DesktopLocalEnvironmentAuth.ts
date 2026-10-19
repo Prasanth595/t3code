@@ -89,26 +89,28 @@ export const make = Effect.gen(function* () {
           return cached.value;
         }
 
-        const instances = yield* pool.list;
-        const primary = instances.find((instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
-        const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
-        if (Option.isNone(configOption)) {
-          return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
-        }
-        const config = configOption.value;
-        // A backend launched with the desktop secret accepts the current
-        // window's token, not the one frozen into its launch config; this
-        // exchange can run long after launch (e.g. after a suspend).
-        const secret = config.bootstrap.desktopBootstrapSecret;
-        const credential =
-          secret === undefined
-            ? config.bootstrap.desktopBootstrapToken
-            : currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
-        if (!credential) {
-          return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
-        }
         // Recheck before each POST, including retries; the port may have changed since readiness.
         const session = yield* Effect.gen(function* () {
+          const instances = yield* pool.list;
+          const primary = instances.find(
+            (instance) => instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID,
+          );
+          const configOption = primary === undefined ? Option.none() : yield* primary.currentConfig;
+          if (Option.isNone(configOption)) {
+            return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+          }
+          const config = configOption.value;
+          // A backend launched with the desktop secret accepts the current
+          // window's token, not the one frozen into its launch config; this
+          // exchange can run long after launch (e.g. after a suspend).
+          const secret = config.bootstrap.desktopBootstrapSecret;
+          const credential =
+            secret === undefined
+              ? config.bootstrap.desktopBootstrapToken
+              : currentDesktopBootstrapToken(secret, yield* Clock.currentTimeMillis);
+          if (!credential) {
+            return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
+          }
           const ownership = yield* DesktopBackendManager.checkBackendOwnership({
             httpBaseUrl: config.httpBaseUrl,
             desktopLaunchId: config.bootstrap.desktopLaunchId,
@@ -133,12 +135,14 @@ export const make = Effect.gen(function* () {
               error._tag === "HttpClientError" ||
               error._tag === "TimeoutError" ||
               (error._tag !== "DesktopLocalEnvironmentAuthForeignServerError" &&
+                error._tag !== "DesktopLocalEnvironmentAuthBackendNotConfiguredError" &&
                 isTransientBearerBootstrapError(error)),
             schedule: Schedule.spaced(BOOTSTRAP_TRANSIENT_RETRY_INTERVAL),
           }),
           Effect.timeout(BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT),
           Effect.mapError((cause) =>
-            cause._tag === "DesktopLocalEnvironmentAuthForeignServerError"
+            cause._tag === "DesktopLocalEnvironmentAuthForeignServerError" ||
+            cause._tag === "DesktopLocalEnvironmentAuthBackendNotConfiguredError"
               ? cause
               : new DesktopLocalEnvironmentAuthSessionBootstrapError({ cause }),
           ),
