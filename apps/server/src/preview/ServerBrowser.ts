@@ -1255,12 +1255,8 @@ const make = Effect.gen(function* () {
       );
   };
 
-  /**
-   * Closes agent tabs that no one watches and the agent stopped using. A tab
-   * the desktop renders is in its tab strip, where the person browsing it
-   * without the server seeing their input closes it themselves.
-   */
-
+  // Desktop browsing bypasses streamed viewers and server input tracking,
+  // so these idle signals only apply to headless tabs.
   const closeIdleAgentTabs = () => {
     const cutoff = Date.now() - AGENT_TAB_IDLE_MS;
     for (const tab of tabs.values()) {
