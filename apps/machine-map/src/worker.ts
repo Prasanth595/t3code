@@ -262,6 +262,10 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.signOutEverywhere(owner));
     case "GET /push":
       return toResponse(await stub.pushKey(owner));
+    case "POST /push/status": {
+      const body = await readBody(request, PushEndpointRequest);
+      return body instanceof Response ? body : toResponse(await stub.pushStatus(owner, body));
+    }
     case "POST /push/subscribe": {
       const body = await readBody(request, PushSubscribeRequest);
       return body instanceof Response ? body : toResponse(await stub.subscribePush(owner, body));

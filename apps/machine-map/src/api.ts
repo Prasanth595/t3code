@@ -171,6 +171,8 @@ export interface PendingRotation {
   readonly machineId: MachineId;
   readonly createdAt: string;
   readonly expiresAt: string;
+  /** The deadline passed without confirmation. Only a rejoin marker remains, never a secret. */
+  readonly expired?: boolean;
 }
 
 /**
@@ -400,6 +402,11 @@ export type PushEndpointRequest = typeof PushEndpointRequest.Type;
 /** GET /api/push: null when the portal has no `VAPID_JWK` secret. */
 export interface PushKeyResponse {
   readonly publicKey: string | null;
+}
+
+/** POST /api/push/status: reads registration without turning notifications on. */
+export interface PushStatusResponse {
+  readonly subscribed: boolean;
 }
 
 /** The encrypted body of one push message. The service worker shows it (MM-1808). */

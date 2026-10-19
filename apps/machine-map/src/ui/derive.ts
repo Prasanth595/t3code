@@ -38,6 +38,7 @@ export interface MachineQueue {
   readonly revisions: ReadonlyArray<MapRevision>;
   readonly commands: ReadonlyArray<MachineCommand>;
   readonly rotation: PendingRotation | undefined;
+  readonly rejoinRequired: boolean;
   /** MM-602: the machine never connected. Its work waits for it to join and is not counted. */
   readonly waitingToJoin: boolean;
   readonly count: number;
@@ -54,12 +55,13 @@ export function machineQueue(
   const commands = snapshot.commands.filter(
     (c) => c.machineId === machineId && c.status === "queued",
   );
-  const rotation = rotations.find((r) => r.machineId === machineId);
+  const rotation = rotations.find((r) => r.machineId === machineId && !r.expired);
   const waitingToJoin = !hasJoined(presence);
   return {
     revisions,
     commands,
     rotation,
+    rejoinRequired: rotations.some((r) => r.machineId === machineId && r.expired),
     waitingToJoin,
     count: waitingToJoin ? 0 : revisions.length + commands.length + (rotation ? 1 : 0),
   };

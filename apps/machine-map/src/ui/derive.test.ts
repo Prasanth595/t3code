@@ -69,6 +69,30 @@ describe("machineQueue (MM-602)", () => {
     expect(queue.waitingToJoin).toBe(false);
     expect(queue.count).toBe(1);
   });
+
+  it("shows an expired rotation as recovery work, not a queued secret", () => {
+    const current = snapshot({
+      online: false,
+      lastSeenAt: "2026-10-12T08:00:00.000Z",
+      appliedRevision: 1,
+      status: null,
+    });
+    const rotation = {
+      machineId: MAC,
+      createdAt: "2026-10-11T08:00:00.000Z",
+      expiresAt: "2026-10-12T08:00:00.000Z",
+    };
+    expect(machineQueue(current, [rotation], mac)).toMatchObject({
+      count: 1,
+      rejoinRequired: false,
+      rotation,
+    });
+    expect(machineQueue(current, [{ ...rotation, expired: true }], mac)).toMatchObject({
+      count: 0,
+      rejoinRequired: true,
+      rotation: undefined,
+    });
+  });
 });
 
 describe("arrowEnds (MM-602, MM-604)", () => {
