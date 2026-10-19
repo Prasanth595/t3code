@@ -295,23 +295,16 @@ export const make = Effect.gen(function* () {
     yield* Effect.gen(function* () {
       const { png } = yield* assets.iconPaths;
       if (Option.isNone(png)) return;
+      // Electron's copyFile extracts ASAR entries to temporary files it never removes.
+      const icon = yield* fileSystem.readFile(png.value);
+      const current = yield* fileSystem.readFile(iconPath).pipe(Effect.option);
+      if (Option.isSome(current) && sameBytes(current.value, icon)) return;
       // The AppImage mount is temporary; the chooser needs the icon after exit.
       yield* fileSystem.makeDirectory(iconsDir, { recursive: true });
-      // Read rather than copy: copying out of the ASAR extracts the icon to a
-      // temporary file that is never removed.
-      const icon = yield* fileSystem.readFile(png.value);
-      const current = yield* fileSystem.readFile(iconPath).pipe(Effect.orElseSucceed(() => null));
-      if (
-        current !== null &&
-        current.length === icon.length &&
-        current.every((byte, index) => byte === icon[index])
-      ) {
-        return;
-      }
       yield* fileSystem.writeFile(iconPath, icon, { mode: 0o600 });
     }).pipe(
       Effect.catch((error) =>
-        logWarning("URL handler icon copy failed", { iconPath, category: error.reason._tag }),
+        logWarning("URL handler icon install failed", { iconPath, category: error.reason._tag }),
       ),
     );
 

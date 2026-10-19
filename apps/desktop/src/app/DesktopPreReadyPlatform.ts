@@ -81,9 +81,7 @@ export const make = Effect.gen(function* () {
           : undefined;
         if (iconPath !== undefined) {
           try {
-            NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
-            // Copying out of the ASAR makes Electron extract the icon to a
-            // temporary file that is never removed; reading does not.
+            // Electron's copyFile extracts ASAR entries to temporary files it never removes.
             const icon = NodeFS.readFileSync(
               NodePath.posix.join(
                 Electron.app.getAppPath(),
@@ -95,6 +93,7 @@ export const make = Effect.gen(function* () {
               current = NodeFS.readFileSync(iconPath);
             } catch {}
             if (current === null || !current.equals(icon)) {
+              NodeFS.mkdirSync(NodePath.posix.dirname(iconPath), { recursive: true });
               NodeFS.writeFileSync(iconPath, icon, { mode: 0o600 });
             }
           } catch {}
