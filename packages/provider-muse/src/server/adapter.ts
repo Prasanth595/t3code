@@ -222,9 +222,7 @@ interface ActiveTurn {
 }
 
 interface PendingRequest {
-  readonly native:
-    | { type: "approval"; value: MuseApproval }
-    | { type: "question"; value: MuseUserInput };
+  native: { type: "approval"; value: MuseApproval } | { type: "question"; value: MuseUserInput };
   request: OrchestrationV2RuntimeRequest;
   node: OrchestrationV2ExecutionNode;
   item: OrchestrationV2TurnItem;
@@ -1107,11 +1105,29 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const nativeId =
           native.type === "approval" ? native.value.approvalId : native.value.userInputId;
         if (turn?.settledRequests.has(`${native.type}:${nativeId}`)) return;
-        const previous = [...pending.values()].find(
+        let previous = [...pending.values()].find(
           (entry) =>
             entry.native.type === native.type &&
             entry.request.nativeRequestRef?.nativeId === nativeId,
         );
+        if (previous?.response) {
+          if (
+            previous.native.type === "approval" &&
+            native.type === "approval" &&
+            (previous.native.value.currentRequirementId.approvalId !==
+              native.value.currentRequirementId.approvalId ||
+              previous.native.value.currentRequirementId.sourceIndex !==
+                native.value.currentRequirementId.sourceIndex)
+          ) {
+            // A new requirement needs its own answer without replacing the recorded one.
+            yield* resolvePending(previous, "resolved");
+            previous = undefined;
+          } else {
+            // Keep response ownership through trailing updates for the answered requirement.
+            previous.native = native;
+            return;
+          }
+        }
         const providerTurnId = turn?.providerTurn.id ?? null;
         const threadId = turn?.input.threadId ?? thread.appThreadId ?? input.threadId;
         const requestId =
