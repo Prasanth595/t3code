@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 const mocks = vi.hoisted(() => ({
   appState: "background" as string | null,
   nativeCheckSupported: true,
+  platform: "ios",
+  subscribed: Promise.withResolvers<void>(),
   listeners: new Set<(state: string) => void>(),
   isProtectedDataAvailable: vi.fn<() => Promise<boolean>>(),
   readStorage: vi.fn<() => Promise<void>>(),
@@ -17,12 +19,18 @@ vi.mock("expo", () => ({
   }),
 }));
 vi.mock("react-native", () => ({
+  Platform: {
+    get OS() {
+      return mocks.platform;
+    },
+  },
   AppState: {
     get currentState() {
       return mocks.appState;
     },
     addEventListener: (_event: string, listener: (state: string) => void) => {
       mocks.listeners.add(listener);
+      mocks.subscribed.resolve();
       return { remove: () => mocks.listeners.delete(listener) };
     },
   },
@@ -57,6 +65,8 @@ beforeEach(() => {
   vi.resetModules();
   mocks.appState = "background";
   mocks.nativeCheckSupported = true;
+  mocks.platform = "ios";
+  mocks.subscribed = Promise.withResolvers<void>();
   mocks.listeners.clear();
   mocks.isProtectedDataAvailable.mockReset();
   mocks.readStorage.mockReset().mockResolvedValue(undefined);
@@ -74,13 +84,19 @@ describe("protected storage startup", () => {
     { launch: "unknown", state: "unknown", checkRejects: false },
     { launch: "unset", state: null, checkRejects: false },
     { launch: "background with a failed native check", state: "background", checkRejects: true },
+    {
+      launch: "background without a native check",
+      state: "background",
+      nativeCheckSupported: false,
+    },
+    { launch: "unknown without a native check", state: "unknown", nativeCheckSupported: false },
+    { launch: "unset without a native check", state: null, nativeCheckSupported: false },
   ])(
     "keeps a locked $launch launch usable after activation without rebuilding its runtime",
     async (scenario) => {
       mocks.appState = scenario.state;
-      const checked = Promise.withResolvers<void>();
+      mocks.nativeCheckSupported = scenario.nativeCheckSupported ?? true;
       mocks.isProtectedDataAvailable.mockImplementation(async () => {
-        checked.resolve();
         if (scenario.checkRejects) throw new Error("Protected data check unavailable.");
         return false;
       });
@@ -91,7 +107,7 @@ describe("protected storage startup", () => {
       const startup = runtime.runPromiseExit(Effect.succeed("ready"));
 
       // A missing gate finishes startup with a cached storage failure instead.
-      await Promise.race([checked.promise, startup]);
+      await Promise.race([mocks.subscribed.promise, startup]);
       expect(mocks.readStorage).not.toHaveBeenCalled();
       mocks.appState = "inactive";
       for (const listener of mocks.listeners) listener("inactive");
@@ -106,23 +122,42 @@ describe("protected storage startup", () => {
       expect(mocks.listeners.size).toBe(0);
       mocks.appState = "background";
       await (await import("./protectedData")).whenProtectedDataAvailable();
-      expect(mocks.isProtectedDataAvailable).toHaveBeenCalledOnce();
+      expect(mocks.isProtectedDataAvailable).toHaveBeenCalledTimes(
+        mocks.nativeCheckSupported ? 1 : 0,
+      );
     },
   );
 
   it.each([
-    { launch: "unlocked background", state: "background", nativeCheckSupported: true },
-    { launch: "active foreground", state: "active", nativeCheckSupported: true },
-    { launch: "Android background", state: "background", nativeCheckSupported: false },
+    {
+      launch: "unlocked background",
+      state: "background",
+      platform: "ios",
+      nativeCheckSupported: true,
+    },
+    { launch: "active foreground", state: "active", platform: "ios", nativeCheckSupported: true },
+    {
+      launch: "Android background",
+      state: "background",
+      platform: "android",
+      nativeCheckSupported: false,
+    },
+    {
+      launch: "Android with a native check",
+      state: "background",
+      platform: "android",
+      nativeCheckSupported: true,
+    },
   ])("starts storage on $launch launch without waiting for activation", async (scenario) => {
     mocks.appState = scenario.state;
+    mocks.platform = scenario.platform;
     mocks.nativeCheckSupported = scenario.nativeCheckSupported;
-    mocks.isProtectedDataAvailable.mockResolvedValue(true);
+    mocks.isProtectedDataAvailable.mockResolvedValue(scenario.platform === "ios");
     ({ runtime } = await import("./runtime"));
 
     expect(await runtime.runPromise(Effect.succeed("ready"))).toBe("ready");
     expect(mocks.isProtectedDataAvailable).toHaveBeenCalledTimes(
-      scenario.state === "background" && scenario.nativeCheckSupported ? 1 : 0,
+      scenario.platform === "ios" && scenario.state === "background" ? 1 : 0,
     );
     expect(mocks.readStorage).toHaveBeenCalledOnce();
     expect(mocks.listeners.size).toBe(0);

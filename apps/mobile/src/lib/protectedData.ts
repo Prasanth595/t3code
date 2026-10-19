@@ -1,5 +1,5 @@
 import { requireOptionalNativeModule } from "expo";
-import { AppState } from "react-native";
+import { AppState, Platform } from "react-native";
 
 const NativeControls = requireOptionalNativeModule<{
   readonly isProtectedDataAvailable?: () => Promise<boolean>;
@@ -12,7 +12,7 @@ let protectedDataAvailable: Promise<void> | undefined;
 export function whenProtectedDataAvailable(): Promise<void> {
   protectedDataAvailable ??= new Promise((resolve) => {
     const isAvailable = NativeControls?.isProtectedDataAvailable;
-    if (isAvailable === undefined || AppState.currentState === "active") {
+    if (Platform.OS !== "ios" || AppState.currentState === "active") {
       resolve();
       return;
     }
@@ -23,7 +23,7 @@ export function whenProtectedDataAvailable(): Promise<void> {
       subscription.remove();
       resolve();
     }
-    isAvailable().then(
+    isAvailable?.().then(
       (available) => {
         if (available) done();
       },
