@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import type { SavedRemoteConnection } from "../lib/connection";
+import { appTokenRepairErrorAtom } from "./forkAppTokenRepairErrors";
 import type { EnvironmentRuntimeState } from "./remote-runtime-types";
 
 export function createRemoteEnvironmentProjectionAtoms(input: {
@@ -95,7 +96,12 @@ export function createRemoteEnvironmentProjectionAtoms(input: {
         return null;
       }
 
-      const connection = presentation.connection;
+      // Fork: the app token repair says why it cannot reconnect (connection/forkAppTokenRepair.ts).
+      const repairError = get(appTokenRepairErrorAtom(environmentId));
+      const connection =
+        repairError === null || presentation.connection.phase === "connected"
+          ? presentation.connection
+          : { ...presentation.connection, error: repairError };
       const serverConfig = get(input.serverConfigAtom(environmentId));
       if (
         previous !== null &&
