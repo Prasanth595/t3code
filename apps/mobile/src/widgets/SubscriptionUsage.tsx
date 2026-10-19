@@ -40,12 +40,13 @@ function SubscriptionUsage(
   const monochrome =
     widgetEnvironment.widgetRenderingMode !== "fullColor" || widgetEnvironment.isLuminanceReduced;
   // Accessory and tinted widgets inherit the host's legible monochrome styles.
+  const mode = props.theme?.mode;
   const appearance =
-    props.theme?.mode === "system" || !props.theme
-      ? widgetEnvironment.colorScheme === "dark"
+    mode === "light" || mode === "dark"
+      ? mode
+      : widgetEnvironment.colorScheme === "dark"
         ? "dark"
-        : "light"
-      : props.theme.mode;
+        : "light";
   const palette = !accessory && !monochrome ? props.theme?.[appearance] : undefined;
   const primary = palette?.foreground ?? "primary";
   const secondary = palette?.secondary ?? "secondary";

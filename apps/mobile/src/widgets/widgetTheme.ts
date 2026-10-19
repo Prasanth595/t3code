@@ -20,12 +20,11 @@ export interface WidgetTheme {
   dark: WidgetPalette;
 }
 
-/** Publish native colors, not CSS variables, to the isolated widget runtime. */
 export function createWidgetTheme(
   mode: MobileThemeMode,
   palettes: Readonly<Record<"light" | "dark", MobileThemeVariables>>,
 ): WidgetTheme {
-  const palette = (variables: MobileThemeVariables): WidgetPalette => ({
+  const palette = (variables: MobileThemeVariables) => ({
     background: variables["--color-card"],
     foreground: variables["--color-foreground"],
     secondary: variables["--color-foreground-secondary"],

@@ -4,12 +4,12 @@ import * as Linking from "expo-linking";
 import { useEffect } from "react";
 import { Platform } from "react-native";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { createWidgetTheme } from "./widgetTheme";
 import { environmentCatalog } from "../connection/catalog";
 import { environmentPresentations } from "../state/presentation";
 import { publishSubscriptionUsage } from "./publishSubscriptionUsage";
 import { useSubscriptionUsage } from "./useSubscriptionUsage";
 import { buildSubscriptionUsageSnapshot } from "./subscriptionUsageSnapshot";
+import { createWidgetTheme } from "./widgetTheme";
 
 // Isolate quota changes from the much busier thread/config presentation stream.
 const snapshotAtom = Atom.make((get) =>

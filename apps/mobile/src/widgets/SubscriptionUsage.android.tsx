@@ -21,14 +21,14 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
   // The widget runtime evaluates this function without the app's module scope.
   const now = Date.now();
   const limit = 2;
+  const mode = props.theme?.mode;
   const appearance =
-    props.theme?.mode === "system" || !props.theme
-      ? environment.colorScheme === "dark"
+    mode === "light" || mode === "dark"
+      ? mode
+      : environment.colorScheme === "dark"
         ? "dark"
-        : "light"
-      : props.theme.mode;
+        : "light";
   const palette = props.theme?.[appearance];
-  const material = getMaterialColors({ scheme: appearance });
   const colors = palette
     ? {
         surface: palette.background,
@@ -38,7 +38,7 @@ export function SubscriptionUsage(props: SubscriptionUsageProps, environment: Wi
         primary: palette.accent,
         error: palette.danger,
       }
-    : material;
+    : getMaterialColors({ scheme: appearance });
   const muted = colors.onSurfaceVariant;
   const providers = props.providers ?? [
     { name: "Codex", detail: "Open T3 to connect", windows: [], expiresAt: 0, totalWindows: 0 },
