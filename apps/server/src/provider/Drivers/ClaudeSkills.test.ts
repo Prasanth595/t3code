@@ -121,6 +121,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
       yield* fs.writeFileString(
         path.join(workspace, ".claude", "settings.local.json"),
+        '{"enabledPlugins":{"plugin@shop":true,"local@shop":false},"skillOverrides":{"invalid":"bogus"}}',
+      );
+      assert.deepEqual(
+        yield* discoverClaudeSkills({ homePath: configDir }, workspace),
+        projectSettings,
+      );
+      yield* fs.writeFileString(
+        path.join(workspace, ".claude", "settings.local.json"),
         '{"enabledPlugins":{"plugin@shop":true}}',
       );
       const localSettings = yield* discoverClaudeSkills({ homePath: configDir }, workspace);

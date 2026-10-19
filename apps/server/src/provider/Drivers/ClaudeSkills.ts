@@ -178,19 +178,13 @@ const SkillOverrideValue = Schema.Literals(["on", "name-only", "user-invocable-o
 
 // Lenient because these settings files are hand-edited and Claude Code itself
 // tolerates comments and trailing commas in them.
-const SkillOverrideSettings = fromLenientJson(
+const SkillSettings = fromLenientJson(
   Schema.Struct({
     skillOverrides: Schema.optional(Schema.Record(Schema.String, SkillOverrideValue)),
+    enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
   }),
 );
-const decodeSkillOverrideSettings = Schema.decodeUnknownEffect(SkillOverrideSettings);
-const decodeEnabledPluginSettings = Schema.decodeUnknownEffect(
-  fromLenientJson(
-    Schema.Struct({
-      enabledPlugins: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
-    }),
-  ),
-);
+const decodeSkillSettings = Schema.decodeUnknownEffect(SkillSettings);
 
 type SkillOverride = {
   readonly enabled: boolean;
@@ -236,9 +230,9 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
       continue;
     }
 
-    const parsed = yield* decodeSkillOverrideSettings(contents).pipe(
+    const parsed = yield* decodeSkillSettings(contents).pipe(
       Effect.tapError((cause) =>
-        Effect.logDebug("claude settings file is unreadable; ignoring skillOverrides", {
+        Effect.logDebug("claude settings file is unreadable; ignoring skill settings", {
           path: settingsPath,
           cause,
         }),
@@ -248,12 +242,7 @@ const readSkillSettings = Effect.fn("readSkillSettings")(function* (
     for (const [name, value] of Object.entries(parsed?.skillOverrides ?? {})) {
       overridesByName.set(name, parseSkillOverride(value));
     }
-    // Decode independently: an invalid skillOverrides map must not discard
-    // the plugin enablement in the same settings file.
-    const pluginSettings = yield* decodeEnabledPluginSettings(contents).pipe(
-      Effect.orElseSucceed(() => undefined),
-    );
-    for (const [key, enabled] of Object.entries(pluginSettings?.enabledPlugins ?? {})) {
+    for (const [key, enabled] of Object.entries(parsed?.enabledPlugins ?? {})) {
       if (typeof enabled === "boolean") {
         enabledPlugins.set(key, enabled);
       } else {
