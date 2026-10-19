@@ -3357,6 +3357,7 @@ it.layer(
           assert.notStrictEqual(ghost, undefined);
           assert.strictEqual(ghost?.driver, "ghostDriver");
           assert.strictEqual(ghost?.availability, "unavailable");
+          assert.strictEqual(Object.hasOwn(ghost ?? {}, "setup"), false);
           assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
         }).pipe(Effect.provide(runtimeServices));
       }),
