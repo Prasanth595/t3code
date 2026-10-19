@@ -39,7 +39,6 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
-  parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
   type ServerProviderDraft,
@@ -78,6 +77,9 @@ const CODEX_CLIENT_NAME = "T3 Code";
 // (most often reported on Windows). Give Codex its own longer budget instead of raising the
 // timeout for every provider.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
+// `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
+// Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
+const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -561,7 +563,8 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
         shell: spawnCommand.shell,
       }),
     );
-    return result.code === 0 ? parseGenericCliVersion(`${result.stdout}\n${result.stderr}`) : null;
+    if (result.code !== 0) return null;
+    return CODEX_CLI_VERSION_PATTERN.exec(result.stdout)?.[1] ?? null;
   },
   Effect.timeoutOption(Duration.millis(DEFAULT_TIMEOUT_MS)),
   Effect.map(Option.getOrNull),

@@ -642,6 +642,28 @@ it.layer(
       }),
     );
 
+    it.effect("keeps a prerelease --version unclassified instead of reading it as stable", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const { binaryPath } = yield* writeFakeCodexCli(
+          [
+            `[ "$1" = "--version" ] && { echo "codex-cli 0.159.0-alpha.1"; exit 0; }`,
+            OBSOLETE_CODEX_APP_SERVER,
+          ].join("\n"),
+        );
+
+        const status = yield* checkCodexProviderStatus(decodeCodexSettings({ binaryPath }));
+
+        assert.strictEqual(status.version, "0.159.0-alpha.1");
+        const classified = withBundledCompatibility({
+          ...status,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
+        });
+        assert.strictEqual(classified.compatibilityAdvisory?.status, "unknown");
+      }),
+    );
+
     it.effect("keeps the probe failure without a version when --version also fails", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
@@ -682,7 +704,7 @@ it.layer(
         // The processes are real, so wait in real time for the fallback to start.
         for (let attempt = 0; !(yield* fs.exists(pidFile)); attempt++) {
           assert.isBelow(attempt, 500, "the --version fallback never started");
-          yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 10)));
+          yield* TestClock.withLive(Effect.sleep("10 millis"));
         }
         yield* TestClock.adjust("5 seconds");
 
