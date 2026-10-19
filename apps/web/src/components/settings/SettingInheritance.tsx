@@ -154,13 +154,15 @@ export interface SettingOverridingProject extends ProjectOverrideEntry {
   readonly open: () => void;
 }
 
+const EMPTY_OVERRIDING_PROJECTS: readonly SettingOverridingProject[] = [];
+
 export function SettingInheritance({
   state,
   summary,
   targets,
   environments,
   keys,
-  overridingProjects = [],
+  overridingProjects = EMPTY_OVERRIDING_PROJECTS,
   onClearOverrides,
 }: {
   state: SettingInheritanceState;
@@ -195,7 +197,7 @@ export function SettingInheritance({
       .filter(Boolean)
       .join(" · ");
     const layers = settingInheritanceLayers(target, environment.serverConfig.settings, key);
-    const unsupported = target.unsupportedSettingKeys?.has(key) === true;
+    const unsupported = keys.some((key) => target.unsupportedSettingKeys?.has(key) === true);
     const winningLayer = unsupported ? undefined : layers.find((layer) => layer.effective);
     return [
       {

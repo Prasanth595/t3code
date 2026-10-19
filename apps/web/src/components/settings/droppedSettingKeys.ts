@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { ServerSettings, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -8,11 +8,7 @@ interface DroppedSettingKeys {
   readonly keys: ReadonlySet<string>;
 }
 
-/**
- * Setting keys each environment dropped on a save this session, for servers
- * too old to list the keys they store. Tagged with the server version, so an
- * update clears them.
- */
+// Learning lasts for this session and server version so an update retries support.
 export const droppedSettingKeysAtom = Atom.make<ReadonlyMap<EnvironmentId, DroppedSettingKeys>>(
   new Map(),
 ).pipe(Atom.keepAlive, Atom.withLabel("settings:dropped-setting-keys"));
@@ -22,19 +18,22 @@ export function recordDroppedSettingKeys(
   serverVersion: string,
   keys: readonly string[],
 ) {
-  if (keys.length === 0) return;
+  const topLevelKeys = keys.filter((key) => Object.hasOwn(ServerSettings.fields, key));
+  if (topLevelKeys.length === 0) return;
   appAtomRegistry.update(droppedSettingKeysAtom, (current) => {
     const existing = current.get(environmentId);
     const next = new Map(current);
     next.set(environmentId, {
       serverVersion,
-      keys: new Set([...(existing?.serverVersion === serverVersion ? existing.keys : []), ...keys]),
+      keys: new Set([
+        ...(existing?.serverVersion === serverVersion ? existing.keys : []),
+        ...topLevelKeys,
+      ]),
     });
     return next;
   });
 }
 
-/** The keys an environment dropped, if it still runs the version that dropped them. */
 export function droppedSettingKeysFor(
   dropped: ReadonlyMap<EnvironmentId, DroppedSettingKeys>,
   environmentId: EnvironmentId,

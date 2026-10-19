@@ -1,6 +1,7 @@
+// @vitest-environment jsdom
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { act, StrictMode, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -33,6 +34,7 @@ vi.mock("./SettingsScopeContext", () => ({
     environment: null,
     connectedEnvironments: [],
     targets: targets(),
+    target: null,
   }),
 }));
 vi.mock("./useScopedModelAvailability", () => ({
@@ -40,6 +42,7 @@ vi.mock("./useScopedModelAvailability", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
+vi.mock("../../state/environments", () => ({ useEnvironmentProviders: () => new Map() }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: (id: string) => ({ id, title: id }) }));
 vi.mock("./settingsLayout", () => ({
@@ -71,7 +74,25 @@ vi.mock("../ui/select", () => ({
   SelectTrigger: "div",
   SelectValue: "span",
 }));
-vi.mock("../ui/switch", () => ({ Switch: "input" }));
+vi.mock("../ui/switch", () => ({
+  Switch: ({
+    mixed,
+    checked,
+    "aria-label": label,
+  }: {
+    mixed: boolean;
+    checked: boolean;
+    "aria-label": string;
+  }) => (
+    <input
+      type="checkbox"
+      aria-label={label}
+      aria-checked={mixed ? "mixed" : checked}
+      checked={checked}
+      readOnly
+    />
+  ),
+}));
 vi.mock("../ui/textarea", () => ({ Textarea: "textarea" }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
 
@@ -86,22 +107,40 @@ function targets() {
   }));
 }
 
-let renderer: ReactTestRenderer | null;
+let root: Root;
+let container: HTMLDivElement;
+
+function render() {
+  act(() =>
+    root.render(
+      <StrictMode>
+        <SourceControlWritingSettingsSection />
+      </StrictMode>,
+    ),
+  );
+}
 
 function button(label: string) {
-  return renderer!.root.findAllByType("button").find((item) => item.children.includes(label))!;
+  return [...container.querySelectorAll("button")].find((item) => item.textContent === label);
 }
 
 function openEditor() {
-  act(() => button("Write custom instructions for all").props.onClick());
+  act(() => button("Write custom instructions for all")!.click());
 }
 
 function editInstructions(value: string) {
-  act(() => renderer!.root.findByType("textarea").props.onChange({ target: { value } }));
+  const editor = container.querySelector("textarea")!;
+  act(() => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      editor,
+      value,
+    );
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
 }
 
 function applyInstructions() {
-  act(() => button("Apply instructions to all").props.onClick());
+  act(() => button("Apply instructions to all")!.click());
 }
 
 beforeEach(() => {
@@ -124,18 +163,15 @@ beforeEach(() => {
   state.updateSettings.mockReset().mockImplementation((patch) => {
     state.styles = state.styles.map((style) => ({ ...style, ...patch.sourceControlWritingStyle }));
   });
-  act(() => {
-    renderer = create(
-      <StrictMode>
-        <SourceControlWritingSettingsSection />
-      </StrictMode>,
-    );
-  });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  render();
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
-  renderer = null;
+  await act(async () => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
@@ -143,23 +179,15 @@ describe("mixed source control instructions", () => {
   it("shows the supported environment's editor when the representative cannot store writing style", () => {
     state.unsupported.add(0);
     state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
-    act(() => {
-      renderer!.update(
-        <StrictMode>
-          <SourceControlWritingSettingsSection />
-        </StrictMode>,
-      );
-    });
+    render();
 
     expect(button("Write custom instructions for all")).toBeUndefined();
-    expect(renderer!.root.findByType("textarea").props.defaultValue).toBe(
-      "Second environment instructions",
-    );
-    expect(
-      renderer!.root
-        .findAllByType("input")
-        .find((input) => input.props["aria-label"] === "Follow change request templates")?.props,
-    ).toMatchObject({ mixed: false, checked: false });
+    expect(container.querySelector("textarea")!.value).toBe("Second environment instructions");
+    const templates = container.querySelector<HTMLInputElement>(
+      'input[aria-label="Follow change request templates"]',
+    )!;
+    expect(templates.checked).toBe(false);
+    expect(templates.getAttribute("aria-checked")).toBe("false");
     expect(state.updateSettings).not.toHaveBeenCalled();
   });
 
@@ -169,7 +197,7 @@ describe("mixed source control instructions", () => {
       customInstructions,
     }));
 
-    act(() => button("Reset change request templates").props.onClick());
+    act(() => button("Reset change request templates")!.click());
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
     expect(state.styles.map((style) => style.followChangeRequestTemplates)).toEqual([
@@ -183,15 +211,9 @@ describe("mixed source control instructions", () => {
 
   it("resets every environment even when the representative already has default instructions", () => {
     state.styles[0] = { ...DEFAULT_UNIFIED_SETTINGS.sourceControlWritingStyle };
-    act(() => {
-      renderer!.update(
-        <StrictMode>
-          <SourceControlWritingSettingsSection />
-        </StrictMode>,
-      );
-    });
+    render();
 
-    act(() => button("Reset source control writing style").props.onClick());
+    act(() => button("Reset source control writing style")!.click());
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
     expect(
@@ -208,8 +230,8 @@ describe("mixed source control instructions", () => {
   it("does not write an untouched bulk draft", () => {
     const initialStyles = state.styles;
     openEditor();
-    expect(renderer!.root.findByType("textarea").props.value).toBe("");
-    expect(button("Apply instructions to all").props.disabled).toBe(true);
+    expect(container.querySelector("textarea")!.value).toBe("");
+    expect(button("Apply instructions to all")!.disabled).toBe(true);
 
     applyInstructions();
     expect(state.updateSettings).not.toHaveBeenCalled();
@@ -219,7 +241,7 @@ describe("mixed source control instructions", () => {
   it("applies edited instructions to every selected environment", () => {
     openEditor();
     editInstructions("  Keep titles concise.  ");
-    expect(button("Apply instructions to all").props.disabled).toBe(false);
+    expect(button("Apply instructions to all")!.disabled).toBe(false);
     applyInstructions();
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
@@ -234,7 +256,7 @@ describe("mixed source control instructions", () => {
     openEditor();
     editInstructions("Temporary instructions");
     editInstructions("");
-    expect(button("Apply instructions to all").props.disabled).toBe(false);
+    expect(button("Apply instructions to all")!.disabled).toBe(false);
     applyInstructions();
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
@@ -252,6 +274,6 @@ describe("mixed source control instructions", () => {
       "Shared instructions",
     ]);
     expect(button("Write custom instructions for all")).toBeUndefined();
-    expect(renderer!.root.findByType("textarea").props.defaultValue).toBe("Shared instructions");
+    expect(container.querySelector("textarea")!.value).toBe("Shared instructions");
   });
 });

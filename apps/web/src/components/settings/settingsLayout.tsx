@@ -310,7 +310,10 @@ export function SettingsRow({
   const unsupportedEverywhere =
     context !== null &&
     context.targets.length > 0 &&
-    unsupportedTargets.length === context.targets.length;
+    settingKeys.length > 0 &&
+    context.targets.every((target) =>
+      settingKeys.every((key) => target.unsupportedSettingKeys?.has(key)),
+    );
   const source =
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
@@ -331,17 +334,18 @@ export function SettingsRow({
     ),
   );
   const overridingProjects = isProjectScope ? [] : projectOverrides(context, scopedKeys);
-  const renderedReset = unavailable ? null : isProjectScope && scopedKeys.length > 0 ? (
-    source === "project" || source === "mixed" ? (
-      <SettingResetButton
-        label={typeof title === "string" ? title : "override"}
-        tooltip="Reset to inherited value"
-        onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
-      />
-    ) : null
-  ) : (
-    resetAction
-  );
+  const renderedReset =
+    unavailable || unsupportedEverywhere ? null : isProjectScope && scopedKeys.length > 0 ? (
+      source === "project" || source === "mixed" ? (
+        <SettingResetButton
+          label={typeof title === "string" ? title : "override"}
+          tooltip="Reset to inherited value"
+          onClick={() => (onResetOverride ? onResetOverride() : clearOverrides(scopedKeys))}
+        />
+      ) : null
+    ) : (
+      resetAction
+    );
   const inertControl = (message: string) => (
     <Tooltip>
       <TooltipTrigger
@@ -389,6 +393,7 @@ export function SettingsRow({
       context.targets.some((candidate) => {
         const environmentSettings = environmentSettingsById.get(candidate.environmentId);
         return (
+          !candidate.unsupportedSettingKeys?.has(key) &&
           environmentSettings !== undefined &&
           !Equal.equals(environmentSettings[key], DEFAULT_SERVER_SETTINGS[key])
         );
@@ -410,9 +415,11 @@ export function SettingsRow({
       <SettingInheritance
         state={inheritance.state}
         summary={
-          unsupportedLabels
-            ? `${inheritance.summary} · Not supported on ${unsupportedLabels}`
-            : inheritance.summary
+          unsupportedEverywhere
+            ? `Not supported on ${unsupportedLabels}`
+            : unsupportedLabels
+              ? `${inheritance.summary} · Not supported on ${unsupportedLabels}`
+              : inheritance.summary
         }
         targets={context.targets}
         environments={context.connectedEnvironments}

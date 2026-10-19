@@ -77,11 +77,14 @@ export function SourceControlWritingSettingsSection() {
     (environment?.serverConfig
       ? providersByEnvironment.get(environment.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
+  const styleTargets = targets.filter(
+    (target) => !target.unsupportedSettingKeys?.has("sourceControlWritingStyle"),
+  );
   const styleFieldMixed = (field: keyof ServerSettings["sourceControlWritingStyle"]) => {
-    const first = targets[0];
+    const first = styleTargets[0];
     return (
       first !== undefined &&
-      targets.some(
+      styleTargets.some(
         (candidate) =>
           candidate.settings.sourceControlWritingStyle[field] !==
           first.settings.sourceControlWritingStyle[field],
