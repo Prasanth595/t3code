@@ -60,22 +60,22 @@ export const layerSafeStorageWith = (options: { readonly encryptionAvailable: bo
 
 export const layerSafeStorage = layerSafeStorageWith({ encryptionAvailable: true });
 
+/** What the token endpoint answers for an accepted pairing credential. */
+export const accessTokenBody = (accessToken: string) => ({
+  access_token: accessToken,
+  issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+  token_type: "Bearer",
+  expires_in: 3600,
+  scope: "environment:connect",
+});
+
 /** An HTTP client that answers every request with a successful pairing exchange. */
 export const layerHttpPairing = (accessToken: string) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
       Effect.sync(() =>
-        HttpClientResponse.fromWeb(
-          request,
-          Response.json({
-            access_token: accessToken,
-            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-            token_type: "Bearer",
-            expires_in: 3600,
-            scope: "environment:connect",
-          }),
-        ),
+        HttpClientResponse.fromWeb(request, Response.json(accessTokenBody(accessToken))),
       ),
     ),
   );

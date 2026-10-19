@@ -1,11 +1,17 @@
+import * as NodeUtil from "node:util";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as References from "effect/References";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -16,23 +22,17 @@ import {
 import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { factoryServerBearerToken, pairFactoryServer } from "./factoryServerIpc.ts";
-import { layerDesktopEnvironment, layerSafeStorageWith } from "./testing.ts";
+import { accessTokenBody, layerDesktopEnvironment, layerSafeStorageWith } from "./testing.ts";
 
 const COULD_NOT_COMPLETE =
   "The factory server could not complete the pairing. Check its logs and try again.";
 
-const accessTokenBody = (token: string) => ({
-  access_token: token,
-  issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-  token_type: "Bearer",
-  expires_in: 3600,
-  scope: "environment:connect",
-});
+const REJECTED = "The factory server rejected this pairing link.";
 
-/** A response, or the transport error of a server that could not be reached. */
+/** A response, the transport error of a server that could not be reached, or no answer at all. */
 type Respond = (
   request: HttpClientRequest.HttpClientRequest,
-) => Response | HttpClientError.HttpClientError;
+) => Response | HttpClientError.HttpClientError | "hang";
 
 const layerHttp = (
   requests: Array<{ readonly url: string; readonly body: string }>,
@@ -48,6 +48,7 @@ const layerHttp = (
           body: body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : "",
         });
         const result = respond(request);
+        if (result === "hang") return Effect.never;
         return result instanceof Response
           ? Effect.succeed(HttpClientResponse.fromWeb(request, result))
           : Effect.fail(result);
@@ -102,6 +103,9 @@ const serverFailed = jsonResponse(
   ),
 );
 
+/** A status the token endpoint does not declare, with a body that is not one of its errors. */
+const undeclared = (status: number) => () => new Response("nope", { status });
+
 const unreachable = (request: HttpClientRequest.HttpClientRequest) =>
   new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request }) });
 
@@ -111,6 +115,7 @@ const withLayers = <A, E, R>(
     readonly encryptionAvailable?: boolean;
     readonly requests?: Array<{ readonly url: string; readonly body: string }>;
     readonly respond?: Respond;
+    readonly logs?: Array<unknown>;
   },
   effect: Effect.Effect<A, E, R>,
 ) =>
@@ -125,10 +130,21 @@ const withLayers = <A, E, R>(
           layerDesktopEnvironment(baseDir, options.isPackaged ?? true),
           layerSafeStorageWith({ encryptionAvailable: options.encryptionAvailable ?? true }),
           layerHttp(options.requests ?? [], options.respond ?? accepted("bearer-1")),
+          Logger.layer([capturingLogger(options.logs ?? [])], { mergeWithExisting: false }),
         ),
       ),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
+/** Keeps each log's message and annotations, the way the desktop log file receives them. */
+const capturingLogger = (logs: Array<unknown>) =>
+  Logger.make(({ message, fiber }) => {
+    logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) });
+  });
+
+/** The logs as the console logger (`util.inspect`) and the OTLP logger (JSON) would write them. */
+const logText = (logs: ReadonlyArray<unknown>): string =>
+  `${NodeUtil.inspect(logs, { depth: null })}\n${JSON.stringify(logs)}`;
 
 const failureMessage = <A, E>(exit: Exit.Exit<A, E>): string => {
   assert(Exit.isFailure(exit));
@@ -190,7 +206,7 @@ describe("pairing the factory server", () => {
         const exit = yield* Effect.exit(
           pairFactoryServer.handler("http://127.0.0.1:3876/pair#token=stale"),
         );
-        assert.equal(failureMessage(exit), "The factory server rejected this pairing link.");
+        assert.equal(failureMessage(exit), REJECTED);
         assert.equal(yield* factoryServerBearerToken, "");
       }),
     ),
@@ -212,7 +228,7 @@ describe("pairing the factory server", () => {
       { respond: serverRejected },
       Effect.gen(function* () {
         const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
-        assert.equal(failureMessage(exit), "The factory server rejected this pairing link.");
+        assert.equal(failureMessage(exit), REJECTED);
       }),
     ),
   );
@@ -254,12 +270,61 @@ describe("pairing the factory server", () => {
     ),
   );
 
-  it.effect("stores nothing when secure storage is unavailable", () =>
+  it.effect("calls an undeclared 401 or 403 a rejected link and any other status not", () =>
+    Effect.gen(function* () {
+      for (const [status, reason] of [
+        [401, REJECTED],
+        [403, REJECTED],
+        [502, COULD_NOT_COMPLETE],
+      ] as const) {
+        const exit = yield* withLayers(
+          { respond: undeclared(status) },
+          Effect.exit(pairFactoryServer.handler("abc123")),
+        );
+        assert.equal(failureMessage(exit), reason, `status ${status}`);
+      }
+    }),
+  );
+
+  it.effect("says the server is unreachable when it never answers", () =>
     withLayers(
-      { encryptionAvailable: false },
+      { respond: () => "hang" },
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(Effect.exit(pairFactoryServer.handler("abc123")));
+        yield* TestClock.adjust("10 seconds");
+        const exit = yield* Fiber.join(fiber);
+        assert.equal(
+          failureMessage(exit),
+          "Could not reach the factory server at http://127.0.0.1:3876. Is it running?",
+        );
+      }),
+    ),
+  );
+
+  it.effect("logs a failed pairing without the pairing credential", () =>
+    Effect.gen(function* () {
+      const credential = "secret-pairing-credential";
+      for (const respond of [unreachable, serverRejected, undeclared(502)]) {
+        const logs: Array<unknown> = [];
+        yield* withLayers(
+          { respond, logs },
+          Effect.exit(pairFactoryServer.handler(`http://127.0.0.1:3876/pair#token=${credential}`)),
+        );
+        const text = logText(logs);
+        assert.include(text, "factory server pairing failed");
+        assert.notInclude(text, credential);
+      }
+    }),
+  );
+
+  it.effect("stores nothing and spends no link when secure storage is unavailable", () => {
+    const requests: Array<{ readonly url: string; readonly body: string }> = [];
+    return withLayers(
+      { encryptionAvailable: false, requests },
       Effect.gen(function* () {
         const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
         assert.equal(failureMessage(exit), "Could not store the factory server credential.");
+        assert.equal(requests.length, 0);
 
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -270,8 +335,8 @@ describe("pairing the factory server", () => {
         );
         assert.equal(yield* factoryServerBearerToken, "");
       }),
-    ),
-  );
+    );
+  });
 
   it.effect("asks for a link when the input is empty", () => {
     const requests: Array<{ readonly url: string; readonly body: string }> = [];

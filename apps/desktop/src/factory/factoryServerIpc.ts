@@ -17,7 +17,12 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import { PAIR_FACTORY_SERVER_CHANNEL } from "./factoryServerChannel.ts";
 import { factoryServerIsLocalEnvironment, usesFactoryServer } from "./factoryServer.ts";
-import { readFactoryServerBearer, writeFactoryServerBearer } from "./factoryServerCredential.ts";
+import {
+  ensureFactoryServerBearerStorable,
+  type FactoryServerCredentialStoreError,
+  readFactoryServerBearer,
+  writeFactoryServerBearer,
+} from "./factoryServerCredential.ts";
 
 const { logWarning } = makeComponentLogger("desktop-factory-server");
 
@@ -65,6 +70,14 @@ const pairingFailureReason = (error: RemoteEnvironmentAuthError): string => {
   }
 };
 
+const storeFailure = <A, R>(effect: Effect.Effect<A, FactoryServerCredentialStoreError, R>) =>
+  effect.pipe(
+    Effect.tapError((error) =>
+      logWarning("could not store the factory server credential", { error }),
+    ),
+    Effect.mapError((error) => new FactoryServerPairingError({ reason: error.message })),
+  );
+
 const REJECTED_REASON = "The factory server rejected this pairing link.";
 const COULD_NOT_COMPLETE_REASON =
   "The factory server could not complete the pairing. Check its logs and try again.";
@@ -96,6 +109,8 @@ export const pairFactoryServer = DesktopIpc.makeIpcMethod({
         reason: "Paste a pairing link from `t3 pair`.",
       });
     }
+    // The exchange spends the one-time link, so check first that its bearer can be kept.
+    yield* storeFailure(ensureFactoryServerBearerStorable);
     const httpClient = yield* HttpClient.HttpClient;
     const session = yield* bootstrapRemoteBearerSession({
       httpBaseUrl: FORK_FACTORY_SERVER_URL,
@@ -108,11 +123,6 @@ export const pairFactoryServer = DesktopIpc.makeIpcMethod({
         (error) => new FactoryServerPairingError({ reason: pairingFailureReason(error) }),
       ),
     );
-    yield* writeFactoryServerBearer(session.access_token).pipe(
-      Effect.tapError((error) =>
-        logWarning("could not store the factory server credential", { error }),
-      ),
-      Effect.mapError((error) => new FactoryServerPairingError({ reason: error.message })),
-    );
+    yield* storeFailure(writeFactoryServerBearer(session.access_token));
   }),
 });
