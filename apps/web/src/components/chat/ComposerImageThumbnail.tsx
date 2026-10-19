@@ -4,6 +4,7 @@ import {
   createComposerImageThumbnail,
   type ComposerImageThumbnailMode,
 } from "../../lib/imageCompression";
+import { cn } from "../../lib/utils";
 
 /** Keep full-resolution image decoding out of composer rerenders. */
 export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
@@ -34,5 +35,13 @@ export const ComposerImageThumbnail = memo(function ComposerImageThumbnail({
     };
   }, [file, mode]);
   const src = preview?.file === file && preview.mode === mode ? preview.src : null;
-  return src ? <img src={src} alt={alt} className={className} /> : fallback;
+  return src ? (
+    <img
+      src={src}
+      alt={alt}
+      className={cn(className, mode === "snapshot" ? "object-contain" : "object-cover")}
+    />
+  ) : (
+    fallback
+  );
 });

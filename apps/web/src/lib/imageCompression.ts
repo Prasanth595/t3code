@@ -212,15 +212,15 @@ const COMPOSER_THUMBNAIL_SIZES = {
 export type ComposerImageThumbnailMode = keyof typeof COMPOSER_THUMBNAIL_SIZES;
 const composerThumbnails = new WeakMap<
   File,
-  Map<ComposerImageThumbnailMode, Promise<string | null>>
+  Partial<Record<ComposerImageThumbnailMode, Promise<string | null>>>
 >();
 
-/** Cache at most two bounded previews per file, keeping snapshot window context intact. */
 export function createComposerImageThumbnail(
   file: File,
   mode: ComposerImageThumbnailMode = "square",
 ): Promise<string | null> {
-  const cached = composerThumbnails.get(file)?.get(mode);
+  const fileThumbnails = composerThumbnails.get(file);
+  const cached = fileThumbnails?.[mode];
   if (cached) return cached;
   const thumbnail = (async () => {
     if (!canRecompress()) return null;
@@ -256,12 +256,7 @@ export function createComposerImageThumbnail(
       bitmap?.close();
     }
   })();
-  let fileThumbnails = composerThumbnails.get(file);
-  if (!fileThumbnails) {
-    fileThumbnails = new Map();
-    composerThumbnails.set(file, fileThumbnails);
-  }
-  fileThumbnails.set(mode, thumbnail);
+  composerThumbnails.set(file, { ...fileThumbnails, [mode]: thumbnail });
   return thumbnail;
 }
 

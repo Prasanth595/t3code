@@ -4862,8 +4862,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {image.previewUrl ? (
               <ComposerImageThumbnail
                 file={image.file}
+                mode={image.source?.kind === "snap-shot" ? "snapshot" : "square"}
                 alt=""
-                className="size-full object-cover"
+                className="size-full"
                 fallback={
                   isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
                     <AttachmentImage
@@ -6740,11 +6741,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   file={image.file}
                                   mode={image.source?.kind === "snap-shot" ? "snapshot" : "square"}
                                   alt={image.name}
-                                  className={
-                                    image.source?.kind === "snap-shot"
-                                      ? "h-full w-full object-contain"
-                                      : "h-full w-full object-cover"
-                                  }
+                                  className="h-full w-full"
                                   fallback={
                                     isHeicImageFile({ name: image.name, type: image.mimeType }) ? (
                                       <AttachmentImage
