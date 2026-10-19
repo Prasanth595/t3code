@@ -9,7 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import * as DateTime from "effect/DateTime";
+import type * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -189,13 +189,12 @@ export const layer: Layer.Layer<
             : yield* sessions.get(input.providerSessionId);
           if (Option.isNone(session)) {
             if (input.subagent !== undefined) {
-              // The owning process is gone, so this explicit Stop can settle
-              // the orphan without inventing a successful provider result.
-              return {
-                status: "interrupted" as const,
-                completedAt: yield* DateTime.now,
-                result: null,
-              };
+              return yield* new ProviderTurnControlError({
+                threadId: input.threadId,
+                operation: "interrupt",
+                providerTurnId: input.providerTurnId,
+                cause: "No live provider session can confirm this subagent's outcome.",
+              });
             }
             return;
           }
@@ -218,15 +217,12 @@ export const layer: Layer.Layer<
           }
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
-          // stops it or reports there is nothing left to stop. Background work
-          // the projection still shows is settled by the orchestrator after.
+          // stops it or reports there is nothing left to stop.
           yield* session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
           });
-          // Give native terminal ingestion time to finish before the Stop
-          // follow-up repairs a run whose provider no longer reports on it.
           // The wait is real time: ingestion runs on other fibers and never
           // advances a test clock, so a test clock would hold Stop forever.
           yield* Effect.gen(function* () {
