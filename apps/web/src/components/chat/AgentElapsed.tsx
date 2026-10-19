@@ -57,11 +57,12 @@ export function AgentElapsed({
         );
         const text = elapsedMs === null ? "" : format(elapsedMs / 1000);
         if (textRef.current.textContent !== text) textRef.current.textContent = text;
-        if (warningRef.current) {
-          warningRef.current.textContent =
-            warnAfterSeconds !== undefined && elapsedWarningReached(elapsedMs, warnAfterSeconds)
-              ? "taking longer than expected"
-              : "";
+        const warning =
+          warnAfterSeconds !== undefined && elapsedWarningReached(elapsedMs, warnAfterSeconds)
+            ? "taking longer than expected"
+            : "";
+        if (warningRef.current && warningRef.current.textContent !== warning) {
+          warningRef.current.textContent = warning;
         }
       }
     };
@@ -81,7 +82,7 @@ export function AgentElapsed({
         {format(elapsedMs / 1000)}
       </span>
       {warnAfterSeconds === undefined ? null : (
-        <span ref={warningRef} className="text-amber-700 dark:text-amber-400" />
+        <span ref={warningRef} className="text-warning-foreground" />
       )}
     </span>
   );

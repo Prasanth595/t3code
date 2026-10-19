@@ -23,6 +23,11 @@ import {
 import { assertClaudeCompactAfterPeerTurnOutput } from "./claude_compact_after_peer_turn/output.ts";
 import { assertClaudeCompactAfterPeerTurnNoEchoOutput } from "./claude_compact_after_peer_turn_no_echo/output.ts";
 import { claudeCompactAfterResumeWakeInput } from "./claude_compact_after_resume_wake/input.ts";
+import { claudeCompactFailureHoldsQueueInput } from "./claude_compact_failure_holds_queue/input.ts";
+import {
+  assertClaudeCompactFailureHoldsQueueOutput,
+  assertClaudeCompactUnconfirmedHoldsQueueOutput,
+} from "./claude_compact_failure_holds_queue/output.ts";
 import { assertClaudeCompactAfterResumeWakeOutput } from "./claude_compact_after_resume_wake/output.ts";
 import { claudeIdleResumeInput } from "./claude_idle_resume/input.ts";
 import { assertClaudeIdleResumeOutput } from "./claude_idle_resume/output.ts";
@@ -358,6 +363,36 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CLAUDE_MODEL_SELECTION,
         runContinuationWorker: true,
         assertOutput: assertClaudeCompactAfterPeerTurnNoEchoOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_compact_failure_holds_queue",
+    buildInput: claudeCompactFailureHoldsQueueInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_compact_failure_holds_queue/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeCompactFailureHoldsQueueOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_compact_unconfirmed_holds_queue",
+    buildInput: claudeCompactFailureHoldsQueueInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_compact_failure_holds_queue/claude_unconfirmed_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeCompactUnconfirmedHoldsQueueOutput,
       },
     ],
   },

@@ -3645,6 +3645,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       compact: true,
       status: "failed",
     },
+    // Claude reports "nothing to compact" as a failed compaction too. Without
+    // a structured no-op outcome it holds the queue like any other failure.
     {
       name: "fails an unlimited failed /compact",
       limited: false,
@@ -3736,7 +3738,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
       );
       const expectedItemStatus =
-        compaction === "failed" || (compact && compaction === undefined) ? "failed" : "completed";
+        compaction === "failed"
+          ? "failed"
+          : compaction === undefined && compact
+            ? "cancelled"
+            : "completed";
       const lastCompaction = compactionItems.at(-1);
       assert.equal(
         lastCompaction?.type === "turn_item.updated" ? lastCompaction.turnItem.status : null,
@@ -3744,8 +3750,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       );
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.class, limited ? "usage_limit" : "provider_error");
+      assert.equal(
+        terminal.failure.code,
+        compaction === undefined ? "compaction_unconfirmed" : "compaction_failed",
+      );
       if (name === "fails /compact with no reported outcome") {
-        assert.equal(terminal.failure.message, "Compaction outcome was not confirmed by Claude.");
+        assert.equal(terminal.failure.message, "Claude did not confirm the compaction.");
       } else {
         assert.equal(
           terminal.failure.message,
@@ -3759,6 +3769,369 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  const compactionStatusFrame = (
+    uuid: string,
+    status: "compacting" | null,
+    outcome?: "success" | "failed",
+  ) =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "status",
+      status,
+      ...(outcome === undefined ? {} : { compact_result: outcome }),
+      ...(outcome === "failed" ? { compact_error: "Compaction request failed." } : {}),
+      uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  const compactBoundaryFrame = (uuid: string) =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
+      uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
+  // Each compaction item's latest update, in the order the items first appeared.
+  interface SettledCompaction {
+    readonly status: string;
+    readonly summary: string | undefined;
+    readonly tokens: ReadonlyArray<number | undefined>;
+    readonly startedAts: number;
+  }
+  const settledCompactions = (
+    events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
+  ): ReadonlyArray<SettledCompaction> => {
+    const startedAts = new Map<string, Set<string>>();
+    const items = new Map<string, SettledCompaction>();
+    for (const event of events) {
+      if (event.type !== "turn_item.updated" || event.turnItem.type !== "compaction") continue;
+      const item = event.turnItem;
+      const started = startedAts.get(item.id) ?? new Set<string>();
+      started.add(item.startedAt === null ? "" : DateTime.formatIso(item.startedAt));
+      startedAts.set(item.id, started);
+      items.set(item.id, {
+        status: item.status,
+        summary: item.summary,
+        tokens: [item.beforeTokenCount, item.afterTokenCount],
+        startedAts: started.size,
+      });
+    }
+    return [...items.values()];
+  };
+  const unconfirmed = "Claude did not confirm the compaction.";
+  const completedWithTokens = {
+    status: "completed",
+    summary: undefined,
+    tokens: [1500, 400],
+    startedAts: 1,
+  } as const;
+
+  it.effect.each([
+    {
+      name: "a hook-skipped automatic compaction ends unconfirmed when its status clears",
+      frames: [compactionStatusFrame("c1", "compacting"), compactionStatusFrame("c2", null)],
+      expected: [
+        {
+          status: "cancelled",
+          summary: unconfirmed,
+          tokens: [undefined, undefined],
+          startedAts: 1,
+        },
+      ],
+    },
+    {
+      name: "an automatic compaction still running at a normal result ends unconfirmed",
+      frames: [compactionStatusFrame("c1", "compacting")],
+      expected: [
+        {
+          status: "cancelled",
+          summary: unconfirmed,
+          tokens: [undefined, undefined],
+          startedAts: 1,
+        },
+      ],
+    },
+    {
+      name: "a boundary after a successful outcome updates the same item",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactionStatusFrame("c2", null, "success"),
+        compactBoundaryFrame("c3"),
+      ],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "a successful outcome after the boundary updates the same item",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactBoundaryFrame("c2"),
+        compactionStatusFrame("c3", null, "success"),
+      ],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "a boundary after a cleared status completes the same item",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactionStatusFrame("c2", null),
+        compactBoundaryFrame("c3"),
+      ],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "a boundary from an older CLI without status frames completes one item",
+      frames: [compactBoundaryFrame("c1")],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "heartbeats keep one item and its start time",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactionStatusFrame("c2", "compacting"),
+        compactionStatusFrame("c3", "compacting"),
+        compactionStatusFrame("c4", null, "success"),
+        compactBoundaryFrame("c5"),
+      ],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "a failed compaction does not carry into the next one",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactionStatusFrame("c2", null, "failed"),
+        compactionStatusFrame("c3", "compacting"),
+        compactionStatusFrame("c4", null, "success"),
+        compactBoundaryFrame("c5"),
+      ],
+      expected: [
+        {
+          status: "failed",
+          summary: "Compaction request failed.",
+          tokens: [undefined, undefined],
+          startedAts: 1,
+        },
+        completedWithTokens,
+      ],
+    },
+    {
+      name: "a success without a boundary does not absorb the next compaction",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactionStatusFrame("c2", null, "success"),
+        compactionStatusFrame("c3", "compacting"),
+        compactionStatusFrame("c4", null, "success"),
+        compactBoundaryFrame("c5"),
+      ],
+      expected: [
+        { status: "completed", summary: undefined, tokens: [undefined, undefined], startedAts: 1 },
+        completedWithTokens,
+      ],
+    },
+    {
+      name: "a success does not carry into a later failure",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        compactionStatusFrame("c2", null, "success"),
+        compactBoundaryFrame("c3"),
+        compactionStatusFrame("c4", "compacting"),
+        compactionStatusFrame("c5", null, "failed"),
+      ],
+      expected: [
+        completedWithTokens,
+        {
+          status: "failed",
+          summary: "Compaction request failed.",
+          tokens: [undefined, undefined],
+          startedAts: 1,
+        },
+      ],
+    },
+  ] as const)("$name", ({ name, frames, expected }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`attempt-claude-compaction-lifecycle-${name}`),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        ...frames.map((frame, index) =>
+          claudeSdkFrame({ ...frame, uuid: `00000000-0000-4000-8000-0000000007${10 + index}` }),
+        ),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000799", result: "Done." }),
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.deepEqual(settledCompactions(harness.events), expected);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("a hook-skipped /compact fails the run as unconfirmed with one stopped item", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-compact-hook-skipped"),
+          text: "/compact",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offerAll(harness.sdkMessages, [
+        compactionStatusFrame("00000000-0000-4000-8000-000000000720", "compacting"),
+        compactionStatusFrame("00000000-0000-4000-8000-000000000721", null),
+        claudeSdkFrame({
+          ...makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000722",
+            result: "",
+            numTurns: 0,
+            terminalReason: null,
+          }),
+          local_command: "compact",
+        }),
+      ]);
+
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.class, "provider_error");
+      assert.equal(terminal.failure.code, "compaction_unconfirmed");
+      assert.deepEqual(settledCompactions(harness.events), [
+        {
+          status: "cancelled",
+          summary: unconfirmed,
+          tokens: [undefined, undefined],
+          startedAts: 1,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("an interrupted /compact stays interrupted and stops its compaction item", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const closeGate = yield* Deferred.make<void>();
+        const testScope = yield* Scope.Scope;
+        yield* Scope.addFinalizer(testScope, Deferred.succeed(closeGate, undefined));
+        const interruptStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) =>
+            Deferred.await(closeGate).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+          interrupt: Deferred.succeed(interruptStarted, undefined),
+        });
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attemptId = RunAttemptId.make("attempt-claude-compact-interrupted");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "/compact",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          compactionStatusFrame("00000000-0000-4000-8000-000000000730", "compacting"),
+        );
+        yield* awaitUntil(
+          () => settledCompactions(harness.events)[0]?.status === "running",
+          "compaction running",
+        );
+        yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptStarted);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            ...makeResultFrame({
+              uuid: "00000000-0000-4000-8000-000000000731",
+              result: "",
+              numTurns: 0,
+              terminalReason: null,
+            }),
+            local_command: "compact",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "interrupted terminal");
+        yield* Deferred.succeed(closeGate, undefined);
+        assert.equal(harness.terminalEvents()[0]?.status, "interrupted");
+        assert.deepEqual(settledCompactions(harness.events), [
+          {
+            status: "interrupted",
+            summary: undefined,
+            tokens: [undefined, undefined],
+            startedAts: 1,
+          },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("a CLI exit during compaction fails its compaction item with the run", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions();
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-compaction-exit"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          compactionStatusFrame("00000000-0000-4000-8000-000000000740", "compacting"),
+        );
+        yield* awaitUntil(
+          () => settledCompactions(harness.events)[0]?.status === "running",
+          "compaction running",
+        );
+        yield* Queue.shutdown(harness.sdkMessages);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "failed");
+        assert.deepEqual(settledCompactions(harness.events), [
+          { status: "failed", summary: undefined, tokens: [undefined, undefined], startedAts: 1 },
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
     ),
   );
