@@ -51,15 +51,19 @@ import {
 import type {
   ActorAvatars,
   CheckContext,
+  CheckContextFields,
   LabelCandidates,
   PullRequestActivity,
   PullRequestCheckContexts,
+  PullRequestCheckContextsEnterprise,
   PullRequestCore,
+  PullRequestCoreEnterprise,
   PullRequestFilesViewed,
   PullRequestHeads,
   PullRequestPreview as PullRequestPreviewQuery,
   PullRequestSubject,
   ReviewerCandidates,
+  ReviewerCandidatesEnterprise,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
 import type {
@@ -67,6 +71,7 @@ import type {
   ReviewDismissals,
   ReviewThreadComments,
   ReviewThreads,
+  ReviewThreadsEnterprise,
   ThreadComment,
 } from "./pullRequestReviews.graphql.ts";
 
@@ -1090,14 +1095,10 @@ export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly checksTruncated: boolean;
 }
 
-type CoreRequestedReviewer = NonNullable<
-  NonNullable<
-    NonNullable<NonNullable<PullRequestCore.Result["repository"]>["pullRequest"]>["reviewRequests"]
-  >["nodes"]
->[number];
-
 /** Null for a repository or number that names no pull request the viewer can see. */
-export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullRequestCore | null {
+export function toPullRequestCore(
+  result: PullRequestCore.Result | PullRequestCoreEnterprise.Result,
+): GitHubPullRequestCore | null {
   const repository = result.repository;
   const pr = repository?.pullRequest;
   if (repository == null || pr == null) return null;
@@ -1111,22 +1112,21 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       author:
         pr.author === null ? null : { ...pr.author, id: "id" in pr.author ? pr.author.id : null },
       latestReviews: [],
-      reviewRequests: nodesOf(pr.reviewRequests).flatMap(
-        ({ requestedReviewer }: NonNullable<CoreRequestedReviewer>) =>
-          requestedReviewer === null
-            ? []
-            : [
-                {
-                  login: "login" in requestedReviewer ? requestedReviewer.login : null,
-                  slug: "slug" in requestedReviewer ? requestedReviewer.slug : null,
-                  name:
-                    "teamName" in requestedReviewer
-                      ? requestedReviewer.teamName
-                      : "name" in requestedReviewer
-                        ? requestedReviewer.name
-                        : null,
-                },
-              ],
+      reviewRequests: nodesOf(pr.reviewRequests).flatMap(({ requestedReviewer }) =>
+        requestedReviewer === null
+          ? []
+          : [
+              {
+                login: "login" in requestedReviewer ? requestedReviewer.login : null,
+                slug: "slug" in requestedReviewer ? requestedReviewer.slug : null,
+                name:
+                  "teamName" in requestedReviewer
+                    ? requestedReviewer.teamName
+                    : "name" in requestedReviewer
+                      ? requestedReviewer.name
+                      : null,
+              },
+            ],
       ),
       labels: nodesOf(pr.labels),
       statusCheckRollup: toCheckContexts(nodesOf(contexts)),
@@ -1144,12 +1144,21 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
       },
     },
     comparison:
-      pr.state !== "OPEN" || pr.baseRef?.compare == null
+      pr.state !== "OPEN"
         ? null
-        : {
-            behindBy: pr.baseRef.compare.behindBy,
-            viewerCanUpdate: pr.viewerCanUpdateBranch,
-          },
+        : "viewerCanUpdateBranch" in pr
+          ? pr.baseRef?.compare == null
+            ? null
+            : {
+                behindBy: pr.baseRef.compare.behindBy,
+                viewerCanUpdate: pr.viewerCanUpdateBranch,
+              }
+          : {
+              // The API fills freshness using REST; fork maintainer-edit grants are not inferred.
+              behindBy: null,
+              viewerCanUpdate:
+                toCanWrite(pr.headRepository?.viewerPermission) && pr.headRef !== null,
+            },
     checksTruncated: contexts?.pageInfo.hasNextPage === true,
   };
 }
@@ -1239,7 +1248,9 @@ export function toPullRequestActivityPage(
 /** A check context as the rollup reports it; opaque outside this module. */
 export type GitHubCheckContext = CheckFields;
 
-function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitHubCheckContext> {
+function toCheckContexts(
+  nodes: ReadonlyArray<CheckContext | CheckContextFields>,
+): ReadonlyArray<GitHubCheckContext> {
   return nodes.map((check) =>
     check.__typename === "CheckRun"
       ? { ...check, workflowName: check.checkSuite.workflowRun?.workflow.name ?? null }
@@ -1248,7 +1259,9 @@ function toCheckContexts(nodes: ReadonlyArray<CheckContext>): ReadonlyArray<GitH
 }
 
 /** One page of the head commit's check contexts; null for a pull request GitHub did not find. */
-export function toPullRequestCheckContextsPage(result: PullRequestCheckContexts.Result): {
+export function toPullRequestCheckContextsPage(
+  result: PullRequestCheckContexts.Result | PullRequestCheckContextsEnterprise.Result,
+): {
   readonly headSha: string;
   readonly contexts: ReadonlyArray<GitHubCheckContext>;
   readonly nextCursor: string | null;
@@ -1384,7 +1397,9 @@ type ReviewThreadsPullRequest = NonNullable<
 >;
 
 /** One page of review threads; null for a pull request the viewer cannot see. */
-export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewThreadPage | null {
+export function toReviewThreadPage(
+  result: ReviewThreads.Result | ReviewThreadsEnterprise.Result,
+): GitHubReviewThreadPage | null {
   const pullRequest = result.repository?.pullRequest;
   if (pullRequest == null) return null;
   const viewer = trimmed(result.viewer.login);
@@ -1554,7 +1569,7 @@ export interface GitHubBaseComparison {
  * Null for a repository the viewer cannot see.
  */
 export function toReviewerCandidates(
-  result: ReviewerCandidates.Result,
+  result: ReviewerCandidates.Result | ReviewerCandidatesEnterprise.Result,
 ): PullRequestReviewerCandidateList | null {
   const repository = result.repository;
   if (repository == null) return null;
@@ -1660,9 +1675,8 @@ export interface GitHubViewerAccess {
   readonly canUpdate: boolean;
   readonly didAuthor: boolean;
   /**
-   * GitHub's own `viewerCanUpdateBranch`, read with the base comparison rather than here: it is
-   * false for a branch that is already current, so it answers "may update, and there is
-   * something to update" at once. Absent where the comparison was not read.
+   * GitHub's own answer, or source-branch write access on Enterprise where the action must
+   * compare first. Absent where the comparison was not read.
    */
   readonly canUpdateBranch?: boolean;
 }

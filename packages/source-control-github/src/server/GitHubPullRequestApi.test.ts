@@ -479,6 +479,66 @@ function route(...routes: ReadonlyArray<readonly [needle: string, body: unknown]
   });
 }
 
+// Older Enterprise validates the whole document, including fields behind @include(false).
+function routeEnterprise(...routes: ReadonlyArray<readonly [needle: string, body: unknown]>): void {
+  route(...routes);
+  const answer = mockedExecute.getMockImplementation();
+  assert.isDefined(answer);
+  mockedExecute.mockImplementation((call) => {
+    if (
+      call.kind === "graphql" &&
+      (/\bviewerCanUpdateBranch\b|\bisRequired\b|\bcompare\s*\(/.test(call.query) ||
+        // Bot remains valid in reaction actors; only the requested-reviewer union rejects it.
+        /requestedReviewer\s*\{(?:[^{}]|\{[^{}]*\})*\.\.\.\s*on\s+Bot\b/.test(call.query) ||
+        (call.query.match(/\$headRef\b/g)?.length ?? 0) === 1)
+    ) {
+      return Effect.succeed(
+        output(
+          encodeJson({
+            errors: [
+              {
+                message: "Unsupported field, reviewer type or unused headRef in Enterprise schema",
+              },
+            ],
+          }),
+        ),
+      );
+    }
+    return answer(call);
+  });
+}
+
+const botReviewRequest = {
+  requestedReviewer: {
+    __typename: "Bot",
+    login: "review-bot",
+    name: null,
+    avatarUrl: "https://avatars/bot",
+  },
+};
+
+const enterpriseReviewRequests = {
+  nodes: [
+    {
+      requestedReviewer: {
+        __typename: "User",
+        login: "reviewer",
+        name: null,
+        avatarUrl: "https://avatars/reviewer",
+      },
+    },
+    {
+      requestedReviewer: {
+        __typename: "Team",
+        slug: "maintainers",
+        combinedSlug: "acme/maintainers",
+        teamName: "Maintainers",
+        teamAvatarUrl: "https://avatars/team",
+      },
+    },
+  ],
+};
+
 /** What a mutation answers when nothing is asked of its payload: each root field, null. */
 function mutationAnswer(query: string) {
   const root = /\)\{(\w+)(?:\(|\{|@)/.exec(query)?.[1];
@@ -2363,6 +2423,115 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { outcome: "behind", behindBy: 2 },
+    { outcome: "already current", behindBy: 0 },
+    { outcome: "comparison failure", behindBy: null },
+  ])("checks the Enterprise base before updating a branch: $outcome", ({ behindBy }) =>
+    Effect.gen(function* () {
+      routeEnterprise(
+        [
+          "query PullRequestActionState",
+          actionState({
+            baseRef: { target: { __typename: "Commit", oid: "live789" } },
+            baseRefOid: "stale456",
+          }),
+        ],
+        [
+          "query PullRequestCore",
+          coreResponse({
+            viewerCanUpdateBranch: undefined,
+            baseRef: { target: { __typename: "Commit", oid: "live789" } },
+          }),
+        ],
+      );
+      const answer = mockedExecute.getMockImplementation();
+      assert.isDefined(answer);
+      const comparisonFailure = new GitHubRequestPolicy.GitHubApiResponseError({
+        host: "ghe.example.test",
+        operation: "runPullRequestAction",
+        status: 503,
+      });
+      mockedExecute.mockImplementation((call) =>
+        call.kind === "rest" && call.path.includes("/compare/")
+          ? behindBy === null
+            ? Effect.fail(comparisonFailure)
+            : Effect.succeed(output(encodeJson({ behind_by: behindBy })))
+          : answer(call),
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const result = yield* provider
+        .runAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "ghe.example.test",
+          number: 7,
+          action: "update-branch",
+        })
+        .pipe(Effect.result);
+
+      if (behindBy === null) {
+        expect(result).toMatchObject({ _tag: "Failure", failure: { cause: comparisonFailure } });
+        const detailResult = yield* provider
+          .getChangeRequest({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "ghe.example.test",
+            number: 7,
+          })
+          .pipe(Effect.result);
+        expect(detailResult).toMatchObject({
+          _tag: "Failure",
+          failure: { cause: comparisonFailure },
+        });
+      } else {
+        expect(Result.isSuccess(result)).toBe(true);
+      }
+      expect(variablesOf("updatePullRequestBranch(")).toEqual(
+        behindBy === 2
+          ? [{ pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" }]
+          : [],
+      );
+      expect(restCallsTo("/compare/")).toMatchObject(
+        Array.from({ length: behindBy === null ? 2 : 1 }, () => ({
+          host: "ghe.example.test",
+          path: "repos/acme/web/compare/live789...abc123?per_page=1",
+        })),
+      );
+    }),
+  );
+
+  it.effect("fails Enterprise detail and branch updates when the live base is missing", () =>
+    Effect.gen(function* () {
+      routeEnterprise(
+        ["query PullRequestActionState", actionState({ baseRef: null })],
+        [
+          "query PullRequestCore",
+          coreResponse({
+            viewerCanUpdateBranch: undefined,
+            baseRef: null,
+            headRepository: { nameWithOwner: "acme/web", viewerPermission: "WRITE" },
+            headRef: { id: "REF_feature" },
+          }),
+        ],
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = { cwd: "/w", repository: "acme/web", host: "ghe.example.test", number: 7 };
+      for (const read of [
+        cli.getPullRequestDetail(input),
+        cli.runPullRequestAction({ ...input, action: "update-branch" }),
+      ]) {
+        const result = yield* read.pipe(Effect.result);
+        expect(result).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "GitHubPullRequestReadError" },
+        });
+      }
+      expect(restCallsTo("/compare/")).toEqual([]);
+      expect(variablesOf("updatePullRequestBranch(")).toEqual([]);
+    }),
+  );
+
   it.effect("merges with the strategy it was asked for", () =>
     Effect.gen(function* () {
       route(["query PullRequestActionState", actionState()]);
@@ -3984,6 +4153,245 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each(["github.com", " Acme.GHE.COM "])(
+    "retains Cloud required checks, bot reviewers and branch freshness on %s",
+    (host) =>
+      Effect.gen(function* () {
+        const input = { cwd: "/w", repository: "acme/web", host, number: 7 };
+        const first = checkRun({ name: "first", conclusion: "SUCCESS", isRequired: true });
+        const last = checkRun({ name: "last", conclusion: "FAILURE", isRequired: false });
+        const response = (overflow: boolean) =>
+          coreResponse({
+            baseRef: { compare: { behindBy: 2 }, target: { __typename: "Commit", oid: "live789" } },
+            reviewRequests: {
+              nodes: [botReviewRequest],
+            },
+            commits: {
+              nodes: [
+                {
+                  commit: {
+                    statusCheckRollup: {
+                      contexts: {
+                        nodes: [first],
+                        pageInfo: { hasNextPage: overflow },
+                      },
+                    },
+                  },
+                },
+              ],
+            },
+          });
+        route(["query PullRequestCore", response(false)], ["/compare/", { behind_by: 2 }]);
+        const provider = yield* GitHubPullRequestProvider.make;
+        const detail = yield* provider.getChangeRequest(input);
+        expect(detail.checks.map(({ name, required }) => ({ name, required }))).toEqual([
+          { name: "first", required: true },
+        ]);
+        expect(detail.reviewers.map(({ login }) => login)).toEqual(["review-bot"]);
+        expect(detail.baseComparison).toBe("behind");
+        expect(detail.behindBy).toBe(2);
+        expect(detail.viewerPermissions.actions).toContain("update-branch");
+        route(
+          ["query PullRequestCore", response(true)],
+          ["query PullRequestCheckContexts", JSON.parse(checkContextsPage([first, last], null))],
+        );
+        const overflow = yield* provider.getChangeRequest(input);
+        expect(overflow.checks.map(({ name, required }) => ({ name, required }))).toEqual([
+          { name: "first", required: true },
+          { name: "last", required: false },
+        ]);
+        expect(overflow.checksState).toBe("failing");
+        route(["query PullRequestActionState", actionState()]);
+        yield* provider.runAction({ ...input, action: "update-branch" });
+        expect(variablesOf("updatePullRequestBranch(")).toEqual([
+          { pullRequestId: "PR_7", expectedHeadOid: "abc123", updateMethod: "MERGE" },
+        ]);
+        expect(restCallsTo("/compare/")).toHaveLength(0);
+      }),
+  );
+
+  it.effect(
+    "loads older Enterprise details with live freshness and guarded update permission",
+    () =>
+      Effect.gen(function* () {
+        const input = { cwd: "/w", repository: "acme/web", host: "ghe.example.test", number: 7 };
+        const provider = yield* GitHubPullRequestProvider.make;
+        for (const scenario of [
+          { behindBy: 2, permission: "WRITE", headRef: { id: "REF_feature" }, canUpdate: true },
+          { behindBy: 0, permission: "WRITE", headRef: { id: "REF_feature" }, canUpdate: false },
+          { behindBy: 2, permission: "READ", headRef: { id: "REF_feature" }, canUpdate: false },
+          { behindBy: 2, permission: "WRITE", headRef: null, canUpdate: false },
+        ]) {
+          const first = checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" });
+          const last = checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" });
+          routeEnterprise(
+            [
+              "query PullRequestCore",
+              coreResponse({
+                url: "https://ghe.example.test/acme/web/pull/7",
+                viewerCanUpdateBranch: undefined,
+                baseRef: { target: { __typename: "Commit", oid: "live789" } },
+                baseRefOid: "stale456",
+                headRepository: {
+                  nameWithOwner: "acme/web",
+                  viewerPermission: scenario.permission,
+                },
+                headRef: scenario.headRef,
+                reviewRequests: enterpriseReviewRequests,
+                commits: {
+                  nodes: [
+                    {
+                      commit: {
+                        statusCheckRollup: {
+                          contexts: { nodes: [first], pageInfo: { hasNextPage: true } },
+                        },
+                      },
+                    },
+                  ],
+                },
+              }),
+            ],
+            ["query PullRequestCheckContexts", JSON.parse(checkContextsPage([first], "c1"))],
+            ["/compare/", { behind_by: scenario.behindBy }],
+          );
+          const answer = mockedExecute.getMockImplementation();
+          assert.isDefined(answer);
+          mockedExecute.mockImplementation((call) =>
+            call.kind === "graphql" &&
+            call.operationName?.startsWith("PullRequestCheckContexts") &&
+            call.variables?.["after"] === "c1"
+              ? Effect.succeed(output(checkContextsPage([last], null)))
+              : answer(call),
+          );
+          const detail = yield* provider.getChangeRequest(input);
+          expect(detail.title).toBe("Pull request 7");
+          expect(detail.reviewers.map(({ login }) => login)).toEqual([
+            "reviewer",
+            "acme/maintainers",
+          ]);
+          expect(detail.baseComparison).toBe(scenario.behindBy > 0 ? "behind" : "up-to-date");
+          expect(detail.behindBy).toBe(scenario.behindBy);
+          expect(detail.checks.map(({ name }) => name)).toEqual(["first", "last"]);
+          expect(detail.checksState).toBe("failing");
+          expect(detail.viewerPermissions.actions.includes("update-branch")).toBe(
+            scenario.canUpdate,
+          );
+          expect((detail.viewerPermissions.updateMethods ?? []).includes("merge")).toBe(
+            scenario.canUpdate,
+          );
+          expect(
+            (yield* provider.getViewerPermissions(input)).actions.includes("update-branch"),
+          ).toBe(scenario.canUpdate);
+        }
+        expect(restCallsTo("/compare/")).toHaveLength(8);
+        expect(
+          restCallsTo("/compare/").every(
+            (call) => call.path === "repos/acme/web/compare/live789...abc123?per_page=1",
+          ),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect.each(["ghe.example.test", " Acme.GHE.COM "])(
+    "loads requested reviewers in review activity on %s",
+    (host) =>
+      Effect.gen(function* () {
+        const cloud = host.trim().toLowerCase().endsWith(".ghe.com");
+        (cloud ? route : routeEnterprise)([
+          "query ReviewThreads",
+          {
+            data: {
+              viewer: { login: "viewer" },
+              repository: {
+                pullRequest: {
+                  reviewThreads: { totalCount: 0, pageInfo: lastPage, nodes: [] },
+                  viewerCanUpdate: true,
+                  viewerDidAuthor: false,
+                  author: null,
+                  reactionGroups: [],
+                  comments: { nodes: [] },
+                  reviews: { nodes: [] },
+                  reviewRequests: {
+                    nodes: [
+                      ...enterpriseReviewRequests.nodes,
+                      ...(cloud ? [botReviewRequest] : []),
+                    ],
+                  },
+                  latestReviews: { nodes: [] },
+                  reviewDismissals: { pageInfo: lastPage, nodes: [] },
+                  commits: { nodes: [] },
+                },
+              },
+            },
+          },
+        ]);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const activity = yield* cli.listReviewThreadComments({
+          cwd: "/w",
+          repository: "acme/web",
+          host,
+          number: 7,
+        });
+        expect(activity.reviewers).toEqual([
+          { login: "reviewer", name: null, avatarUrl: "https://avatars/reviewer" },
+          { login: "acme/maintainers", name: "Maintainers", avatarUrl: "https://avatars/team" },
+          ...(cloud
+            ? [{ login: "review-bot", name: null, avatarUrl: "https://avatars/bot", isBot: true }]
+            : []),
+        ]);
+      }),
+  );
+
+  it.effect.each(["ghe.example.test", " Acme.GHE.COM "])(
+    "loads reviewer candidates with existing requests on %s",
+    (host) =>
+      Effect.gen(function* () {
+        const cloud = host.trim().toLowerCase().endsWith(".ghe.com");
+        (cloud ? route : routeEnterprise)([
+          "query ReviewerCandidates",
+          {
+            data: {
+              repository: {
+                assignableUsers: {
+                  pageInfo: { hasNextPage: false },
+                  nodes: ["author", "reviewer", "available"].map((login) => ({
+                    login,
+                    name: null,
+                    avatarUrl: `https://avatars/${login}`,
+                  })),
+                },
+                pullRequest: {
+                  author: { __typename: "User", login: "author" },
+                  reviewRequests: {
+                    nodes: [
+                      ...enterpriseReviewRequests.nodes,
+                      ...(cloud ? [botReviewRequest] : []),
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        ]);
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          host,
+          number: 7,
+        });
+        expect(
+          list.candidates.map(({ id, kind, isRequested }) => ({ id, kind, isRequested })),
+        ).toEqual([
+          { id: "reviewer", kind: "user", isRequested: true },
+          { id: "maintainers", kind: "team", isRequested: true },
+          ...(cloud ? [{ id: "review-bot", kind: "user", isRequested: true }] : []),
+          { id: "available", kind: "user", isRequested: false },
+        ]);
+        expect(list.truncated).toBe(false);
+      }),
+  );
+
   it.effect("keeps the core detail read separate from conversation activity", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
@@ -4245,9 +4653,15 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect("preserves the reserve for automatic detail reads and allows manual checks", () =>
     Effect.gen(function* () {
-      const response = coreResponse();
-      mockedExecute.mockReturnValue(
-        Effect.succeed(output(encodeJson(response), false, false, graphqlQuota(499))),
+      const response = coreResponse({
+        baseRef: { target: { __typename: "Commit", oid: "live789" } },
+      });
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "rest"
+            ? output(encodeJson({ behind_by: 2 }))
+            : output(encodeJson(response), false, false, graphqlQuota(499)),
+        ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const input = {
@@ -4259,11 +4673,11 @@ layer("GitHubPullRequestApi.layer", (it) => {
       yield* cli.getPullRequestDetail(input);
       const error = yield* Effect.flip(cli.getPullRequestDetail(input));
       expect(error._tag).toBe("SourceControlRateLimitPausedError");
-      expect(mockedExecute).toHaveBeenCalledOnce();
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
       yield* cli
         .getPullRequestDetail(input)
         .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
     }),
   );
 
