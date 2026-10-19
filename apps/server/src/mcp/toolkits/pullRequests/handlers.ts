@@ -99,7 +99,13 @@ const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(function* (
       project?.repositoryIdentity?.locator.remoteUrl,
     ) ??
     (/(?:^|\/)_git\/[^/]+$/u.test(repository)
-      ? changeRequestUrlFor("azure-devops", host, repository, input.number)
+      ? changeRequestUrlFor(
+          "azure-devops",
+          host,
+          repository,
+          input.number,
+          project?.repositoryIdentity?.locator.remoteUrl,
+        )
       : null) ??
     `https://${host}/${repository}/pull/${input.number}`;
   return {

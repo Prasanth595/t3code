@@ -61,6 +61,22 @@ function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink |
     : null;
 }
 
+function remoteWebOrigin(host: string, remoteUrl: string | undefined): string {
+  try {
+    const remote = new URL(remoteUrl ?? "");
+    if (
+      (remote.protocol === "http:" || remote.protocol === "https:") &&
+      (remote.hostname.toLowerCase() === host.toLowerCase() ||
+        remote.host.toLowerCase() === host.toLowerCase())
+    ) {
+      return remote.origin;
+    }
+  } catch {
+    // SSH remotes do not specify the server's web origin.
+  }
+  return `https://${host}`;
+}
+
 export function changeRequestUrlFor(
   kind: string | null | undefined,
   host: string,
@@ -73,27 +89,18 @@ export function changeRequestUrlFor(
       return `https://${host}/${repository}/pull/${number}`;
     case "gitcafe":
       return `https://${host}/${repository}/pulls/${number}`;
-    case "forgejo": {
-      try {
-        const remote = new URL(remoteUrl ?? "");
-        if (
-          (remote.protocol === "http:" || remote.protocol === "https:") &&
-          (remote.hostname.toLowerCase() === host.toLowerCase() ||
-            remote.host.toLowerCase() === host.toLowerCase())
-        ) {
-          return `${remote.origin}/${repository}/pulls/${number}`;
-        }
-      } catch {
-        // SSH remotes do not specify the server's web origin.
-      }
-      return `https://${host}/${repository}/pulls/${number}`;
-    }
+    case "forgejo":
+      return `${remoteWebOrigin(host, remoteUrl)}/${repository}/pulls/${number}`;
     case "gitlab":
       return `https://${host}/${repository}/-/merge_requests/${number}`;
     case "bitbucket":
       return `https://${host}/${repository}/pull-requests/${number}`;
-    case "azure-devops":
-      return `https://${canonicalRepositoryKey(`${host}/${repository}`.toLowerCase())}/pullrequest/${number}`;
+    case "azure-devops": {
+      const [canonicalHost = host, ...path] = canonicalRepositoryKey(
+        `${host}/${repository}`.toLowerCase(),
+      ).split("/");
+      return `${remoteWebOrigin(canonicalHost, remoteUrl)}/${path.join("/")}/pullrequest/${number}`;
+    }
     default:
       return null;
   }
