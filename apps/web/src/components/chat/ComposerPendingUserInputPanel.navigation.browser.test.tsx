@@ -161,15 +161,21 @@ it("still auto-advances once after the answer draft rerenders the same question"
 it.each([undefined, "  done  "])(
   "renders option Markdown and keeps the raw answer value (%s)",
   async (value) => {
-    const option = { label: "**Done**", description: "Use `the browser`.", value };
+    const option = {
+      label: "**Return** Promise<void> from handler",
+      description: "Use `the browser` with Array<string> input.",
+      value,
+    };
     await act(async () =>
       root.render(<Questions questions={[{ ...prompt.questions[0]!, options: [option] }]} />),
     );
-    expect(container.innerText).toContain("Done");
-    expect(container.innerText).toContain("Use the browser.");
+    expect(container.innerText).toContain("Return Promise<void> from handler");
+    expect(container.innerText).toContain("Use the browser with Array<string> input.");
     expect(container.innerText).not.toContain("**");
     expect(container.innerText).not.toContain("`");
-    await act(async () => page.getByRole("button", { name: "Done", exact: true }).click());
+    await act(async () =>
+      page.getByRole("button", { name: "Return Promise<void> from handler", exact: true }).click(),
+    );
     expect(JSON.parse(page.getByLabelText("Answers").element().textContent!)).toEqual({
       "question-0": { selectedOptionValues: [value ?? option.label], customAnswer: "" },
     });

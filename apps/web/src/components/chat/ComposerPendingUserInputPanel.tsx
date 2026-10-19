@@ -208,17 +208,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span
-              id={previewId}
-              inert
-              className="min-w-0 flex-1 text-secondary-label"
-              data-pending-user-input-preview
-            >
+            <span id={previewId} inert className="min-w-0 flex-1" data-pending-user-input-preview>
               <ChatMarkdown
                 text={activeQuestion.question}
                 cwd={cwd}
                 threadRef={threadRef}
-                className="line-clamp-1 max-h-lh"
+                className="line-clamp-1 max-h-lh text-xs/4 text-secondary-label"
               />
             </span>
           ) : null}
@@ -320,7 +315,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                           text={option.label}
                           cwd={cwd}
                           threadRef={threadRef}
-                          className="text-sm font-medium"
+                          parseRawHtml={false}
+                          className="text-sm font-medium text-current"
                         />
                       </div>
                       {hasDescription ? (
@@ -329,6 +325,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             text={option.description}
                             cwd={cwd}
                             threadRef={threadRef}
+                            parseRawHtml={false}
                             className="text-secondary-label text-2xs"
                           />
                         </div>
