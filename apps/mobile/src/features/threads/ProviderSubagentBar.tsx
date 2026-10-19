@@ -6,18 +6,14 @@ import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { ProviderAccountIcon } from "../../components/ProviderIcon";
-import type { ProviderBadge } from "../../lib/modelOptions";
+import { ProviderInstanceIcon } from "../../components/ProviderIcon";
+import type { ProviderBadge } from "../../lib/providerInstances";
 import { RequestActionButton } from "./RequestActionButton";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 
 export function ProviderSubagentBar(props: {
-  /** Driver, catalog icon and account badge of the provider running the subagent. */
-  readonly provider: {
-    readonly driver: string;
-    readonly iconUrl?: string | undefined;
-    readonly badge?: ProviderBadge | undefined;
-  } | null;
+  readonly provider: { readonly driver: string; readonly iconUrl?: string | undefined } | null;
+  readonly providerBadge: ProviderBadge | undefined;
   readonly modelLabel: string;
   readonly effortLabel: string | null;
   readonly status: ProviderSubagentStatus | null;
@@ -34,17 +30,17 @@ export function ProviderSubagentBar(props: {
       {}
       <View
         accessible
-        accessibilityLabel={`${modelDescription} subagent${props.provider?.badge ? ` on the ${props.provider.badge.displayName} account` : ""}, ${statusLabel}. It runs on its own and cannot take messages.`}
+        accessibilityLabel={`${modelDescription} subagent${props.providerBadge ? ` on the ${props.providerBadge.displayName} account` : ""}, ${statusLabel}. It runs on its own and cannot take messages.`}
         className="min-w-0 flex-1 gap-0.5"
       >
         <View className="min-w-0 flex-row items-center gap-1.5">
           {props.provider ? (
-            <ProviderAccountIcon
+            <ProviderInstanceIcon
               provider={props.provider.driver}
               iconUrl={props.provider.iconUrl}
-              badge={props.provider.badge}
+              {...props.providerBadge}
+              showBadge={!!props.providerBadge}
               size={16}
-              // Theme colours aren't readable here, so the ring stays transparent.
               surfaceColor="transparent"
             />
           ) : null}

@@ -77,7 +77,7 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
-import { ProviderAccountIcon } from "../../components/ProviderIcon";
+import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
@@ -1026,10 +1026,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                         }
                         emphasized
                         renderIcon={(size) => (
-                          <ProviderAccountIcon
+                          <ProviderInstanceIcon
                             provider={currentModelOption?.providerDriver}
                             iconUrl={currentModelOption?.providerIconUrl}
-                            badge={currentModelOption?.providerBadge}
+                            {...currentModelOption?.providerBadge}
+                            showBadge={!!currentModelOption?.providerBadge}
                             size={size}
                             surfaceColor={composerSurfaceColor}
                           />

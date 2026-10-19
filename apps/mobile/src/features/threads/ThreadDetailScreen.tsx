@@ -95,7 +95,7 @@ import {
   CHAT_CONTENT_MAX_WIDTH,
   type LayoutVariant,
 } from "../../lib/layout";
-import { resolveProviderBadge } from "../../lib/modelOptions";
+import { resolveProviderBadge } from "../../lib/providerInstances";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
 import { useEnvironmentQuery } from "../../state/query";
@@ -1273,16 +1273,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       }}
                     >
                       <ProviderSubagentBar
-                        provider={
+                        provider={providerSubagentProvider ?? null}
+                        providerBadge={
                           providerSubagentProvider
-                            ? {
-                                ...providerSubagentProvider,
-                                badge: resolveProviderBadge(
-                                  props.serverConfig,
-                                  providerSubagentProvider,
-                                ),
-                              }
-                            : null
+                            ? resolveProviderBadge(props.serverConfig, providerSubagentProvider)
+                            : undefined
                         }
                         modelLabel={
                           providerSubagentCatalogModel?.name ??

@@ -5,7 +5,6 @@ import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider
 import { useId, useState } from "react";
 import { resolveOfficialAcpRegistryIconUrl } from "@t3tools/contracts";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import type { ProviderBadge } from "../lib/modelOptions";
 import { AppText as Text } from "./ui/AppText";
 import { getProviderClient } from "../lib/providerClients";
 
@@ -152,74 +151,51 @@ export function ProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
   readonly provider: string | null | undefined;
   readonly size?: number;
-  readonly displayName: string;
+  readonly displayName?: string;
   readonly accentColor?: string;
   readonly showBadge?: boolean;
   readonly surfaceColor: string;
 }) {
+  if (!props.showBadge) {
+    return <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />;
+  }
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
         <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
       </View>
-      {props.showBadge ? (
-        // A wide right-aligned box lets the badge fit its initials. Alone, an
-        // absolute badge is capped at the icon's width, which clips "WO".
+      {/* A wide box lets initials extend beyond the glyph without clipping. */}
+      <View
+        pointerEvents="none"
+        style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}
+      >
         <View
-          pointerEvents="none"
-          style={{ position: "absolute", right: -3, bottom: -3, width: 32, alignItems: "flex-end" }}
+          className={props.accentColor ? undefined : "bg-card"}
+          style={{
+            height: 12,
+            minWidth: 12,
+            paddingHorizontal: 2,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: props.surfaceColor,
+            backgroundColor: props.accentColor,
+            alignItems: "center",
+            justifyContent: "center",
+          }}
         >
-          <View
-            className={props.accentColor ? undefined : "bg-card"}
+          <Text
+            className={props.accentColor ? undefined : "text-foreground-muted"}
             style={{
-              height: 12,
-              minWidth: 12,
-              paddingHorizontal: 2,
-              borderRadius: 999,
-              borderWidth: 1,
-              borderColor: props.surfaceColor,
-              backgroundColor: props.accentColor,
-              alignItems: "center",
-              justifyContent: "center",
+              fontSize: 7,
+              fontWeight: "600",
+              lineHeight: 9,
+              color: props.accentColor ? "#ffffff" : undefined,
             }}
           >
-            <Text
-              className={props.accentColor ? undefined : "text-foreground-muted"}
-              style={{
-                fontSize: 7,
-                fontWeight: "600",
-                lineHeight: 9,
-                color: props.accentColor ? "#ffffff" : undefined,
-              }}
-            >
-              {providerInstanceInitials(props.displayName)}
-            </Text>
-          </View>
+            {providerInstanceInitials(props.displayName ?? "")}
+          </Text>
         </View>
-      ) : null}
+      </View>
     </View>
-  );
-}
-
-/** A provider glyph that carries the account badge when its instance needs one. */
-export function ProviderAccountIcon(props: {
-  readonly provider: string | null | undefined;
-  readonly iconUrl?: string | null | undefined;
-  readonly badge: ProviderBadge | undefined;
-  readonly size: number;
-  readonly surfaceColor: string;
-}) {
-  return props.badge ? (
-    <ProviderInstanceIcon
-      provider={props.provider}
-      iconUrl={props.iconUrl}
-      size={props.size}
-      displayName={props.badge.displayName}
-      {...(props.badge.accentColor ? { accentColor: props.badge.accentColor } : {})}
-      showBadge
-      surfaceColor={props.surfaceColor}
-    />
-  ) : (
-    <ProviderIcon provider={props.provider} iconUrl={props.iconUrl} size={props.size} />
   );
 }

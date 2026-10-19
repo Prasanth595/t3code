@@ -39,16 +39,16 @@ import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { AndroidAnchoredMenu } from "../../components/ui/AndroidAnchoredMenu";
 import { Button } from "../../components/ui/Button";
 import { IconButton } from "../../components/ui/IconButton";
-import { ProviderAccountIcon } from "../../components/ProviderIcon";
+import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import {
   buildModelOptions,
   groupByProvider,
   type ModelOption,
-  type ProviderBadge,
   type ProviderGroup,
 } from "../../lib/modelOptions";
+import type { ProviderBadge } from "../../lib/providerInstances";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -127,10 +127,11 @@ function ProviderHeader(props: {
   const sheetColor = useUniwindTheme()["--color-sheet-solid"];
   const content = (
     <>
-      <ProviderAccountIcon
+      <ProviderInstanceIcon
         provider={props.driver}
         iconUrl={props.iconUrl}
-        badge={props.badge}
+        {...props.badge}
+        showBadge={!!props.badge}
         size={15}
         surfaceColor={sheetColor}
       />
@@ -157,7 +158,7 @@ function ProviderHeader(props: {
   if (props.collapsible) {
     return (
       <Pressable
-        accessibilityLabel={`${props.label}, ${props.modelCount} models`}
+        accessibilityLabel={`${props.badge?.displayName ?? props.label}, ${props.modelCount} models`}
         accessibilityRole="button"
         accessibilityState={{ expanded: !props.collapsed }}
         className="mx-4 mt-1 min-h-11 flex-row items-center gap-2 rounded-xl px-1 pt-2 active:opacity-60 android:min-h-12"
@@ -169,7 +170,12 @@ function ProviderHeader(props: {
   }
 
   return (
-    <View accessibilityRole="header" className="mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1">
+    <View
+      accessible
+      accessibilityLabel={props.badge?.displayName ?? props.label}
+      accessibilityRole="header"
+      className="mx-4 min-h-9 flex-row items-center gap-2 px-1 pt-1"
+    >
       {content}
     </View>
   );

@@ -66,7 +66,7 @@ import {
 } from "../../state/composer-attachment-uploads";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
-import { ProviderAccountIcon } from "../../components/ProviderIcon";
+import { ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
@@ -1709,10 +1709,11 @@ export function NewTaskDraftScreen(props: {
                         disabled={isComposerInteractionLocked}
                         emphasized
                         renderIcon={(size) => (
-                          <ProviderAccountIcon
+                          <ProviderInstanceIcon
                             provider={flow.selectedModelOption?.providerDriver}
                             iconUrl={flow.selectedModelOption?.providerIconUrl}
-                            badge={flow.selectedModelOption?.providerBadge}
+                            {...flow.selectedModelOption?.providerBadge}
+                            showBadge={!!flow.selectedModelOption?.providerBadge}
                             size={size}
                             surfaceColor={composerSurfaceColor}
                           />

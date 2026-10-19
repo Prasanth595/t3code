@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -20,6 +21,53 @@ import {
   resolveSelectableModelSelection,
   type ModelOption,
 } from "./modelOptions";
+
+function configWith(settings: ServerSettings): ServerConfig {
+  return {
+    environment: {
+      environmentId: EnvironmentId.make("environment-test"),
+      label: "Test",
+      platform: { os: "linux", arch: "x64" },
+      serverVersion: "1.0.0",
+      capabilities: { repositoryIdentity: false },
+    },
+    auth: {
+      policy: "loopback-browser",
+      bootstrapMethods: [],
+      sessionMethods: [],
+      sessionCookieName: "test-session",
+    },
+    cwd: "/project",
+    keybindingsConfigPath: "/keybindings.json",
+    keybindings: [],
+    issues: [],
+    availableEditors: [],
+    observability: {
+      logsDirectoryPath: "/logs",
+      localTracingEnabled: false,
+      otlpTracesEnabled: false,
+      otlpMetricsEnabled: false,
+      otlpLogsEnabled: false,
+    },
+    providers: [
+      {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        driver: ProviderDriverKind.make("codex"),
+        displayName: "Codex Work",
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-01-01T00:00:00.000Z",
+        models: [{ slug: "model-a", name: "Model A", isCustom: false, capabilities: null }],
+        slashCommands: [],
+        skills: [],
+      },
+    ],
+    settings,
+  };
+}
 
 describe("mobile model options", () => {
   it("groups models by provider and flags legacy entries", () => {
@@ -63,66 +111,114 @@ describe("mobile model options", () => {
     ]);
   });
 
-  it("badges the account when two instances share a provider or one has an accent", () => {
-    const claude = (instanceId: string, extra: Record<string, unknown> = {}) => ({
-      instanceId,
-      driver: "claudeAgent",
-      enabled: true,
-      installed: true,
-      auth: { status: "authenticated" },
-      models: [
-        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+  it("keeps account identity in new-task, provider-filtered, and fallback model options", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const config = configWith({
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: { [ProviderInstanceId.make("codex_work")]: { driver, enabled: true } },
+    });
+    const work = config.providers[0]!;
+    expect(buildModelOptions(config, null, undefined, null)[0]?.providerBadge).toBeUndefined();
+    expect(
+      buildModelOptions(
+        { ...config, providers: [{ ...work, accentColor: "#eae10c" }] },
+        null,
+        undefined,
+        null,
+      )[0]?.providerBadge,
+    ).toEqual({ displayName: "Codex Work", accentColor: "#eae10c" });
+
+    const accounts = {
+      ...config,
+      settings: {
+        ...config.settings,
+        providerInstances: {
+          ...config.settings.providerInstances,
+          [ProviderInstanceId.make("codex_personal")]: { driver, enabled: true },
+        },
+      },
+      providers: [
+        work,
+        { ...work, instanceId: ProviderInstanceId.make("codex_personal"), displayName: "Personal" },
       ],
-      ...extra,
-    });
-    const badges = (providers: ReadonlyArray<unknown>) =>
-      buildModelOptions({ providers } as unknown as ServerConfig, null).map(
+    };
+    expect(
+      groupByProvider(buildModelOptions(accounts, null, undefined, null)).map(
+        (group) => group.models[0]?.providerBadge,
+      ),
+    ).toEqual([{ displayName: "Codex Work" }, { displayName: "Personal" }]);
+    expect(
+      buildModelOptions(accounts, null, work.instanceId, null).map(
         (option) => option.providerBadge,
-      );
-
-    expect(badges([claude("claudeAgent")])).toEqual([undefined]);
+      ),
+    ).toEqual([{ displayName: "Codex Work" }]);
+    const selection = { instanceId: work.instanceId, model: "saved-model" };
     expect(
-      badges([claude("claudeAgent", { displayName: "Work", accentColor: "#eae10c" })]),
-    ).toEqual([{ displayName: "Work", accentColor: "#eae10c" }]);
-    expect(
-      badges([
-        claude("claudeAgent", { displayName: "Personal" }),
-        claude("claude_work", { displayName: "Work" }),
-      ]),
-    ).toEqual([{ displayName: "Personal" }, { displayName: "Work" }]);
+      buildModelOptions(accounts, selection, work.instanceId, null).find(
+        (option) => option.selection.model === selection.model,
+      ),
+    ).toMatchObject({ selection, providerBadge: { displayName: "Codex Work" } });
+  });
 
-    // Different ACP agents have their own glyphs, so they need no badge.
-    const acp = (instanceId: string) => ({
-      ...claude(instanceId),
-      driver: "acpRegistry",
+  it("badges local ACP accounts while distinct registry agents keep their own glyph identity", () => {
+    const driver = ProviderDriverKind.make("acpRegistry");
+    const config = configWith({
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {
+        [ProviderInstanceId.make("acp_work")]: {
+          driver,
+          enabled: true,
+          config: { agentId: "agent-a" },
+        },
+        [ProviderInstanceId.make("acp_personal")]: {
+          driver,
+          enabled: true,
+          config: { agentId: "agent-b" },
+        },
+      },
     });
-    const acpConfig = {
-      providers: [acp("acp_a"), acp("acp_b")],
-      settings: {
-        providerInstances: {
-          acp_a: { driver: "acpRegistry", config: { agentId: "agent-a" } },
-          acp_b: { driver: "acpRegistry", config: { agentId: "agent-b" } },
+    const provider = config.providers[0]!;
+    const registry = {
+      ...config,
+      providers: [
+        {
+          ...provider,
+          driver,
+          instanceId: ProviderInstanceId.make("acp_work"),
+          displayName: "Work",
         },
-      },
-    } as unknown as ServerConfig;
-    expect(buildModelOptions(acpConfig, null).map((option) => option.providerBadge)).toEqual([
-      undefined,
-      undefined,
-    ]);
-
-    // Local ACP commands have no registry agent, so two of them share a glyph.
-    const localConfig = {
-      ...acpConfig,
-      settings: {
-        providerInstances: {
-          acp_a: { driver: "acpRegistry", config: { source: "local", agentId: "agent-a" } },
-          acp_b: { driver: "acpRegistry", config: { source: "local", agentId: "agent-b" } },
+        {
+          ...provider,
+          driver,
+          instanceId: ProviderInstanceId.make("acp_personal"),
+          displayName: "Personal",
         },
-      },
-    } as unknown as ServerConfig;
+      ],
+    };
     expect(
-      buildModelOptions(localConfig, null).every((option) => option.providerBadge !== undefined),
-    ).toBe(true);
+      buildModelOptions(registry, null, undefined, null).map((option) => option.providerBadge),
+    ).toEqual([undefined, undefined]);
+    const local = {
+      ...registry,
+      settings: {
+        ...registry.settings,
+        providerInstances: {
+          [ProviderInstanceId.make("acp_work")]: {
+            driver,
+            enabled: true,
+            config: { source: "local", agentId: "agent-a" },
+          },
+          [ProviderInstanceId.make("acp_personal")]: {
+            driver,
+            enabled: true,
+            config: { source: "local", agentId: "agent-b" },
+          },
+        },
+      },
+    };
+    expect(
+      buildModelOptions(local, null, undefined, null).map((option) => option.providerBadge),
+    ).toEqual([{ displayName: "Work" }, { displayName: "Personal" }]);
   });
 
   it("carries configured ACP identity into model and provider catalogs", () => {
@@ -596,23 +692,6 @@ describe("mobile model options", () => {
   describe("project-aware enablement", () => {
     const projectId = ProjectId.make("project-a");
     const instanceId = ProviderInstanceId.make("codex_work");
-
-    function configWith(settings: ServerSettings): ServerConfig {
-      return {
-        providers: [
-          {
-            instanceId,
-            driver: "codex",
-            displayName: "Codex Work",
-            enabled: true,
-            installed: true,
-            auth: { status: "authenticated" },
-            models: [{ slug: "model-a", name: "Model A", isCustom: false, capabilities: null }],
-          },
-        ],
-        settings,
-      } as unknown as ServerConfig;
-    }
 
     it("words a project's own turn-off apart from missing setup", () => {
       const settings: ServerSettings = {
