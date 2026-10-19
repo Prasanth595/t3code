@@ -1127,9 +1127,6 @@ interface ActiveCodexTurnContext {
   readonly subagent: CodexSubagentThreadContext | null;
   readonly startedAt: DateTime.Utc;
   readonly runningCompactionItemIds: Set<string>;
-  // Item positions allocated in this turn. Later turns never look items up
-  // here: late background items resolve their settled turn's context, and a
-  // subagent's approvals allocate on the owning root turn.
   readonly itemPositions: Map<
     string,
     { readonly ordinal: number; readonly startedAt: DateTime.Utc }
@@ -4581,13 +4578,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           context: ActiveCodexTurnContext,
           nativeItemId: string,
           status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
-          nativeTimestamp?: DateTime.Utc,
+          updatedAt: DateTime.Utc,
         ) {
-          const now = nativeTimestamp ?? (yield* DateTime.now);
           const { ordinal, startedAt } = yield* resolveItemPosition(
             context,
             nativeItemId,
-            nativeTimestamp,
+            updatedAt,
           );
           if (status === "running") context.runningCompactionItemIds.add(nativeItemId);
           else context.runningCompactionItemIds.delete(nativeItemId);
@@ -4619,8 +4615,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ? "Context compaction failed"
                       : "Context compaction stopped",
               startedAt,
-              completedAt: status === "running" ? null : now,
-              updatedAt: now,
+              completedAt: status === "running" ? null : updatedAt,
+              updatedAt,
             },
           });
         });
