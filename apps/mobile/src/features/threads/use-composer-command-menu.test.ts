@@ -9,10 +9,11 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const refreshProviders = vi.hoisted(() => vi.fn());
+const pathSearchError = vi.hoisted(() => ({ current: null as string | null }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 
 vi.mock("../../state/queries", () => ({
-  useComposerPathSearch: () => ({ entries: [], isPending: false }),
+  useComposerPathSearch: () => ({ entries: [], isPending: false, error: pathSearchError.current }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
 }));
 vi.mock("../../state/use-composer-drafts", () => ({
@@ -139,9 +140,19 @@ describe("workspace command discovery retry", () => {
     ],
   } satisfies ServerProvider;
 
-  function Probe({ cwd, status = provider }: { cwd: string; status?: ServerProvider }) {
-    useComposerCommandMenu({
-      draftMessage: "/project",
+  function Probe({
+    cwd,
+    status = provider,
+    message = "/project",
+    onError,
+  }: {
+    cwd: string;
+    status?: ServerProvider;
+    message?: string;
+    onError?: (error: string | null) => void;
+  }) {
+    const menu = useComposerCommandMenu({
+      draftMessage: message,
       ownerKey: null,
       environmentId,
       projectCwd: cwd,
@@ -150,12 +161,14 @@ describe("workspace command discovery retry", () => {
       hasCompactableConversation: false,
       onChangeDraftMessage: () => {},
     });
+    onError?.(menu.error);
     return null;
   }
 
   beforeEach(() => {
     vi.useFakeTimers();
     refreshProviders.mockReset();
+    pathSearchError.current = null;
     refreshProviders.mockResolvedValue({ _tag: "Success", value: { providers: [provider] } });
     const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
     const container = {
@@ -178,6 +191,27 @@ describe("workspace command discovery retry", () => {
     });
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it.each(["This connection cannot search host files.", "Search connection lost"])(
+    "surfaces a failed path search instead of a no-match result: %s",
+    async (error) => {
+      pathSearchError.current = error;
+      const onError = vi.fn();
+      await act(async () => {
+        root.render(createElement(Probe, { cwd: "/project-a", message: "@missing", onError }));
+      });
+      expect(onError).toHaveBeenLastCalledWith(error);
+    },
+  );
+
+  it("keeps path-search failures out of unrelated command menus", async () => {
+    pathSearchError.current = "Search connection lost";
+    const onError = vi.fn();
+    await act(async () => {
+      root.render(createElement(Probe, { cwd: "/project-a", onError }));
+    });
+    expect(onError).toHaveBeenLastCalledWith(null);
   });
 
   it("retries partial commands after the cooldown without editing the draft", async () => {
