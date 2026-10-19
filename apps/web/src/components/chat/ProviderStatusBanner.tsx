@@ -1,7 +1,6 @@
 import { type ServerProvider } from "@t3tools/contracts";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 
-/** Unsupported and broken versions fail mid-turn, so they warn even when ready. */
 export function getIncompatibleVersion(status: ServerProvider) {
   const compatibility = status.compatibilityAdvisory;
   if (status.status === "error" && status.auth.status === "unauthenticated") return null;
@@ -54,7 +53,6 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   );
 }
 
-/** Broken-version guidance takes precedence over startup failures it can cause. */
 export function getProviderStatusMessage(status: ServerProvider): string {
   if (
     status.auth.status !== "unauthenticated" &&

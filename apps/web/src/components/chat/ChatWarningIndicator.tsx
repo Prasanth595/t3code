@@ -60,7 +60,9 @@ export function resolveThreadErrorChatWarning(
 ): ChatWarning | null {
   return error
     ? {
-        id: ["thread", threadKey, error].join("\u0000"),
+        id: ["thread", threadKey, errorClass === "usage_limit" ? "warning" : "error", error].join(
+          "\u0000",
+        ),
         title: "Thread failed",
         description: error,
         severity: errorClass === "usage_limit" ? "warning" : "error",
@@ -101,7 +103,7 @@ export const ChatWarningIndicator = memo(function ChatWarningIndicator({
           closeDelay={200}
           render={
             <Button
-              variant={isError ? "ghost-error-icon" : "ghost-warning-icon"}
+              variant={actionVariant}
               size="icon-circle-xs"
               aria-label={`${warnings.length} ${isSingle ? "warning" : "warnings"}`}
             />

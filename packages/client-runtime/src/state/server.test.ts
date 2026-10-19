@@ -3,6 +3,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerLifecycleStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -13,12 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
@@ -28,10 +31,12 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
+  createServerEnvironmentAtoms,
   applyServerWelcomeEvent,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
@@ -59,8 +64,6 @@ const CONFIG = {
   observability: null,
   providers: [],
   settings: {},
-  // Capabilities drive version-skew behaviour in the projection, so the
-  // fixture carries them rather than leaving the field absent.
   environment: { capabilities: { environmentThemes: true } },
 } as unknown as ServerConfig;
 
@@ -182,8 +185,6 @@ describe("update restart reconnect nudges", () => {
         interval: Duration.zero,
       });
 
-      // Three backoff entries, three nudges. The old one-shot behavior fired
-      // once and then let the supervisor's ladder stretch to 16-second gaps.
       expect(yield* Ref.get(retries)).toBe(3);
     }),
   );
@@ -200,7 +201,6 @@ describe("update restart reconnect nudges", () => {
         { startImmediately: true },
       );
 
-      // Each nudge waits out the interval first, so nothing fires immediately.
       yield* TestClock.adjust(Duration.millis(999));
       expect(yield* Ref.get(retries)).toBe(0);
 
@@ -320,6 +320,12 @@ describe("server state projection", () => {
       fromVersion: "0.0.30",
       targetVersion: "0.0.31",
     });
+    expect(
+      serverUpdateStateForProgressEvent("0.0.30", "0.0.31", {
+        type: "complete",
+        result: { targetVersion: "0.0.31", method: "desktop-app", desktopUpdateToken: "token" },
+      }).stage,
+    ).toBe("installing");
   });
 
   it("keeps active update state and hides stale failures after a version change", () => {
@@ -421,7 +427,9 @@ describe("server state projection", () => {
     });
 
     const result = Option.getOrThrow(projected);
-    expect(result.config.settings).toBe(settings);
+    // An equal settings payload keeps the snapshot's object so readers don't re-render.
+    expect(result.config.settings).toBe(Option.getOrThrow(snapshot).config.settings);
+    expect(result.config.settings).toEqual(settings);
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
@@ -448,8 +456,6 @@ describe("server state projection", () => {
     });
     expect(Option.getOrThrow(published).config.environmentThemes).toEqual(themes);
 
-    // A machine that stops publishing has to clear the palettes, not freeze
-    // clients on the last set it sent.
     const unpublished = applyServerConfigProjection(published, {
       version: 1,
       type: "environmentThemesUpdated",
@@ -458,8 +464,6 @@ describe("server state projection", () => {
     expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
   });
 
-  // A snapshot never carries published themes, so taking it wholesale would
-  // clear them on every reconnect and repaint anyone wearing one.
   it("keeps published themes across a reconnect snapshot", () => {
     const themes = [
       {
@@ -484,8 +488,6 @@ describe("server state projection", () => {
     });
     expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual(themes);
 
-    // A server that predates the feature never sends another theme event, so
-    // carrying the set forward would leave a palette nothing can update.
     const downgraded = applyServerConfigProjection(withThemes, {
       version: 1,
       type: "snapshot",
@@ -569,8 +571,6 @@ describe("server state projection", () => {
           );
           yield* Deferred.await(firstSubscribed);
 
-          // Model the point after the ref changed but before either subscriber
-          // processed its publication.
           supervisorSession.value = Option.some(secondSession);
           const handled = yield* SubscriptionRef.changes(state).pipe(
             Stream.filter(
@@ -877,7 +877,9 @@ describe("server state projection", () => {
             ),
             Stream.runHead,
           );
-          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.providers).toBe(providers);
+          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.providers).toEqual(
+            providers,
+          );
         }),
       );
 
@@ -926,3 +928,81 @@ describe("server state projection", () => {
     }),
   );
 });
+
+it.effect("tracks each environment's server run across reconnect and restart", () =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<ServerLifecycleStreamEvent>();
+    const subscribed = yield* Queue.unbounded<void>();
+    const client = {
+      [WS_METHODS.subscribeServerLifecycle]: () =>
+        Stream.fromQueue(events).pipe(Stream.onStart(Queue.offer(subscribed, undefined))),
+    } as unknown as WsRpcProtocolClient;
+    const currentSession = yield* SubscriptionRef.make(Option.some(session(client)));
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target: TARGET,
+      state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+      session: currentSession,
+      prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    });
+    const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+      followStream: (_environmentId, stream) =>
+        Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+    const cache = Persistence.EnvironmentCacheStore.of({
+      loadShell: () => Effect.succeedNone,
+      saveShell: () => Effect.void,
+      loadThread: () => Effect.succeedNone,
+      saveThread: () => Effect.void,
+      removeThread: () => Effect.void,
+      loadServerConfig: () => Effect.succeedNone,
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeedNone,
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
+    const atoms = createServerEnvironmentAtoms(
+      Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+          Layer.succeed(Persistence.EnvironmentCacheStore, cache),
+        ),
+      ),
+      { initialConfigValueAtom: () => Atom.make(CONFIG) },
+    );
+    const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+      Effect.sync(() => registry.dispose()),
+    );
+    const run = atoms.runStartedAt({ environmentId: TARGET.environmentId, input: {} });
+    registry.mount(run);
+    yield* Queue.take(subscribed);
+    const sendReady = Effect.fn(function* (at: string) {
+      yield* Queue.offer(events, {
+        version: 1,
+        sequence: 1,
+        type: "ready",
+        payload: { at, environment: CONFIG.environment },
+      });
+      yield* AtomRegistry.toStream(registry, run).pipe(
+        Stream.filter((result) => Option.contains(at)(AsyncResult.value(result))),
+        Stream.runHead,
+      );
+    });
+    yield* sendReady("2026-10-19T00:00:00Z");
+    yield* SubscriptionRef.set(currentSession, Option.none());
+    yield* SubscriptionRef.set(currentSession, Option.some(session(client)));
+    yield* Queue.take(subscribed);
+    yield* sendReady("2026-10-19T00:00:00Z");
+    expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T00:00:00Z");
+    yield* SubscriptionRef.set(currentSession, Option.some(session(client)));
+    yield* Queue.take(subscribed);
+    yield* sendReady("2026-10-19T01:00:00Z");
+    expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T01:00:00Z");
+    const other = atoms.runStartedAt({ environmentId: EnvironmentId.make("other"), input: {} });
+    expect(AsyncResult.value(registry.get(other))).toEqual(Option.none());
+  }),
+);
