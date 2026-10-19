@@ -77,52 +77,6 @@ describe("projectThreadAwarenessV2", () => {
     },
   );
 
-  it.each([
-    ["completed", null],
-    ["failed", null],
-    ["running", "running"],
-  ] as const)("projects a settled %s thread as %s", (status, phase) => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({ status, settledOverride: "settled" }),
-      })?.phase ?? null,
-    ).toBe(phase);
-  });
-
-  it("keeps a settled thread that is waiting on the user", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({
-          status: "completed",
-          settledOverride: "settled",
-          pendingRuntimeRequest: {
-            id: RuntimeRequestId.make("request-settled"),
-            kind: "user_input",
-            createdAt: updatedAt,
-          },
-        }),
-      }),
-    ).toMatchObject({ phase: "waiting_for_input" });
-  });
-
-  it("keeps a settled completed run held open by a monitor", () => {
-    expect(
-      projectThreadAwarenessV2({
-        environmentId: "env-1" as EnvironmentId,
-        project,
-        thread: v2Thread({
-          status: "completed",
-          settledOverride: "settled",
-          pendingBackgroundTasks: [{ taskId: "watch", kind: "monitor" }],
-        }),
-      }),
-    ).toMatchObject({ phase: "running" });
-  });
-
   it("keeps an older activity run visible over a newer cancelled run", () => {
     expect(
       projectThreadAwarenessV2({

@@ -64,8 +64,7 @@ export function projectThreadAwarenessV2(
   if (phase === null) {
     return null;
   }
-  // Settling a finished thread means the user is done with its result, so it
-  // leaves the card like an archived one. Live or waiting work stays visible.
+  // Resolve the phase first so live or waiting work stays visible after settlement.
   if (thread.settledOverride === "settled" && (phase === "completed" || phase === "failed")) {
     return null;
   }
