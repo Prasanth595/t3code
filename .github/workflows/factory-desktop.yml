@@ -31,13 +31,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          # Only the publish step needs the write token; keep it out of .git/config
-          # while dependency install and build scripts run.
-          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
+
+      # Only the publish step needs the write token, and it uses gh, not git, so
+      # drop checkout's credentials before dependency install and build scripts
+      # run. persist-credentials: false would do this, but checkout then strips
+      # them with `git submodule foreach`, which fails hard on the gitlinks under
+      # .repos/alchemy-effect that have no .gitmodules entry.
+      - name: Drop checkout credentials
+        run: |
+          git config --local --name-only --get-regexp '^includeIf\.gitdir:' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
 
       - name: Check signing secrets
         env:
