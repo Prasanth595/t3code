@@ -78,17 +78,20 @@ export function DevicePanel(props: {
 
   const grouped = groupDevices(state);
 
-  // Late results settle only the operation they started; another thread may
-  // have begun its own since.
-  const settleOperation = (error: string | null) =>
-    setOperation((current) =>
-      current?.scope === scope ? { scope, pending: null, error } : current,
-    );
+  const startOperation = (pending: DeviceSummary | null) => {
+    const started = { scope, pending, error: null };
+    setOperation(started);
+    // Returning to the same thread can start a newer operation before this one settles.
+    return (error: string | null) =>
+      setOperation((current) =>
+        current === started ? { ...started, pending: null, error } : current,
+      );
+  };
 
   const selectDevice = async (value: string) => {
     const device = state.devices.find((candidate) => deviceKey(candidate) === value);
     if (!device) return;
-    setOperation({ scope, pending: device, error: null });
+    const settleOperation = startOperation(device);
     const result = await open({
       environmentId,
       input: {
@@ -129,7 +132,7 @@ export function DevicePanel(props: {
       return;
     }
     if (!activeSession) return;
-    setOperation({ scope, pending: null, error: null });
+    const settleOperation = startOperation(null);
     void close({
       environmentId,
       input: {

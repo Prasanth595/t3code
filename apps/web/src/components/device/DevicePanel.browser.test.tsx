@@ -222,26 +222,39 @@ describe("DevicePanel thread switches", () => {
     expect(errors()).toHaveLength(1);
   });
 
-  it("keeps a thread's own pick pending when another thread's pick settles", async () => {
+  it("keeps the latest pick pending across switches away and back", async () => {
     const first = deferred();
     const second = deferred();
-    mocks.open.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const latest = deferred();
+    mocks.open
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockReturnValueOnce(latest.promise);
     await show(threadA);
     await click(startButton());
     await show(threadB);
     await click(startButton());
+    await show(threadA);
+    await click(startButton());
 
-    await act(async () => first.settle(opened));
+    await act(async () => first.settle(failed));
 
     expect(startButton()).toBeNull();
-    expect(mocks.openDevice.mock.calls).toEqual([[threadA, phoneTarget]]);
+    expect(errors()).toHaveLength(0);
+    expect(mocks.openDevice).not.toHaveBeenCalled();
 
     await act(async () => second.settle(opened));
 
+    expect(startButton()).toBeNull();
+    expect(mocks.openDevice.mock.calls).toEqual([[threadB, phoneTarget]]);
+
+    await act(async () => latest.settle(opened));
+
     expect(startButton()?.disabled).toBe(false);
+    expect(errors()).toHaveLength(0);
     expect(mocks.openDevice.mock.calls).toEqual([
-      [threadA, phoneTarget],
       [threadB, phoneTarget],
+      [threadA, phoneTarget],
     ]);
   });
 });
