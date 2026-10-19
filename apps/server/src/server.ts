@@ -1,8 +1,5 @@
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
-import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
-import * as Semaphore from "effect/Semaphore";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
@@ -21,7 +18,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as Schedule from "effect/Schedule";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -145,7 +141,8 @@ import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
-  MANAGED_TUNNEL_RECOVERY_COOLDOWN,
+  makeManagedTunnelRecovery,
+  retryDesiredManagedTunnelLink,
   managedTunnelStartupAction,
   retryManagedTunnelRegistration,
 } from "./cloud/managedTunnelStartup.ts";
@@ -850,12 +847,6 @@ const layerMakeServer = Layer.unwrap(
             if (typeof address === "string" || !("port" in address)) return;
             const localOrigin = `http://127.0.0.1:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
-            const recoveryLock = yield* Semaphore.make(1);
-            // Monotonic, so a wall clock corrected backward (a host that booted
-            // ahead) cannot push the next recovery hours into the future.
-            let lastRecoveryAtNanos: bigint | null = null;
-            // Clock refusals retry until the clock is fixed, which can be hours,
-            // and a retry only logs once it gives up. Say once why it waits.
             let clockSkewReported = false;
             const reportClockSkew = (error: unknown) =>
               isRelayClockSkewError(error) && !clockSkewReported
@@ -867,34 +858,20 @@ const layerMakeServer = Layer.unwrap(
                     ),
                   )
                 : Effect.void;
-            const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
-              recoveryLock.withPermits(1)(
-                Effect.gen(function* () {
-                  const now = yield* Clock.monotonicTimeNanos;
-                  if (lastRecoveryAtNanos !== null) {
-                    const elapsed = Number((now - lastRecoveryAtNanos) / 1_000_000n);
-                    const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
-                    if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
-                  }
-                  lastRecoveryAtNanos = yield* Clock.monotonicTimeNanos;
-                }).pipe(
-                  Effect.andThen(
-                    cloudLink.recoverManagedTunnel(localOrigin, config, {
-                      retryRuntimeFailures: true,
-                    }),
-                  ),
-                  Effect.tapError(reportClockSkew),
-                  Effect.retry({
-                    while: (error) =>
-                      CloudLink.shouldRetryCloudLink(error) &&
-                      error._tag !== "CloudLinkEndpointUnavailableError",
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                      ),
-                      Schedule.jittered,
-                    ),
-                  }),
+            const recoverManagedTunnel = yield* makeManagedTunnelRecovery(
+              (config) =>
+                cloudLink
+                  .recoverManagedTunnel(localOrigin, config, {
+                    retryRuntimeFailures: true,
+                  })
+                  .pipe(Effect.tapError(reportClockSkew)),
+              (error) =>
+                CloudLink.shouldRetryCloudLink(error) &&
+                error._tag !== "CloudLinkEndpointUnavailableError",
+            );
+            yield* endpointRuntime.recoveryRequests.pipe(
+              Stream.runForEach((config) =>
+                recoverManagedTunnel(config).pipe(
                   Effect.tap((recovered) =>
                     recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
                   ),
@@ -906,9 +883,7 @@ const layerMakeServer = Layer.unwrap(
                         }),
                   ),
                 ),
-              );
-            yield* endpointRuntime.recoveryRequests.pipe(
-              Stream.runForEach(recoverManagedTunnel),
+              ),
               Effect.forkScoped,
             );
             const wantsCliLink = hasCloudPublicConfig
@@ -960,28 +935,12 @@ const layerMakeServer = Layer.unwrap(
                 ),
                 Effect.asVoid,
               );
-            // A clock refusal used to end registration and start the stored
-            // tunnel at once. It now retries until the clock is fixed, so start
-            // the tunnel on the first one rather than after the retry window.
-            let startedForClockSkew = startedConfirmed;
-            const startStoredTunnelOnClockSkew = (error: unknown) =>
-              isRelayClockSkewError(error) && !startedForClockSkew
-                ? Effect.sync(() => {
-                    startedForClockSkew = true;
-                  }).pipe(Effect.andThen(startStoredManagedTunnel))
-                : Effect.void;
             const registerManagedTunnel = retryManagedTunnelRegistration(
               cloudLink
                 .registerManagedTunnelRecovery(localOrigin, {
                   retryRuntimeFailures: true,
                 })
-                .pipe(
-                  Effect.tapError((error) =>
-                    reportClockSkew(error).pipe(
-                      Effect.andThen(startStoredTunnelOnClockSkew(error)),
-                    ),
-                  ),
-                ),
+                .pipe(Effect.tapError(reportClockSkew)),
               (error) =>
                 CloudLink.shouldRetryCloudLink(error) &&
                 error._tag !== "CloudLinkEndpointUnavailableError",
@@ -1021,37 +980,23 @@ const layerMakeServer = Layer.unwrap(
               yield* endpointRuntime.requestRecovery(startupAction.config);
             }
             if (startupAction.action === "reconcile_link") {
-              const reconciledMode = yield* cloudLink
-                .reconcileDesiredLinkIfStillDesired(localOrigin)
-                .pipe(
-                  // A host often boots before its clock syncs. Keep trying for as
-                  // long as the clock is what the relay refuses, so the link comes
-                  // up as soon as the clock is fixed instead of after a restart.
-                  Effect.tapError(reportClockSkew),
-                  Effect.retry({
-                    while: isRelayClockSkewError,
-                    schedule: Schedule.spaced("30 seconds"),
-                  }),
-                  Effect.retry({
-                    while: CloudLink.shouldRetryCloudLink,
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                      ),
-                      Schedule.upTo({ duration: "10 minutes" }),
-                    ),
-                  }),
-                  Effect.tap((mode) =>
-                    mode === null
-                      ? Effect.void
-                      : Effect.logInfo("T3 Connect desired link reconciled on startup"),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
-                      cause,
-                    }).pipe(Effect.as(null)),
-                  ),
-                );
+              const reconciledMode = yield* retryDesiredManagedTunnelLink(
+                cloudLink
+                  .reconcileDesiredLinkIfStillDesired(localOrigin)
+                  .pipe(Effect.tapError(reportClockSkew)),
+                CloudLink.shouldRetryCloudLink,
+              ).pipe(
+                Effect.tap((mode) =>
+                  mode === null
+                    ? Effect.void
+                    : Effect.logInfo("T3 Connect desired link reconciled on startup"),
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to reconcile T3 Connect desired link on startup", {
+                    cause,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
               if (reconciledMode === "managed") {
                 const afterReconcile = yield* registerManagedTunnel;
                 if (afterReconcile.status === "recovery_required") {

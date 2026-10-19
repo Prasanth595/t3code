@@ -17,6 +17,8 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import { DESKTOP_UPDATE_RESTART_MARKER_FILE, EnvironmentId } from "@t3tools/contracts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -686,6 +688,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
+      expect(
+        yield* link.startManagedTunnelIfOriginConfirmed("http://127.0.0.1:3773", {
+          requireConfirmedOrigin: false,
+        }),
+      ).toBe(true);
       expect(yield* link.registerManagedTunnelRecovery("http://127.0.0.1:3773")).toEqual({
         status: "revoked",
       });
@@ -695,10 +702,15 @@ describe("releaseManagedTunnelOnShutdown", () => {
           requireConfirmedOrigin: false,
         }),
       ).toBe(false);
-      // One registration request, no relink, and nothing started or removed.
-      // linkState also sends a HEAD to read the relay's clock.
       expect(requests.filter((request) => request.method !== "HEAD")).toHaveLength(1);
-      expect(applyConfigCalls).toEqual([]);
+      expect(applyConfigCalls).toEqual([
+        {
+          providerKind: "cloudflare_tunnel",
+          connectorToken: "existing-token",
+          tunnelId: "existing-tunnel",
+        },
+        null,
+      ]);
       expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(true);
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
     }).pipe(
@@ -750,7 +762,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
       ).pipe(Effect.forkChild({ startImmediately: true }));
       yield* Effect.raceFirst(Deferred.await(firstFailure), Fiber.await(registration));
       const state = yield* link.linkState();
-      expect(state).toMatchObject({ clockSkewSeconds: -420, linkRevoked: false });
+      expect(state).toMatchObject({
+        clockSkewSeconds: -420,
+        linkRevoked: false,
+        hostPlatform: yield* HostProcess.Platform,
+      });
       expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
 
       // Clock synchronization can take longer than the normal startup retry window.
@@ -1202,7 +1218,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(CloudLink.shouldRetryCloudLink(error)).toBe(false);
       expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unauthorized" });
       expect((yield* link.linkState()).linkRevoked).toBe(true);
-      expect(applyConfigCalls).toEqual([]);
+      expect(applyConfigCalls).toEqual([null]);
       expect(values.has(RELAY_ENVIRONMENT_CREDENTIAL_SECRET)).toBe(true);
     }).pipe(
       provideReleaseHarness({
@@ -1358,7 +1374,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(error).toMatchObject({ _tag: "RelayRequestError", rejection });
       expect(CloudLink.shouldRetryCloudLink(error)).toBe(false);
       expect(requests).toHaveLength(1);
-      expect(applyConfigCalls).toEqual([]);
+      expect(applyConfigCalls).toEqual(status === 401 ? [null] : []);
     }).pipe(
       provideReleaseHarness({
         store,

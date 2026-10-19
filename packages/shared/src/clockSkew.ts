@@ -1,11 +1,4 @@
-/**
- * T3 Connect's signed requests only work while the host clock is close to the
- * relay's. These helpers decide when it is too far off and tell the user how
- * to fix it, so the server, CLI and settings all say the same thing.
- */
-
-// The relay accepts proofs issued up to 60 seconds in its future. Past that, a
-// skewed clock is enough on its own to explain a rejection.
+// The relay permits proofs issued up to 60 seconds in its future.
 const CLOCK_SKEW_LIMIT_SECONDS = 60;
 
 /**
@@ -49,14 +42,12 @@ function clockFixInstructions(platform: string): string {
   if (platform === "darwin") {
     return 'Open System Settings > General > Date & Time and turn on "Set time and date automatically".';
   }
-  return "Turn on network time sync, for example with `timedatectl set-ntp true`.";
+  return platform === "linux"
+    ? "Turn on network time sync, for example with `timedatectl set-ntp true`."
+    : "Turn on automatic date and time on the computer running T3 Code.";
 }
 
-/**
- * What to tell the user when T3 Connect fails because of `seconds` of skew.
- * `platform` is the host's `process.platform`, since that is the clock to fix.
- */
 export function describeClockSkew(seconds: number, platform: string): string {
   const direction = seconds > 0 ? "ahead" : "behind";
-  return `This computer's clock is ${skewAmount(seconds)} ${direction}, and T3 Connect needs it to be right. ${clockFixInstructions(platform)} T3 Connect reconnects by itself once the clock is correct.`;
+  return `The host computer's clock is ${skewAmount(seconds)} ${direction}, and T3 Connect needs it to be right. ${clockFixInstructions(platform)} T3 Connect reconnects by itself once the clock is correct.`;
 }

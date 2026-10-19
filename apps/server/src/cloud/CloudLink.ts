@@ -43,6 +43,7 @@ import {
 import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -647,8 +648,12 @@ const make = Effect.gen(function* () {
     }) {
       return yield* endpointRuntime.withLinkStateLock(
         Effect.gen(function* () {
-          const currentConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+          const [currentConfig, revoked] = yield* Effect.all([
+            secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+            secrets.get(CLOUD_LINK_REVOKED),
+          ]);
           if (
+            Option.isSome(revoked) ||
             Option.isNone(currentConfig) ||
             bytesToString(currentConfig.value) !== input.configJson
           ) {
@@ -710,11 +715,12 @@ const make = Effect.gen(function* () {
     });
     return yield* endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
-        const [runtimeBytes, markerBytes] = yield* Effect.all([
+        const [runtimeBytes, markerBytes, revoked] = yield* Effect.all([
           secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
           secrets.get(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
+          secrets.get(CLOUD_LINK_REVOKED),
         ]);
-        if (Option.isNone(runtimeBytes)) return false;
+        if (Option.isNone(runtimeBytes) || Option.isSome(revoked)) return false;
         const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
         if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
         // With the marker required, only a config the relay already confirmed on
@@ -969,14 +975,8 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /**
-   * Marks the link revoked after the relay answered 401 to `credential`, usually
-   * because the environment was deregistered. Retrying cannot fix that, and
-   * relinking is the user's call, so only mark it. Nothing stored is removed,
-   * and the next accepted registration clears the mark. Returns false, without
-   * marking, when a relink replaced the credential while the rejected request
-   * was in flight.
-   */
+  // Check the credential under the same lock as connector startup so an old
+  // rejection cannot stop a replacement link.
   const markLinkRevoked = (credential: string, cause: RelayRequestError) =>
     endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
@@ -989,6 +989,7 @@ const make = Effect.gen(function* () {
           { cause },
         );
         yield* secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"));
+        yield* endpointRuntime.applyConfig(null);
         return true;
       }),
     );
@@ -1338,12 +1339,18 @@ const make = Effect.gen(function* () {
   const linkState = Effect.fn("environment.cloud.linkState")(
     function* () {
       const state = yield* readCloudLinkState();
-      // Only a configured link has a relay whose clock matters.
-      if (state.relayUrl === null) return state;
-      const clockSkewSeconds = yield* checkRelayClock(state.relayUrl).pipe(
+      const relayUrl =
+        state.relayUrl ??
+        ((yield* readCliDesiredCloudLink.pipe(withSecrets))
+          ? Option.getOrNull(yield* relayUrlConfig.pipe(Effect.option))
+          : null);
+      if (relayUrl === null) return state;
+      const clockSkewSeconds = yield* checkRelayClock(relayUrl).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
       );
-      return clockSkewSeconds === null ? state : { ...state, clockSkewSeconds };
+      return clockSkewSeconds === null
+        ? state
+        : { ...state, clockSkewSeconds, hostPlatform: yield* HostProcess.Platform };
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-relay-config")),
   );

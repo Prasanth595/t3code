@@ -420,6 +420,7 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   // Seconds this environment's clock is ahead of (positive) or behind the
   // relay's, present only when the gap is large enough to break T3 Connect.
   clockSkewSeconds: Schema.optional(Schema.Number),
+  hostPlatform: Schema.optional(Schema.String),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 

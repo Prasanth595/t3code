@@ -61,7 +61,7 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
-import { cn, isMacPlatform, isWindowsPlatform } from "../../lib/utils";
+import { cn } from "../../lib/utils";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
@@ -1807,20 +1807,11 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
-  // This row only renders in the desktop app, so the browser's platform is the
-  // host's, which is the clock that needs fixing.
   const clockSkewSeconds = primaryCloudLinkState.data?.clockSkewSeconds;
   const clockSkewWarning =
     clockSkewSeconds === undefined
       ? null
-      : describeClockSkew(
-          clockSkewSeconds,
-          isWindowsPlatform(navigator.platform)
-            ? "win32"
-            : isMacPlatform(navigator.platform)
-              ? "darwin"
-              : "linux",
-        );
+      : describeClockSkew(clockSkewSeconds, primaryCloudLinkState.data?.hostPlatform ?? "");
   // The fix happens outside the app, so check again when the user comes back.
   const refreshLinkState = primaryCloudLinkState.refresh;
   useEffect(() => {

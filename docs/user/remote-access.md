@@ -339,8 +339,8 @@ when SSH closes, see [background-service troubleshooting](./background-service.m
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | `environment_link_limit_exceeded` or managed tunnel limit | Deregister an unused environment, then restart T3 Code on the host.                                                                         |
 | `auth_invalid` or `invalid_bearer`                        | Run `t3 connect login`. If credentials were revoked, run `t3 connect logout`, then `t3 connect` again. Restart the server after signing in. |
-| "This computer's clock is … behind" or "… ahead"          | Turn on automatic date and time on the host and sync it. T3 Connect reconnects by itself, without a restart.                                |
-| Expired or invalid link proof                             | Check the host's date and time, update T3 Code, then restart it.                                                                            |
+| "The host computer's clock is … behind" or "… ahead"      | Turn on automatic date and time on the host and sync it. T3 Connect reconnects by itself, without a restart.                                |
+| Expired or invalid link proof                             | Check the host's automatic date and time. T3 Connect retries expired proofs automatically. Update T3 Code if it continues.                  |
 | HTTP 403 without a recognized error                       | Check relay access, proxies, and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                               |
 | HTTP 408, 429, or 5xx                                     | Check network and relay availability. Startup retries temporary failures for up to ten minutes.                                             |
 
