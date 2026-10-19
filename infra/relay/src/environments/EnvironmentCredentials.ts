@@ -198,15 +198,10 @@ const make = Effect.gen(function* () {
           }),
         )
         .pipe(
-          Effect.catchCause((cause) => {
-            // SQL finalizers can die; keep compound rollback causes and interruptions intact.
-            const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined;
-            const normalized =
-              reason && Cause.isDieReason(reason) && SqlError.isSqlError(reason.defect)
-                ? Cause.fail(reason.defect)
-                : cause;
-            return Effect.failCause(
-              Cause.map(normalized, (error) =>
+          // Preserve rollback defects and interruptions alongside typed failures.
+          Effect.catchCause((cause) =>
+            Effect.failCause(
+              Cause.map(cause, (error) =>
                 SqlError.isSqlError(error)
                   ? new EnvironmentCredentialCreatePersistenceError({
                       stage: "transaction",
@@ -216,8 +211,8 @@ const make = Effect.gen(function* () {
                     })
                   : error,
               ),
-            );
-          }),
+            ),
+          ),
         );
       return credential.token;
     }),
