@@ -249,8 +249,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
         editor,
-        host: remote.host.host,
-        ...(remote.host.username === undefined ? {} : { username: remote.host.username }),
+        ...remote.host,
         absolutePath: openInCwd,
       });
       if (url === undefined) return;

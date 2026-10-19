@@ -177,13 +177,6 @@ export const remoteSchemeForEditor = (id: EditorId): string | undefined => {
   return editor === undefined ? undefined : remoteSchemeOf(editor);
 };
 
-/**
- * Builds a `<scheme>://vscode-remote/ssh-remote+[<user>@]<host><path>` deep link (Zed
- * takes `zed://ssh/[<user>@]<host><path>`, JetBrains IDEs a Toolbox App
- * `jetbrains://gateway/ssh/environment?...` link) that opens `absolutePath` on
- * `host` in the local editor over SSH. Returns undefined for editors without
- * remote deep-link support.
- */
 export const buildRemoteOpenUrl = (input: {
   readonly editor: EditorId;
   readonly host: string;
@@ -196,8 +189,6 @@ export const buildRemoteOpenUrl = (input: {
   }
   const editor = EDITORS.find((candidate) => candidate.id === input.editor);
   if (editor !== undefined && "jetbrainsProductCode" in editor) {
-    // SSH config supplies the port and any omitted username. A bare product
-    // code lets Toolbox pick the backend build.
     const params = new URLSearchParams({
       h: input.host,
       launchIde: "true",
@@ -238,8 +229,6 @@ export type RemoteOpenTargetKind = typeof RemoteOpenTargetKind.Type;
 export const RemoteOpenTarget = Schema.Struct({
   kind: RemoteOpenTargetKind,
   host: TrimmedNonEmptyString,
-  /** Login account on the environment host. Optional for compatibility with
-      servers that advertised only a hostname. */
   username: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type RemoteOpenTarget = typeof RemoteOpenTarget.Type;

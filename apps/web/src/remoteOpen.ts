@@ -1,13 +1,3 @@
-/**
- * Remote open-in-editor: when this client is not on the environment's
- * machine, "Open" must hand the OS a `vscode://vscode-remote/ssh-remote+…`
- * deep link (local editor connects over SSH) instead of exec'ing an editor
- * on the environment host.
- *
- * Host precedence: a desktop-SSH environment's configured target beats
- * server-advertised names; among advertised names the tailnet MagicDNS name
- * beats mDNS `<hostname>.local` (server sends them in that order).
- */
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
@@ -61,9 +51,7 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  /** Configured target for desktop-SSH environments; null elsewhere. */
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
-  /** Server-advertised hosts; undefined on servers that predate the feature. */
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
@@ -90,7 +78,8 @@ export function resolveRemoteOpenState(input: {
     const userSeparator = alias.lastIndexOf("@");
     const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
     const username =
-      input.sshTarget.username ?? (userSeparator === -1 ? null : alias.slice(0, userSeparator));
+      input.sshTarget.username?.trim() ||
+      (userSeparator === -1 ? null : alias.slice(0, userSeparator));
     return {
       mode: "remote-links",
       host: {
@@ -110,7 +99,11 @@ export function resolveRemoteOpenState(input: {
 function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState): boolean {
   if (previous.mode !== next.mode) return false;
   if (previous.mode !== "remote-links" || next.mode !== "remote-links") return true;
-  return previous.host.kind === next.host.kind && previous.host.host === next.host.host;
+  return (
+    previous.host.kind === next.host.kind &&
+    previous.host.host === next.host.host &&
+    previous.host.username === next.host.username
+  );
 }
 
 // The presentation changes with every server config push and reconnect. This
@@ -127,8 +120,8 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
-        sshTarget: profile !== null && profile._tag === "SshConnectionProfile"
-          ? { alias: profile.target.alias, username: profile.target.username } : null,
+        sshTarget:
+          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),

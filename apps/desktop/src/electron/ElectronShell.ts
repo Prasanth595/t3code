@@ -22,8 +22,7 @@ const REMOTE_EDITOR_PROTOCOLS = new Set(
   }),
 );
 
-// Zed's `[user@]host` sits in the first path segment, so it needs its own
-// userinfo check: a login user is allowed, a password or port is not.
+// Zed embeds [user@]host in the path; reject passwords and ports there.
 const ZED_SSH_PATHNAME = /^\/(?:[^/@:]+@)?[^/@:]+\/.*$/;
 
 const isRemoteEditorUrl = (url: URL) =>

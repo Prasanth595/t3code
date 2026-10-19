@@ -48,7 +48,11 @@ export const make = Effect.gen(function* () {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ))
       ) {
-        targets.push({ kind: "tailscale", host: magicDnsName, ...(username === null ? {} : { username }) });
+        targets.push({
+          kind: "tailscale",
+          host: magicDnsName,
+          ...(username === null ? {} : { username }),
+        });
       }
       return targets;
     }
