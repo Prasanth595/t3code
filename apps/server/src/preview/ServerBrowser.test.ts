@@ -1797,3 +1797,87 @@ it.live("a desktop page that comes back reconnects without waiting for a viewer"
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.live.each(["pause", "capture", "resume"] as const)(
+  "a stalled snapshot %s releases the tab queue and capture lock without leaking a paused viewer",
+  (stage) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        yield* browser.attachViewer(viewerInput(tabId, false));
+        const { page, sessions } = contexts[0]!;
+        const session = sessions.at(-1)!;
+        const blocked = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const send = session.send.getMockImplementation()!;
+        let streaming = true;
+        let stalled = false;
+        session.send.mockImplementation(async (method, input) => {
+          if (
+            !stalled &&
+            ((stage === "pause" && method === "Page.stopScreencast") ||
+              (stage === "resume" && method === "Page.startScreencast"))
+          ) {
+            stalled = true;
+            blocked.resolve();
+            await release.promise;
+          }
+          const result = await send(method, input);
+          if (method === "Page.stopScreencast") streaming = false;
+          if (method === "Page.startScreencast") streaming = true;
+          return result;
+        });
+        if (stage === "capture") {
+          page.ariaSnapshot.mockImplementationOnce(async () => {
+            blocked.resolve();
+            await release.promise;
+            return '- button "delete" [ref=e1]';
+          });
+        }
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            release.resolve();
+            vi.useRealTimers();
+          }),
+        );
+        const snapshot = yield* broker
+          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.promise(() => blocked.promise);
+        // The complete capture must answer within the action budget, before broker eviction.
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(15_000));
+        expect.soft(snapshot.pollUnsafe()).toMatchObject({
+          _tag: "Success",
+          value: {
+            _tag: "PreviewAutomationTimeoutError",
+            remoteTag: "PreviewAutomationTimeoutError",
+          },
+        });
+
+        const evaluation = yield* broker
+          .invoke({ scope, tabId, operation: "evaluate", input: { expression: "1 + 1" } })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect.soft(evaluation.pollUnsafe()).toMatchObject({ _tag: "Success", value: "evaluated" });
+
+        const recovered = yield* broker
+          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect.soft(recovered.pollUnsafe()).toMatchObject({
+          _tag: "Success",
+          value: { visibleText: "delete", screenshot: { data: "ZnJhbWU=" } },
+        });
+        // A failed CDP session may be retired, but cannot remain attached and paused.
+        expect.soft(streaming || session.detach.mock.calls.length > 0).toBe(true);
+
+        release.resolve();
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect(streaming || session.detach.mock.calls.length > 0).toBe(true);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
