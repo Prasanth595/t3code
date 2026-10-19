@@ -1,5 +1,5 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
-import { act, type ReactNode } from "react";
+import { act, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -10,8 +10,9 @@ const files = vi.hoisted(() => ({
   searchEntries: [] as ProjectEntry[],
   searchPending: false,
   searchError: null as string | null,
+  loadedDirectories: new Set<string>() as ReadonlySet<string>,
   loadingDirectories: new Set<string>() as ReadonlySet<string>,
-  load: vi.fn(async () => {}),
+  load: vi.fn(async (_path: string) => {}),
   refresh: vi.fn(),
 }));
 
@@ -19,6 +20,7 @@ vi.mock("./useDirectoryEntries", () => ({
   useDirectoryEntries: () => ({
     entries: files.directoryEntries,
     loadingDirectories: files.loadingDirectories,
+    loadedDirectories: files.loadedDirectories,
     load: files.load,
     refresh: files.refresh,
     ready: true,
@@ -48,7 +50,7 @@ vi.mock("~/components/ui/tooltip", () => ({
   TooltipPopup: () => null,
 }));
 
-describe("Files panel search", () => {
+describe("Files panel", () => {
   let root: Root | undefined;
   let container: HTMLDivElement | undefined;
   const props = {
@@ -61,7 +63,7 @@ describe("Files panel search", () => {
     workspaceMutationId: null,
   };
 
-  async function render() {
+  async function render(overrides: Partial<ComponentProps<typeof FileBrowserPanel>> = {}) {
     if (!container) {
       container = document.body.appendChild(document.createElement("div"));
       // The tree virtualizes its rows, so it needs a real viewport to render any.
@@ -69,7 +71,26 @@ describe("Files panel search", () => {
         "display: flex; flex-direction: column; width: 320px; height: 480px;";
       root = createRoot(container);
     }
-    await act(async () => root!.render(<FileBrowserPanel {...props} />));
+    const panelProps = { ...props, ...overrides };
+    await act(async () =>
+      root!.render(
+        <FileBrowserPanel key={`${panelProps.environmentId}:${panelProps.cwd}`} {...panelProps} />,
+      ),
+    );
+  }
+
+  async function remount() {
+    await act(async () => root!.unmount());
+    root = createRoot(container!);
+    await render();
+  }
+
+  async function toggleFolder(path: string) {
+    const row = container!
+      .querySelector("file-tree-container")!
+      .shadowRoot!.querySelector<HTMLButtonElement>(`button[data-item-path="${path}/"]`);
+    expect(row).not.toBeNull();
+    await act(async () => row!.click());
   }
 
   function searchInput() {
@@ -103,6 +124,10 @@ describe("Files panel search", () => {
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    localStorage.clear();
+    vi.clearAllMocks();
+    files.loadedDirectories = new Set(["", "src"]);
+    files.loadingDirectories = new Set();
     files.directoryEntries = [
       { path: "src", kind: "directory" },
       { path: "src/app.ts", kind: "file" },
@@ -118,6 +143,7 @@ describe("Files panel search", () => {
     container?.remove();
     root = undefined;
     container = undefined;
+    localStorage.clear();
     vi.unstubAllGlobals();
   });
 
@@ -182,5 +208,91 @@ describe("Files panel search", () => {
     expect(visiblePaths()).toEqual([]);
     expect(hasMessage("No matching files.")).toBe(false);
     expect(container!.textContent).toContain("Workspace search failed.");
+  });
+
+  it("remembers expansion and collapse across remounts without leaking between environments or workspaces", async () => {
+    files.directoryEntries.push(
+      { path: "docs", kind: "directory" },
+      { path: "docs/guide.md", kind: "file" },
+    );
+    files.loadedDirectories = new Set(["", "src", "docs"]);
+    await render();
+    await toggleFolder("src");
+    expect(visiblePaths()).toContain("src/app.ts");
+    // A fresh panel must recover from durable browser storage, with no prior tree model.
+    expect(
+      JSON.parse(localStorage.getItem("t3code.fileTreeExpanded:test-environment:/workspace")!),
+    ).toEqual(["src"]);
+    await remount();
+    expect(visiblePaths()).toContain("src/app.ts");
+
+    await render({ environmentId: EnvironmentId.make("other-environment") });
+    expect(visiblePaths()).not.toContain("src/app.ts");
+    await toggleFolder("docs");
+    expect(visiblePaths()).toContain("docs/guide.md");
+
+    await render();
+    expect(visiblePaths()).toContain("src/app.ts");
+    expect(visiblePaths()).not.toContain("docs/guide.md");
+    await render({ cwd: "/other-workspace" });
+    expect(visiblePaths()).not.toContain("src/app.ts");
+    expect(visiblePaths()).not.toContain("docs/guide.md");
+
+    await render();
+    expect(visiblePaths()).toContain("src/app.ts");
+    await toggleFolder("src");
+    expect(visiblePaths()).not.toContain("src/app.ts");
+    await remount();
+    expect(visiblePaths()).not.toContain("src/app.ts");
+    expect(localStorage.getItem("t3code.fileTreeExpanded:test-environment:/workspace")).toBeNull();
+  });
+
+  it("loads remembered parents before restoring children as their listings arrive", async () => {
+    localStorage.setItem(
+      "t3code.fileTreeExpanded:test-environment:/workspace",
+      JSON.stringify(["src", "src/components"]),
+    );
+    files.directoryEntries = [{ path: "src", kind: "directory" }];
+    files.loadedDirectories = new Set([""]);
+    await render();
+    expect(files.load.mock.calls).toEqual([["src"]]);
+    expect(
+      JSON.parse(localStorage.getItem("t3code.fileTreeExpanded:test-environment:/workspace")!),
+    ).toEqual(["src", "src/components"]);
+
+    files.directoryEntries = [
+      ...files.directoryEntries,
+      { path: "src/app.ts", kind: "file" },
+      { path: "src/components", kind: "directory" },
+    ];
+    files.loadedDirectories = new Set(["", "src"]);
+    await render();
+    expect(files.load.mock.calls).toEqual([["src"], ["src/components"]]);
+
+    files.directoryEntries = [
+      ...files.directoryEntries,
+      { path: "src/components/Button.tsx", kind: "file" },
+    ];
+    files.loadedDirectories = new Set(["", "src", "src/components"]);
+    await render();
+    expect(visiblePaths()).toContain("src/app.ts");
+    expect(visiblePaths()).toContain("src/components/Button.tsx");
+  });
+
+  it("still reveals an externally selected file when no expansion was saved", async () => {
+    files.directoryEntries = [{ path: "src", kind: "directory" }];
+    files.loadedDirectories = new Set([""]);
+    await render({ selectedPath: "src/app.ts", selectedPathRevealId: 1 });
+    expect(files.load).toHaveBeenCalledWith("src");
+
+    files.directoryEntries = [...files.directoryEntries, { path: "src/app.ts", kind: "file" }];
+    files.loadedDirectories = new Set(["", "src"]);
+    await render({ selectedPath: "src/app.ts", selectedPathRevealId: 1 });
+    expect(visiblePaths()).toContain("src/app.ts");
+    const selected = container!
+      .querySelector("file-tree-container")!
+      .shadowRoot!.querySelector('[data-item-path="src/app.ts"]');
+    expect(selected?.getAttribute("aria-selected")).toBe("true");
+    expect(props.onOpenFile).not.toHaveBeenCalled();
   });
 });
