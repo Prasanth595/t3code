@@ -3,7 +3,6 @@ import type {
   SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 
-/** Keep the group representative unless the selected scope excludes its checkout. */
 export function scopeProjectSettingsGroup(
   group: SidebarProjectSnapshot,
   members: readonly SidebarProjectGroupMember[],

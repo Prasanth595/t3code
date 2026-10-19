@@ -50,74 +50,47 @@ function projectGroup(projects: Project[]) {
 }
 
 describe("scopeProjectSettingsGroup", () => {
-  it("keeps the sidebar icon when the remote checkout was registered first", () => {
-    const group = projectGroup([
-      makeProject(remoteEnvironmentId),
-      makeProject(localEnvironmentId, { projectIcon: customIcon }),
-    ]);
-    const scoped = scopeProjectSettingsGroup(group, group.memberProjects);
-
-    expect(scoped.environmentId).toBe(localEnvironmentId);
-    expect(scoped.projectIcon).toEqual(customIcon);
-    expect(scoped.memberProjects).toHaveLength(2);
-    expect(scoped.memberProjects[0]?.projectIcon).toBeNull();
-  });
-
-  it("keeps the favicon source and automatic title with the sidebar representative", () => {
-    const group = projectGroup([
-      makeProject(remoteEnvironmentId, { title: "Remote repo", faviconPath: "remote.svg" }),
-      makeProject(localEnvironmentId, { title: "Local repo", faviconPath: "local.svg" }),
-    ]);
-    const scoped = scopeProjectSettingsGroup(group, group.memberProjects);
-
-    expect(scoped).toMatchObject({
-      environmentId: localEnvironmentId,
-      workspaceRoot: "/local/repo",
+  it("keeps the sidebar preview identity and edit targets when the remote checkout was registered first", () => {
+    const local = makeProject(localEnvironmentId, {
       title: "Local repo",
       faviconPath: "local.svg",
+      projectIcon: customIcon,
     });
+    const remote = makeProject(remoteEnvironmentId, {
+      title: "Remote repo",
+      faviconPath: "remote.svg",
+    });
+    const group = projectGroup([remote, local]);
+    const scoped = scopeProjectSettingsGroup(group, group.memberProjects);
+
+    expect(group).toMatchObject(local);
+    expect(scoped).toMatchObject(local);
+    expect(scoped.memberProjects).toBe(group.memberProjects);
+    expect(scoped.memberProjects).toMatchObject([remote, local]);
   });
 
-  it("uses the selected environment when it excludes the sidebar representative", () => {
-    const group = projectGroup([
-      makeProject(remoteEnvironmentId, { faviconPath: "remote.svg" }),
-      makeProject(localEnvironmentId, { projectIcon: customIcon }),
-    ]);
+  it.each([
+    [remoteEnvironmentId, "local-project"],
+    [localEnvironmentId, "other-checkout"],
+  ])("uses the complete selected checkout identity for %s/%s", (environmentId, id) => {
+    const local = makeProject(localEnvironmentId, { projectIcon: customIcon });
+    const selected = makeProject(environmentId, {
+      id: ProjectId.make(id),
+      title: "Selected checkout",
+      workspaceRoot: "/selected/repo",
+      faviconPath: "selected.svg",
+      projectIcon: null,
+    });
+    const group = projectGroup([local, selected]);
     const members = group.memberProjects.filter(
-      (member) => member.environmentId === remoteEnvironmentId,
+      (member) => member.environmentId === selected.environmentId && member.id === selected.id,
     );
     const scoped = scopeProjectSettingsGroup(group, members);
 
-    expect(scoped).toMatchObject({
-      environmentId: remoteEnvironmentId,
-      id: "remote-project",
-      workspaceRoot: "/remote/repo",
-      faviconPath: "remote.svg",
-      projectIcon: null,
-    });
-    expect(scoped.memberProjects).toHaveLength(1);
-    expect(group.projectIcon).toEqual(customIcon);
-  });
-
-  it("uses the selected physical checkout among siblings on the same environment", () => {
-    const group = projectGroup([
-      makeProject(localEnvironmentId, { projectIcon: customIcon }),
-      makeProject(localEnvironmentId, {
-        id: ProjectId.make("other-checkout"),
-        workspaceRoot: "/local/other-repo",
-        projectIcon: { kind: "emoji", emoji: "🐦" },
-      }),
-    ]);
-    const members = group.memberProjects.filter((member) => member.id === "other-checkout");
-    const scoped = scopeProjectSettingsGroup(group, members);
-
-    expect(scoped).toMatchObject({
-      environmentId: localEnvironmentId,
-      id: "other-checkout",
-      workspaceRoot: "/local/other-repo",
-      projectIcon: { kind: "emoji", emoji: "🐦" },
-    });
-    expect(scoped.memberProjects).toHaveLength(1);
+    expect(scoped).toMatchObject(selected);
+    expect(scoped.memberProjects).toBe(members);
+    expect(scoped.memberProjects).toMatchObject([selected]);
+    expect(group).toMatchObject(local);
   });
 });
 
