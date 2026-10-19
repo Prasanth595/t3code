@@ -1,6 +1,8 @@
 import { expect, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   MessageId,
   NodeId,
   type OrchestrationV2Command,
@@ -18,6 +20,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -39,6 +42,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { userFacingDispatchErrorMessage } from "./UserFacingErrors.ts";
 import { DispatchModeLimit, type DispatchModeRefusal } from "./DispatchModeLimit.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
@@ -426,6 +430,66 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect("rejects an oversized expanded steer to the caller before committing it", () => {
+  const dispatched: Array<string> = [];
+  const layerTest = layerDispatchChokepointTest(
+    ServerSettings.layerTest({
+      providerInstances: {
+        [ProviderInstanceId.make("codex_work")]: { driver: "codex", enabled: true },
+      },
+    }),
+  )(dispatched);
+  const citation = serializeAssistantCitation({
+    version: 1,
+    environmentId: EnvironmentId.make("environment:steer-citation"),
+    threadId: ThreadId.make("thread:steer-citation:source"),
+    messageId: MessageId.make("message:steer-citation:source"),
+    text: "Quoted claim",
+    start: 0,
+    end: 12,
+    prefix: "",
+    suffix: "",
+  });
+  const text = `${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - citation.length - 1)} ${citation}`;
+  const command = {
+    type: "message.dispatch",
+    commandId: CommandId.make("command:steer-citation:oversized"),
+    threadId: ThreadId.make("thread:thread-management:chokepoint"),
+    messageId: MessageId.make("message:steer-citation:oversized"),
+    text,
+    attachments: [],
+    dispatchMode: { type: "steer_active", targetRunId: RunId.make("run:active") },
+    createdBy: "user",
+    creationSource: "web",
+  } satisfies OrchestrationV2Command;
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const result = yield* Effect.result(threads.dispatch(command));
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(userFacingDispatchErrorMessage(result.failure)).toMatch(
+        /over the .*character limit.*quotes are expanded/,
+      );
+    }
+    expect(dispatched).toEqual([]);
+
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    yield* receipts.insertIfAbsent({
+      commandId: command.commandId,
+      threadId: command.threadId,
+      commandType: command.type,
+      acceptedAt: yield* DateTime.now,
+      resultSequence: 1,
+      status: "accepted",
+      error: null,
+    });
+    yield* threads.dispatch(command);
+    expect(dispatched).toEqual(["message.dispatch"]);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect(
   "a replay of an already-accepted command id dispatches despite the instance now being disabled",

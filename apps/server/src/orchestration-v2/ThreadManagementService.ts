@@ -51,6 +51,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { providerUserMessageText } from "./ProviderMessageText.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
@@ -670,10 +671,24 @@ const make = Effect.gen(function* () {
   };
 
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(
-      Effect.andThen(assertDispatchTargetEnabled(command)),
-      Effect.andThen(orchestrator.dispatch(command)),
-    );
+    Effect.gen(function* () {
+      yield* ensureCommandTranscripts(command);
+      yield* assertDispatchTargetEnabled(command);
+      // Receipts replay the original outcome regardless of the retry's text.
+      if (command.type === "message.dispatch" && !(yield* hasReceipt(command.commandId))) {
+        yield* providerUserMessageText(command).pipe(
+          Effect.mapError(
+            (cause) =>
+              new Orchestrator.OrchestratorCommandRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+      }
+      return yield* orchestrator.dispatch(command);
+    });
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(

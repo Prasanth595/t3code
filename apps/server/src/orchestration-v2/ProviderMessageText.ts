@@ -17,12 +17,8 @@ class ProviderInputTooLongError extends Schema.TaggedError<ProviderInputTooLongE
   }
 }
 
-/**
- * The text a provider receives for a persisted user message: composer context references
- * become their envelope and assistant citations carry their saved quotes. The stored message
- * keeps its links. A message that fit as links can exceed the provider input limit once its
- * quotes expand, so the expanded text is checked again, as the composer does before sending.
- */
+// Project context before expanding quotes, including citations inside context records.
+// The durable message keeps its clickable links.
 export const providerUserMessageText = (message: {
   readonly text: string;
   readonly context?: OrchestrationMessageContext | undefined;

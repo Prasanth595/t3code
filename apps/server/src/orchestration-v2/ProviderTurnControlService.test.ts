@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  ComposerContextId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -18,10 +19,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
-import {
-  expandAssistantCitationsForProvider,
-  serializeAssistantCitation,
-} from "@t3tools/shared/assistantCitations";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -337,7 +335,7 @@ it.effect(
     }),
 );
 
-it.effect("steers with cited assistant quotes expanded for the provider", () =>
+it.effect("steers with saved quotes expanded after composer context projection", () =>
   Effect.gen(function* () {
     const now = yield* DateTime.now;
     const threadId = ThreadId.make("thread:steer-citation");
@@ -362,7 +360,7 @@ it.effect("steers with cited assistant quotes expanded for the provider", () =>
       updatedAt: now,
     };
     const projection = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
-    const text = `Revisit ${serializeAssistantCitation({
+    const citation = serializeAssistantCitation({
       version: 1,
       environmentId: EnvironmentId.make("environment:steer-citation"),
       threadId,
@@ -372,16 +370,40 @@ it.effect("steers with cited assistant quotes expanded for the provider", () =>
       end: 18,
       prefix: "",
       suffix: "",
-    })}`;
-    const message = {
+    });
+    const text = `Revisit ${citation} with [Terminal](t3-context://v1/terminal/ctx_quote)`;
+    const message: OrchestrationV2ConversationMessage = {
       id: MessageId.make("message:steer-citation"),
+      threadId,
+      runId: RunId.make("run:steer-citation"),
+      nodeId: null,
+      role: "user",
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
       text,
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            contextId: ComposerContextId.make("ctx_quote"),
+            kind: "terminal",
+            label: "Terminal",
+            terminalId: "term-1",
+            terminalLabel: "Terminal",
+            lineStart: 1,
+            lineEnd: 1,
+            text: citation,
+          },
+        ],
+      },
       attachments: [],
       createdBy: "user",
       creationSource: "web",
-    } as unknown as OrchestrationV2ConversationMessage;
+    };
     const steered = yield* Ref.make<ReadonlyArray<string>>([]);
-    const runtime: ProviderAdapterV2SessionRuntime = {
+    const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId: providerInstanceId,
       driver,
       providerSessionId,
@@ -439,6 +461,15 @@ it.effect("steers with cited assistant quotes expanded for the provider", () =>
       });
     }).pipe(Effect.provide(layerControl));
 
-    assert.deepEqual(yield* Ref.get(steered), [expandAssistantCitationsForProvider(text)]);
+    const texts = yield* Ref.get(steered);
+    assert.lengthOf(texts, 1);
+    const sent = texts[0]!;
+    assert.include(sent, "Revisit [assistant-quote-1] with [Terminal: Terminal; ref=ctx_quote]");
+    assert.include(sent, '<context kind="terminal" id="ctx_quote">');
+    assert.include(sent, "1 | [assistant-quote-1]");
+    assert.include(sent, '"text": "Ship it on Friday."');
+    assert.notInclude(sent, "t3-citation:");
+    assert.equal(message.text, text);
+    assert.include(JSON.stringify(message.context), citation);
   }),
 );

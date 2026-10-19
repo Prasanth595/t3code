@@ -9,6 +9,7 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
+import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 
 import * as Config from "effect/Config";
 
@@ -143,7 +144,12 @@ export function historicalMessage(
   switch (item.type) {
     // History is provider input; the stored message keeps its clickable citations.
     case "user_message":
-      text = expandAssistantCitationsForProvider(item.text);
+      text = expandAssistantCitationsForProvider(
+        projectComposerContextForProvider({
+          text: item.text,
+          records: item.context?.records ?? [],
+        }),
+      );
       break;
     case "assistant_message":
       text = item.text;

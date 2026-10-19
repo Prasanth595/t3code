@@ -3,11 +3,13 @@ import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudge
 import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
+  ComposerContextId,
   type ChatAttachment,
   EnvironmentId,
   EventId,
   MessageId,
   type ModelSelection,
+  type OrchestrationMessageContext,
   type OrchestrationV2Command,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
@@ -22,10 +24,7 @@ import {
   TurnItemId,
   ProviderDriverKind,
 } from "@t3tools/contracts";
-import {
-  expandAssistantCitationsForProvider,
-  serializeAssistantCitation,
-} from "@t3tools/shared/assistantCitations";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -2959,8 +2958,33 @@ describe("orchestration v2 provider switching", () => {
           end: 28,
           prefix: "",
           suffix: "",
-        })}`;
-        const expandedPrompt = expandAssistantCitationsForProvider(citedPrompt);
+        })} with [Terminal](t3-context://v1/terminal/ctx_handoff_quote)`;
+        const context: OrchestrationMessageContext = {
+          version: 1,
+          records: [
+            {
+              version: 1,
+              contextId: ComposerContextId.make("ctx_handoff_quote"),
+              kind: "terminal",
+              label: "Terminal",
+              terminalId: "term-1",
+              terminalLabel: "Terminal",
+              lineStart: 1,
+              lineEnd: 1,
+              text: serializeAssistantCitation({
+                version: 1,
+                environmentId: EnvironmentId.make("environment:citations"),
+                threadId,
+                messageId: MessageId.make("message:citations:context-source"),
+                text: "Context-only quote.",
+                start: 0,
+                end: 19,
+                prefix: "",
+                suffix: "",
+              }),
+            },
+          ],
+        };
         const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -2982,7 +3006,12 @@ describe("orchestration v2 provider switching", () => {
         const projection = yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const send = (ordinal: number, text: string, modelSelection: ModelSelection) =>
+          const send = (
+            ordinal: number,
+            text: string,
+            modelSelection: ModelSelection,
+            context?: OrchestrationMessageContext,
+          ) =>
             Effect.gen(function* () {
               yield* orchestrator.dispatch({
                 type: "message.dispatch",
@@ -2992,6 +3021,7 @@ describe("orchestration v2 provider switching", () => {
                 createdBy: "user",
                 creationSource: "web",
                 text,
+                ...(context === undefined ? {} : { context }),
                 attachments: [],
                 modelSelection,
                 dispatchMode: { type: "start_immediately" },
@@ -3021,7 +3051,7 @@ describe("orchestration v2 provider switching", () => {
             branch: null,
             worktreePath: cwd,
           });
-          yield* send(1, citedPrompt, CODEX_MODEL_SELECTION);
+          yield* send(1, citedPrompt, CODEX_MODEL_SELECTION, context);
           yield* send(2, "Continue", CLAUDE_MODEL_SELECTION);
           return yield* orchestrator.getThreadProjection(threadId);
         }).pipe(
@@ -3034,15 +3064,28 @@ describe("orchestration v2 provider switching", () => {
         );
         const turns = yield* Ref.get(capturedTurns);
 
-        assert.equal(turns[0]?.text, expandedPrompt);
+        assert.lengthOf(turns, 2);
+        assert.include(turns[0]?.text ?? "", "Why [assistant-quote-1]");
         assert.include(turns[1]?.text ?? "", "Context handoff (full_thread_summary):");
-        assert.include(turns[1]?.text ?? "", expandedPrompt);
-        for (const turn of turns) assert.notInclude(turn.text, "t3-citation:");
-        // The stored message keeps its clickable link.
+        for (const turn of turns) {
+          assert.include(turn.text, '"text": "The release color is violet."');
+          assert.include(turn.text, '"comment": "Is this still true?"');
+          assert.include(turn.text, '"text": "Context-only quote."');
+          assert.include(turn.text, '<context kind="terminal" id="ctx_handoff_quote">');
+          assert.notInclude(turn.text, "t3-citation:");
+          assert.notInclude(turn.text, "t3-context:");
+        }
+        assert.equal(
+          projection.messages.find(
+            (message) => message.id === MessageId.make("message:citations:1"),
+          )?.text,
+          citedPrompt,
+        );
         assert.equal(
           projection.turnItems.find((item) => item.type === "user_message")?.text,
           citedPrompt,
         );
+        assert.deepEqual(projection.messages[0]?.context, context);
       }),
     ),
   );
