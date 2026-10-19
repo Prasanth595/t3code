@@ -147,6 +147,10 @@ const statusRoute = factoryRoute(
     const paths = yield* FactoryPaths;
     const attention = yield* (yield* Attention).list();
     const passRunning = yield* loop.passRunning;
+    const runningThreads = yield* loop.runningThreads.pipe(
+      Effect.tapError((error) => Effect.logWarning(`status: ${error.message}`, error.cause)),
+      Effect.orElseSucceed(() => null),
+    );
     const nowMs = yield* Clock.currentTimeMillis;
     const report = yield* guarded(() =>
       buildStatus({
@@ -157,6 +161,7 @@ const statusRoute = factoryRoute(
         dataDir: paths.factoryDir,
         nowMs,
         passRunning,
+        runningThreads,
         attention,
       }),
     );

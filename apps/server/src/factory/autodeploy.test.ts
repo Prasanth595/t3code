@@ -35,9 +35,14 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-const status = (runs: Array<{ state: string | null; unreadable?: boolean }>, running = false) => ({
+const status = (
+  runs: Array<{ state: string | null; unreadable?: boolean }>,
+  running = false,
+  threads: number | null = 0,
+) => ({
   state: "running",
   passes: { running },
+  threads: { running: threads },
   runs: runs.map((run, i) => ({ id: `o/r#${i}`, unreadable: false, ...run })),
 });
 const IDLE = status([]);
@@ -224,6 +229,28 @@ describe("autodeploy.sh", () => {
     expect(NodeFS.existsSync(failedFile())).toBe(false);
   });
 
+  it.each([
+    ["an agent at work in a thread", 2],
+    ["a thread count T3 could not read", null],
+  ])("waits without deploying while there is %s", async (_name, threads) => {
+    commitToOrigin("second");
+    statusBodies = [status([], false, threads)];
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("an agent is at work in a thread");
+  });
+
+  it("deploys against a server from before the thread count", async () => {
+    const sha = commitToOrigin("second");
+    const { threads: _threads, ...older } = IDLE;
+    statusBodies = [older];
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+  });
+
   it("deploys when the only unfinished runs wait on people", async () => {
     const sha = commitToOrigin("second");
     statusBodies = [status([{ state: "pr-open" }, { state: "needs-info" }, { state: "stuck" }])];
@@ -285,14 +312,23 @@ describe("autodeploy.sh", () => {
     expect(result.output).toContain("/api/factory/status");
   });
 
-  it("records a failed sha, names it in one line and does not retry it until main moves", async () => {
+  it("tries a failing build on three ticks, then gives the sha up until main moves", async () => {
     const before = current();
     const bad = commitToOrigin("bad");
     const badShort = git(clone, "rev-parse", "--short", bad);
+    for (const attempt of [1, 2]) {
+      const retried = await runAutodeploy({ DEPLOY_FAIL: "1" });
+      expect(retried.status).not.toBe(0);
+      expect(lines(retried.output)).toHaveLength(1);
+      expect(retried.output).toContain(`build of ${badShort} failed (attempt ${attempt} of 3)`);
+      expect(NodeFS.existsSync(failedFile())).toBe(false);
+    }
     const failed = await runAutodeploy({ DEPLOY_FAIL: "1" });
     expect(failed.status).not.toBe(0);
     expect(lines(failed.output)).toHaveLength(1);
-    expect(failed.output).toContain(badShort);
+    expect(failed.output).toContain(`deploy of ${badShort} failed`);
+    expect(failed.output).toContain("until main moves");
+    expect(NodeFS.readFileSync(failedFile(), "utf8").trim()).toBe(bad);
     expect(current()).toBe(before);
 
     const again = await runAutodeploy();
@@ -319,6 +355,15 @@ describe("autodeploy.sh", () => {
   };
   const deadPid = () =>
     NodeChildProcess.spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
+
+  it("deploys a sha whose build failed once and then passed", async () => {
+    const sha = commitToOrigin("second");
+    expect((await runAutodeploy({ DEPLOY_FAIL: "1" })).status).not.toBe(0);
+    const next = await runAutodeploy();
+    expect(next.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "autodeploy.attempts"))).toBe(false);
+  });
 
   it("records a sha whose install fails, releases both locks and does not retry it", async () => {
     const before = current();
@@ -347,7 +392,9 @@ describe("autodeploy.sh", () => {
     const result = await runAutodeploy({ BUILD_HANG: hung, T3FAC_BUILD_LIMIT: "1" });
     expect(result.status).toBe(1);
     expect(lines(result.output)).toHaveLength(1);
-    expect(result.output).toContain(`build of ${short} took over 1s`);
+    expect(result.output).toContain(
+      `build of ${short} took over 1s and was stopped (attempt 1 of 3)`,
+    );
     expect(() => process.kill(Number(NodeFS.readFileSync(hung, "utf8")), 0)).toThrow();
     expect(NodeFS.existsSync(failedFile())).toBe(false);
     expect(lockExists("autodeploy.lock")).toBe(false);
@@ -441,6 +488,33 @@ describe("autodeploy.sh", () => {
     expect(result.status).toBe(0);
     expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
     expect(lockExists()).toBe(false);
+    expect(lockExists("autodeploy.lock")).toBe(false);
+  });
+
+  it("leaves a stale lock alone while another process is taking it over", async () => {
+    commitToOrigin("second");
+    NodeFS.symlinkSync(deadPid(), lockPath("autodeploy.lock"));
+    NodeFS.mkdirSync(lockPath("autodeploy.lock.takeover"));
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.deploys).toEqual([]);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("another autodeploy is running");
+    expect(NodeFS.existsSync(lockPath("autodeploy.lock.takeover"))).toBe(true);
+  });
+
+  it("clears a takeover guard left over a minute ago and takes the lock", async () => {
+    const sha = commitToOrigin("second");
+    NodeFS.symlinkSync(deadPid(), lockPath("autodeploy.lock"));
+    const guard = lockPath("autodeploy.lock.takeover");
+    NodeFS.mkdirSync(guard);
+    // Five minutes before it was made, in seconds.
+    const old = NodeFS.statSync(guard).mtimeMs / 1000 - 5 * 60;
+    NodeFS.utimesSync(guard, old, old);
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+    expect(NodeFS.existsSync(guard)).toBe(false);
     expect(lockExists("autodeploy.lock")).toBe(false);
   });
 

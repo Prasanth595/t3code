@@ -137,6 +137,8 @@ export class FactoryLoop extends Context.Service<
      * nothing answers an empty list for it. Reading it changes nothing the pass reports.
      */
     readonly watchedRepos: Effect.Effect<WatchedListing, WatchedRepos.WatchedReposError>;
+    /** How many threads have an agent at work (FactorySessions' `runningThreads`). */
+    readonly runningThreads: Effect.Effect<number, T3Sessions.SessionsError>;
   }
 >()("t3/factory/FactoryLoop") {}
 
@@ -928,6 +930,7 @@ const startFactory = (options: RuntimeOptions) =>
       },
       reload,
       save,
+      runningThreads: sessions.runningThreads,
       repoConfigs: Effect.sync(() => new Map(readings)),
       watchedRepos,
     } satisfies FactoryLoop["Service"];

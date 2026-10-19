@@ -9,10 +9,11 @@
 #   `+fac.<sha>` or the commit whose deploy last failed;
 # - after a deploy or rollback by hand, records origin/main as that commit, so what the person
 #   installed stays until main moves;
-# - asks GET /api/factory/status whether a run is in progress, and waits for the next tick when
-#   one is or when it cannot tell;
+# - asks GET /api/factory/status whether a factory run is in progress or an agent is at work in
+#   any thread, and waits for the next tick when one is or when it cannot tell;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
-#   with deploy.sh, whose health check rolls back a bad version.
+#   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
+#   its limit is tried on the next two ticks before the commit is given up on.
 #
 # Prints one line per deploy, failure or wait, which the job appends to autodeploy.log; the
 # build's own output goes to autodeploy-build.log, replaced on each attempt.
@@ -24,6 +25,9 @@ logs="$HOME/Library/Logs/t3fac"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
 hold_file="$root/autodeploy.hold"
+# `<sha> <n>`: the commit whose build has failed n times in a row.
+attempts_file="$root/autodeploy.attempts"
+build_attempts=3
 tick_lock="$root/autodeploy.lock"
 deploy_lock="$root/deploy.lock"
 job=io.github.rawphp.t3fac.autodeploy
@@ -94,9 +98,10 @@ fi
 hand_deployed || exit 0
 if [[ $(cat "$failed_file" 2> /dev/null || true) == "$target" ]]; then exit 0; fi
 
-# Returns 0 when no factory run is in progress. Otherwise prints why it is not deploying and
-# returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
-# person, including one whose file cannot be read), a pass running, or a status it cannot read.
+# Returns 0 when nothing would be cut off by the restart. Otherwise prints why it is not deploying
+# and returns 1: a run that may have a session or gate at work (any unfinished run not waiting on a
+# person, including one whose file cannot be read), a pass running, a thread with an agent at
+# work, or a status it cannot read.
 factory_idle() {
   local body busy
   if [[ -z $token ]]; then
@@ -109,21 +114,38 @@ factory_idle() {
     say "not deploying $short: cannot read http://127.0.0.1:$port/api/factory/status"
     return 1
   fi
-  if ! busy=$(jq -r '.passes.running == true or any(.runs[];
-      .unreadable or ((.state // "") | IN("pr-open", "needs-info", "stuck") | not))' \
-    <<< "$body" 2> /dev/null); then
+  # A server from before the thread count has no `threads`; it counts as none, so a rollback to
+  # one does not stop autodeploy for good. A count T3 could not read is null, and waits.
+  if ! busy=$(jq -r 'if .passes.running == true or any(.runs[];
+      .unreadable or ((.state // "") | IN("pr-open", "needs-info", "stuck") | not))
+    then "a factory run is in progress"
+    elif .threads != null and .threads.running != 0 then "an agent is at work in a thread"
+    else "" end' <<< "$body" 2> /dev/null); then
     say "not deploying $short: cannot read the factory status"
     return 1
   fi
-  if [[ $busy != false ]]; then
-    say "waiting to deploy $short: a factory run is in progress"
+  if [[ -n $busy ]]; then
+    say "waiting to deploy $short: $busy"
     return 1
   fi
 }
 
 failed() {
+  rm -f "$attempts_file"
   echo "$target" > "$failed_file"
-  say "deploy of $short failed; ${installed:+still on $installed; }see $build_log"
+  say "deploy of $short failed; ${installed:+still on $installed; }not trying it again until main moves; see $build_log"
+  exit 1
+}
+
+# A build can fail on the network as well as on the commit, so it is tried $build_attempts times,
+# one a tick, before failed gives the commit up. $1 says how this attempt failed.
+build_failed() {
+  local sha count n=1
+  read -r sha count 2> /dev/null < "$attempts_file" || true
+  if [[ ${sha:-} == "$target" && ${count:-} =~ ^[0-9]+$ ]]; then n=$((count + 1)); fi
+  ((n < build_attempts)) || failed
+  echo "$target $n" > "$attempts_file"
+  say "build of $short $1 (attempt $n of $build_attempts); trying again next tick; see $build_log"
   exit 1
 }
 
@@ -165,12 +187,8 @@ export T3FAC_SKIP_RELOAD=$job
 : > "$build_log"
 status=0
 build >> "$build_log" 2>&1 || status=$?
-if ((status == 124)); then
-  # Most likely the network, so the commit is tried again on the next tick.
-  say "build of $short took over ${build_limit}s and was stopped; trying again next tick"
-  exit 1
-fi
-((status == 0)) || failed
+if ((status == 124)); then build_failed "took over ${build_limit}s and was stopped"; fi
+((status == 0)) || build_failed failed
 
 # During the build a run may have started, or a person may have deployed by hand or be doing so.
 factory_idle || exit 0
@@ -183,4 +201,5 @@ hand_deployed || exit 0
 export T3FAC_DEPLOY_LOCK=$$
 
 (cd "$clone" && factory/scripts/deploy.sh) >> "$build_log" 2>&1 || failed
+rm -f "$attempts_file"
 say "deployed $short"

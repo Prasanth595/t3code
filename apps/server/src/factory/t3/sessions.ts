@@ -172,6 +172,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "send",
     "archive",
     "remove-worktree",
+    "running-threads",
   ]),
   cause: Schema.Defect(),
 }) {
@@ -336,6 +337,11 @@ export class FactorySessions extends Context.Service<
      * left behind (a restart mid-wait) fails, naming the path, for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
+    /**
+     * How many unarchived threads, a person's or the factory's, have an agent at work: a run
+     * preparing, starting or running. A run waiting on a person does not count.
+     */
+    readonly runningThreads: Effect.Effect<number, SessionsError>;
   }
 >()("t3/factory/t3/sessions/FactorySessions") {}
 
@@ -566,6 +572,21 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
     });
 
+  const runningThreads: FactorySessions["Service"]["runningThreads"] = projections
+    .getShellSnapshot({ location: "active" })
+    .pipe(
+      Effect.map(
+        ({ threads }) =>
+          threads.filter(
+            ({ activityRunStatus }) =>
+              activityRunStatus === "preparing" ||
+              activityRunStatus === "starting" ||
+              activityRunStatus === "running",
+          ).length,
+      ),
+      Effect.mapError((cause) => new SessionsError({ operation: "running-threads", cause })),
+    );
+
   return FactorySessions.of({
     findProject,
     launch,
@@ -574,6 +595,7 @@ export const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
+    runningThreads,
   });
 });
 
