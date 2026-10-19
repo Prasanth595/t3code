@@ -162,9 +162,7 @@ export const layer = Layer.effect(
       },
     );
 
-    // The startup scan only sees listeners that exist at that moment. WSL's
-    // localhost relay can bind the same 127.0.0.1 port seconds later, so move
-    // to the next free port unless the user pinned one with T3CODE_PORT.
+    // WSL localhost relays can appear after the startup scan. Only move unpinned ports.
     const handlePrimaryPortTaken = Effect.fn("desktop.backendPool.primaryPortTaken")(function* (
       port: number,
     ) {

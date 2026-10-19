@@ -158,9 +158,7 @@ export const ExecutionEnvironmentDescriptor = Schema.Struct({
   platform: ExecutionEnvironmentPlatform,
   serverVersion: TrimmedNonEmptyString,
   orchestrationProtocolVersion: Schema.optionalKey(Schema.Int),
-  /** The `desktopLaunchId` from the bootstrap envelope of a desktop-launched
-      backend. Public, not a secret: the desktop compares it with the id it
-      expects before calling the server ready or starting a token exchange. */
+  /** Public correlation id from a desktop-launched backend's bootstrap envelope. */
   desktopLaunchId: Schema.optionalKey(TrimmedNonEmptyString),
   capabilities: ExecutionEnvironmentCapabilities,
 });

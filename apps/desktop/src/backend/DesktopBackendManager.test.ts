@@ -296,6 +296,7 @@ describe("DesktopBackendManager", () => {
           cwd: baseConfig.cwd,
           httpBaseUrl: baseConfig.httpBaseUrl,
           timeout: Duration.millis(50),
+          desktopLaunchId: baseConfig.bootstrap.desktopLaunchId,
         }).pipe(Effect.flip, Effect.forkChild);
 
         const request = yield* Deferred.await(requested);

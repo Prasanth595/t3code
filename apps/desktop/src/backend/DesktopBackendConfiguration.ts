@@ -792,7 +792,6 @@ export const make = Effect.gen(function* () {
     return {
       bootstrapToken,
       bootstrapSecret,
-      // Every resolve is one launch, so a restart gets a new id too.
       launchId: Hex.encode(yield* crypto.randomBytes(16)),
       observabilitySettings,
     } satisfies SharedBootstrapInput;

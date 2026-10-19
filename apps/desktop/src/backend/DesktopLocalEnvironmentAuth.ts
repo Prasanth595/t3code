@@ -60,11 +60,6 @@ export class DesktopLocalEnvironmentAuthForeignServerError extends Schema.Tagged
   }
 }
 
-class OwnershipCheckUnavailableError extends Schema.TaggedError<OwnershipCheckUnavailableError>()(
-  "OwnershipCheckUnavailableError",
-  { cause: Schema.Defect() },
-) {}
-
 export const DesktopLocalEnvironmentAuthError = Schema.Union([
   DesktopLocalEnvironmentAuthBackendNotConfiguredError,
   DesktopLocalEnvironmentAuthSessionBootstrapError,
@@ -112,35 +107,31 @@ export const make = Effect.gen(function* () {
         if (!credential) {
           return yield* new DesktopLocalEnvironmentAuthBackendNotConfiguredError();
         }
-        // Readiness already checked this, but the exchange can run much later,
-        // after another server has taken the port. Every attempt checks again;
-        // the check and the POST are still two separate requests.
-        const session = yield* DesktopBackendManager.checkBackendOwnership({
-          httpBaseUrl: config.httpBaseUrl,
-          desktopLaunchId: config.bootstrap.desktopLaunchId,
+        // Recheck before each POST, including retries; the port may have changed since readiness.
+        const session = yield* Effect.gen(function* () {
+          const ownership = yield* DesktopBackendManager.checkBackendOwnership({
+            httpBaseUrl: config.httpBaseUrl,
+            desktopLaunchId: config.bootstrap.desktopLaunchId,
+          });
+          if (ownership === "foreign") {
+            return yield* new DesktopLocalEnvironmentAuthForeignServerError({
+              port: config.bootstrap.port,
+            });
+          }
+          return yield* bootstrapRemoteBearerSession({
+            httpBaseUrl: config.httpBaseUrl.href,
+            credential,
+            clientMetadata: {
+              label: "T3 Code Desktop",
+              deviceType: "desktop",
+            },
+          });
         }).pipe(
-          Effect.mapError((cause) => new OwnershipCheckUnavailableError({ cause })),
-          Effect.flatMap(
-            Effect.fnUntraced(function* (ownership) {
-              if (ownership === "foreign") {
-                return yield* new DesktopLocalEnvironmentAuthForeignServerError({
-                  port: config.bootstrap.port,
-                });
-              }
-              return yield* bootstrapRemoteBearerSession({
-                httpBaseUrl: config.httpBaseUrl.href,
-                credential,
-                clientMetadata: {
-                  label: "T3 Code Desktop",
-                  deviceType: "desktop",
-                },
-              });
-            }),
-          ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.retry({
             while: (error) =>
-              error._tag === "OwnershipCheckUnavailableError" ||
+              error._tag === "HttpClientError" ||
+              error._tag === "TimeoutError" ||
               (error._tag !== "DesktopLocalEnvironmentAuthForeignServerError" &&
                 isTransientBearerBootstrapError(error)),
             schedule: Schedule.spaced(BOOTSTRAP_TRANSIENT_RETRY_INTERVAL),

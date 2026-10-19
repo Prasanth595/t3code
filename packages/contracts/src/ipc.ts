@@ -359,8 +359,6 @@ export interface DesktopEnvironmentBootstrap {
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
   bootstrapToken?: string;
-  // The id this backend run echoes in its descriptor. The renderer compares
-  // it with the responder's descriptor before exchanging `bootstrapToken`.
   desktopLaunchId?: string;
 }
 
