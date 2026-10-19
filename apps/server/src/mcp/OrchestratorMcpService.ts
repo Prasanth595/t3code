@@ -123,6 +123,7 @@ const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
+  readonly advertisedModels: ServerProvider["models"];
   readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
 }
 
@@ -1217,14 +1218,6 @@ const make = Effect.gen(function* () {
      * one checked for a receipt.
      */
     readonly skipProjectEnablementFilter?: boolean;
-    /**
-     * When the target switches provider instance without naming a model, keep
-     * the inherited model instead of taking the new provider's first model,
-     * failing with `model_unavailable` when the new provider does not
-     * advertise it. Scheduled task updates set this so a provider-only change
-     * never silently swaps the stored model.
-     */
-    readonly keepInheritedModelAcrossProviders?: boolean;
   }): Effect.Effect<ResolvedTarget, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       const requestedInstanceId = input.target?.providerInstanceId;
@@ -1303,23 +1296,9 @@ const make = Effect.gen(function* () {
 
       const inheritedSelection = input.parent.thread.modelSelection;
       const requestedModel = input.target?.model;
-      const keepInheritedModel =
-        requestedModel === undefined &&
-        instanceId !== inheritedSelection.instanceId &&
-        input.keepInheritedModelAcrossProviders === true;
-      if (
-        keepInheritedModel &&
-        provider.models.length > 0 &&
-        !provider.models.some((candidate) => candidate.slug === inheritedSelection.model)
-      ) {
-        return yield* failure(
-          "model_unavailable",
-          `Model ${inheritedSelection.model} is not advertised by provider ${instanceId}; name a model in target to switch providers.`,
-        );
-      }
       const model =
         requestedModel ??
-        (instanceId === inheritedSelection.instanceId || keepInheritedModel
+        (instanceId === inheritedSelection.instanceId
           ? inheritedSelection.model
           : provider?.models[0]?.slug);
       if (model === undefined) {
@@ -1362,44 +1341,38 @@ const make = Effect.gen(function* () {
             : requestedOptions === undefined
               ? { instanceId, model }
               : { instanceId, model, options: requestedOptions },
+        advertisedModels: provider.models,
         supportedRuntimeModes: provider.supportedRuntimeModes,
       };
     });
 
-  /**
-   * The selection a scheduled task's runs use when the caller names a target:
-   * resolved like a work-starting tool's target, with `inherited` standing in
-   * for the parent thread's selection.
-   */
-  const resolveScheduledTaskModelSelection = (input: {
+  const resolveScheduledTaskTarget = Effect.fnUntraced(function* (input: {
     readonly projectId: ProjectId;
     readonly inherited: ModelSelection;
     readonly target: OrchestratorMcpTarget;
-    readonly keepInheritedModelAcrossProviders?: boolean;
-  }) =>
-    Effect.gen(function* () {
-      const { modelSelection } = yield* resolveTargetRechecking({
-        parent: { thread: { projectId: input.projectId, modelSelection: input.inherited } },
-        target: input.target,
-        providers: yield* loadProviders,
-        ...(input.keepInheritedModelAcrossProviders === true
-          ? { keepInheritedModelAcrossProviders: true }
-          : {}),
-      });
-      const enabled = yield* threadManagement.isProviderInstanceEnabledForProject({
-        projectId: input.projectId,
-        instanceId: modelSelection.instanceId,
-      });
-      if (!enabled) {
-        return yield* threadManagementFailure(
-          new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-            projectId: input.projectId,
-            instanceId: modelSelection.instanceId,
-          }),
-        );
-      }
-      return modelSelection;
+  }) {
+    const target = yield* resolveTargetRechecking({
+      parent: { thread: { projectId: input.projectId, modelSelection: input.inherited } },
+      target: input.target,
+      providers: yield* loadProviders,
     });
+    // Driver-only resolution already filters candidates by project enablement.
+    if (
+      (input.target.providerInstanceId !== undefined || input.target.driverKind === undefined) &&
+      !(yield* threadManagement.isProviderInstanceEnabledForProject({
+        projectId: input.projectId,
+        instanceId: target.modelSelection.instanceId,
+      }))
+    ) {
+      return yield* threadManagementFailure(
+        new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+          projectId: input.projectId,
+          instanceId: target.modelSelection.instanceId,
+        }),
+      );
+    }
+    return target;
+  });
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined
@@ -1724,14 +1697,18 @@ const make = Effect.gen(function* () {
         }
         const inherited =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
-        const modelSelection =
+        const target =
           input.target === undefined
-            ? inherited
-            : yield* resolveScheduledTaskModelSelection({
+            ? undefined
+            : yield* resolveScheduledTaskTarget({
                 projectId,
                 inherited,
                 target: input.target,
               });
+        const runtimeMode =
+          target === undefined
+            ? limits.runtimeMode
+            : yield* resolveRuntimeMode(limits.runtimeMode, undefined, target);
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1743,8 +1720,8 @@ const make = Effect.gen(function* () {
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
           workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
-          modelSelection,
-          runtimeMode: limits.runtimeMode,
+          modelSelection: target?.modelSelection ?? inherited,
+          runtimeMode,
           interactionMode: limits.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
@@ -1809,15 +1786,32 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        const modelSelection =
+        const target =
           input.target === undefined
-            ? existing.modelSelection
-            : yield* resolveScheduledTaskModelSelection({
+            ? undefined
+            : yield* resolveScheduledTaskTarget({
                 projectId: existing.projectId,
                 inherited: existing.modelSelection,
-                target: input.target,
-                keepInheritedModelAcrossProviders: true,
+                target: {
+                  ...input.target,
+                  model: input.target.model ?? existing.modelSelection.model,
+                },
               });
+        if (
+          target !== undefined &&
+          input.target?.model === undefined &&
+          target.modelSelection.instanceId !== existing.modelSelection.instanceId &&
+          !target.advertisedModels.some((model) => model.slug === existing.modelSelection.model)
+        ) {
+          return yield* failure(
+            "model_unavailable",
+            `Model ${existing.modelSelection.model} is not advertised by provider ${target.modelSelection.instanceId}; name a model in target to switch providers.`,
+          );
+        }
+        const runtimeMode =
+          target === undefined
+            ? existing.runtimeMode
+            : yield* resolveRuntimeMode(existing.runtimeMode, undefined, target);
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.
@@ -1834,8 +1828,8 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection,
-          runtimeMode: existing.runtimeMode,
+          modelSelection: target?.modelSelection ?? existing.modelSelection,
+          runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,

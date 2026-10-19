@@ -546,12 +546,12 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
-  /**
-   * Provider, model, and options each run uses. Resolved like a delegated
-   * task's target, against the calling thread's selection (or the project
-   * default when there is no calling thread). Omit to copy that selection.
-   */
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(
+    OrchestratorMcpTarget.annotate({
+      description:
+        "Provider, model, and options for runs that launch a fresh thread. Omit to inherit the calling thread's selection, or the project default when there is no calling thread. Options carry over only when the provider and model stay the same.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -608,16 +608,12 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
-  /**
-   * Changes the provider, model, or options the task's runs use. Resolved
-   * like a delegated task's target, against the task's stored selection. A
-   * provider-only change keeps the stored model when the new provider
-   * advertises it and fails with `model_unavailable` otherwise. Omitted
-   * options are retained only when both the provider and the model stay the
-   * same.
-   * Omit to leave the selection unchanged.
-   */
-  target: Schema.optional(OrchestratorMcpTarget),
+  target: Schema.optional(
+    OrchestratorMcpTarget.annotate({
+      description:
+        "Change the provider, model, or options for runs that launch a fresh thread. Omitted fields inherit the stored selection. A provider-only change keeps the stored model if the destination advertises it, otherwise it fails with model_unavailable. Options carry over only when the provider and model stay the same.",
+    }),
+  ),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;
