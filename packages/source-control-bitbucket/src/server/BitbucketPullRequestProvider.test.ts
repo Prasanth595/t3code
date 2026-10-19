@@ -244,8 +244,12 @@ it.effect("serves only Bitbucket Cloud hosts unless an API base url is configure
             (host) => servesHost?.(host) === true,
           ),
         ),
-        Effect.provide(Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({})),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+        Effect.provide(
+          Layer.merge(
+            Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env })),
+          ),
+        ),
       );
 
     expect(yield* servedHosts({})).toEqual(["bitbucket.org", "altssh.bitbucket.org"]);

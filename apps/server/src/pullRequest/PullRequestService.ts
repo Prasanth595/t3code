@@ -479,6 +479,7 @@ function withRateLimitBackoff(
       ? {}
       : { mergeMessageRewrite: api.mergeMessageRewrite }),
     ...(api.repositoryKey === undefined ? {} : { repositoryKey: api.repositoryKey }),
+    ...(api.servesHost === undefined ? {} : { servesHost: api.servesHost }),
     getViewer:
       options?.viewerAllowsPause === true
         ? interactive("getViewer", api.getViewer)

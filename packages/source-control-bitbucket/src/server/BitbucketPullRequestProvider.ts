@@ -106,7 +106,7 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
 
 export const make = Effect.gen(function* () {
   const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
-  const servesHost = yield* BitbucketApi.BitbucketServesHost;
+  const servesHost = yield* BitbucketApi.BitbucketServesHost.pipe(Effect.orDie);
 
   const fail =
     (operation: string) => (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
