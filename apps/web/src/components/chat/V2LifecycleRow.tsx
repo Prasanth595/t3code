@@ -113,27 +113,13 @@ export function V2LifecycleRow(props: {
       item.beforeTokenCount === undefined && item.afterTokenCount === undefined
         ? null
         : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
-    const label = contextCompactionStatusLabel(item);
-    const detail = (
-      <>
-        {item.summary ?? tokenDetail}
-        {item.status === "running" ? (
-          <>
-            {(item.summary ?? tokenDetail) ? " · " : null}
-            <AgentElapsed
-              agent={{
-                status: "running",
-                startedAt: item.startedAt === null ? null : DateTime.formatIso(item.startedAt),
-                completedAt: null,
-              }}
-              compact
-              warnAfterSeconds={120}
-            />
-          </>
-        ) : null}
-      </>
+    return (
+      <TimelineSystemDivider
+        label={contextCompactionStatusLabel(item)}
+        detail={item.summary ?? tokenDetail}
+        icon={MinusIcon}
+      />
     );
-    return <TimelineSystemDivider label={label} detail={detail} icon={MinusIcon} />;
   }
   if (item.type === "handoff") {
     return (

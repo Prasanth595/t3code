@@ -554,6 +554,7 @@ type MessagesTimelineRowContent =
       kind: "context-compaction";
       id: string;
       createdAt: string;
+      startedAt: string;
       label: string;
       tokenCounts: ReturnType<typeof contextCompactionTokenCounts>;
       active: boolean;
@@ -1572,6 +1573,10 @@ export function deriveMessagesTimelineRows(input: {
         kind: "context-compaction",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
+        startedAt:
+          compaction?.type === "compaction" && compaction.startedAt !== null
+            ? DateTime.formatIso(compaction.startedAt)
+            : timelineEntry.createdAt,
         label: timelineEntry.entry.label,
         tokenCounts:
           compaction?.type === "compaction" ? contextCompactionTokenCounts(compaction) : null,
@@ -2170,7 +2175,12 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
 
     case "context-compaction": {
       const bc = b as typeof a;
-      return a.createdAt === bc.createdAt && a.label === bc.label && a.active === bc.active;
+      return (
+        a.createdAt === bc.createdAt &&
+        a.startedAt === bc.startedAt &&
+        a.label === bc.label &&
+        a.active === bc.active
+      );
     }
 
     case "proposed-plan":

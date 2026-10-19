@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
+import * as DateTime from "effect/DateTime";
 import { act, createRef, Profiler, useState, type ComponentProps, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -317,6 +318,77 @@ describe("MessagesTimeline work rows", () => {
   it("renders context compaction entries in the normal work log", async () => {
     await renderTimeline([work("work-1", { label: "Context compacted", tone: "info" })]);
     expect(text()).toContain("Context compacted");
+  });
+
+  it("ticks a running compaction and warns once it passes two minutes", async () => {
+    const compaction = (
+      id: string,
+      status: string,
+      label: string,
+      fields: Record<string, unknown> = {},
+    ) =>
+      work(id, {
+        runId: "run-1",
+        label,
+        tone: "info",
+        itemType: "compaction",
+        sourceActivityKind: "context-compaction",
+        toolLifecycleStatus: status === "running" ? "inProgress" : status,
+        structuredPayload: {
+          id,
+          type: "compaction",
+          status,
+          startedAt: DateTime.makeUnsafe(Date.now() - 118_000),
+          ...fields,
+        },
+      });
+    await renderTimeline(
+      [
+        compaction("compaction-done", "completed", "Context compacted", {
+          beforeTokenCount: 180_000,
+          afterTokenCount: 40_000,
+        }),
+        compaction("compaction-failed", "failed", "Context compaction failed", {
+          beforeTokenCount: 180_000,
+          afterTokenCount: 180_000,
+        }),
+        compaction("compaction-stopped", "interrupted", "Context compaction stopped"),
+        compaction("compaction-running", "running", "Compacting context"),
+      ],
+      {
+        isWorking: true,
+        activeTurnInProgress: true,
+        latestRun: {
+          runId: RunId.make("run-1"),
+          status: "running",
+          startedAt: CREATED_AT,
+          completedAt: null,
+        },
+      },
+    );
+    const separator = (label: string) =>
+      container.querySelector<HTMLElement>(`[role="separator"][aria-label="${label}"]`)!;
+    await vi.waitFor(() => expect(separator("Compacting context")).not.toBeNull());
+
+    const running = separator("Compacting context");
+    const timers = running.querySelectorAll(".tabular-nums");
+    expect(timers).toHaveLength(1);
+    expect(timers[0]!.closest("[aria-hidden]")).toBeNull();
+    expect(timers[0]!.textContent).toBe("1m");
+    expect(running.textContent).not.toContain("taking longer than expected");
+    await vi.waitFor(() => expect(running.textContent).toContain("taking longer than expected"), {
+      timeout: 5_000,
+    });
+    expect(running.textContent).toContain("2m");
+
+    for (const label of ["Context compaction failed", "Context compaction stopped"]) {
+      const row = separator(label);
+      expect(row.textContent).toBe(label);
+      expect(row.querySelector(".tabular-nums")).toBeNull();
+    }
+    const done = separator("Context compacted");
+    expect(done.textContent).toMatch(/^Context compacted 180K.*40K tokens$/);
+    expect(done.querySelector(".tabular-nums")).toBeNull();
   });
 
   it("formats changed file paths from the workspace root", async () => {
