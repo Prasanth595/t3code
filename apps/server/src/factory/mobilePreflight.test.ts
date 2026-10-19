@@ -266,6 +266,17 @@ describe("mobile-preflight.sh", () => {
     );
   });
 
+  it.each(["IOS_DIST_CERT_P12", ...PROFILES])("names %s when it is not base64", (name) => {
+    expectFailure(stubbed({ [name]: "not base64 !!!" }), `${name} is not base64`);
+  });
+
+  it("names a profile with no expiration date", () => {
+    expectFailure(
+      stubbed(withProfile("IOS_WIDGETS_PROFILE", { ExpirationDate: undefined })),
+      "IOS_WIDGETS_PROFILE has no expiration date",
+    );
+  });
+
   it("rejects an expired profile", () => {
     expectFailure(
       stubbed(withProfile("IOS_SHARING_PROFILE", { ExpirationDate: "2020-01-01T00:00:00Z" })),
