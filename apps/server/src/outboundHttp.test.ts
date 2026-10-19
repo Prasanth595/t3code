@@ -1,12 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - the test runs a real TLS h2 server to see which protocol fetch negotiates.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeHttp2 from "node:http2";
 import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
+import * as NodeURL from "node:url";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient } from "effect/http";
 import * as Undici from "undici";
 import { afterAll, afterEach, beforeAll, describe, expect } from "vite-plus/test";
@@ -48,6 +50,7 @@ const server = NodeHttp2.createSecureServer(
 let origin = "";
 const defaultCaCertificates = NodeTls.getCACertificates("default");
 const defaultDispatcher = Undici.getGlobalDispatcher();
+const defaultAttemptTimeout = NodeNet.getDefaultAutoSelectFamilyAttemptTimeout();
 
 beforeAll(async () => {
   NodeTls.setDefaultCACertificates([...defaultCaCertificates, TEST_CERT]);
@@ -57,6 +60,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   Undici.setGlobalDispatcher(defaultDispatcher);
+  NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(defaultAttemptTimeout);
 });
 
 afterAll(async () => {
@@ -98,147 +102,138 @@ describe("installHttp1FetchDispatcher", () => {
   );
 });
 
+const runNode = Effect.fnUntraced(function* (args: Array<string>) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const child = yield* spawner.spawn(ChildProcess.make(process.execPath, args));
+  return yield* Effect.all(
+    {
+      stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+      stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+      exitCode: child.exitCode.pipe(Effect.map(Number)),
+    },
+    { concurrency: "unbounded" },
+  );
+}, Effect.scoped);
+
 describe("ignoreMacosTypeOfServiceEinval", () => {
   const errnoError = (code: string) =>
     Object.assign(new Error(`setTypeOfService ${code}`), { code, syscall: "setTypeOfService" });
-  const failingPrototype = (error: Error) => ({
-    setTypeOfService(this: NodeNet.Socket, _typeOfService: number): NodeNet.Socket {
-      throw error;
-    },
-  });
 
-  it("returns the socket when macOS rejects the type of service with EINVAL", () => {
-    const prototype = failingPrototype(errnoError("EINVAL"));
+  it("swallows only an Error with code EINVAL on macOS", () => {
+    let error: unknown = errnoError("EINVAL");
+    const prototype = {
+      setTypeOfService(this: NodeNet.Socket, _typeOfService: number): NodeNet.Socket {
+        throw error;
+      },
+    };
     ignoreMacosTypeOfServiceEinval("darwin", prototype);
 
     const socket = new NodeNet.Socket();
     expect(prototype.setTypeOfService.call(socket, 0)).toBe(socket);
-  });
 
-  it("rethrows every other error", () => {
-    const permissionDenied = errnoError("EPERM");
-    const prototype = failingPrototype(permissionDenied);
-    ignoreMacosTypeOfServiceEinval("darwin", prototype);
+    error = errnoError("EPERM");
+    expect(() => prototype.setTypeOfService.call(socket, 0)).toThrow(error);
 
-    expect(() => prototype.setTypeOfService.call(new NodeNet.Socket(), 0)).toThrow(
-      permissionDenied,
-    );
+    error = { code: "EINVAL" };
+    expect(() => prototype.setTypeOfService.call(socket, 0)).toThrow();
   });
 
   it("changes nothing off macOS or on a runtime without setTypeOfService", () => {
-    const prototype = failingPrototype(errnoError("EINVAL"));
+    const error = errnoError("EINVAL");
+    const prototype = {
+      setTypeOfService() {
+        throw error;
+      },
+    };
     const original = prototype.setTypeOfService;
     ignoreMacosTypeOfServiceEinval("linux", prototype);
     ignoreMacosTypeOfServiceEinval("win32", prototype);
     expect(prototype.setTypeOfService).toBe(original);
+    expect(() => prototype.setTypeOfService()).toThrow(error);
 
     const withoutTypeOfService = {};
     ignoreMacosTypeOfServiceEinval("darwin", withoutTypeOfService);
     expect(withoutTypeOfService).not.toHaveProperty("setTypeOfService");
   });
 
-  // Node 24.15 added setTypeOfService, and the undici 7 it bundles calls it on
-  // every HTTP/1.1 request; undici 8 skips the call by default. A stub that
-  // always throws EINVAL makes the macOS failure deterministic on any platform.
-  // An escaped EINVAL leaves the request hanging, so a short timeout fails fast.
+  // Bundled undici 7 calls this API from a socket callback. Keep the real fetch
+  // in a child so an escaped EINVAL exits that process instead of breaking Vitest.
   it.effect.runIf(
     typeof (NodeNet.Socket.prototype as { setTypeOfService?: unknown }).setTypeOfService ===
       "function" && process.versions.undici?.startsWith("7.") === true,
-  )(
-    "keeps built-in fetch working when setTypeOfService throws EINVAL",
-    () => {
-      const socketPrototype = NodeNet.Socket.prototype as NodeNet.Socket & {
-        setTypeOfService?: unknown;
-      };
-      const original = socketPrototype.setTypeOfService;
-      let calls = 0;
-      socketPrototype.setTypeOfService = () => {
-        calls++;
-        throw errnoError("EINVAL");
-      };
-      const uncaught: Array<unknown> = [];
-      const recordUncaught = (error: unknown) => uncaught.push(error);
-      process.on("uncaughtExceptionMonitor", recordUncaught);
-      return Effect.gen(function* () {
-        ignoreMacosTypeOfServiceEinval("darwin");
-        expect(yield* versionViaBuiltinFetch()).toBe("1.1");
-        expect(calls).toBeGreaterThan(0);
-        expect(uncaught).toEqual([]);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            process.off("uncaughtExceptionMonitor", recordUncaught);
-            socketPrototype.setTypeOfService = original;
-          }),
-        ),
-      );
-    },
-    10_000,
+  )("keeps built-in fetch working when setTypeOfService throws EINVAL", () =>
+    Effect.gen(function* () {
+      const child = yield* runNode([
+        "--input-type=module",
+        "--eval",
+        `
+import * as NodeNet from "node:net";
+import * as NodeTls from "node:tls";
+import { ignoreMacosTypeOfServiceEinval } from ${JSON.stringify(new URL("./outboundHttp.ts", import.meta.url).href)};
+
+NodeTls.setDefaultCACertificates([${JSON.stringify(TEST_CERT)}]);
+let calls = 0;
+NodeNet.Socket.prototype.setTypeOfService = () => {
+  calls++;
+  throw Object.assign(new Error("setTypeOfService EINVAL"), { code: "EINVAL" });
+};
+ignoreMacosTypeOfServiceEinval("darwin");
+console.log(await (await fetch(${JSON.stringify(origin)})).text());
+if (calls === 0) throw new Error("fetch did not call setTypeOfService");
+`,
+      ]);
+      expect(child.exitCode, child.stderr).toBe(0);
+      expect(child.stdout.trim()).toBe("1.1");
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  // The reset has to come from another process, as it does from the Adobe,
-  // Unity and workerd listeners in the reports. A listener in this process
-  // accepts on the client's event loop, so the request is written first.
-  it.effect.runIf(HostProcess.Platform.defaultValue() === "darwin")(
-    "keeps requests to a listener that resets connections from crashing the process",
-    () => {
-      const listener = NodeChildProcess.spawn(
-        process.execPath,
-        [
-          "-e",
-          'const server = require("node:net").createServer((socket) => socket.resetAndDestroy()); server.listen(0, "127.0.0.1", () => console.log(server.address().port));',
-        ],
-        { stdio: ["ignore", "pipe", "inherit"] },
+  it.effect("guards ordinary CLI and both ACP fast paths before their imports run", () =>
+    Effect.gen(function* () {
+      const dispatchModules = ["mcp/AcpMcpStdioBridge.ts", "cli/consoleStdin.ts", "binCli.ts"];
+      // Load the real entrypoint, but replace dispatch modules to avoid starting
+      // the app. Probe at import time, when those modules could first open sockets.
+      const preload = `
+import * as NodeModule from "node:module";
+import * as NodeNet from "node:net";
+
+Object.defineProperty(process, "platform", { value: "darwin" });
+NodeNet.Socket.prototype.setTypeOfService = () => {
+  throw Object.assign(new Error("setTypeOfService EINVAL"), { code: "EINVAL" });
+};
+NodeModule.registerHooks({
+  load(url, context, nextLoad) {
+    const path = ${JSON.stringify(dispatchModules)}.find((path) => url.endsWith("/src/" + path));
+    if (path === undefined) return nextLoad(url, context);
+    NodeNet.Socket.prototype.setTypeOfService.call(new NodeNet.Socket(), 0);
+    console.log(path);
+    return {
+      format: "module",
+      source: "export const runAcpMcpCliFastPath = async () => {}; export const attachConsoleStdin = () => {}; export const runCli = () => {};",
+      shortCircuit: true,
+    };
+  },
+});
+`;
+      const children = yield* Effect.forEach(
+        ["--version", "acp-mcp-bridge", "acp-mcp-call"],
+        (command) =>
+          runNode([
+            "--import",
+            `data:text/javascript,${encodeURIComponent(preload)}`,
+            NodeURL.fileURLToPath(new URL("./bin.ts", import.meta.url)),
+            command,
+          ]),
       );
-      const socketPrototype = NodeNet.Socket.prototype as NodeNet.Socket & {
-        setTypeOfService?: unknown;
-      };
-      const original = socketPrototype.setTypeOfService;
-      // Vitest catches what would exit the server, so record it to assert on.
-      const uncaught: Array<unknown> = [];
-      const recordUncaught = (error: unknown) => uncaught.push(error);
-      process.on("uncaughtExceptionMonitor", recordUncaught);
-      return Effect.gen(function* () {
-        const port = yield* Effect.promise(
-          () =>
-            new Promise<string>((resolve, reject) => {
-              const fail = (reason: string) => {
-                clearTimeout(startup);
-                reject(new Error(`resetting listener ${reason} before printing its port`));
-              };
-              // @effect-diagnostics-next-line globalTimers:off -- Bounds listener startup, which takes milliseconds when it works.
-              const startup = setTimeout(() => fail("took over 5 s"), 5_000);
-              listener.once("error", (error) =>
-                fail(`failed to start (${"code" in error ? String(error.code) : error.name})`),
-              );
-              listener.once("exit", (code, signal) =>
-                fail(`exited (code ${code}, signal ${signal})`),
-              );
-              listener.stdout.once("data", (chunk) => {
-                clearTimeout(startup);
-                resolve(String(chunk).trim());
-              });
-            }),
-        );
-        ignoreMacosTypeOfServiceEinval();
-        for (let attempt = 0; attempt < 20; attempt++) {
-          const error = yield* HttpClient.get(`http://127.0.0.1:${port}/`).pipe(
-            Effect.provide(FetchHttpClient.layer),
-            Effect.flip,
-          );
-          expect(error.reason._tag).toBe("TransportError");
-        }
-        expect(uncaught).toEqual([]);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            process.off("uncaughtExceptionMonitor", recordUncaught);
-            socketPrototype.setTypeOfService = original;
-            listener.kill();
-          }),
-        ),
-      );
-    },
+      expect(
+        children.map((child) => child.exitCode),
+        children.map((child) => child.stderr).join("\n"),
+      ).toEqual([0, 0, 0]);
+      expect(children.map((child) => child.stdout.trim().split("\n"))).toEqual([
+        ["cli/consoleStdin.ts", "binCli.ts"],
+        ["mcp/AcpMcpStdioBridge.ts"],
+        ["mcp/AcpMcpStdioBridge.ts"],
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 

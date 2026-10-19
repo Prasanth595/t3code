@@ -1,7 +1,6 @@
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import type * as Undici from "undici";
 
 // undici stays external to the CLI bundle (scripts/lib/cli-external-packages.ts).
@@ -49,23 +48,19 @@ type TypeOfServiceSocket = {
   setTypeOfService?: (this: NodeNet.Socket, typeOfService: number) => NodeNet.Socket;
 };
 
-/**
- * The undici 7 that Node 24 and Electron bundle calls `setTypeOfService()` on
- * every HTTP/1.1 request, from a socket callback, without catching. macOS
- * rejects it with EINVAL once the peer has reset the connection, so one request
- * to a listener that resets exits the server. The request still fails on its
- * own. undici 8.8 ignores these errors (https://github.com/nodejs/undici/pull/5547).
- */
+// Bundled undici calls this from a socket callback without catching. On macOS,
+// EINVAL after a peer reset must not exit the server over an optional QoS hint.
 export function ignoreMacosTypeOfServiceEinval(
-  platform = HostProcess.Platform.defaultValue(),
-  socketPrototype: TypeOfServiceSocket = NodeNet.Socket.prototype as NodeNet.Socket &
-    TypeOfServiceSocket,
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Runs before ACP dispatch without loading the Effect graph.
+  platform = process.platform,
+  socketPrototype: TypeOfServiceSocket = NodeNet.Socket.prototype as TypeOfServiceSocket,
 ): void {
+  if (platform !== "darwin") return;
   const setTypeOfService = socketPrototype.setTypeOfService;
-  if (platform !== "darwin" || typeof setTypeOfService !== "function") return;
-  socketPrototype.setTypeOfService = function (typeOfService) {
+  if (typeof setTypeOfService !== "function") return;
+  socketPrototype.setTypeOfService = function (...args) {
     try {
-      return setTypeOfService.call(this, typeOfService);
+      return setTypeOfService.apply(this, args);
     } catch (error) {
       if (error instanceof Error && "code" in error && error.code === "EINVAL") return this;
       throw error;
