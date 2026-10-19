@@ -1497,6 +1497,51 @@ export const make = Effect.gen(function* () {
         ? primaryRemoteUrl
         : ((yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ?? originUrl);
 
+    // Keep linked-PR fallback conservative: upstream and publish routing must agree on the
+    // primary repository, and publishing must not strip a remote prefix from the branch.
+    const canMatchLinkedPullRequest =
+      repositoryKey !== null && branch !== null && preferredRemoteName === primaryRemoteName
+        ? yield* gitCore
+            .execute({
+              operation: "GitManager.resolveLocalRepositoryContext.pushConfig",
+              cwd,
+              args: [
+                "config",
+                "--null",
+                "--get-regexp",
+                "^(remote\\.|branch\\..*\\.(remote|pushremote)$|url\\..*\\.pushinsteadof$)",
+              ],
+              timeoutMs: 5_000,
+            })
+            .pipe(
+              Effect.map(({ stdout }) =>
+                stdout.split("\0").every((entry) => {
+                  if (entry.length === 0) return true;
+                  const separator = entry.indexOf("\n");
+                  if (separator < 0) return false;
+                  const key = entry.slice(0, separator);
+                  const value = entry.slice(separator + 1);
+                  if (
+                    key === `branch.${branch}.remote` ||
+                    key === `branch.${branch}.pushremote` ||
+                    key === "remote.pushdefault"
+                  ) {
+                    return value.trim() === primaryRemoteName;
+                  }
+                  const remote = /^remote\.(.+)\.([^.]+)$/u.exec(key);
+                  if (!remote) return !key.endsWith(".pushinsteadof");
+                  if (branch.startsWith(`${remote[1]}/`)) return false;
+                  return (
+                    remote[1] !== primaryRemoteName ||
+                    (remote[2] !== "url" && remote[2] !== "pushurl") ||
+                    checkoutRepositoryKey(value) === repositoryKey
+                  );
+                }),
+              ),
+              Effect.orElseSucceed(() => false),
+            )
+        : false;
+
     const provider = remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
     const handle =
       remoteUrl && provider?.kind === "unknown"
@@ -1509,7 +1554,7 @@ export const make = Effect.gen(function* () {
         : null;
     const sourceControlProvider = handle?.context?.provider ?? provider;
     return {
-      ...(repositoryKey ? { repositoryKey } : {}),
+      ...(canMatchLinkedPullRequest && repositoryKey ? { repositoryKey } : {}),
       ...(sourceControlProvider ? { sourceControlProvider } : {}),
     };
   });

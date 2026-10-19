@@ -4,7 +4,6 @@ import {
 } from "@t3tools/client-runtime/state/vcs";
 import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
-import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { assert, describe, expect, it } from "vite-plus/test";
 import {

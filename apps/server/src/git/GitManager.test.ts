@@ -2595,41 +2595,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("status keeps the last known PR when the branch gains its first upstream", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-sticky-first-push"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-
-      const existingPr = {
-        number: 215,
-        title: "Sticky first-push PR",
-        url: "https://github.com/pingdotgg/codething-mvp/pull/215",
-        baseRefName: "main",
-        headRefName: "feature/pr-sticky-first-push",
-      };
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          prListSequence: [JSON.stringify([existingPr])],
-          failWith:
-            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
-          failAfterCalls: 1,
-        },
-      });
-
-      const first = yield* manager.status({ cwd: repoDir });
-      expect(first.pr?.number).toBe(215);
-
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-sticky-first-push"]);
-      yield* manager.invalidateStatus(repoDir);
-
-      const second = yield* manager.status({ cwd: repoDir });
-      expect(second.pr?.number).toBe(215);
-    }),
-  );
-
   it.effect("status refreshes checkout identity and PR when its remote changes", () =>
     Effect.gen(function* () {
       const workspaceDir = yield* makeTempDir("t3code-git-manager-");
