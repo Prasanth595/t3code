@@ -360,12 +360,21 @@ async function activateFile(action: string) {
   }
 }
 
-it.each(["panel", "open", "open-in-browser", "reveal"])(
-  "resolves the unique segment suffix for the %s file action",
-  async (action) => {
+it.each([
+  { action: "panel", truncated: false },
+  { action: "open", truncated: false },
+  { action: "open-in-browser", truncated: false },
+  { action: "reveal", truncated: false },
+  { action: "panel", truncated: true },
+])(
+  "resolves the only segment suffix in returned results for $action (truncated: $truncated)",
+  async ({ action, truncated }) => {
     state.previewAvailable = action === "open-in-browser";
     state.search.mockResolvedValue(
-      searchResult(["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html", indexedPath]),
+      searchResult(
+        ["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html", indexedPath],
+        truncated,
+      ),
     );
     await renderMarkdown(fileChip);
     await activateFile(action);
@@ -405,15 +414,14 @@ it("keeps a real literal file when the workspace index only returns a nested twi
 });
 
 it.each([
-  { name: "no match", paths: [], truncated: false },
-  { name: "incomplete search results", paths: [indexedPath], truncated: true },
+  { name: "no match", paths: [] },
   {
     name: "basename and partial segment matches",
     paths: ["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html"],
   },
   { name: "ambiguous suffixes", paths: [indexedPath, "Other/docs/GROUPS_PLAN.html"] },
-])("keeps the authored path and position for $name", async ({ paths, truncated }) => {
-  state.search.mockResolvedValue(searchResult(paths, truncated));
+])("keeps the authored path and position for $name", async ({ paths }) => {
+  state.search.mockResolvedValue(searchResult(paths));
   await renderMarkdown(fileChip);
   await activateFile("panel");
   expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.html", 12);
