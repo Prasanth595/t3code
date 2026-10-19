@@ -1044,7 +1044,9 @@ it.effect.each([
         endEarly ? undefined : threadId,
       );
     }).pipe(
-      Effect.ensuring(Deferred.succeed(end, undefined).pipe(Effect.andThen(Fiber.join(run)))),
+      Effect.ensuring(
+        Deferred.succeed(end, undefined).pipe(Effect.andThen(Fiber.join(run)), Effect.orDie),
+      ),
     );
   }).pipe(Effect.provide(layerMcpSessionRegistryTest)),
 );
