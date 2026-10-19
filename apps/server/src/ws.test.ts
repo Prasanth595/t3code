@@ -1,6 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
+  OrchestrationV2GetShellSnapshotError,
+  EventId,
+  ProviderInstanceId,
+  ProviderSessionId,
   ProjectId,
   ThreadId,
   type OrchestrationV2StoredEvent,
@@ -9,6 +13,13 @@ import {
   type ServerConfigStreamEvent,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
+import * as Headers from "effect/http/Headers";
+import * as Schema from "effect/Schema";
+import { Rpc, RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -453,4 +464,287 @@ it.effect("thread resume across compacted history keeps message order and final 
       ),
     ),
   ),
+);
+
+const catchupRpc = RpcGroup.make(
+  Rpc.make("subscribe", { stream: true, success: Schema.Unknown, error: Schema.Unknown }),
+);
+
+const openCatchupRpc = Effect.fnUntraced(function* <A, E, R>(stream: Stream.Stream<A, E, R>) {
+  const messages =
+    yield* Queue.unbounded<RpcMessage.FromServer<RpcGroup.Rpcs<typeof catchupRpc>>>();
+  const server = yield* RpcServer.makeNoSerialization(catchupRpc, {
+    onFromServer: (message) => Queue.offer(messages, message).pipe(Effect.asVoid),
+  }).pipe(Effect.provide(catchupRpc.toLayerHandler("subscribe", () => stream)));
+  const requestId = RpcMessage.RequestId("catchup");
+  yield* server.write(1, {
+    _tag: "Request",
+    id: requestId,
+    tag: "subscribe",
+    payload: undefined,
+    headers: Headers.empty,
+  });
+  return {
+    messages,
+    ack: server.write(1, { _tag: "Ack", requestId }),
+    interrupt: server.write(1, { _tag: "Interrupt", requestId, interruptors: [] }),
+  };
+});
+
+const makeCatchupFixture = Effect.fnUntraced(function* () {
+  const threadId = ThreadId.make("thread:catchup");
+  const projectId = ProjectId.make("project:catchup");
+  const now = DateTime.makeUnsafe("2026-10-01T00:00:00Z");
+  const project = {
+    id: projectId,
+    title: "Catchup",
+    workspaceRoot: "/tmp/catchup",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: DateTime.formatIso(now),
+    updatedAt: DateTime.formatIso(now),
+  };
+  const projection = ProjectionStore.emptyProjection({
+    id: EventId.make("catchup:created"),
+    type: "thread.created",
+    threadId,
+    occurredAt: now,
+    payload: {
+      id: threadId,
+      projectId,
+      title: "Catchup",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-test" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdBy: "user",
+      creationSource: "web",
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+  const event = {
+    id: EventId.make("catchup:detached"),
+    type: "provider-session.detached" as const,
+    threadId,
+    occurredAt: now,
+    payload: { providerSessionId: ProviderSessionId.make("session:catchup"), detachedAt: now },
+  };
+  const shellSnapshot = {
+    schemaVersion: ProjectionStore.ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+    snapshotSequence: 1,
+    projects: [project],
+    threads: [],
+    archivedThreads: [],
+  };
+  const metadata = {
+    kind: "snapshot",
+    snapshot: shellSnapshot,
+    resolvedRepositoryIdentityRoots: [project.workspaceRoot],
+  };
+  const projectEvent = (sequence: number) => ({
+    sequence,
+    aggregateKind: "project" as const,
+    aggregateId: projectId,
+    eventId: EventId.make(`catchup:project:${sequence}`),
+    type: "project.meta-updated" as const,
+    payload: { projectId, updatedAt: project.updatedAt },
+    occurredAt: project.updatedAt,
+    commandId: null,
+    causationEventId: null,
+    correlationId: null,
+    metadata: {},
+  });
+  const changes = yield* PubSub.unbounded<ProjectEnrichment.ProjectEnrichmentChange>();
+  const dependencies = Layer.mergeAll(
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      ensureLegacyTranscript: () => Effect.void,
+      getThreadSnapshot: () =>
+        Effect.succeed({ schemaVersion: 1, snapshotSequence: 1, projection }),
+      readShellSnapshot: () => Effect.succeed(Effect.succeed(shellSnapshot)),
+      streamStoredEventsFrom: () => Stream.make({ sequence: 2, commandId: null, event }),
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([project]) }),
+    Layer.mock(ProjectService.ProjectService)({ getShell: () => Effect.succeedSome(project) }),
+    Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({
+      subscribeChanges: PubSub.subscribe(changes),
+      getAvailable: () =>
+        Effect.succeed({
+          repositoryIdentity: null,
+          faviconPath: null,
+          repositoryIdentityResolved: true,
+        }),
+    }),
+    Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+      latestAgentSequence: () => Effect.succeed(1),
+      latestApplicationSequence: Effect.succeed(1),
+      getAgentReplayStats: () =>
+        Effect.succeed({ eventCount: 1, rawPayloadBytes: 0, hasCreateEvent: false }),
+      getReplayStats: () => Effect.succeed({ eventCount: 1, rawPayloadBytes: 0 }),
+      readAgentEvents: () => Stream.make({ sequence: 1, commandId: null, event }),
+      readApplicationEvents: () => Stream.make(projectEvent(1)),
+      streamProjectedApplicationEvents: ({ project }) => Stream.make(project(projectEvent(2))),
+    }),
+  );
+  return { threadId, projection, event, project, metadata, shellSnapshot, dependencies, changes };
+});
+
+it.effect.each([
+  { scope: "thread", mode: "snapshot" },
+  { scope: "thread", mode: "replay" },
+  { scope: "shell", mode: "snapshot" },
+  { scope: "shell", mode: "replay" },
+] as const)("$scope $mode sends completion in the first RPC chunk before ACK", ({ scope, mode }) =>
+  Effect.gen(function* () {
+    const fixture = yield* makeCatchupFixture();
+    const input = {
+      requestCompletionMarker: true,
+      ...(mode === "replay" ? { afterSequence: 0 } : {}),
+    };
+    const rpc = yield* (
+      scope === "thread"
+        ? openCatchupRpc(
+            Stream.unwrap(subscribeOrchestrationV2Thread({ ...input, threadId: fixture.threadId })),
+          )
+        : openCatchupRpc(Stream.unwrap(subscribeOrchestrationV2Shell(input)))
+    ).pipe(Effect.provide(fixture.dependencies));
+    const first = yield* Queue.take(rpc.messages);
+    assert.equal(first._tag, "Chunk");
+    if (first._tag !== "Chunk") return;
+    assert.deepEqual(Array.from(first.values), [
+      ...(scope === "thread"
+        ? [
+            mode === "snapshot"
+              ? { kind: "snapshot", snapshotSequence: 1, projection: fixture.projection }
+              : { kind: "event", sequence: 1, event: fixture.event },
+          ]
+        : [
+            ...(mode === "snapshot" ? [{ kind: "snapshot", snapshot: fixture.shellSnapshot }] : []),
+            fixture.metadata,
+            ...(mode === "replay"
+              ? [{ kind: "project.updated", sequence: 1, project: fixture.project }]
+              : []),
+          ]),
+      { kind: "synchronized" },
+    ]);
+    yield* rpc.ack;
+    const live = yield* Queue.take(rpc.messages);
+    assert.equal(live._tag, "Chunk");
+    if (live._tag === "Chunk")
+      assert.deepEqual(live.values, [
+        scope === "thread"
+          ? { kind: "event", sequence: 2, event: fixture.event }
+          : { kind: "project.updated", sequence: 2, project: fixture.project },
+      ]);
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("shell replay without a marker keeps metadata and replay in separate RPC chunks", () =>
+  Effect.gen(function* () {
+    const fixture = yield* makeCatchupFixture();
+    const rpc = yield* openCatchupRpc(
+      Stream.unwrap(subscribeOrchestrationV2Shell({ afterSequence: 0 })),
+    ).pipe(Effect.provide(fixture.dependencies));
+    for (const expected of [
+      [fixture.metadata],
+      [{ kind: "project.updated", sequence: 1, project: fixture.project }],
+      [{ kind: "project.updated", sequence: 2, project: fixture.project }],
+    ]) {
+      const message = yield* Queue.take(rpc.messages);
+      assert.equal(message._tag, "Chunk");
+      if (message._tag === "Chunk") assert.deepEqual(Array.from(message.values), expected);
+      yield* rpc.ack;
+    }
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect.each(["failure", "interruption"] as const)(
+  "shell eager replay releases subscriptions on %s without sending partial catchup",
+  (mode) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeCatchupFixture();
+      const parked = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void, ProjectService.ProjectOperationError>();
+      const projectionClosed = yield* Deferred.make<void>();
+      const enrichmentClosed = yield* Deferred.make<void>();
+      const failure = new ProjectService.ProjectOperationError({
+        operation: "read-project",
+        projectId: fixture.project.id,
+        cause: new Error("unavailable"),
+      });
+      const rpc = yield* openCatchupRpc(
+        Stream.unwrap(
+          subscribeOrchestrationV2Shell({
+            afterSequence: 0,
+            requestCompletionMarker: true,
+          }),
+        ),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            fixture.dependencies,
+            Layer.mock(ProjectService.ProjectService)({
+              getShell: () =>
+                Deferred.succeed(parked, undefined).pipe(
+                  Effect.andThen(Deferred.await(release)),
+                  Effect.andThen(Effect.succeedSome(fixture.project)),
+                  Effect.ensuring(Deferred.succeed(projectionClosed, undefined)),
+                ),
+            }),
+            Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({
+              subscribeChanges: Effect.gen(function* () {
+                yield* Effect.addFinalizer(() => Deferred.succeed(enrichmentClosed, undefined));
+                return yield* PubSub.subscribe(fixture.changes);
+              }),
+              getAvailable: () =>
+                Effect.succeed({
+                  repositoryIdentity: null,
+                  faviconPath: null,
+                  repositoryIdentityResolved: true,
+                }),
+            }),
+          ),
+        ),
+      );
+      yield* Deferred.await(parked).pipe(
+        Effect.raceFirst(
+          Queue.take(rpc.messages).pipe(
+            Effect.tap((message) =>
+              Effect.sync(() => assert.fail(`Unexpected ${message._tag} before replay finished`)),
+            ),
+          ),
+        ),
+      );
+      if (mode === "failure") yield* Deferred.fail(release, failure);
+      else yield* rpc.interrupt;
+      const message = yield* Queue.take(rpc.messages);
+      assert.equal(message._tag, "Exit");
+      if (message._tag === "Exit") {
+        assert.isTrue(Exit.isFailure(message.exit));
+        if (Exit.isFailure(message.exit)) {
+          if (mode === "interruption") assert.isTrue(Cause.hasInterruptsOnly(message.exit.cause));
+          else
+            assert.deepEqual(
+              Option.getOrThrow(Cause.findErrorOption(message.exit.cause)),
+              new OrchestrationV2GetShellSnapshotError({
+                message: "Failed to prepare the application shell stream",
+                cause: failure,
+              }),
+            );
+        }
+      }
+      yield* Deferred.await(projectionClosed);
+      yield* Deferred.await(enrichmentClosed);
+    }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
 );
