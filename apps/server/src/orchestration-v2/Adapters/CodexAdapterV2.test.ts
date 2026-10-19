@@ -1473,15 +1473,6 @@ describe("CodexAdapterV2 skill mentions", () => {
       assert.equal(CodexAdapterV2.codexSkillMentionText(text), expected, text);
     }
   });
-
-  it("sends a linked skill as a structured input for its exact file", () => {
-    const path = String.raw`C:\Users\Jane Doe\skills (old)\review\SKILL.md`;
-    const link = String.raw`[$review](C:\Users\Jane%20Doe\skills%20%28old%29\review\SKILL.md)`;
-    assert.deepEqual(CodexAdapterV2.codexSkillInputs(`Run ${link} then ${link} and €lint`), {
-      text: "Run $review then $review and $lint",
-      skills: [{ type: "skill", name: "review", path }],
-    });
-  });
 });
 
 describe("CodexAdapterV2 background command detail", () => {
@@ -1617,6 +1608,7 @@ function codexReplayPreamble(input: {
   readonly nativeTurnId: string;
   readonly prompt: string;
   readonly sentPrompt?: string;
+  readonly skills?: ReadonlyArray<{ type: "skill"; name: string; path: string }>;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
     {
@@ -1707,7 +1699,10 @@ function codexReplayPreamble(input: {
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
-          input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
+          input: [
+            { type: "text", text: input.sentPrompt ?? input.prompt },
+            ...(input.skills ?? []),
+          ],
           cwd: "/workspace",
           model: "gpt-5.4",
           approvalPolicy: "never",
@@ -2567,68 +2562,78 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("sends currency-sigil skill mentions to Codex as $ mentions", () =>
-    Effect.gen(function* () {
-      const nativeThreadId = "skill-sigil-thread";
-      const nativeTurnId = "skill-sigil-turn";
-      const transcript = makeCodexReplayTranscript({
-        scenario: "skill-sigil-canonicalized",
-        entries: [
-          ...codexReplayPreamble({
-            nativeThreadId,
-            nativeTurnId,
-            prompt: "€review do it",
-            sentPrompt: "$review do it",
-          }),
-          {
-            type: "expect_outbound",
-            label: "turn/steer",
-            frame: {
-              id: 4,
-              method: "turn/steer",
-              params: {
-                expectedTurnId: nativeTurnId,
-                input: [{ type: "text", text: "then $ship it" }],
-                threadId: nativeThreadId,
+  it.effect(
+    "binds picked skill files in Codex start and steer while retaining plain mentions",
+    () =>
+      Effect.gen(function* () {
+        const nativeThreadId = "skill-sigil-thread";
+        const nativeTurnId = "skill-sigil-turn";
+        const firstPath = String.raw`C:\Users\Jane Doe\100% (old)\review\SKILL.md`;
+        const first = String.raw`[$review.v2](C:\Users\Jane%20Doe\100%25%20%28old%29\review\SKILL.md)`;
+        const secondPath = "/repo/skills/review/SKILL.md";
+        const second = `[$review.v2](${secondPath})`;
+        const transcript = makeCodexReplayTranscript({
+          scenario: "skill-sigil-canonicalized",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: `${first} then ${first} and €lint`,
+              sentPrompt: "$review.v2 then $review.v2 and $lint",
+              skills: [{ type: "skill", name: "review.v2", path: firstPath }],
+            }),
+            {
+              type: "expect_outbound",
+              label: "turn/steer",
+              frame: {
+                id: 4,
+                method: "turn/steer",
+                params: {
+                  expectedTurnId: nativeTurnId,
+                  input: [
+                    { type: "text", text: "then $ship and $review.v2" },
+                    { type: "skill", name: "review.v2", path: secondPath },
+                  ],
+                  threadId: nativeThreadId,
+                },
               },
             },
+            {
+              type: "emit_inbound",
+              label: "turn/steer",
+              frame: { id: 4, result: { turnId: nativeTurnId } },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const turnInput = makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("skill-sigil-attempt"),
+          text: `${first} then ${first} and €lint`,
+        });
+        yield* harness.runtime.startTurn(turnInput);
+        yield* harness.runtime.steerTurn({
+          threadId: harness.threadId,
+          runId: turnInput.runId,
+          providerThread: harness.providerThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId,
+          }),
+          message: {
+            ...turnInput.message,
+            messageId: MessageId.make("message-skill-sigil-steer"),
+            text: `then £ship and ${second}`,
           },
-          {
-            type: "emit_inbound",
-            label: "turn/steer",
-            frame: { id: 4, result: { turnId: nativeTurnId } },
-          },
-        ],
-      });
-      const harness = yield* makeCodexReplayHarness(transcript);
-      const turnInput = makeCodexTestTurnInput({
-        threadId: harness.threadId,
-        providerThread: harness.providerThread,
-        now: yield* DateTime.now,
-        attemptId: RunAttemptId.make("skill-sigil-attempt"),
-        text: "€review do it",
-      });
-      yield* harness.runtime.startTurn(turnInput);
-      yield* harness.runtime.steerTurn({
-        threadId: harness.threadId,
-        runId: turnInput.runId,
-        providerThread: harness.providerThread,
-        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-          nativeTurnId,
-        }),
-        message: {
-          ...turnInput.message,
-          messageId: MessageId.make("message-skill-sigil-steer"),
-          text: "then £ship it",
-        },
-      });
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    ),
   );
 
   const assistantMessages = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>

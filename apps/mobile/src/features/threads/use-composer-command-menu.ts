@@ -37,7 +37,7 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  dedupeProviderSkillsByPath,
+  dedupeProviderSkills,
   formatProviderSkillMention,
   formatProviderSkillMenuDescription,
   getProviderSkillsForSlashMenu,
@@ -136,7 +136,6 @@ export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
-  /** The provider's skills, to bind a pick to its file when another skill shares its name. */
   readonly skills?: ReadonlyArray<ServerProviderSkill>;
   readonly allowInteractionMode: boolean;
 }): {
@@ -416,7 +415,7 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByPath(skills.filter(isProviderSkillUserInvocable));
+      const enabledSkills = dedupeProviderSkills(skills.filter(isProviderSkillUserInvocable));
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\p{Sc}+/u,
       });

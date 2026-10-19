@@ -262,12 +262,7 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
   return path.join(home, ".claude");
 });
 
-/**
- * Roots are listed highest precedence first. A name in both scopes yields one
- * skill per file: Claude Code runs only the user copy for `/name`, so the
- * composer binds a pick to its file with a linked mention instead (see
- * orchestration-v2/linkedSkillMentions.ts).
- */
+// Keep root precedence for plain mentions while exposing every file for explicit picks.
 export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* (
   config: Pick<ClaudeSettings, "homePath"> & Partial<Pick<ClaudeSettings, "launchArgs">>,
   cwd?: string,
@@ -328,7 +323,6 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         continue;
       }
 
-      // Both roots are the same directory when the workspace is the home dir.
       if (skillsByPath.has(skillPath)) {
         continue;
       }

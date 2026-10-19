@@ -19,7 +19,6 @@ export type ComposerPromptSegment =
   | {
       type: "skill";
       name: string;
-      /** The SKILL.md a linked mention runs. */
       path?: string;
       source: string;
     }

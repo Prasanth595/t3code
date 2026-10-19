@@ -420,13 +420,8 @@ export function codexSkillMentionText(text: string): string {
   return text.replace(SKILL_MENTION_PATTERN, "$1$$$2");
 }
 
-/**
- * A skill picked from a shared name arrives as a link to its SKILL.md. Codex
- * gets it as a structured skill input, which binds that exact file; the link
- * in the text becomes `$name`, which Codex does not resolve again once a
- * structured input selected that name.
- */
-export function codexSkillInputs(text: string) {
+// Codex skips name resolution for names already selected by structured input.
+function codexSkillInputs(text: string) {
   const mentions = collectLinkedSkillMentions(text);
   return {
     text: codexSkillMentionText(

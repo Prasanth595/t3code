@@ -324,7 +324,6 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skillLabel = (node.attrs.skillLabel as string) || skillName;
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
   const skillPath = (node.attrs.skillPath as string | null) ?? null;
-  // A linked mention names its SKILL.md; a plain `$name` takes the first skill with that name.
   const skill = skillPath
     ? skills.find((candidate) => candidate.path === skillPath)
     : skills.find((candidate) => candidate.name === skillName);

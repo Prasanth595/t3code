@@ -180,6 +180,41 @@ describe("workspace command discovery retry", () => {
     vi.unstubAllGlobals();
   });
 
+  it("offers and inserts each same-name skill from both mobile menus", async () => {
+    const skills = [
+      { name: "review.v2", path: "/repo/my skills/100%/SKILL.md", enabled: true },
+      { name: "review.v2", path: "/home/me/review/SKILL.md", enabled: true },
+    ];
+    const changed = vi.fn();
+    const menus: ReturnType<typeof useComposerCommandMenu>[] = [];
+    function SkillMenu({ prefix }: { prefix: string }) {
+      menus.push(
+        useComposerCommandMenu({
+          draftMessage: prefix,
+          ownerKey: null,
+          environmentId: null,
+          projectCwd: null,
+          selectedProviderStatus: { ...provider, skills },
+          hasThread: false,
+          hasCompactableConversation: false,
+          onChangeDraftMessage: changed,
+        }),
+      );
+      return null;
+    }
+    for (const prefix of ["$", "/"]) {
+      await act(async () => root.render(createElement(SkillMenu, { prefix, key: prefix })));
+      const menu = menus.at(-1)!;
+      const items = menu.items.filter((item) => item.type === "skill");
+      expect(items.map((item) => item.description)).toEqual(skills.map((skill) => skill.path));
+      expect(new Set(items.map((item) => item.id)).size).toBe(2);
+      await act(async () => menu.onSelect(items[0]!));
+      expect(changed).toHaveBeenLastCalledWith("[$review.v2](/repo/my%20skills/100%25/SKILL.md) ");
+      await act(async () => menu.onSelect(items[1]!));
+      expect(changed).toHaveBeenLastCalledWith("[$review.v2](/home/me/review/SKILL.md) ");
+    }
+  });
+
   it("retries partial commands after the cooldown without editing the draft", async () => {
     const recovered = {
       ...provider,

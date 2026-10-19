@@ -1,14 +1,7 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 
-/**
- * The composer links a skill pick to its file, `[$name](…/SKILL.md)`, when
- * another skill shares the name. Providers invoke skills by name and would run
- * whichever same-name skill they resolve first, so Codex gets a structured
- * skill input (CodexAdapterV2) and every other provider gets the link spelled
- * out (spellOutLinkedSkillMentions).
- */
-export interface LinkedSkillMention {
+interface LinkedSkillMention {
   readonly name: string;
   readonly path: string;
   readonly start: number;
@@ -26,7 +19,6 @@ export function collectLinkedSkillMentions(text: string): ReadonlyArray<LinkedSk
   );
 }
 
-/** `text` with each mention, in order, replaced by `replacement(mention)`. */
 export function replaceLinkedSkillMentions(
   text: string,
   mentions: ReadonlyArray<LinkedSkillMention>,
@@ -41,12 +33,8 @@ export function replaceLinkedSkillMentions(
   return result + text.slice(cursor);
 }
 
-/**
- * For providers that invoke skills by name: each link becomes the bare name,
- * so no adapter dispatches it by name, plus an instruction to follow the
- * picked file.
- */
-export function expandLinkedSkillMentions(text: string): string {
+// Remove the sigil so a provider cannot dispatch a different same-name skill.
+function expandLinkedSkillMentions(text: string): string {
   const mentions = collectLinkedSkillMentions(text);
   if (mentions.length === 0) return text;
   const body = replaceLinkedSkillMentions(text, mentions, (mention) => mention.name);

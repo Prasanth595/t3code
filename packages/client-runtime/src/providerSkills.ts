@@ -4,7 +4,10 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { formatLinkedSkillMention } from "@t3tools/shared/composerInlineTokens";
+import {
+  formatLinkedSkillMention,
+  isLocalSkillFilePath,
+} from "@t3tools/shared/composerInlineTokens";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
@@ -12,17 +15,17 @@ function normalizePathSeparators(pathValue: string): string {
   return pathValue.replaceAll("\\", "/");
 }
 
-/** One menu row per SKILL.md: same-name skills from different files are different skills. */
-export function dedupeProviderSkillsByPath(
+export function dedupeProviderSkills(
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProviderSkill[] {
-  const seenPaths = new Set<string>();
+  const seen = new Set<string>();
   return skills.filter((skill) => {
-    const normalizedPath = normalizePathSeparators(skill.path);
-    if (seenPaths.has(normalizedPath)) {
-      return false;
-    }
-    seenPaths.add(normalizedPath);
+    // Native identifiers such as acp://skill/name still invoke by name.
+    const key = isLocalSkillFilePath(skill.path)
+      ? `path:${normalizePathSeparators(skill.path)}`
+      : `name:${skill.name.trim().toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -31,19 +34,17 @@ function isProviderSkillNameShared(
   skill: Pick<ServerProviderSkill, "name" | "path">,
   skills: ReadonlyArray<ServerProviderSkill>,
 ): boolean {
-  return skills.some(
-    (other) =>
-      other.name === skill.name &&
-      normalizePathSeparators(other.path) !== normalizePathSeparators(skill.path) &&
-      isProviderSkillUserInvocable(other),
+  return (
+    isLocalSkillFilePath(skill.path) &&
+    skills.some(
+      (other) =>
+        other.name === skill.name &&
+        normalizePathSeparators(other.path) !== normalizePathSeparators(skill.path) &&
+        isProviderSkillUserInvocable(other),
+    )
   );
 }
 
-/**
- * The composer text for a skill pick: `$name`, or a mention linked to the
- * picked SKILL.md when another skill shares the name, so the server runs that
- * file (orchestration-v2/linkedSkillMentions.ts).
- */
 export function formatProviderSkillMention(
   skill: Pick<ServerProviderSkill, "name" | "path">,
   skills: ReadonlyArray<ServerProviderSkill>,
@@ -53,7 +54,6 @@ export function formatProviderSkillMention(
     : `$${skill.name}`;
 }
 
-/** Menu description, led by the file path when the name alone cannot tell rows apart. */
 export function formatProviderSkillMenuDescription(
   skill: ServerProviderSkill,
   skills: ReadonlyArray<ServerProviderSkill>,
@@ -82,7 +82,7 @@ export function getProviderSkillsForSlashMenu(
   showSkillsInSlashMenu: boolean,
 ): ServerProviderSkill[] {
   return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByPath(skills.filter(isProviderSkillUserInvocable))
+    ? dedupeProviderSkills(skills.filter(isProviderSkillUserInvocable))
     : [];
 }
 

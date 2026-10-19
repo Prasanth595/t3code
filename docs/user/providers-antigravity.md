@@ -84,8 +84,8 @@ is unavailable. Continue with a follow-up message or start a new thread.
 ### Skills and attachments
 
 Put project skills in `.agents/skills`. T3 Code also reads `.gemini/skills` and the
-legacy `.agent/skills` directory. Among these project locations, the first copy
-wins in this order: `.gemini/skills`, `.agents/skills`, `.agent/skills`. See
+legacy `.agent/skills` directory. Skills are listed in this order: `.gemini/skills`,
+`.agents/skills`, `.agent/skills`. When names overlap, select the file by its path. See
 [commands and skills](./composer.md#commands-and-skills) for invoking them.
 
 Skills for every project go in `~/.gemini/config/skills` or

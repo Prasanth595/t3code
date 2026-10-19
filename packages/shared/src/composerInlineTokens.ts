@@ -25,12 +25,7 @@ const SKILL_MENTION_SOURCE =
     .source;
 const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
-/**
- * A skill mention linked to the SKILL.md that must run even when another skill
- * shares the name. The brackets delimit the name, so it takes any name a
- * provider reports, dots included. formatLinkedSkillMention percent-encodes the
- * destination, so it holds no whitespace or parentheses.
- */
+// Brackets delimit provider names, including dots; destinations encode whitespace and parentheses.
 const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([^\s[\]]+)\]\(([^()\s]+)\)(?=\s)/gu;
 const SKILL_FILE_REGEX = /[\\/]SKILL\.md$/i;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
@@ -107,7 +102,13 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
-/** A skill pick bound to its SKILL.md, as a Markdown link. */
+export function isLocalSkillFilePath(path: string): boolean {
+  return (
+    SKILL_FILE_REGEX.test(path) &&
+    (!URI_SCHEME_REGEX.test(path) || WINDOWS_DRIVE_PATH_REGEX.test(path))
+  );
+}
+
 export function formatLinkedSkillMention(skill: {
   readonly name: string;
   readonly path: string;
@@ -132,9 +133,7 @@ export function collectComposerInlineTokens(
     } catch {
       continue;
     }
-    // A URL to a SKILL.md is an ordinary link, not a local skill.
-    const hasExternalScheme = URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path);
-    if (hasExternalScheme || !SKILL_FILE_REGEX.test(path)) continue;
+    if (!isLocalSkillFilePath(path)) continue;
     const start = (match.index ?? 0) + (match[1] ?? "").length;
     const end = (match.index ?? 0) + match[0].length;
     const source = text.slice(start, end);
