@@ -60,10 +60,6 @@ export type PullRequestMergeability = typeof PullRequestMergeability.Type;
 export const PullRequestMergeMethod = Schema.Literals(["merge", "squash", "rebase"]);
 export type PullRequestMergeMethod = typeof PullRequestMergeMethod.Type;
 
-/**
- * Grows as hosts gain actions, so lists a server sends decode with `ForwardCompatibleArray`: an
- * older client drops an action it does not know instead of failing the whole pull request.
- */
 export const PullRequestAction = Schema.Literals([
   "merge",
   "ready",
