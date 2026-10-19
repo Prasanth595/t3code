@@ -293,10 +293,9 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v4 records of stateful formats (Codex) predate service tiers, so they
-    // all priced as standard. Keep them, because the rollout may be gone, but
-    // make a live rollout re-parse whole: no file has size -1, and a zero
-    // position cannot resume.
+    // Stateful formats before v5 lack service tiers; Claude before v6 lacks
+    // 1-hour cache writes. Keep deleted history, but force live files to reparse:
+    // no file has size -1, and a zero position cannot resume.
     const legacy =
       (format.state !== undefined && version < 5) || (entry.p === "claude" && version < 6);
     // A corrupt state disqualifies the entry: resuming with it would attach

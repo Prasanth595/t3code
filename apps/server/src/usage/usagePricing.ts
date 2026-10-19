@@ -57,14 +57,8 @@ function finiteNumber(value: unknown): number | null {
 }
 
 /**
- * Reads one rate set, `suffix` selecting a tier such as `_priority`. Returns
- * `null` without both an input and an output rate.
- *
- * Anthropic bills cache reads at a discount and cache writes at a premium.
- * When the standard tier omits them, cached input is priced as plain input
- * rather than as free. A faster tier that omits them keeps the standard tier's
- * cache-to-input ratio. A missing 1-hour write rate falls back to the 5-minute
- * one.
+ * Missing cache rates use the input rate; faster tiers preserve the standard
+ * cache-to-input ratio. Missing 1-hour write rates use the 5-minute rate.
  */
 function readTokenRates(
   entry: LiteLlmEntry,
