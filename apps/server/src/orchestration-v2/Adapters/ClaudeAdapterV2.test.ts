@@ -3285,6 +3285,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     Effect.gen(function* () {
       const initCwds: Array<string> = [];
       const harness = yield* makeWakeHarnessWithOptions({
+        close: (messages) => Queue.shutdown(messages),
+        freshQueueOnReopen: true,
         onSessionInit: (cwd) =>
           Effect.sync(() => {
             initCwds.push(cwd);
@@ -3308,6 +3310,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             text,
             attachments: [],
             runtimePolicy,
+            ...(ordinal === 3 ? { modelSelection: CLAUDE_TEST_RESTART_MODEL_SELECTION } : {}),
           }),
         );
       const init = (uuid: string) =>
@@ -3320,6 +3323,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid,
         });
       yield* startTurn(1, "First.");
+      assert.deepEqual(initCwds, []);
       yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000701"));
       assert.deepEqual(initCwds, [cwd]);
       yield* Queue.offer(
@@ -3331,6 +3335,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* startTurn(2, "Second.");
       yield* harness.offerAndWait(init("00000000-0000-4000-8000-000000000703"));
       assert.deepEqual(initCwds, [cwd]);
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000704", result: "Two." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      yield* startTurn(3, "Restart with a new model.");
+      assert.lengthOf(harness.processQueues, 2);
+      yield* Queue.offerAll(harness.processQueues[1]!, [
+        init("00000000-0000-4000-8000-000000000705"),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000706", result: "Three." }),
+      ]);
+      yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(initCwds, [cwd, cwd]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
