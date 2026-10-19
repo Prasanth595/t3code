@@ -129,7 +129,11 @@ import {
   resolvePromptInjectedEffort,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { projectScriptCwd, resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  projectScriptCwd,
+  projectScriptTerminalInput,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
@@ -3498,7 +3502,7 @@ export default function ChatView(props: ChatViewProps) {
 
     const writeResult = await terminalActions.writeToTerminal(
       targetTerminalId,
-      `${script.command}\r`,
+      projectScriptTerminalInput(script.command),
     );
     if (!writeResult) return;
     if (writeResult._tag === "Failure") {

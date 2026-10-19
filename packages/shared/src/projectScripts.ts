@@ -79,3 +79,11 @@ export function projectScriptMenuLabel(script: ProjectScript): string {
 export function settleProjectScript(scripts: readonly ProjectScript[]): ProjectScript | null {
   return scripts.find((script) => script.runOnSettle === true) ?? null;
 }
+
+/**
+ * Leading spaces omit scripts from Bash history with ignorespace/ignoreboth,
+ * zsh with HIST_IGNORE_SPACE, and fish. This does not suppress PowerShell/PSReadLine history.
+ */
+export function projectScriptTerminalInput(command: string): string {
+  return ` ${command}\r`;
+}
