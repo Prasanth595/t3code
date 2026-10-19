@@ -3273,65 +3273,79 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("still completes a user steer when the interrupt fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let interrupts = 0;
-        const harness = yield* makeWakeHarnessWithOptions({
-          interrupt: Effect.sync(() => {
-            interrupts++;
-          }).pipe(
-            Effect.andThen(
-              Effect.fail(
-                new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                  method: "interrupt",
-                  cause: "forced interrupt failure",
-                }),
-              ),
-            ),
-          ),
-        });
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const attemptId = RunAttemptId.make("attempt-steer-interrupt-failed");
-        const input = makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId,
-          text: "Scan the repository.",
-          attachments: [],
-        });
-        yield* harness.runtime.startTurn(input);
-        const providerTurnId = idAllocator.derive.providerTurn({
-          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-          nativeTurnId: `turn:${attemptId}`,
-        });
-        yield* harness.runtime.steerTurn({
-          threadId: harness.threadId,
-          runId: input.runId,
-          providerThread: harness.providerThread,
-          providerTurnId,
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: MessageId.make("message-steer-interrupt-failed"),
-            text: "Stop waiting and summarize what you have.",
+  it.effect(
+    "offers after interrupt failure but rejects a steer whose turn ends during interrupt",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let interrupts = 0;
+          const interruptStarted = yield* Deferred.make<void>();
+          const releaseInterrupt = yield* Deferred.make<void>();
+          const harness = yield* makeWakeHarnessWithOptions({
+            interrupt: Effect.suspend(() => {
+              interrupts++;
+              return interrupts === 1
+                ? Effect.fail(
+                    new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "interrupt",
+                      cause: "forced interrupt failure",
+                    }),
+                  )
+                : Deferred.succeed(interruptStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseInterrupt)),
+                  );
+            }),
+          });
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attemptId = RunAttemptId.make("attempt-steer-interrupt-failed");
+          const input = makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Scan the repository.",
             attachments: [],
-          },
-        });
-        assert.equal(interrupts, 1);
-        assert.lengthOf(harness.offeredMessages, 2);
-        assert.equal(harness.offeredMessages[1]?.priority, "now");
-        yield* Queue.offer(harness.sdkMessages, wakeResult);
-        const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(terminal.providerTurnId, providerTurnId);
-        assert.equal(terminal.status, "completed");
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          });
+          yield* harness.runtime.startTurn(input);
+          const providerTurnId = idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          });
+          const steer = harness.runtime.steerTurn({
+            threadId: harness.threadId,
+            runId: input.runId,
+            providerThread: harness.providerThread,
+            providerTurnId,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("message-steer-interrupt-failed"),
+              text: "Stop waiting and summarize what you have.",
+              attachments: [],
+            },
+          });
+          yield* steer;
+          assert.equal(interrupts, 1);
+          assert.lengthOf(harness.offeredMessages, 2);
+          assert.equal(harness.offeredMessages[1]?.priority, "now");
+          const steering = yield* Effect.forkScoped(steer);
+          yield* Deferred.await(interruptStarted);
+          assert.lengthOf(harness.offeredMessages, 2);
+          yield* harness.offerAndWait(wakeResult);
+          const terminal = yield* Queue.take(harness.terminalReceipts);
+          assert.equal(terminal.providerTurnId, providerTurnId);
+          assert.equal(terminal.status, "completed");
+          yield* Deferred.succeed(releaseInterrupt, undefined);
+          const steered = yield* Fiber.await(steering);
+          assert.isTrue(Exit.isFailure(steered));
+          assert.lengthOf(harness.offeredMessages, 2);
+          assert.equal(interrupts, 2);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect(

@@ -59,10 +59,10 @@ composer commands.
 
 ## Steer a running turn
 
-A [steer](./composer.md#send-while-the-agent-is-working) stops the command or tool
-Claude is running so Claude reads your message right away, as pressing Esc and then
-sending does in Claude Code. Background commands and subagents keep running. Queue
-the message instead if the current command should finish first.
+A [steer](./composer.md#send-while-the-agent-is-working) interrupts Claude's running
+command so Claude can read your message promptly. Foreground subagents move to the
+background first so they can continue, and background commands and subagents keep
+running. Queue the message instead if the current command should finish first.
 
 ## Usage limits
 

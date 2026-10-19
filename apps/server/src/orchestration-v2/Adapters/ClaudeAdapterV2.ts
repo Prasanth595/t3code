@@ -1191,9 +1191,8 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
-    // A steer interrupts the turn without closing the query. Undeclared, that
-    // interrupt also stops background subagents. T3 stops one subagent or
-    // workflow through `stop_task`, and Stop closes the query.
+    // Keep background subagents alive across interrupts; T3 exposes stop_task
+    // for individual subagents and closes the query on Stop.
     perTaskStopAffordance: true,
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
@@ -2717,14 +2716,6 @@ function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
   return (
     message.terminal_reason === "aborted_streaming" || message.terminal_reason === "aborted_tools"
   );
-}
-
-// Claude reads a `now` message only once the running tool returns, so a steer
-// the user sends interrupts the turn first, as Esc then send does in Claude
-// Code. Agent and scheduled deliveries never cut off a command the agent is
-// waiting on; they join at the next tool boundary.
-function claudeSteerInterruptsTurn(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
-  return message.createdBy === "user" && message.scheduledTaskId === undefined;
 }
 
 function isClaudeProviderContinuationTurn(
@@ -9078,12 +9069,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            // The query stays open: the interrupted turn's aborted result is
-            // skipped (see isClaudeActiveSteeringAbortResult) and the steer
-            // runs next in the same turn. Offering after the interrupt keeps
-            // the steer out of the aborted turn, which a tool returning just
-            // before the interrupt could otherwise fold it into.
-            if (claudeSteerInterruptsTurn(turnInput.message)) {
+            // A now-priority offer alone waits for running tools. Interrupt first
+            // so user steers take effect promptly; automatic deliveries can wait.
+            if (
+              turnInput.message.createdBy === "user" &&
+              turnInput.message.scheduledTaskId === undefined
+            ) {
               yield* existing.query.interrupt.pipe(
                 Effect.catch((cause) =>
                   Effect.logWarning("orchestration-v2.claude-steer-interrupt-failed", {
@@ -9092,6 +9083,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
                 ),
               );
+            }
+            // Completion or Stop can release ownership while interrupt is pending.
+            if (
+              (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
+              (yield* Ref.get(queryContext)) !== existing
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
+              });
             }
             yield* existing.query.offer(userMessage);
           },
