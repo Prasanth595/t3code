@@ -103,13 +103,29 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
       } satisfies PreparedConnection;
     }
 
-    const authorized = yield* remote.authorizeBearer({
-      expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: target.httpBaseUrl,
-      wsBaseUrl: target.wsBaseUrl,
-      bearerToken: bearerToken.value,
-      connectionMethod: "direct",
-    });
+    const authorize = (token: string) =>
+      remote.authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
+        httpBaseUrl: target.httpBaseUrl,
+        wsBaseUrl: target.wsBaseUrl,
+        bearerToken: token,
+        connectionMethod: "direct",
+      });
+    const authorized = yield* authorize(bearerToken.value).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          if (
+            error._tag !== "ConnectionBlockedError" ||
+            error.reason !== "authentication" ||
+            !auth.refreshBearerToken
+          )
+            return yield* error;
+          const refreshed = yield* auth.refreshBearerToken(bearerToken.value);
+          if (Option.isNone(refreshed)) return yield* error;
+          return yield* authorize(refreshed.value);
+        }),
+      ),
+    );
     return {
       ...authorized,
       target,

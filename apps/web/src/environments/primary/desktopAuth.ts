@@ -1,6 +1,6 @@
 let desktopBearerTokenPromise: Promise<string> | null = null;
 
-export function readDesktopPrimaryBearerToken(): Promise<string | null> {
+export function readDesktopPrimaryBearerToken(rejectedToken?: string): Promise<string | null> {
   if (typeof window === "undefined") {
     return Promise.resolve(null);
   }
@@ -9,9 +9,10 @@ export function readDesktopPrimaryBearerToken(): Promise<string | null> {
     return Promise.resolve(null);
   }
 
-  desktopBearerTokenPromise ??= bridge.getLocalEnvironmentBearerToken().catch((error) => {
+  // Only coalesce in-flight reads. The main process owns the expiry-aware cache.
+  if (rejectedToken !== undefined) desktopBearerTokenPromise = null;
+  desktopBearerTokenPromise ??= bridge.getLocalEnvironmentBearerToken(rejectedToken).finally(() => {
     desktopBearerTokenPromise = null;
-    throw error;
   });
   return desktopBearerTokenPromise;
 }

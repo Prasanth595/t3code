@@ -60,6 +60,7 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
   DesktopLocalEnvironmentAuth,
   {
     readonly getBearerToken: Effect.Effect<string, DesktopLocalEnvironmentAuthError>;
+    readonly invalidateBearerToken: (rejected: string) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/backend/DesktopLocalEnvironmentAuth") {}
 
@@ -67,15 +68,16 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
   const httpClient = yield* HttpClient.HttpClient;
-  const tokenRef = yield* Ref.make(Option.none<string>());
+  const tokenRef = yield* Ref.make(Option.none<{ token: string; expiresAt: number }>());
   const mutex = yield* Semaphore.make(1);
 
   const getBearerToken = mutex
     .withPermits(1)(
       Effect.gen(function* () {
         const cached = yield* Ref.get(tokenRef);
-        if (Option.isSome(cached)) {
-          return cached.value;
+        const now = yield* Clock.currentTimeMillis;
+        if (Option.isSome(cached) && cached.value.expiresAt > now + 60_000) {
+          return cached.value.token;
         }
 
         const instances = yield* pool.list;
@@ -117,13 +119,20 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
-        yield* Ref.set(tokenRef, Option.some(session.access_token));
+        yield* Ref.set(
+          tokenRef,
+          Option.some({ token: session.access_token, expiresAt: now + session.expires_in * 1_000 }),
+        );
         return session.access_token;
       }),
     )
     .pipe(Effect.withSpan("desktop.localEnvironmentAuth.getBearerToken"));
 
-  return DesktopLocalEnvironmentAuth.of({ getBearerToken });
+  const invalidateBearerToken = (rejected: string) =>
+    Ref.update(tokenRef, (cached) =>
+      Option.isSome(cached) && cached.value.token === rejected ? Option.none() : cached,
+    );
+  return DesktopLocalEnvironmentAuth.of({ getBearerToken, invalidateBearerToken });
 });
 
 export const layer = Layer.effect(DesktopLocalEnvironmentAuth, make);

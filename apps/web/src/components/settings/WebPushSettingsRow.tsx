@@ -1,8 +1,12 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
+import {
+  readPushRegistrationFailure,
+  subscribePushRegistrationFailure,
+} from "../../forkWebPushRegistration";
 import { useEnvironmentIds } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { webPushTest } from "../../state/webPush";
@@ -22,6 +26,10 @@ export function WebPushSettingsRow() {
   const environmentIds = useEnvironmentIds();
   const test = useAtomCommand(webPushTest, { reportFailure: false });
   const [testing, setTesting] = useState(false);
+  const registrationFailure = useSyncExternalStore(
+    subscribePushRegistrationFailure,
+    readPushRegistrationFailure,
+  );
   if (!webPushSupported()) return null;
 
   const sendTest = async () => {
@@ -61,7 +69,19 @@ export function WebPushSettingsRow() {
   return (
     <SettingsRow
       {...searchableSetting("web-push")}
-      description="Thread notifications on this device while T3 Code is closed, from each connected server. Needs the installed app and system notifications."
+      description={
+        <>
+          Thread notifications on this device while T3 Code is closed, from each connected server.
+          Needs the installed app and system notifications.
+          {wanted && registrationFailure ? (
+            <span role="status" className="block text-destructive">
+              {registrationFailure === "retrying"
+                ? "Registration failed for a server. Retrying…"
+                : "Registration failed for a server. Reconnect or reload to try again."}
+            </span>
+          ) : null}
+        </>
+      }
       resetAction={
         enabled !== DEFAULT_CLIENT_SETTINGS.webPushEnabled ? (
           <SettingResetButton

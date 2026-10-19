@@ -27,7 +27,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **[Desktop app on the map](docs/fork/features.md#desktop-app-on-the-map):** the desktop app adds each reachable machine as an environment.
 - **[Zoom and pan](docs/fork/features.md#zoom-and-pan):** the map zooms, pans and fits all cards, with "Auto layout".
 - **[Approved clients](docs/fork/features.md#approved-clients):** a new browser waits until the owner approves it.
-- **[Client access](docs/fork/features.md#client-access):** each machine decides which browsers get in through Cloudflare Access.
+- **[Client access](docs/fork/features.md#client-access):** each machine decides which browsers get in through Cloudflare Access; an open browser waits for approval when its access changes.
 - **[Owner-only access changes](docs/fork/features.md#owner-only-access-changes):** only the owner changes `clientAccess` and `machineMap`.
 - **[Sibling client sessions](docs/fork/features.md#sibling-client-sessions):** a browser client session lasts 1 day, also on sibling machines.
 - **[App invites and app tokens](docs/fork/features.md#app-invites-and-app-tokens):** "Invite an app" shows a QR code that a native app uses once.
@@ -84,7 +84,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 **Web app and look**
 
 - **[Installed web app](docs/fork/features.md#installed-web-app):** each server web app installs as an app, with an offline page and an app badge.
-- **[Web Push](docs/fork/features.md#web-push):** a phone gets thread notifications while the app is closed.
+- **[Web Push](docs/fork/features.md#web-push):** a phone gets thread notifications while the app is closed, with registration retries and a separate failure status.
 - **[Thread card layouts](docs/fork/features.md#thread-card-layouts):** build the thread card from its elements, for desktop and for mobile.
 - **[Local server groups](docs/fork/features.md#local-server-groups):** the browser Local servers list also shows servers that no T3 terminal started.
 - **[Theme style](docs/fork/features.md#theme-style):** published themes set shape, fonts, a canvas pattern and user CSS.

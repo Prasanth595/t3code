@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 
 import { APP_DISPLAY_NAME } from "../../branding";
 import { fetchSessionState } from "../../environments/primary";
+import { createMachineAccessWatcher } from "../../forkMachineAccessWatcher";
 import { usePrimaryEnvironment } from "../../state/environments";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
@@ -35,25 +36,16 @@ export function MachinePausedSurface() {
 }
 
 /**
- * Fork: MM-718. The pause closes the socket of this client. When the primary connection drops,
- * one session check tells a pause apart from a network failure, and a pause loads the lock page.
+ * Fork: MM-718, MM-920. Pausing or changing client access closes the socket. A session check
+ * distinguishes those locks from network failures so the root surface can handle recovery.
  */
 export function MachinePauseWatcher() {
   const phase = usePrimaryEnvironment()?.connection.phase;
-  const wasConnected = useRef(false);
+  const watcher = useRef(
+    createMachineAccessWatcher(fetchSessionState, () => window.location.reload()),
+  );
   useEffect(() => {
-    if (phase === "connected") {
-      wasConnected.current = true;
-      return;
-    }
-    if (!wasConnected.current) return;
-    wasConnected.current = false;
-    void fetchSessionState().then(
-      (session) => {
-        if (session.machinePaused === true) window.location.reload();
-      },
-      () => undefined,
-    );
+    void watcher.current(phase);
   }, [phase]);
   return null;
 }
