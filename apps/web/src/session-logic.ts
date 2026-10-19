@@ -1068,12 +1068,16 @@ export function countFilesChangedAfterTurnCount(
 export function hasUnrecordedChangesAfterTurnCount(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly runs: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["runs"][number], "ordinal" | "status" | "startedAt">
+    Pick<OrchestrationV2ThreadProjection["runs"][number], "id" | "ordinal" | "status" | "startedAt">
   >;
   readonly turnCount: number;
 }): boolean {
   const capturedTurnCounts = new Set(
     input.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
+  );
+  // An earlier rewind discarded these runs, so their failed captures no longer matter.
+  const rolledBackRunIds = new Set(
+    input.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
   );
   return (
     input.runs.some(
@@ -1086,6 +1090,7 @@ export function hasUnrecordedChangesAfterTurnCount(input: {
     input.checkpoints.some(
       (checkpoint) =>
         checkpoint.checkpointTurnCount > input.turnCount &&
+        !rolledBackRunIds.has(checkpoint.runId) &&
         (checkpoint.status === "missing" || checkpoint.status === "error"),
     )
   );

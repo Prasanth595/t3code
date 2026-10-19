@@ -213,7 +213,7 @@ export function RevertConfirmHost(props: {
   readonly threadKey: string;
   /** Read while open, so a checkpoint captured after opening still counts. */
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status" | "startedAt">>;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status" | "startedAt">>;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);

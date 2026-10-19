@@ -67,7 +67,7 @@ describe("RevertConfirmHost", () => {
     });
     const host = (
       checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
-      runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status" | "startedAt">> = [],
+      runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status" | "startedAt">> = [],
     ) => (
       <AppAtomRegistryProvider>
         <RevertConfirmHost
@@ -91,7 +91,7 @@ describe("RevertConfirmHost", () => {
       root.render(
         host(
           [...first, checkpoint(3, ["c.ts", "d.ts"])],
-          [{ ordinal: 4, status: "failed", startedAt: STARTED_AT }],
+          [{ id: RunId.make("run-4"), ordinal: 4, status: "failed", startedAt: STARTED_AT }],
         ),
       ),
     );

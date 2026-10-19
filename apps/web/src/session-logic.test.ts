@@ -379,6 +379,7 @@ describe("V2 session presentation", () => {
     });
     const startedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
     const run = (ordinal: number, status: OrchestrationV2RunStatus, started = true) => ({
+      id: RunId.make(`run-${ordinal}`),
       ordinal,
       status,
       startedAt: started ? startedAt : null,
@@ -401,6 +402,8 @@ describe("V2 session presentation", () => {
     ).toBe(false);
     expect(unrecorded([...ready, checkpoint(3, "error")], [], 2)).toBe(true);
     expect(unrecorded([...ready, checkpoint(3, "stale")], [], 2)).toBe(false);
+    // A failed capture from a run an earlier rewind discarded no longer matters.
+    expect(unrecorded([...ready, checkpoint(3, "error")], [run(3, "rolled_back")], 2)).toBe(false);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
