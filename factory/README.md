@@ -73,6 +73,36 @@ The fork has no Expo project. The hook removes upstream's `owner` and EAS projec
 
 Some of upstream's mobile tooling still has upstream's ids. `vp run dev:client` and the other `dev:client*` scripts start Metro with `--scheme t3code-dev`, which the fork's dev build does not register, so the dev client never connects. Run `node factory/scripts/mobile-dev-client.ts` instead, with `--clear` in place of `dev:client:reset`. `scripts/mobile-native-client.ts` looks for the installed dev client under `com.t3tools.t3code.dev` and never finds the fork's, so build and install the dev client with `vp run ios:dev` or `vp run android:dev` from `apps/mobile`.
 
+### TestFlight
+
+The iOS app reaches phones through TestFlight internal testing, which needs no App Review. To install it, ask the account holder to add your Apple ID to the internal testing group in App Store Connect (Users and Access first, if you are not on the team yet). Accept the email invite, install the TestFlight app on the iPhone and install T3 Code Factory from there. TestFlight offers each new build as an update.
+
+`.github/workflows/factory-mobile.yml` makes the builds. It runs after every push to `main` that changes `apps/mobile/**` or `packages/**`, and by hand from the Actions tab (`Factory mobile`, Run workflow). A newer run cancels one still running. It prebuilds the `production` variant with `expo prebuild`, signs the app, its widgets and its share extension for App Store distribution, archives and exports them with `xcodebuild` and uploads the `.ipa` with `xcrun altool`. No Expo account or EAS build is involved. The version is whatever `apps/mobile/app.config.ts` resolves (`T3CODE_MOBILE_VERSION`, default `2.0.0`), and the build number is the workflow run number. The run summary names both. Processing in App Store Connect takes a few minutes after the run before the build shows in TestFlight.
+
+The signing material lives in the `mobile-release` GitHub environment, which only `main` may deploy from:
+
+| Name                     | Kind     | Value                                                                          |
+| ------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `IOS_DIST_CERT_P12`      | secret   | Apple Distribution certificate and key, `.p12`, base64                         |
+| `IOS_DIST_CERT_PASSWORD` | secret   | Password of that `.p12`                                                        |
+| `IOS_APP_PROFILE`        | secret   | App Store profile for `au.com.originalsolutions.t3codefactory`, base64         |
+| `IOS_WIDGETS_PROFILE`    | secret   | App Store profile for `au.com.originalsolutions.t3codefactory.widgets`, base64 |
+| `IOS_SHARING_PROFILE`    | secret   | App Store profile for `au.com.originalsolutions.t3codefactory.sharing`, base64 |
+| `APPLE_API_KEY`          | secret   | App Store Connect API key, the `.p8` contents (same key as `desktop-release`)  |
+| `APPLE_API_KEY_ID`       | secret   | Its key id                                                                     |
+| `APPLE_API_ISSUER`       | secret   | Its issuer id                                                                  |
+| `APPLE_TEAM_ID`          | variable | `3TB6CJ6ZHV`                                                                   |
+
+Encode a file with `base64 -i <file> | pbcopy` and paste it as the secret. Every run first checks each value without printing it (`factory/scripts/mobile-preflight.sh`) and fails with the name of the one that is missing or wrong.
+
+Before the first run can pass, the account holder sets up team `3TB6CJ6ZHV` in Apple Developer:
+
+1. App IDs `au.com.originalsolutions.t3codefactory`, `au.com.originalsolutions.t3codefactory.widgets` and `au.com.originalsolutions.t3codefactory.sharing`, all with App Groups (`group.au.com.originalsolutions.t3codefactory`). The app's App ID also needs Push Notifications, Associated Domains and Sign in with Apple; the production prebuild puts all three in its entitlements.
+2. An Apple Distribution certificate, exported from Keychain Access as a `.p12`.
+3. Three App Store provisioning profiles, one per App ID. A capability enabled after a profile was made needs the profile regenerated.
+4. An App Store Connect app record for `au.com.originalsolutions.t3codefactory`, and an internal testing group in TestFlight.
+5. The `mobile-release` environment on this repo, limited to `main`, holding the secrets and variable above.
+
 ## Logs
 
 The server writes to `~/Library/Logs/t3fac/t3fac.log`. launchd never rotates that file, and a crash-looping server writes the most and cannot rotate it itself, so a second LaunchAgent, `io.github.rawphp.t3fac.logrotate`, runs `~/.local/share/t3fac/rotate-log.sh` every 10 minutes. When the log is over 20 MB it copies it to `t3fac.log.1`, shifts the older copies up (`.2.gz` to `.5.gz`, gzipped), deletes anything past the fifth and empties `t3fac.log` in place, so the running server keeps writing to the same open file. The rotator's own output goes to `~/Library/Logs/t3fac/logrotate.log` and stays tiny: it prints one line per rotation and nothing otherwise.
