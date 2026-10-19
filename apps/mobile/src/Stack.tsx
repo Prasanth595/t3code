@@ -149,6 +149,7 @@ import { nativeHeaderScrollEdgeEffects } from "./native/StackHeader";
 import { FORM_SHEET_PRESENTATION_OPTIONS } from "./native/sheet-surface";
 import { useThreadOutboxDrain } from "./state/use-thread-outbox-drain";
 import { useComposerAttachmentUploadWorker } from "./state/composer-attachment-uploads";
+import { FactoryScreen } from "./factory/FactoryScreen";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -987,6 +988,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     NotFound: createNativeStackScreen({
       screen: NotFoundScreen,
       linking: "*",
+    }),
+    Factory: createNativeStackScreen({
+      screen: FactoryScreen,
+      linking: "factory",
+      options: { ...SOLID_HEADER_OPTIONS, title: "Factory" },
     }),
   },
 });
