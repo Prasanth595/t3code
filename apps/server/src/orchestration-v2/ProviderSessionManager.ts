@@ -248,21 +248,26 @@ function sessionKey(providerSessionId: ProviderSessionId): string {
   return String(providerSessionId);
 }
 
+function isRuntimeRequestEvent(event: ProviderAdapter.ProviderAdapterV2Event) {
+  return (
+    event.type === "runtime_request.updated" ||
+    (event.type === "node.updated" && event.node.runtimeRequestId !== null) ||
+    (event.type === "turn_item.updated" &&
+      (event.turnItem.type === "approval_request" || event.turnItem.type === "user_input_request"))
+  );
+}
+
 function sessionScopedRuntimeRequestThreadId(
   event: ProviderAdapter.ProviderAdapterV2Event,
 ): ThreadId | undefined {
+  if (!isRuntimeRequestEvent(event)) return undefined;
   switch (event.type) {
     case "runtime_request.updated":
       return event.runtimeRequest.providerTurnId === null ? event.threadId : undefined;
     case "node.updated":
-      return event.node.runId === null && event.node.runtimeRequestId !== null
-        ? event.node.threadId
-        : undefined;
+      return event.node.runId === null ? event.node.threadId : undefined;
     case "turn_item.updated":
-      return event.turnItem.runId === null &&
-        (event.turnItem.type === "approval_request" || event.turnItem.type === "user_input_request")
-        ? event.turnItem.threadId
-        : undefined;
+      return event.turnItem.runId === null ? event.turnItem.threadId : undefined;
     default:
       return undefined;
   }
@@ -1971,6 +1976,21 @@ export const layerWithOptions = (
                           event,
                         })
                         .pipe(
+                          // Requests need persisted state before the provider can be answered;
+                          // other artifact write failures must not stop shared background work.
+                          Effect.catchTags({
+                            ProviderEventPublishError: (cause) =>
+                              event.sessionThreadId !== undefined && !isRuntimeRequestEvent(event)
+                                ? Effect.logWarning(
+                                    "orchestration-v2.driver-session.session-artifact-persist-failed",
+                                    {
+                                      providerSessionId: entry.runtime.providerSessionId,
+                                      threadId,
+                                      cause,
+                                    },
+                                  )
+                                : Effect.fail(cause),
+                          }),
                           Effect.mapError(
                             (cause) =>
                               new ProviderAdapter.ProviderAdapterEventStreamError({
