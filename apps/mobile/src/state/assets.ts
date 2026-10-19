@@ -87,15 +87,14 @@ export function useRefreshAssetUrl(
   return useCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null)
       return fallbackUri ?? null;
+    let result;
     try {
-      const state = assetUrlStateFromResult(
-        await createUrl({ environmentId, input: { resource } }),
-        httpBaseUrl,
-      );
-      return state._tag === "Success" ? state.url : (fallbackUri ?? null);
+      result = await createUrl({ environmentId, input: { resource } });
     } catch (error) {
       if (fallbackUri !== undefined) return fallbackUri;
       throw error;
     }
+    const state = assetUrlStateFromResult(result, httpBaseUrl);
+    return state._tag === "Success" ? state.url : (fallbackUri ?? null);
   }, [createUrl, environmentId, httpBaseUrl, resource, fallbackUri]);
 }
