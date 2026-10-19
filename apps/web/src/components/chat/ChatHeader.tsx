@@ -24,6 +24,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
 import { readLocalApi } from "~/localApi";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { threadEnvironment } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { canShareWithGuestAtom } from "./guestShareAvailability";
@@ -196,7 +197,15 @@ export const ChatHeader = memo(function ChatHeader({
     onStartRename: startRename,
     canShareWithGuest,
   });
-  useEffect(() => subscribeThreadRenameStart(startRename), [startRename]);
+  useEffect(
+    () =>
+      subscribeThreadRenameStart(() => {
+        // A maximized right panel collapses the chat column, which would hide the title input.
+        useRightPanelStore.getState().setMaximized(activeThreadRef, false);
+        startRename();
+      }),
+    [activeThreadRef, startRename],
+  );
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleMenuTimerRef = useRef<number | null>(null);
   const cancelPendingTitleMenu = () => {
