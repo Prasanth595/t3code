@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import type { FileDiffMetadata } from "@pierre/diffs";
 
 import { DiffFileTree, type DiffFileTreeEntry } from "./DiffFileTree";
-import { diffFileTreeEntries, diffFileTreeModel } from "./diffFileTree.logic";
+import { diffFileTreeEntries } from "./diffFileTree.logic";
 import { useCodeViewFileReveal } from "./useCodeViewFileReveal";
 
 const captured = vi.hoisted(() => ({ model: null as unknown }));
@@ -73,9 +73,18 @@ describe("diff tree file activation", () => {
     return element!;
   }
 
-  async function activate(path: string, modifiers: MouseEventInit = {}) {
+  function fileRows(): HTMLElement[] {
+    const host = container.querySelector("file-tree-container");
+    return [
+      ...(host?.shadowRoot ?? container).querySelectorAll<HTMLElement>(
+        '[role="treeitem"][data-item-type="file"]',
+      ),
+    ];
+  }
+
+  async function activate(target: string | HTMLElement, modifiers: MouseEventInit = {}) {
     await act(async () => {
-      row(path).dispatchEvent(
+      (typeof target === "string" ? row(target) : target).dispatchEvent(
         new MouseEvent("click", {
           bubbles: true,
           composed: true,
@@ -200,81 +209,78 @@ describe("diff tree file activation", () => {
     expect(folder.isExpanded()).toBe(false);
   });
 
-  it("keeps a file and its replacement directory selectable", async () => {
-    const files: DiffFileTreeEntry[] = [
-      { path: "office", status: "deleted" },
-      { path: "office/config.ts", status: "added" },
-    ];
-    const presented = diffFileTreeModel(files.map((file) => file.path));
-    await mount({ files, selectedPath: "office" });
-    expect(model().getSelectedPaths()).toEqual([presented.modelPath("office")]);
-    await activate(presented.modelPath("office"));
-    await activate(presented.modelPath("office/config.ts"));
-    expect(targets.map((target) => ("id" in target ? target.id : null))).toEqual([
-      "office\u0000office",
-      "office/config.ts\u0000office/config.ts",
-    ]);
-    targets.length = 0;
-    await activate("office/");
-    expect(targets).toEqual([]);
-  });
-
-  it("keeps the reverse directory-to-file pair selectable", async () => {
+  it("reveals real diff paths and statuses when a directory is replaced by a file", async () => {
     const files: DiffFileTreeEntry[] = [
       { path: "office/config.ts", status: "deleted" },
       { path: "office", status: "added" },
     ];
-    const presented = diffFileTreeModel(files.map((file) => file.path));
-    await mount({ files });
-    await activate(presented.modelPath("office/config.ts"));
-    await activate(presented.modelPath("office"));
-    expect(targets.map((target) => ("id" in target ? target.id : null))).toEqual([
-      "office/config.ts\u0000office/config.ts",
-      "office\u0000office",
+    await mount({ files, selectedPath: "office" });
+    expect(fileRows().map((row) => row.getAttribute("data-item-git-status"))).toEqual([
+      "deleted",
+      "added",
     ]);
+    expect(fileRows()[1]!.getAttribute("aria-selected")).toBe("true");
+    expect(targets).toEqual([]);
+    await activate(fileRows()[1]!);
+    await activate(fileRows()[0]!);
+    await activate("office/");
+    expect(targets).toEqual([
+      { type: "item", id: "office\0office", align: "start" },
+      { type: "item", id: "office/config.ts\0office/config.ts", align: "start" },
+    ]);
+    expect(row("office/").getAttribute("aria-expanded")).toBe("false");
+    await mount({ files, selectedPath: "office/config.ts" });
+    expect(row("office/").getAttribute("aria-expanded")).toBe("true");
+    expect(fileRows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(targets).toHaveLength(2);
   });
 
-  it("survives a later slice that turns an existing file into a directory prefix", async () => {
-    await mount({ files: [{ path: "office", status: "deleted" }] });
+  it("keeps selection and collapsed folders through a colliding slice and refresh", async () => {
     const files: DiffFileTreeEntry[] = [
       { path: "office", status: "deleted" },
-      { path: "office/config.ts", status: "added" },
+      { path: "src/route.ts", status: "modified" },
     ];
-    await act(async () => {
-      root!.render(<Panel files={files} />);
-    });
-    const presented = diffFileTreeModel(files.map((file) => file.path));
-    await activate(presented.modelPath("office"));
-    await activate(presented.modelPath("office/config.ts"));
-    expect(targets.map((target) => ("id" in target ? target.id : null))).toEqual([
-      "office\u0000office",
-      "office/config.ts\u0000office/config.ts",
+    await mount({ files, selectedPath: "office" });
+    await activate("src/");
+    const appended: DiffFileTreeEntry[] = [...files, { path: "office/config.ts", status: "added" }];
+    await mount({ files: appended, selectedPath: "office" });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("false");
+    expect(fileRows()[0]!.getAttribute("aria-selected")).toBe("true");
+    await activate(fileRows()[0]!);
+    await activate(fileRows()[1]!);
+    expect(targets).toEqual([
+      { type: "item", id: "office\0office", align: "start" },
+      { type: "item", id: "office/config.ts\0office/config.ts", align: "start" },
     ]);
+    await activate("office/");
+    await mount({ files: appended.map((file) => ({ ...file })), selectedPath: "office" });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("false");
+    expect(row("office/").getAttribute("aria-expanded")).toBe("false");
+    await activate(fileRows()[0]!);
+    expect(targets.at(-1)).toEqual({ type: "item", id: "office\0office", align: "start" });
+    expect(targets).toHaveLength(3);
   });
 
-  it("keeps both colliding files selectable after a refresh of the same set", async () => {
+  it("preserves filename and extension icons when files become directory prefixes", async () => {
     const files: DiffFileTreeEntry[] = [
-      { path: "office", status: "deleted" },
-      { path: "office/config.ts", status: "added" },
-      { path: "src/features/route.ts", status: "modified" },
+      { path: "AGENTS.md", status: "deleted" },
+      { path: "config.ts", status: "deleted" },
     ];
-    const presented = diffFileTreeModel(files.map((file) => file.path));
+    const rootFileIcons = () =>
+      fileRows()
+        .filter((row) => row.getAttribute("aria-level") === "1")
+        .map((row) => row.querySelector('[data-item-section="icon"] use')?.getAttribute("href"));
     await mount({ files });
-    const folder = model().getItem("src/features/")!;
-    if (!("collapse" in folder)) throw new Error("Expected the directory handle");
-    await act(async () => folder.collapse());
-    await act(async () => {
-      root!.render(<Panel files={files.map((file) => ({ ...file }))} />);
+    const icons = rootFileIcons();
+    expect(icons).toEqual(["#t3-file-icon-agents", "#file-tree-builtin-typescript"]);
+    await mount({
+      files: [
+        ...files,
+        { path: "AGENTS.md/note.txt", status: "added" },
+        { path: "config.ts/note.txt", status: "added" },
+      ],
     });
-    const refreshed = model().getItem("src/features/")!;
-    if (!("isExpanded" in refreshed)) throw new Error("Expected the directory handle");
-    expect(refreshed.isExpanded()).toBe(false);
-    await activate(presented.modelPath("office"));
-    await activate(presented.modelPath("office/config.ts"));
-    expect(targets.map((target) => ("id" in target ? target.id : null))).toEqual([
-      "office\u0000office",
-      "office/config.ts\u0000office/config.ts",
-    ]);
+    expect(rootFileIcons()).toEqual(icons);
   });
 
   it("does not echo controlled selection, but lets the reader activate it", async () => {
