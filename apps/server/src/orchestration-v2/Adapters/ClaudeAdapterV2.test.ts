@@ -9679,6 +9679,94 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("replaces subagent context snapshots and clears them on an in-turn resume", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-context-snapshots"),
+            text: "Run an audit, then resume it.",
+            attachments: [],
+          }),
+        );
+        let sequence = 4100;
+        const taskFrame = (message: Record<string, unknown>) =>
+          claudeSdkFrame({
+            type: "system",
+            task_id: "context-agent",
+            tool_use_id: "toolu-context-agent",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`,
+            ...message,
+          });
+        const started = {
+          subtype: "task_started",
+          description: "Audit recent commits",
+          task_type: "local_agent",
+          subagent_type: "general-purpose",
+        };
+        const completed = {
+          subtype: "task_notification",
+          status: "completed",
+          output_file: "",
+          summary: "Audit complete.",
+        };
+        for (const message of [
+          started,
+          {
+            subtype: "task_progress",
+            description: "Reading files",
+            usage: { total_tokens: 12_000, tool_uses: 2, duration_ms: 900 },
+          },
+          {
+            subtype: "task_progress",
+            description: "",
+            usage: { total_tokens: 8_000, tool_uses: 3, duration_ms: 1_000 },
+          },
+          { ...completed, usage: { total_tokens: 7_000, tool_uses: 4, duration_ms: 2_000 } },
+          started,
+          {
+            subtype: "task_progress",
+            description: "Resumed audit",
+            usage: { total_tokens: 0, tool_uses: 0, duration_ms: 0 },
+          },
+          completed,
+        ]) {
+          yield* harness.offerAndWait(taskFrame(message));
+        }
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000004199",
+            result: "Both audits finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const snapshots = harness.events.flatMap((event) =>
+          event.type === "subagent.updated"
+            ? [[event.subagent.status, event.subagent.progress, event.subagent.usage]]
+            : [],
+        );
+        assert.deepEqual(snapshots, [
+          ["running", undefined, undefined],
+          ["running", "Reading files", { contextTokens: 12_000, toolUses: 2 }],
+          ["running", "Reading files", { contextTokens: 8_000, toolUses: 3 }],
+          ["completed", "Reading files", { contextTokens: 7_000, toolUses: 4 }],
+          ["running", undefined, undefined],
+          ["running", "Resumed audit", { contextTokens: 0, toolUses: 0 }],
+          ["completed", "Resumed audit", { contextTokens: 0, toolUses: 0 }],
+        ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([false, true])(
     "drops an idle start superseded by live completion, later resume %s",
     (resume) =>
@@ -9710,11 +9798,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               uuid: `00000000-0000-4000-8000-${suffix}`,
             });
           const finished = (taskId: string, suffix: string) =>
-            makeSubagentNotificationFrame({
-              taskId,
-              toolUseId: `toolu-${taskId}`,
-              summary: "Finished audit.",
-              uuid: `00000000-0000-4000-8000-${suffix}`,
+            claudeSdkFrame({
+              ...makeSubagentNotificationFrame({
+                taskId,
+                toolUseId: `toolu-${taskId}`,
+                summary: "Finished audit.",
+                uuid: `00000000-0000-4000-8000-${suffix}`,
+              }),
+              usage: { total_tokens: 18_000, tool_uses: 4, duration_ms: 2_000 },
             });
           yield* startTurn(1);
           yield* harness.offerAndWait(started("stale-agent", "000000004001"));
@@ -9736,6 +9827,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
           yield* Queue.take(harness.terminalReceipts);
+          assert.deepEqual(
+            harness.events
+              .filter((event) => event.type === "subagent.updated")
+              .findLast((event) => event.subagent.nativeTaskRef?.nativeId === "stale-agent")
+              ?.subagent.usage,
+            { contextTokens: 18_000, toolUses: 4 },
+          );
           if (resume) yield* harness.offerAndWait(started("stale-agent", "000000004007"));
           yield* harness.offerAndWait(finished("wake-agent", "000000004008"));
           yield* Queue.take(harness.continuationReceipts);
@@ -9757,6 +9855,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(latest.subagent.status, resume ? "running" : "completed");
           assert.equal(latest.subagent.result, resume ? null : "Finished audit.");
           assert.equal(latest.subagent.completedAt === null, resume);
+          assert.deepEqual(
+            latest.subagent.usage,
+            resume ? undefined : { contextTokens: 18_000, toolUses: 4 },
+          );
+          assert.deepEqual(
+            harness.events
+              .filter((event) => event.type === "subagent.updated")
+              .findLast((event) => event.subagent.nativeTaskRef?.nativeId === "wake-agent")
+              ?.subagent.usage,
+            { contextTokens: 18_000, toolUses: 4 },
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -13145,10 +13254,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         for (let index = 0; index < 5; index++) yield* offerProgressOnly(index);
         yield* Queue.offer(
           harness.sdkMessages,
-          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001121", state: "start" }),
+          claudeSdkFrame({
+            ...workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001121", state: "start" }),
+            usage: { total_tokens: 12000, tool_uses: 3, duration_ms: 1000 },
+          }),
         );
-        yield* awaitUntil(() => coordinatorCount() > inTurnCount, "in-turn workflow snapshot");
+        while (coordinatorCount() <= inTurnCount) yield* Queue.take(harness.subagentReceipts);
         assert.equal(coordinatorCount(), inTurnCount + 1);
+        const inTurnCoordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
+        assert.equal(inTurnCoordinator?.workflow?.totalTokens, 12000);
+        assert.equal(inTurnCoordinator?.workflow?.toolCalls, 3);
 
         yield* Queue.offer(
           harness.sdkMessages,
@@ -13163,13 +13278,20 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         for (let index = 5; index < 10; index++) yield* offerProgressOnly(index);
         yield* Queue.offer(
           harness.sdkMessages,
-          workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001123", state: "done" }),
+          claudeSdkFrame({
+            ...workflowSnapshot({ uuid: "00000000-0000-4000-8000-000000001123", state: "done" }),
+            usage: { total_tokens: 18000, tool_uses: 5, duration_ms: 2000 },
+          }),
         );
-        yield* awaitUntil(
-          () => coordinatorCount() > betweenTurnCount,
-          "between-turn workflow snapshot",
-        );
+        while (coordinatorCount() <= betweenTurnCount) yield* Queue.take(harness.subagentReceipts);
         assert.equal(coordinatorCount(), betweenTurnCount + 1);
+        const betweenTurnCoordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
+        assert.equal(betweenTurnCoordinator?.workflow?.totalTokens, 18000);
+        assert.equal(betweenTurnCoordinator?.workflow?.toolCalls, 5);
+        assert.deepEqual(
+          [inTurnCoordinator?.usage, betweenTurnCoordinator?.usage],
+          [undefined, undefined],
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
