@@ -1570,12 +1570,15 @@ export function NewTaskDraftScreen(props: {
     >
       {!voiceInput.isBusy &&
       composerMenu.trigger &&
-      (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
+      (composerMenu.items.length > 0 ||
+        composerMenu.trigger.kind === "pull-request" ||
+        composerMenu.trigger.kind === "path") ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}
             triggerKind={composerMenu.trigger.kind}
             isLoading={composerMenu.isLoading}
+            searchesThreads={composerMenu.searchesThreads}
             error={composerMenu.error}
             onSelect={composerMenu.onSelect}
           />
