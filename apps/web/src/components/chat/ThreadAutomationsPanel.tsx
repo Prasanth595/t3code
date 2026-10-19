@@ -180,7 +180,6 @@ export function ThreadAutomationsPanel(props: {
                 aria-hidden
               />
             </span>
-            {/* The narrow panel cuts both lines; hovering shows them in full. */}
             <Tooltip>
               <TooltipTrigger render={<div className="min-w-0 flex-1" />}>
                 <span className="block truncate text-sm font-medium text-foreground/80">
