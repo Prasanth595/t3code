@@ -119,7 +119,9 @@ it.effect("setup in a root shell warns that the server cannot run as root", () =
 it.effect("setup without root does not report a host without fonts as ready", () =>
   Effect.gen(function* () {
     const { commands, output } = yield* runSetup({ root: false });
-    expect(output).toContain("T3's browser needs fontconfig and system fonts; setup installs them.");
+    expect(output).toContain(
+      "T3's browser needs fontconfig and system fonts; setup installs them.",
+    );
     expect(output).toContain("This needs root. Run:");
     expect(output).not.toContain("ready");
     expect(aptGet(commands)).toEqual([]);

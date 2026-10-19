@@ -152,7 +152,9 @@ const browserSetupCommand = Command.make("setup", { baseDir: baseDirFlag }).pipe
           yield* Console.log(`T3's browser is missing ${missing.join(", ")}; setup installs them.`);
         }
         if (needsFonts) {
-          yield* Console.log("T3's browser needs fontconfig and system fonts; setup installs them.");
+          yield* Console.log(
+            "T3's browser needs fontconfig and system fonts; setup installs them.",
+          );
         }
         return yield* Console.log(`\nThis needs root. Run:\n\n  ${setupCommand}\n`);
       }
