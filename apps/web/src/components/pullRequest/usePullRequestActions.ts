@@ -1,6 +1,9 @@
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   ProjectId,
@@ -345,7 +348,9 @@ export function usePullRequestHandoffs({
       toastManager.update(toastId, {
         type: "error",
         title: "Could not prepare the pull request checkout",
-        description: checkoutFailureDescription(squashAtomCommandFailure(prepared)),
+        description: checkoutFailureDescription(
+          isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
+        ),
       });
       return;
     }
