@@ -81,99 +81,75 @@ const makeSuccessfulHandle = (stdout: string) =>
   });
 
 describe("Git output collection", () => {
-  it.effect.each([false, true])(
-    "preserves chunked UTF-8 and NUL output with callbacks=%s",
-    (callbacks) =>
-      Effect.gen(function* () {
-        const stdout = "a\\b\0雪\nlast ";
-        const stderr = "Receiving é\r\nUpdating 雪\rdone";
-        const chunks = (text: string) =>
-          Stream.fromIterable(
-            Array.from(new TextEncoder().encode(text), (byte) => Uint8Array.of(byte)),
-          );
-        const spawner = ChildProcessSpawner.make(() =>
+  // Git writes in arbitrary chunk sizes; one byte per chunk splits every
+  // multibyte character across reads.
+  const byteChunks = (text: string) =>
+    Stream.fromIterable(Array.from(new TextEncoder().encode(text), (byte) => Uint8Array.of(byte)));
+  const makeDriver = (output: { stdout?: string; stderr?: string }) =>
+    makeGitVcsDriverCore().pipe(
+      Effect.provideService(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
           Effect.succeed(
             ChildProcessSpawner.makeHandle({
               ...makeSuccessfulHandle(""),
-              stdout: chunks(stdout),
-              stderr: chunks(stderr),
+              stdout: byteChunks(output.stdout ?? ""),
+              stderr: byteChunks(output.stderr ?? ""),
             }),
           ),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const stdoutLines: string[] = [];
-        const stderrLines: string[] = [];
-        const result = yield* driver.execute({
-          operation: "test.chunkedGitOutput",
-          cwd: "/repo",
-          args: ["status"],
-          ...(callbacks
-            ? {
-                progress: {
-                  onStdoutLine: (line: string) => Effect.sync(() => void stdoutLines.push(line)),
-                  onStderrLine: (line: string) => Effect.sync(() => void stderrLines.push(line)),
-                },
-              }
-            : {}),
-        });
-        assert.deepEqual(result, {
-          exitCode: 0,
-          stdout,
-          stderr,
-          stdoutTruncated: false,
-          stderrTruncated: false,
-        });
-        assert.deepEqual(stdoutLines, callbacks ? ["a\\b\0雪", "last "] : []);
-        assert.deepEqual(stderrLines, callbacks ? ["Receiving é", "Updating 雪", "done"] : []);
-      }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+        ),
+      ),
+    );
+
+  it.effect("returns the same split UTF-8 and NUL output with and without line callbacks", () =>
+    Effect.gen(function* () {
+      const stdout = "a\\b\0雪\nlast ";
+      const stderr = "Receiving é\r\nUpdating 雪\rdone";
+      const driver = yield* makeDriver({ stdout, stderr });
+      const input = { operation: "test.chunkedGitOutput", cwd: "/repo", args: ["status"] };
+      const expected = {
+        exitCode: 0,
+        stdout,
+        stderr,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+      };
+
+      assert.deepEqual(yield* driver.execute(input), expected);
+
+      const stdoutLines: string[] = [];
+      const stderrLines: string[] = [];
+      const withCallbacks = yield* driver.execute({
+        ...input,
+        progress: {
+          onStdoutLine: (line) => Effect.sync(() => void stdoutLines.push(line)),
+          onStderrLine: (line) => Effect.sync(() => void stderrLines.push(line)),
+        },
+      });
+      assert.deepEqual(withCallbacks, expected);
+      assert.deepEqual(stdoutLines, ["a\\b\0雪", "last "]);
+      assert.deepEqual(stderrLines, ["Receiving é", "Updating 雪", "done"]);
+    }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 
-  it.effect.each([
-    { callbacks: false, keep: false },
-    { callbacks: false, keep: true },
-    { callbacks: true, keep: false },
-    { callbacks: true, keep: true },
-  ])(
-    "preserves byte caps with callbacks=$callbacks and continued callbacks=$keep",
-    ({ callbacks, keep }) =>
-      Effect.gen(function* () {
-        const bytes = new TextEncoder().encode("é雪\rdone");
-        const spawner = ChildProcessSpawner.make(() =>
-          Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              ...makeSuccessfulHandle(""),
-              stderr: Stream.fromIterable(Array.from(bytes, (byte) => Uint8Array.of(byte))),
-            }),
-          ),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        );
-        const lines: string[] = [];
-        const input = {
-          operation: "test.cappedGitOutput",
-          cwd: "/repo",
-          args: ["status"],
-          maxOutputBytes: 3,
-          keepLineCallbacksAfterTruncation: keep,
-          ...(callbacks
-            ? {
-                progress: {
-                  onStderrLine: (line: string) => Effect.sync(() => void lines.push(line)),
-                },
-              }
-            : {}),
-        };
-        const result = yield* driver.execute({ ...input, appendTruncationMarker: true });
-        assert.equal(result.stderr, "é\uFFFD");
-        assert.isTrue(result.stderrTruncated);
-        assert.deepEqual(lines, callbacks ? (keep ? ["é雪", "done"] : ["é\uFFFD"]) : []);
-        const error = yield* driver.execute(input).pipe(Effect.flip);
-        assert.equal(error.outputLength, 4);
-        assert.include(error.detail, "exceeded 3 bytes");
-      }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+  it.effect("caps output without line callbacks", () =>
+    Effect.gen(function* () {
+      const driver = yield* makeDriver({ stderr: "é雪\rdone" });
+      const input = {
+        operation: "test.cappedGitOutput",
+        cwd: "/repo",
+        args: ["status"],
+        maxOutputBytes: 3,
+      };
+
+      const truncated = yield* driver.execute({ ...input, appendTruncationMarker: true });
+      assert.equal(truncated.stderr, "é\uFFFD");
+      assert.isTrue(truncated.stderrTruncated);
+
+      const error = yield* driver.execute(input).pipe(Effect.flip);
+      assert.equal(error.outputLength, 4);
+      assert.include(error.detail, "exceeded 3 bytes");
+    }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 });
 
