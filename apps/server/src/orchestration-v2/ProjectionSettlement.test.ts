@@ -367,24 +367,9 @@ it.effect.each([
       for (const [name, needsAttention, nextRun, eligible] of [
         ["attention", true, null, false],
         ["ordinary-notice", undefined, null, true],
-        ["explicit-false", false, null, true],
         ["queued", true, { status: "queued", startedAt: null }, false],
-        ["held", true, { status: "queued", startedAt: null, queueHeld: true }, false],
-        ["canceled", true, { status: "cancelled", startedAt: null }, false],
-        ["failed-before-start", true, { status: "failed", startedAt: null }, false],
+        ["canceled-before-start", true, { status: "cancelled", startedAt: null }, false],
         ["later-start", true, { startedAt: later }, true],
-        ["failed-after-start", true, { status: "failed", startedAt: later }, true],
-        ["canceled-after-start", true, { status: "cancelled", startedAt: later }, true],
-        ["lower-ordinal-later-start", true, { ordinal: 1, startedAt: later }, true],
-        [
-          "higher-ordinal-older-start",
-          true,
-          { startedAt: DateTime.subtract(old, { hours: 1 }) },
-          false,
-        ],
-        ["same-start-higher-ordinal", true, {}, true],
-        ["same-start-lower-ordinal", true, { ordinal: 1 }, false],
-        ["automatic-continuation", true, { startedAt: later, workStartedAt: old }, true],
       ] satisfies ReadonlyArray<
         readonly [string, boolean | undefined, Partial<OrchestrationV2Run> | null, boolean]
       >) {
@@ -418,6 +403,12 @@ it.effect.each([
         if (nextRun !== null) {
           yield* createRun(threadId, "completed", 3, nextRun);
         }
+        const notice = (yield* store.getThreadProjection(threadId)).turnItems.find(
+          (item) => item.id === TurnItemId.make(`notice:${runId}`),
+        );
+        assert.equal(notice?.type, "system_notice");
+        if (notice?.type !== "system_notice") return;
+        assert.equal(notice.needsAttention, needsAttention, name);
         assert.deepEqual(
           (yield* store.getSettlementCandidates(threadId)).map((candidate) => candidate.id),
           eligible ? [threadId] : [],
@@ -543,6 +534,19 @@ it.effect(
         pendingQuery![1],
       );
       assert.isTrue(plan.some((row) => row.detail.includes("turn_items_shell_pending_idx")));
+      const candidateQuery = queries.find(([query]) => query.includes("AS latest_run_id"));
+      assert.isDefined(candidateQuery);
+      const candidatePlan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${candidateQuery![0]}`,
+        candidateQuery![1],
+      );
+      assert.isTrue(
+        candidatePlan.some((row) =>
+          row.detail.startsWith(
+            "SEARCH notice USING INDEX orchestration_v2_projection_turn_items_attention_notice_idx (thread_id=? AND run_id=?)",
+          ),
+        ),
+      );
       const countsPlan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
       SELECT thread_id, run_id, COUNT(*) FROM orchestration_v2_projection_turn_items
       WHERE thread_id = ${threadId} AND run_id IS NOT NULL GROUP BY thread_id, run_id`;

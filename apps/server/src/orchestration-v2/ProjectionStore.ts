@@ -5650,14 +5650,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items notice
-                  INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+                  INDEXED BY orchestration_v2_projection_turn_items_attention_notice_idx
                 WHERE notice.thread_id = t.thread_id
                   AND notice.run_id = (
                     SELECT started.run_id FROM orchestration_v2_projection_runs started
                     WHERE started.thread_id = t.thread_id
                       AND json_extract(started.payload_json, '$.startedAt') IS NOT NULL
                     ORDER BY json_extract(started.payload_json, '$.startedAt') DESC,
-                      started.ordinal DESC, started.run_id DESC
+                      started.ordinal DESC
                     LIMIT 1
                   )
                   AND notice.type = 'system_notice'
@@ -6242,16 +6242,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 !runtimeRequests.some((request) => request.status === "pending"),
             )
             .filter(({ runs, turnItems }) => {
-              // Only an actually started run supersedes an attention notice.
-              const latestStartedRun = runs
-                .filter((run) => run.startedAt !== null)
-                .toSorted(
-                  (left, right) =>
-                    DateTime.toEpochMillis(right.startedAt!) -
-                      DateTime.toEpochMillis(left.startedAt!) ||
-                    right.ordinal - left.ordinal ||
-                    right.id.localeCompare(left.id),
-                )[0];
+              // Queue order can differ from the order runs actually start.
+              let latestStartedRun: OrchestrationV2Run | undefined;
+              let latestStartedAt = -Infinity;
+              for (const run of runs) {
+                if (run.startedAt === null) continue;
+                const startedAt = DateTime.toEpochMillis(run.startedAt);
+                if (
+                  latestStartedRun === undefined ||
+                  startedAt > latestStartedAt ||
+                  (startedAt === latestStartedAt && run.ordinal > latestStartedRun.ordinal)
+                ) {
+                  latestStartedRun = run;
+                  latestStartedAt = startedAt;
+                }
+              }
               return !turnItems.some(
                 (item) =>
                   item.runId === latestStartedRun?.id &&

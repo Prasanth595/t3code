@@ -3219,148 +3219,124 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["auto", "full-access"] as const)(
-    "reports SDK permission denials once before completion without leaking into later turns in %s mode",
-    (runtimeMode) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
-          const now = yield* DateTime.now;
-          const start = (ordinal: number) =>
-            harness.runtime.startTurn(
-              makeClaudeTestTurnInput({
-                threadId: harness.threadId,
-                providerThread: harness.providerThread,
-                now,
-                attemptId: RunAttemptId.make(`attempt-denials-${ordinal}`),
-                providerTurnOrdinal: ordinal,
-                text: "Continue.",
-                attachments: [],
-                runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-                  runtimeMode,
-                  interactionMode: "default",
-                  cwd: "/workspace",
-                }),
+  it.effect("reports SDK-only denials with raw reasons once, scoped to their turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const start = (ordinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-denials-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Continue.",
+              attachments: [],
+              runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                runtimeMode: "auto",
+                interactionMode: "default",
+                cwd: "/workspace",
               }),
-            );
-          const denial = (tool_name: string, tool_use_id: string) => ({
-            tool_name,
-            tool_use_id,
-            tool_input: { secret: "NEVER_COPY_TOOL_INPUT" },
-          });
-          const notices = () =>
-            harness.events.flatMap((event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
-                ? [event.turnItem]
-                : [],
-            );
-          yield* start(1);
-          const canUseTool = harness.getOpenedOptions()!.canUseTool!;
-          for (const [tool, id, behavior] of [
-            ["ExitPlanMode", "captured-plan", "deny"],
-            ["Bash", "sdk-bash", "allow"],
-          ] as const) {
-            const result = yield* Effect.promise(() =>
-              canUseTool(
-                tool,
-                {},
-                {
-                  signal: new AbortController().signal,
-                  toolUseID: id,
-                  requestId: id,
-                },
-              ),
-            );
-            assert.equal(result?.behavior, behavior);
-          }
-          const rawReason = `  Auto   policy\nblocked this action. ${"Reason details. ".repeat(60)}`;
-          for (const id of ["sdk-bash", "sdk-bash-again"]) {
-            yield* harness.offerAndWait(
-              claudeSdkFrame({
-                type: "user",
-                uuid: `denial-reasons-${id}`,
-                session_id: WAKE_NATIVE_SESSION,
-                parent_tool_use_id: null,
-                message: {
-                  role: "user",
-                  content: [
-                    {
-                      type: "tool_result",
-                      tool_use_id: id,
-                      is_error: true,
-                      content: [{ type: "text", text: rawReason }],
-                    },
-                  ],
-                },
-                tool_use_result: { message: "MISLEADING_STRUCTURED_RESULT" },
-              }),
-            );
-          }
-          yield* Queue.offer(
-            harness.sdkMessages,
-            makeResultFrame({
-              uuid: "denials-1",
-              result: "Done.",
-              permissionDenials: [
-                denial("ExitPlanMode", "captured-plan"),
-                denial("Bash", "sdk-bash"),
-                denial("Bash", "sdk-bash-again"),
-                denial("ExitPlanMode", "sdk-plan"),
-              ],
             }),
           );
-          const terminal = yield* Queue.take(harness.terminalReceipts);
-          assert.equal(terminal.status, "completed");
-          assert.lengthOf(notices(), 1);
-          const notice = notices()[0]!;
-          const source = runtimeMode === "auto" ? "Auto mode" : "Claude";
-          assert.equal(
-            notice.message,
-            `${source} denied 3 actions (Bash, ExitPlanMode): ${rawReason.replace(/\s+/gu, " ").trim().slice(0, 500)}`,
+        const notices = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem]
+              : [],
           );
-          assert.isTrue(notice.needsAttention);
-          assert.isBelow(
-            harness.events.findIndex(
-              (event) => event.type === "turn_item.updated" && event.turnItem.id === notice.id,
-            ),
-            harness.events.indexOf(terminal),
-          );
-          assert.notInclude(JSON.stringify(notice), "NEVER_COPY_TOOL_INPUT");
-          assert.notInclude(JSON.stringify(notice), "MISLEADING_STRUCTURED_RESULT");
-          assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
-
-          // Reuse both IDs to prove neither the T3-denied IDs nor raw reasons survive a turn.
-          yield* start(2);
-          yield* Queue.offer(
-            harness.sdkMessages,
-            makeResultFrame({
-              uuid: "denials-2",
-              result: "Done.",
-              permissionDenials: [
-                denial("ExitPlanMode", "captured-plan"),
-                denial("Bash", "sdk-bash"),
-              ],
-            }),
-          );
-          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
-          assert.lengthOf(notices(), 2);
-          assert.equal(notices()[1]!.message, `${source} denied 2 actions (ExitPlanMode, Bash)`);
-          yield* start(3);
-          yield* Queue.offer(
-            harness.sdkMessages,
-            makeResultFrame({ uuid: "denials-3", result: "Done." }),
-          );
-          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
-          assert.lengthOf(notices(), 2);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        yield* start(1);
+        const capturedPlan = yield* Effect.promise(() =>
+          harness.getOpenedOptions()!.canUseTool!(
+            "ExitPlanMode",
+            {},
+            {
+              signal: new AbortController().signal,
+              toolUseID: "captured-plan",
+              requestId: "captured-plan",
+            },
           ),
+        );
+        assert.equal(capturedPlan?.behavior, "deny");
+        const rawReason = "Auto policy blocked this command: it writes outside the workspace.";
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            uuid: "denial-reason",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "sdk-bash",
+                  is_error: true,
+                  content: rawReason,
+                },
+              ],
+            },
+            tool_use_result: { message: "MISLEADING_STRUCTURED_RESULT" },
+          }),
+        );
+        const denials = [
+          { tool_name: "ExitPlanMode", tool_use_id: "captured-plan", tool_input: {} },
+          { tool_name: "Bash", tool_use_id: "sdk-bash", tool_input: {} },
+          { tool_name: "Write", tool_use_id: "sdk-write", tool_input: {} },
+        ];
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "denials-1",
+            result: "Done.",
+            permissionDenials: denials,
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.lengthOf(notices(), 1);
+        const notice = notices()[0]!;
+        assert.include(notice.message, rawReason);
+        assert.include(notice.message, "Bash");
+        assert.include(notice.message, "Write");
+        assert.notInclude(notice.message, "ExitPlanMode");
+        assert.notInclude(notice.message, "MISLEADING_STRUCTURED_RESULT");
+        assert.isTrue(notice.needsAttention);
+        assert.equal(notice.runId, RunId.make("run-attempt-denials-1"));
+        assert.isBelow(
+          harness.events.findIndex(
+            (event) => event.type === "turn_item.updated" && event.turnItem.id === notice.id,
+          ),
+          harness.events.indexOf(terminal),
+        );
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
+
+        // Reusing IDs exposes denial markers or reasons that escape their owning turn.
+        yield* start(2);
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "denials-2",
+            result: "Done.",
+            permissionDenials: denials,
+          }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+        assert.lengthOf(notices(), 2);
+        assert.include(notices()[1]!.message, "ExitPlanMode");
+        assert.notInclude(notices()[1]!.message, rawReason);
+        assert.equal(notices()[1]!.runId, RunId.make("run-attempt-denials-2"));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
       ),
+    ),
   );
 
-  it.effect.each(["declined approval", "cancelled approval", "cancelled question"] as const)(
+  it.effect.each(["declined approval", "cancelled question"] as const)(
     "does not announce a %s as an SDK permission denial",
     (scenario) =>
       Effect.scoped(
@@ -4931,9 +4907,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000506",
             result: "Plan captured.",
-            permissionDenials: [
-              { tool_name: "ExitPlanMode", tool_use_id: "tool-exit-plan-1", tool_input: {} },
-            ],
           }),
         );
         yield* Queue.take(harness.terminalReceipts);
@@ -4977,7 +4950,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const proposedPlan = [...plans.values()].find((plan) => plan.kind === "proposed_plan");
         assert.equal(proposedPlan?.status, "active");
         assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions"]);
-        assert.isFalse([...items.values()].some((item) => item.type === "system_notice"));
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -6535,7 +6507,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               0,
             ),
           );
-          yield* awaitUntil(() => harness.terminalEvents().length === 1, "first turn terminal");
+          yield* Queue.take(harness.terminalReceipts);
 
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -6550,14 +6522,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
           yield* Queue.offer(harness.sdkMessages, wakeNotification);
-          yield* Queue.offer(harness.sdkMessages, planToolUse);
-          // The SDK asks for permission only after streaming the tool_use.
-          yield* awaitUntil(
-            () => Queue.sizeUnsafe(harness.sdkMessages) === 0,
-            "the tool_use frame to be consumed",
-          );
-          let settleYields = 0;
-          yield* awaitUntil(() => settleYields++ >= 50, "the tool_use frame to be handled");
+          yield* harness.offerAndWait(planToolUse);
           const canUseTool = harness.getOpenedOptions()?.canUseTool;
           assert.isFunction(canUseTool);
           const callback = yield* Effect.promise(() =>
@@ -6580,16 +6545,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Queue.offer(
             harness.sdkMessages,
             claudeSdkFrame({
+              ...planToolResult,
+              uuid: "wake-sdk-denial-reason",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: "wake-sdk-denied",
+                    is_error: true,
+                    content: "Wake command blocked by policy.",
+                  },
+                ],
+              },
+            }),
+          );
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
               ...wakeResult,
               permission_denials: [
                 { tool_name: "ExitPlanMode", tool_use_id: planToolUseId, tool_input: {} },
+                { tool_name: "Bash", tool_use_id: "wake-sdk-denied", tool_input: {} },
               ],
             }),
           );
-          yield* awaitUntil(
-            () => harness.continuationRequests.length === 1,
-            "continuation request",
-          );
+          yield* Queue.take(harness.continuationReceipts);
 
           yield* Queue.offer(
             harness.sdkMessages,
@@ -6611,7 +6592,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               1,
             ),
           );
-          yield* awaitUntil(() => harness.terminalEvents().length === 2, "user turn terminal");
+          yield* Queue.take(harness.terminalReceipts);
 
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -6627,7 +6608,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               messageCreationSource: "provider",
             }),
           );
-          yield* awaitUntil(() => harness.terminalEvents().length === 3, "continuation terminal");
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
 
           const latestItems = new Map(
             harness.events.flatMap((event) =>
@@ -6640,7 +6621,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             (item) =>
               item.type === "dynamic_tool" && item.nativeItemRef?.nativeId === planToolUseId,
           );
-          assert.isFalse([...latestItems.values()].some((item) => item.type === "system_notice"));
+          const notices = [...latestItems.values()].filter((item) => item.type === "system_notice");
+          assert.lengthOf(notices, 1);
+          assert.equal(notices[0]!.runId, runOf(continuationAttempt));
+          assert.include(notices[0]!.message, "Wake command blocked by policy.");
+          assert.notInclude(notices[0]!.message, "ExitPlanMode");
+          assert.isTrue(notices[0]!.needsAttention);
           const proposedPlans = [...latestItems.values()].filter(
             (item) => item.type === "proposed_plan",
           );

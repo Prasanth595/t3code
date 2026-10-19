@@ -3755,7 +3755,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         const requestedContinuations = yield* Ref.make(new Set<string>());
         const heldProposedPlansByToolUseId = new Map<string, string>();
-        // Follow buffered frames to their eventual turn without retaining discarded frames.
+        // Held frames can drain into a different turn.
         const heldDeniedByT3Tools = new WeakSet<ClaudeToolUseContentBlock>();
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
@@ -7919,8 +7919,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ]
                 .join("; ")
                 .slice(0, 1500);
-              const source = liveQuery.permissionMode === "auto" ? "Auto mode" : "Claude";
-              const title = `${source} denied ${denials.length} action${denials.length === 1 ? "" : "s"} (${tools})`;
+              const title = `Claude denied ${denials.length} action${denials.length === 1 ? "" : "s"} (${tools})`;
               const nativeItemId = `${context.providerTurnId}:permission-denials`;
               yield* emitProviderEvent({
                 type: "turn_item.updated",
