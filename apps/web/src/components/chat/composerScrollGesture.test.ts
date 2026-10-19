@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vite-plus/test";
+// @vitest-environment jsdom
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createComposerScrollGestureState,
+  listenForComposerScrollGestures,
   recordComposerScrollGestureEvent,
   resetComposerScrollGesture,
   shouldCollapseComposerForScrollKey,
@@ -119,5 +122,163 @@ describe("composer scroll gesture", () => {
     expect(record(state, 0, { deltaPx: 20 })).toBe(false);
     expect(record(state, 20, { scrollsTowardLogicalEnd: true })).toBe(false);
     expect(record(state, 40, { deltaPx: 10 })).toBe(false);
+  });
+});
+
+describe("composer timeline scroll input", () => {
+  let timeline: HTMLDivElement;
+  let content: HTMLDivElement;
+  let collapsed: boolean;
+  let atLogicalEnd: boolean;
+  let dispose: () => void;
+
+  function pointerDown(target: EventTarget, button = 0) {
+    target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button }));
+  }
+
+  function scrollTo(scrollTop: number) {
+    timeline.scrollTop = scrollTop;
+    timeline.dispatchEvent(new Event("scroll"));
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    timeline = document.createElement("div");
+    content = document.createElement("div");
+    timeline.append(content);
+    document.body.append(timeline);
+    Object.defineProperties(timeline, {
+      scrollHeight: { value: 1500 },
+      clientHeight: { value: 500 },
+    });
+    timeline.scrollTop = 500;
+    collapsed = false;
+    atLogicalEnd = false;
+    dispose = listenForComposerScrollGestures({
+      gestureState: createComposerScrollGestureState(),
+      getTimelineScrollableNode: () => timeline,
+      isTimelineAtLogicalEnd: () => atLogicalEnd,
+      isCollapseEligible: () => !collapsed,
+      onCollapse: () => {
+        collapsed = true;
+      },
+      restoreAfterTimelineReachedEnd: () => {
+        collapsed = false;
+      },
+    });
+  });
+
+  afterEach(() => {
+    dispose();
+    timeline.remove();
+    vi.useRealTimers();
+  });
+
+  it.each(["scrollbar", "touch", "middle click"])(
+    "collapses after enough %s movement and restores at the logical end",
+    (input) => {
+      scrollTo(600);
+      expect(collapsed).toBe(false);
+
+      if (input === "scrollbar") pointerDown(timeline);
+      if (input === "touch") content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+      if (input === "middle click") {
+        pointerDown(content, 1);
+        window.dispatchEvent(new Event("pointerup"));
+        vi.advanceTimersByTime(1000);
+      }
+
+      scrollTo(590);
+      scrollTo(580);
+      expect(collapsed).toBe(false);
+      scrollTo(576);
+      expect(collapsed).toBe(true);
+
+      // The last message can be visible before the footer's physical bottom.
+      atLogicalEnd = true;
+      scrollTo(700);
+      expect(collapsed).toBe(false);
+      scrollTo(730);
+      expect(collapsed).toBe(false);
+    },
+  );
+
+  it("ends the release tail even when scrolls and duplicate releases keep arriving", () => {
+    content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    scrollTo(490);
+    window.dispatchEvent(new Event("touchend"));
+    vi.advanceTimersByTime(100);
+    scrollTo(476);
+    expect(collapsed).toBe(true);
+
+    atLogicalEnd = true;
+    scrollTo(700);
+    expect(collapsed).toBe(false);
+    vi.advanceTimersByTime(100);
+    window.dispatchEvent(new Event("pointerup"));
+    scrollTo(710);
+    vi.advanceTimersByTime(51);
+
+    // A new streaming turn can move the logical end while follow scrolls continue.
+    atLogicalEnd = false;
+    scrollTo(750);
+    vi.advanceTimersByTime(100);
+    scrollTo(800);
+    expect(collapsed).toBe(false);
+  });
+
+  it("does not turn a press and release without scrolling into a live-follow gesture", () => {
+    pointerDown(timeline);
+    window.dispatchEvent(new Event("pointerup"));
+    vi.advanceTimersByTime(10);
+    scrollTo(550);
+    expect(collapsed).toBe(false);
+  });
+
+  it.each(["pointercancel", "touchcancel", "blur"])(
+    "does not collapse on live-follow scrolling after %s interrupts the gesture",
+    (event) => {
+      if (event === "touchcancel") {
+        content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+      } else {
+        pointerDown(timeline);
+      }
+      scrollTo(490);
+      window.dispatchEvent(new Event(event));
+      vi.advanceTimersByTime(10);
+      scrollTo(550);
+      expect(collapsed).toBe(false);
+    },
+  );
+
+  it("ends middle-click autoscroll on a key, a click, or a wheel without leaving a hold", () => {
+    for (const stop of ["key", "click", "wheel"]) {
+      pointerDown(content, 1);
+      window.dispatchEvent(new Event("pointerup"));
+      vi.advanceTimersByTime(1000);
+      scrollTo(450);
+      expect(collapsed).toBe(true);
+      atLogicalEnd = true;
+      scrollTo(700);
+      expect(collapsed).toBe(false);
+
+      if (stop === "key") document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      if (stop === "click") pointerDown(timeline);
+      if (stop === "wheel") {
+        content.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 30 }));
+      }
+      atLogicalEnd = false;
+      scrollTo(750);
+      expect(collapsed).toBe(false);
+    }
+  });
+
+  it("leaves no gesture active after the composer stops tracking this timeline", () => {
+    pointerDown(timeline);
+    scrollTo(490);
+    dispose();
+    vi.advanceTimersByTime(1000);
+    scrollTo(400);
+    expect(collapsed).toBe(false);
   });
 });
