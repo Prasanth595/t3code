@@ -1027,7 +1027,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   }
   const targetByRunId = new Map<RunId, number>();
   // Wake runs and folded answers can survive without a visible user message.
-  let predecessorTurnCount: number | null = input.hasMoreHistory ? null : 0;
+  let predecessorTurnCount: number | null = 0;
   let nextOrdinal = 1;
   for (const run of input.runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
     // Paging older messages does not load their run/checkpoint metadata.
