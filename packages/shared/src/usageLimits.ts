@@ -132,20 +132,15 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 function accountKeyResolver(reports: Iterable<AccountReport>, sources: UsageLimitSourceSnapshots) {
   const ambiguous = new Set<string>();
   for (const source of sources) {
-    const accounts = new Map<string, (typeof source.accounts)[number]>();
+    const credentials = new Map<string, Set<string>>();
     for (const account of source.accounts) {
-      if (!account.email?.trim()) continue;
-      const key = accountKey(account.driver, account.email, account.usageLimits);
-      if (!key) continue;
-      const previous = accounts.get(key);
-      if (
-        previous &&
-        previous.id !== account.id &&
-        (!previous.workspaceId || !account.workspaceId)
-      ) {
-        ambiguous.add(key);
-      }
-      accounts.set(key, account);
+      const key = accountKey(account.driver, account.email);
+      if (key) credentials.set(key, (credentials.get(key) ?? new Set()).add(account.id));
+    }
+    for (const account of source.accounts) {
+      if (account.workspaceId) continue;
+      const key = accountKey(account.driver, account.email);
+      if (key && (credentials.get(key)?.size ?? 0) > 1) ambiguous.add(key);
     }
   }
   const workspaces = new Map<string, Set<string>>();

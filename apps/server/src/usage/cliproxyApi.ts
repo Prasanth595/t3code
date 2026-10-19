@@ -261,9 +261,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
             Effect.flatMap(decodeClaudeProfile),
             Effect.map((profile) => profile.organization.uuid.trim() || undefined),
             Effect.orElseSucceed(() => undefined),
-            Effect.tap((uuid) =>
-              uuid ? Effect.void : Effect.logDebug("Claude hub organization identity unavailable"),
-            ),
           )
         : Effect.succeed(account.id_token?.chatgpt_account_id?.trim() || undefined);
     const base = {
