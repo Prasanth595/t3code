@@ -103,7 +103,8 @@ it.effect("a persisted fork leaves PR watching with its parent until explicitly 
             userMessageId: MessageId.make("fork-watch-source-message"),
             rootNodeId: null,
             activeAttemptId: null,
-            status: "completed",
+            // Fork: a completed run needs a resolved native session to fork (forkNativeSource.ts).
+            status: "interrupted",
             requestedAt: now,
             startedAt: now,
             completedAt: now,
