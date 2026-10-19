@@ -6617,7 +6617,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const isUserTurn = !isContinuationTurn && !isAppOwnedWakeTurn;
                   const invalidatesTextContinuation = isUserTurn && textMessageId !== null;
                   const preserveBufferedContinuation =
-                    (isAppOwnedWakeTurn && !isTextContinuationTurn && textMessageId !== null) ||
+                    (!isUserTurn && !isTextContinuationTurn && textMessageId !== null) ||
                     acpTurnStartShouldPreserveContinuation({
                       continuationRequested: wasRequested,
                       isContinuationTurn: isContinuationTurn || isTextContinuationTurn,
