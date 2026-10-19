@@ -1313,6 +1313,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           'exec mise x "native-package-tool@1.9.0" -- "native-package-tool" "$@"',
           'exec mise x "$TOOL" -- "native-package-tool" "$@"',
           'export MISE_NATIVE_PACKAGE_TOOL_VERSION=1.9.0\nexec mise x native-package-tool -- native-package-tool "$@"',
+          '. "$HOME/.native-package-tool-env"\nexec mise x native-package-tool -- native-package-tool "$@"',
         ]) {
           NodeFS.writeFileSync(wrapperPath, `#!/bin/sh\n${script}\n`);
           const asked: Array<ReadonlyArray<string>> = [];

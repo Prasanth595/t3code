@@ -783,8 +783,9 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
 );
 
 const MISE_EXEC = /\bmise\s+(?:x|exec)\b/;
-// Overrides the config's version for whatever mise runs next.
-const MISE_TOOL_VERSION = /\bMISE_[A-Z0-9_]+_VERSION=/;
+// The probe cannot see either: `MISE_<TOOL>_VERSION` overrides the config's
+// version, and a sourced file can export it.
+const WRAPPER_PICKS_VERSION = /\bMISE_[A-Z0-9_]+_VERSION=|^\s*(?:source|\.)\s+\S/;
 
 /**
  * Whether a `mise x` line picks the tool's version itself (`claude@2`) or
@@ -822,7 +823,7 @@ const readMiseWrapper = Effect.fn("readMiseWrapper")(function* (
   if (lines.length === 0) {
     return null;
   }
-  return code.some((line) => MISE_TOOL_VERSION.test(line)) || lines.some(miseExecChoosesVersion)
+  return code.some((line) => WRAPPER_PICKS_VERSION.test(line)) || lines.some(miseExecChoosesVersion)
     ? "chooses-version"
     : "follows-config";
 });
