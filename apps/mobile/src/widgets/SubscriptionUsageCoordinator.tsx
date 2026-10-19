@@ -23,12 +23,14 @@ const snapshotAtom = Atom.make((get) =>
 export function SubscriptionUsageCoordinator() {
   const {
     themeMode,
+    themeAppearance,
     themeVariablesByAppearance,
     isReady: appearanceReady,
   } = useAppearancePreferences();
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const snapshot = useAtomValue(snapshotAtom);
   useSubscriptionUsage(catalog.isReady);
+  const androidAppearance = Platform.OS === "android" ? themeAppearance : null;
   useEffect(() => {
     if (!catalog.isReady || !appearanceReady) return;
     void Promise.resolve()
@@ -41,6 +43,14 @@ export function SubscriptionUsageCoordinator() {
       .catch((error: unknown) => {
         console.warn("Could not update subscription usage widget", error);
       });
-  }, [catalog.isReady, appearanceReady, snapshot, themeMode, themeVariablesByAppearance]);
+  }, [
+    catalog.isReady,
+    appearanceReady,
+    snapshot,
+    themeMode,
+    themeVariablesByAppearance,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Android stores resolved colors; System appearance changes must republish them.
+    androidAppearance,
+  ]);
   return null;
 }
