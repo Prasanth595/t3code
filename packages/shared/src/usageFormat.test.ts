@@ -12,18 +12,24 @@ import {
 } from "./usageFormat.ts";
 
 describe("formatTokens", () => {
-  it.each([
-    [999, "999"],
-    [999.6, "1K"],
-    [1_234, "1.23K"],
-    [999_499, "999K"],
-    [999_600, "1M"],
-    [12_345_678, "12.3M"],
-    [999_600_000, "1B"],
-    [-999_600, "-1M"],
-    [Number.NaN, "NaN"],
-  ])("formats %s as %s", (value, expected) => {
-    expect(formatTokens(value)).toBe(expected);
+  it("promotes units when three-significant-figure rounding reaches the next unit", () => {
+    expect(formatTokens(999.6)).toBe("1K");
+    expect(formatTokens(999_600)).toBe("1M");
+    expect(formatTokens(999_600_000)).toBe("1B");
+    expect(formatTokens(999_600_000_000)).toBe("1T");
+  });
+
+  it("preserves ordinary counts below the rollover boundary", () => {
+    expect(formatTokens(0)).toBe("0");
+    expect(formatTokens(999.4)).toBe("999");
+    expect(formatTokens(1_234)).toBe("1.23K");
+    expect(formatTokens(999_499)).toBe("999K");
+    expect(formatTokens(12_345_678)).toBe("12.3M");
+  });
+
+  it("preserves negative signs and NaN", () => {
+    expect(formatTokens(-999_600)).toBe("-1M");
+    expect(formatTokens(Number.NaN)).toBe("NaN");
   });
 });
 
