@@ -1858,7 +1858,7 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
           .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
           .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
         yield* Effect.promise(() => blocked.promise);
-        // The complete capture must answer within the action budget, before broker eviction.
+        // The host must answer within the action budget, before the broker timeout.
         if (stage === "wait") {
           yield* Effect.yieldNow;
           yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
@@ -1895,7 +1895,8 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
         // A failed CDP session may be retired, but cannot remain attached and paused.
         expect.soft(streaming || session.detach.mock.calls.length > 0).toBe(true);
         let replacement: ReturnType<typeof makeSession> | undefined;
-        if (session.detach.mock.calls.length > 0) {
+        if (stage !== "capture") {
+          expect(session.detach).toHaveBeenCalled();
           expect(yield* Queue.clear(viewer.output)).toContainEqual({ _tag: "reconnect" });
           yield* browser.attachViewer(viewerInput(tabId, false));
           replacement = sessions.at(-1)!;
@@ -1916,7 +1917,7 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
 );
 
 it.live(
-  "a snapshot timeout preserves recorded frames and allows a new recording before late pause completes",
+  "a snapshot timeout preserves recorded frames and retires a persistently stalled recording session",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -1927,14 +1928,20 @@ it.live(
         const blocked = Promise.withResolvers<void>();
         const release = Promise.withResolvers<void>();
         const send = session.send.getMockImplementation()!;
-        let stalled = false;
+        let stops = 0;
         session.send.mockImplementation(async (method, input) => {
-          if (method === "Page.stopScreencast" && !stalled) {
-            stalled = true;
-            blocked.resolve();
-            await release.promise;
-          }
+          if (method === "Page.stopScreencast" && ++stops === 2) blocked.resolve();
+          await release.promise;
           return send(method, input);
+        });
+        // Playwright detach waits for a command on the same stalled CDP session.
+        session.detach.mockImplementation(() => release.promise);
+        // Reaching the encoder limit must not tie frame draining to the stalled stop command.
+        encoder.evaluate.mockResolvedValueOnce(false);
+        session.emit("Page.screencastFrame", {
+          data: "ZnJhbWU=",
+          sessionId: 1,
+          metadata: { deviceWidth: 1280 },
         });
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
         yield* Effect.addFinalizer(() =>
@@ -1955,23 +1962,47 @@ it.live(
             remoteTag: "PreviewAutomationTimeoutError",
           },
         });
-        expect(session.detach).toHaveBeenCalled();
+        expect(session.detach).toHaveBeenCalledTimes(1);
+        const sendsAtTimeout = session.send.mock.calls.length;
+        const framesAtTimeout = encoder.evaluate.mock.calls.length;
+        session.emit("Page.screencastFrame", {
+          data: "bGF0ZQ==",
+          sessionId: 2,
+          metadata: { deviceWidth: 1280 },
+        });
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect.soft(encoder.evaluate).toHaveBeenCalledTimes(framesAtTimeout);
+
+        const recovered = yield* broker
+          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect.soft(recovered.pollUnsafe()).toMatchObject({
+          _tag: "Success",
+          value: { visibleText: "delete" },
+        });
 
         encoder.evaluate
           .mockResolvedValueOnce({ mimeType: "video/webm", count: 1, bytes: 5 })
           .mockResolvedValueOnce("ZnJhbWU=");
-        const stopped = yield* broker.invoke<{ path: string; mimeType: string; sizeBytes: number }>(
-          {
+        const stopping = yield* broker
+          .invoke<{ path: string; mimeType: string; sizeBytes: number }>({
             scope,
             tabId,
             operation: "recordingStop",
             input: {},
-          },
-        );
+          })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect(encoder.close).toHaveBeenCalled();
+        const stopped = yield* Fiber.join(stopping);
+        expect(session.send).toHaveBeenCalledTimes(sendsAtTimeout);
+        expect(session.detach).toHaveBeenCalledTimes(1);
         const fs = yield* FileSystem.FileSystem;
         expect(stopped).toMatchObject({ mimeType: "video/webm", sizeBytes: 5 });
         expect(yield* fs.readFileString(stopped.path)).toBe("frame");
-        expect(encoder.close).toHaveBeenCalled();
         yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
         const replacement = contexts[0]!.sessions.at(-1)!;
         expect(replacement).not.toBe(session);

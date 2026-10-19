@@ -268,7 +268,7 @@ interface EncoderWindow {
 
 interface Recording {
   readonly encoder: Page;
-  readonly session: CDPSession;
+  session: CDPSession | null;
   readonly startedAt: string;
   readonly framesInFlight: Set<Promise<void>>;
 }
@@ -1464,7 +1464,14 @@ const make = Effect.gen(function* () {
         const opened = await tab.page.context().newCDPSession(tab.page);
         session = opened;
         const framesInFlight = new Set<Promise<void>>();
+        const recording: Recording = {
+          encoder,
+          session: opened,
+          startedAt: new Date().toISOString(),
+          framesInFlight,
+        };
         opened.on("Page.screencastFrame", (frame) => {
+          if (recording.session !== opened) return;
           const cssWidth = tab.page.viewportSize()?.width ?? frame.metadata.deviceWidth;
           const delivered: Promise<void> = encoder
             .evaluate(
@@ -1472,26 +1479,23 @@ const make = Effect.gen(function* () {
                 (globalThis as unknown as EncoderWindow).__t3Recorder.frame(data, width),
               [frame.data, cssWidth] as const,
             )
-            .then(async (accepted) => {
-              if (!accepted) await opened.send("Page.stopScreencast");
+            .then((accepted) => {
+              // Draining encoded frames must not wait for a stalled screencast session.
+              if (!accepted && recording.session === opened)
+                void opened.send("Page.stopScreencast").catch(constVoid);
             })
             .catch(constVoid)
             .finally(() => {
               framesInFlight.delete(delivered);
-              void opened
-                .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
-                .catch(constVoid);
+              if (recording.session === opened)
+                void opened
+                  .send("Page.screencastFrameAck", { sessionId: frame.sessionId })
+                  .catch(constVoid);
             });
           framesInFlight.add(delivered);
         });
         await opened.send("Page.startScreencast", RECORDING_SCREENCAST);
         if (tab.closing) throw new Error("The tab closed while the recording started.");
-        const recording: Recording = {
-          encoder,
-          session: opened,
-          startedAt: new Date().toISOString(),
-          framesInFlight,
-        };
         tab.recording = recording;
         return recording;
       } catch (cause) {
@@ -1527,8 +1531,10 @@ const make = Effect.gen(function* () {
         endCapture();
         // Retire the sessions: a late stop must never pause a recovered viewer.
         for (const viewer of tab.viewers) viewer.disconnect();
-        // Keep the encoder so recordingStop can still return the frames already captured.
-        void recording?.session.detach().catch(constVoid);
+        // Detach itself can stall; retire the session while keeping the encoded frames.
+        const session = recording?.session;
+        if (recording) recording.session = null;
+        void session?.detach().catch(constVoid);
         reject(timeout);
       }, SNAPSHOT_TIMEOUT_MS);
     });
@@ -1542,7 +1548,7 @@ const make = Effect.gen(function* () {
         try {
           await Promise.all([
             ...[...tab.viewers].map((viewer) => viewer.pause()),
-            recording?.session.send("Page.stopScreencast").catch(constVoid),
+            recording?.session?.send("Page.stopScreencast").catch(constVoid),
           ]);
           if (expired) throw timeout;
           return await capture();
@@ -1553,7 +1559,7 @@ const make = Effect.gen(function* () {
               ...[...tab.viewers].map((viewer) => viewer.resume()),
               recording && tab.recording === recording
                 ? recording.session
-                    .send("Page.startScreencast", RECORDING_SCREENCAST)
+                    ?.send("Page.startScreencast", RECORDING_SCREENCAST)
                     .catch(constVoid)
                 : undefined,
             ]);
@@ -1577,9 +1583,9 @@ const make = Effect.gen(function* () {
       let mimeType: string | null;
       const chunks: Array<Buffer> = [];
       try {
-        await recording.session.send("Page.stopScreencast").catch(constVoid);
+        await recording.session?.send("Page.stopScreencast").catch(constVoid);
         await Promise.all(recording.framesInFlight);
-        await recording.session.detach().catch(constVoid);
+        await recording.session?.detach().catch(constVoid);
         const stopped = await recording.encoder.evaluate(() =>
           (globalThis as unknown as EncoderWindow).__t3Recorder.stop(),
         );
