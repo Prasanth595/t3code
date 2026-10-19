@@ -721,10 +721,10 @@ function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
 }
 
 interface MarkdownLinkHandlers {
-  readonly onLinkPress: (href: string) => void;
+  readonly onLinkPress: (href: string, scope?: string) => void;
   readonly fileContextMenu: (href: string) => MarkdownFileContextMenu | undefined;
-  readonly onFileContextMenuAction: (href: string, actionId: string) => void;
-  readonly onImagePress?: (href: string) => void;
+  readonly onFileContextMenuAction: (href: string, actionId: string, scope?: string) => void;
+  readonly onImagePress?: (href: string, scope?: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
   readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
 }
@@ -807,6 +807,12 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
+  const scope = useContext(MarkdownImageAssetScopeContext);
+  const resolveImageSource = props.linkHandlers.resolveImageSource;
+  const scopedImageSource = useCallback<MarkdownImageSourceResolver>(
+    (image) => resolveImageSource?.(image, scope) ?? null,
+    [resolveImageSource, scope],
+  );
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
 
@@ -830,6 +836,12 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         skills={props.skills}
         textStyle={props.markdownStyles.nativeTextStyle}
         {...props.linkHandlers}
+        onLinkPress={(href) => props.linkHandlers.onLinkPress(href, scope)}
+        onImagePress={(href) => props.linkHandlers.onImagePress?.(href, scope)}
+        onFileContextMenuAction={(href, actionId) =>
+          props.linkHandlers.onFileContextMenuAction(href, actionId, scope)
+        }
+        resolveImageSource={scopedImageSource}
         renderImage={props.renderImage}
       />
     );
@@ -1792,7 +1804,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const onMarkdownLinkPress = (href: string, scope?: string, imageEmbed = false) => {
     const linkedThreadId = parseThreadLinkHref(href);
     if (linkedThreadId) {
       navigation.navigate("Thread", {
@@ -1806,6 +1818,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       threadId: props.threadId,
       workspaceRoot: props.workspaceRoot,
       imageEmbed,
+      scope,
     });
     if (media) {
       void Haptics.selectionAsync();
@@ -1860,13 +1873,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
     onLinkPress: onMarkdownLinkPress,
-    onImagePress: (href) => onMarkdownLinkPress(href, true),
+    onImagePress: (href, scope) => onMarkdownLinkPress(href, scope, true),
     resolveImageSource,
     fileContextMenu: (href) => {
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
-    onFileContextMenuAction: (href, actionId) => {
+    onFileContextMenuAction: (href, actionId, scope) => {
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       if (!target) return;
       switch (actionId as FileChipAction) {
@@ -1877,7 +1890,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           if (target.relativePath) copyTextWithHaptic(target.relativePath);
           return;
         case "open-file":
-          onMarkdownLinkPress(href);
+          onMarkdownLinkPress(href, scope);
           return;
         case "save":
           shareFileChip(target);

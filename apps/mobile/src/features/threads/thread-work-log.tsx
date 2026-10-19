@@ -1184,19 +1184,16 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               kind: "image",
               environmentId: props.environmentId,
               resource,
-              scope: row.workEntry.id,
             }))}
           >
             {outputImages.map((resource) => (
               <View key={resource.index} className="pb-1.5">
-                <MarkdownImageAssetScopeContext value={row.workEntry.id}>
-                  <ThreadMarkdownImage
-                    environmentId={props.environmentId}
-                    resource={resource}
-                    alt={null}
-                    onPressPreview={props.onPressPreview}
-                  />
-                </MarkdownImageAssetScopeContext>
+                <ThreadMarkdownImage
+                  environmentId={props.environmentId}
+                  resource={resource}
+                  alt={null}
+                  onPressPreview={props.onPressPreview}
+                />
               </View>
             ))}
           </FilePreviewGallery>
