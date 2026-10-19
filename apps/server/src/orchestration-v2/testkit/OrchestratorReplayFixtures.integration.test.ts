@@ -599,6 +599,209 @@ describe("orchestrator replay fixtures", () => {
     });
   });
 
+  it.effect(
+    "keeps Muse answers and decisions across native acknowledgement and turn cleanup",
+    () => {
+      const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === "simple");
+      const provider = fixture?.providers.find((candidate) => candidate.driver === "muse");
+      assert.isDefined(fixture);
+      assert.isDefined(provider);
+      const answers = { approach: ["Small", "Keep tests focused"] };
+      return runFixtureProviderWithRegisteredHarness({
+        fixtureName: fixture.name,
+        buildInput: () => ({
+          ...fixture.buildInput(),
+          steps: [
+            ...fixture.buildInput().steps,
+            { type: "answer_next_user_input_request", answers },
+            { type: "answer_next_user_input_request", answers },
+            { type: "approve_next_runtime_request", decision: "accept" },
+          ],
+        }),
+        driver: {
+          ...provider,
+          assertOutput: (result) => {
+            const projection = projectionFor(result, fixture.name);
+            assert.equal(projection.runs.at(-1)?.status, "completed");
+            assert.lengthOf(projection.runtimeRequests, 3);
+            const observed = [];
+            const expected = [];
+            for (const nativeId of ["question-ack", "question-no-ack", "approval-no-ack"]) {
+              const request = projection.runtimeRequests.find(
+                (candidate) => candidate.nativeRequestRef?.nativeId === nativeId,
+              );
+              assert.isDefined(request);
+              const card = projection.turnItems.find((item) => item.nodeId === request.nodeId);
+              const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+              const isQuestion = request.kind === "user_input";
+              const response = isQuestion ? { answers } : { decision: "accept" as const };
+              const submitted = result.domainEvents.find(
+                (event) =>
+                  event.type === "runtime-request.updated" &&
+                  event.payload.id === request.id &&
+                  event.payload.status === "resolved",
+              );
+              assert.isDefined(submitted, `${nativeId} was persisted before native delivery`);
+              assert.deepInclude(submitted.payload, response);
+              observed.push({
+                nativeId,
+                status: request.status,
+                answers: request.answers,
+                decision: request.decision,
+                nodeStatus: node?.status,
+                cardStatus: card?.status,
+                questionAnswer:
+                  card?.type === "user_input_request" ? card.questionAnswer : undefined,
+              });
+              expected.push({
+                nativeId,
+                status: "resolved",
+                answers: isQuestion ? answers : undefined,
+                decision: isQuestion ? undefined : "accept",
+                nodeStatus: "completed",
+                cardStatus: "completed",
+                questionAnswer: isQuestion
+                  ? {
+                      requestId: request.id,
+                      answers,
+                      attachmentsByQuestionId: {},
+                      questionTextById: { approach: "Which approach?" },
+                    }
+                  : undefined,
+              } as const);
+            }
+            assert.deepEqual(observed, expected);
+          },
+        },
+        transformTranscript: (transcript) => {
+          const at = transcript.entries.findIndex(
+            (entry) => entry.type === "emit_inbound" && entry.label === "turn/started",
+          );
+          const started = transcript.entries[at];
+          assert.isDefined(started);
+          if (started.type !== "emit_inbound") assert.fail("Missing Muse turn/started");
+          const { sessionId, turnId } = (
+            started.frame as {
+              readonly params: { readonly sessionId: string; readonly turnId: string };
+            }
+          ).params;
+          const metadata = transcript.metadata as {
+            readonly commandIds: ReadonlyArray<ReadonlyArray<string>>;
+          };
+          return {
+            ...transcript,
+            metadata: {
+              ...transcript.metadata,
+              commandIds: [
+                [...metadata.commandIds[0]!, "answer-ack", "answer-no-ack", "approve-no-ack"],
+              ],
+            },
+            entries: [
+              ...transcript.entries.slice(0, at + 1),
+              ...["question-ack", "question-no-ack"].flatMap(
+                (userInputId, index): ProviderReplayEntry[] => [
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      jsonrpc: "2.0",
+                      method: "userInput/requested",
+                      params: {
+                        sessionId,
+                        turnId,
+                        userInputId,
+                        questions: [
+                          {
+                            id: "approach",
+                            header: "Approach",
+                            question: "Which approach?",
+                            options: [{ label: "Small" }, { label: "Large" }],
+                            selection: { mode: "single" },
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  {
+                    type: "expect_outbound",
+                    frame: {
+                      jsonrpc: "2.0",
+                      id: 4 + index,
+                      method: "userInput/answer",
+                      params: {
+                        sessionId,
+                        userInputId,
+                        commandId: index === 0 ? "answer-ack" : "answer-no-ack",
+                        answers: [
+                          {
+                            questionId: "approach",
+                            selectedLabel: "Small",
+                            note: "Keep tests focused",
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  { type: "emit_inbound", frame: { jsonrpc: "2.0", id: 4 + index, result: {} } },
+                  ...(index === 0
+                    ? [
+                        {
+                          type: "emit_inbound" as const,
+                          frame: {
+                            jsonrpc: "2.0",
+                            method: "userInput/settled",
+                            params: { sessionId, turnId, userInputId },
+                          },
+                        },
+                      ]
+                    : []),
+                ],
+              ),
+              {
+                type: "emit_inbound",
+                frame: {
+                  jsonrpc: "2.0",
+                  method: "approval/requested",
+                  params: {
+                    sessionId,
+                    turnId,
+                    approvalId: "approval-no-ack",
+                    currentRequirementId: { approvalId: "approval-no-ack", sourceIndex: 0 },
+                    availableChoices: [
+                      {
+                        choiceId: "once",
+                        label: "Allow once",
+                        decision: "approved",
+                        scope: "once",
+                      },
+                    ],
+                    subject: { kind: "shell", command: "touch result.txt" },
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                frame: {
+                  jsonrpc: "2.0",
+                  id: 6,
+                  method: "approval/decide",
+                  params: {
+                    sessionId,
+                    approvalId: "approval-no-ack",
+                    commandId: "approve-no-ack",
+                    requirementId: { approvalId: "approval-no-ack", sourceIndex: 0 },
+                    choiceId: "once",
+                  },
+                },
+              },
+              { type: "emit_inbound", frame: { jsonrpc: "2.0", id: 6, result: {} } },
+              ...transcript.entries.slice(at + 1),
+            ],
+          };
+        },
+      });
+    },
+  );
+
   it.effect("keeps an OpenCode decline when the turn ends without acknowledgement", () => {
     const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
       (candidate) => candidate.name === "opencode_child_approval",

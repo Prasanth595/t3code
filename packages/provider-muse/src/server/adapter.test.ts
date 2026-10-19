@@ -880,7 +880,7 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("uses the latest native approval requirement and waits for its resolution event", () =>
+  it.effect("uses the latest native approval requirement and cleans up on native resolution", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
@@ -916,11 +916,16 @@ describe("MuseAdapterV2", () => {
         ),
       );
       yield* fake.emit("approval/resolved", { approvalId: "approval-1", turnId: nativeId });
-      const resolved = yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.status === "resolved",
+      yield* harness.takeEvent(
+        "provider_session.updated",
+        (event) => event.providerSession.status === "running",
       );
-      assert.strictEqual(resolved.runtimeRequest.id, first.runtimeRequest.id);
+      assert.isFalse(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "resolved",
+        ),
+      );
       const repeated = yield* harness.runtime
         .respondToRuntimeRequest({ requestId: first.runtimeRequest.id, decision: "accept" })
         .pipe(Effect.exit);
@@ -928,35 +933,43 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("keeps the user's decision when Muse settles before acknowledging it", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("approval/requested", approval(nativeId));
-      const pending = yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.status === "pending",
-      );
-      const acknowledgement = pendingPromise<Record<string, unknown>>();
-      fake.queueResponse("approval/decide", acknowledgement.promise);
-      const responding = yield* harness.runtime
-        .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "decline" })
-        .pipe(Effect.forkScoped);
-      yield* fake.takeCall("approval/decide");
-      yield* fake.emit("approval/resolved", {
-        approvalId: "approval-1",
-        turnId: nativeId,
-        decision: "abort",
-      });
-      const resolved = yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.status === "resolved",
-      );
-      assert.strictEqual(resolved.runtimeRequest.decision, "decline");
-      acknowledgement.resolve({});
-      yield* Fiber.join(responding);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  it.effect(
+    "does not replace the submitted decision when Muse settles before acknowledging it",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const harness = yield* makeHarness(fake);
+        const { nativeId } = yield* startConversation(harness, fake);
+        yield* fake.emit("approval/requested", approval(nativeId));
+        const pending = yield* harness.takeEvent(
+          "runtime_request.updated",
+          (event) => event.runtimeRequest.status === "pending",
+        );
+        const acknowledgement = pendingPromise<Record<string, unknown>>();
+        fake.queueResponse("approval/decide", acknowledgement.promise);
+        const responding = yield* harness.runtime
+          .respondToRuntimeRequest({ requestId: pending.runtimeRequest.id, decision: "decline" })
+          .pipe(Effect.forkScoped);
+        yield* fake.takeCall("approval/decide");
+        yield* fake.emit("approval/resolved", {
+          approvalId: "approval-1",
+          turnId: nativeId,
+          decision: "abort",
+        });
+        yield* harness.takeEvent(
+          "provider_session.updated",
+          (event) => event.providerSession.status === "running",
+        );
+        acknowledgement.resolve({});
+        yield* Fiber.join(responding);
+        assert.isFalse(
+          harness.allEvents.some(
+            (event) =>
+              event.type === "runtime_request.updated" &&
+              event.runtimeRequest.status === "resolved",
+          ),
+        );
+      }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("lets a user turn take a held Muse report turn, approvals included", () =>
@@ -1011,9 +1024,34 @@ describe("MuseAdapterV2", () => {
       const decision = yield* fake.takeCall("approval/decide");
       assert.strictEqual(decision.params.choiceId, "once");
       yield* fake.emit("approval/resolved", childApproval);
-      const resolved = yield* harness.takeEvent("runtime_request.updated");
+      yield* harness.takeEvent(
+        "provider_session.updated",
+        (event) => event.providerSession.status === "ready",
+      );
+      const resolved = harness.allEvents.findLast(
+        (event) =>
+          event.type === "runtime_request.updated" &&
+          event.runtimeRequest.id === asked.runtimeRequest.id,
+      );
+      if (resolved?.type !== "runtime_request.updated") assert.fail("Missing child approval");
       assert.strictEqual(resolved.runtimeRequest.status, "resolved");
       assert.strictEqual(resolved.runtimeRequest.decision, "accept");
+      assert.isTrue(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "node.updated" &&
+            event.node.id === asked.runtimeRequest.nodeId &&
+            event.node.status === "completed",
+        ),
+      );
+      assert.isTrue(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nodeId === asked.runtimeRequest.nodeId &&
+            event.turnItem.status === "completed",
+        ),
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
@@ -1098,8 +1136,14 @@ describe("MuseAdapterV2", () => {
         answers: response.params.answers,
       });
       yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.status === "resolved",
+        "provider_session.updated",
+        (event) => event.providerSession.status === "running",
+      );
+      assert.isFalse(
+        harness.allEvents.some(
+          (event) =>
+            event.type === "runtime_request.updated" && event.runtimeRequest.status === "resolved",
+        ),
       );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
