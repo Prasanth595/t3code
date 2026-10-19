@@ -239,7 +239,20 @@ export const CursorDriver: ProviderDriver<
                         storedLogin,
                       ),
                     ),
-                    Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+                    Effect.map((usageLimits) => {
+                      const notice = usageLimits.unavailable;
+                      // Managed snapshots retain last good limits, so failures also need a provider message.
+                      return {
+                        ...snapshot,
+                        usageLimits,
+                        ...(notice?.reason === "probeFailed" && notice.message
+                          ? {
+                              status: snapshot.status === "ready" ? "warning" : snapshot.status,
+                              message: [snapshot.message, notice.message].filter(Boolean).join(" "),
+                            }
+                          : {}),
+                      };
+                    }),
                   )
                 : Effect.succeed(snapshot),
             ),

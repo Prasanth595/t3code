@@ -94,6 +94,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
         const openedKeys: Array<string | undefined> = [];
         let closed = 0;
         const requests: string[] = [];
+        let rejectExchange = false;
         const usageClient = HttpClient.make((request) => {
           requests.push(request.url);
           const exchange = request.url.endsWith("/auth/exchange_user_api_key");
@@ -103,11 +104,13 @@ it.layer(layerTest)("CursorDriver", (it) => {
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              Response.json(
-                exchange
-                  ? { accessToken: "browser-access-token" }
-                  : { planUsage: { totalPercentUsed: 23 } },
-              ),
+              exchange && rejectExchange
+                ? new Response(null, { status: 401 })
+                : Response.json(
+                    exchange
+                      ? { accessToken: "browser-access-token" }
+                      : { planUsage: { totalPercentUsed: 23 } },
+                  ),
             ),
           );
         });
@@ -172,6 +175,12 @@ it.layer(layerTest)("CursorDriver", (it) => {
           Effect.provideService(HttpClient.HttpClient, usageClient),
         );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
+        rejectExchange = true;
+        expect(yield* instance.snapshot.refresh).toMatchObject({
+          status: "warning",
+          message: expect.stringContaining("Sign in again"),
+          usageLimits: { windows: [{ id: "totalPercentUsed", usedPercent: 23 }] },
+        });
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
