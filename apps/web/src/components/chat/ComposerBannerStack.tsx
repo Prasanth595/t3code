@@ -249,7 +249,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
   );
 }
 
-function NoticeDescription({
+function NoticeText({
   children,
   className,
   detailsLabel,
@@ -258,29 +258,29 @@ function NoticeDescription({
   readonly className: string;
   readonly detailsLabel: string;
 }) {
-  const descriptionRef = useRef<HTMLSpanElement>(null);
+  const textRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
   const [showDetails, setShowDetails] = useState(false);
 
   useLayoutEffect(() => {
-    const description = descriptionRef.current;
-    if (!description) return;
+    const text = textRef.current;
+    if (!text) return;
     const measure = () => {
       // Ignore the space taken by the details button itself so it cannot
-      // sustain its own overflow after the description would otherwise fit.
+      // sustain its own overflow after the text would otherwise fit.
       const recoveredWidth = detailsRef.current ? detailsRef.current.offsetWidth + 4 : 0;
-      const hidden = getComputedStyle(description).position === "absolute";
+      const hidden = getComputedStyle(text).position === "absolute";
       setShowDetails(
         hidden ||
-          [description, ...description.querySelectorAll("*")].some(
+          [text, ...text.querySelectorAll("*")].some(
             (element) => element.scrollWidth > element.clientWidth + recoveredWidth,
           ),
       );
     };
     measure();
-    const stopObserving = observeResize(description, measure);
+    const stopObserving = observeResize(text, measure);
     const mutations = new MutationObserver(measure);
-    mutations.observe(description, { childList: true, subtree: true, characterData: true });
+    mutations.observe(text, { childList: true, subtree: true, characterData: true });
     return () => {
       stopObserving();
       mutations.disconnect();
@@ -289,7 +289,7 @@ function NoticeDescription({
 
   return (
     <span className="contents">
-      <span ref={descriptionRef} className={className}>
+      <span ref={textRef} className={className}>
         {children}
       </span>
       {showDetails ? (
@@ -358,19 +358,19 @@ function ComposerBannerStackAlert({
           {item.icon}
         </ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
-          <NoticeDescription
+          <NoticeText
             detailsLabel="Show title details"
             className="min-w-0 truncate font-medium leading-7 sm:leading-6"
           >
             {item.title}
-          </NoticeDescription>
+          </NoticeText>
           {item.description ? (
-            <NoticeDescription
+            <NoticeText
               detailsLabel="Show notice details"
               className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
             >
               {item.description}
-            </NoticeDescription>
+            </NoticeText>
           ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
