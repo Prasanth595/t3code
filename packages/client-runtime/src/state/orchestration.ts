@@ -1,4 +1,4 @@
-import { ORCHESTRATION_V2_WS_METHODS, type ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, ORCHESTRATION_V2_WS_METHODS, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -20,6 +20,47 @@ import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
+import { loadOfflineThreadContinuation, type ThreadContinuation } from "./threadContinuation.ts";
+
+const fetchLiveTranscript = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+    if (Option.isNone(prepared)) {
+      return yield* new EnvironmentRpcUnavailableError({
+        environmentId: supervisor.target.environmentId,
+        message: "The source environment is not connected.",
+      });
+    }
+    return yield* fetchEnvironmentThreadTranscript({
+      prepared: prepared.value,
+      threadId,
+      signer: yield* Effect.serviceOption(ManagedRelayDpopSigner.ManagedRelayDpopSigner),
+      remoteAuthorization: yield* Effect.serviceOption(
+        RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+      ),
+    });
+  });
+
+/**
+ * The live transcript, or while the source cannot answer, the newest offline copy (fork thread
+ * backups). Without an offline copy, the live failure stands.
+ */
+const loadThreadContinuation = (environmentId: EnvironmentId, threadId: ThreadId) =>
+  fetchLiveTranscript(threadId).pipe(
+    Effect.map((transcript): ThreadContinuation => ({
+      transcript,
+      source: { _tag: "live" },
+      omittedItems: 0,
+    })),
+    Effect.catch((liveError) =>
+      loadOfflineThreadContinuation(environmentId, threadId).pipe(
+        Effect.flatMap((offline) =>
+          offline === null ? Effect.fail(liveError) : Effect.succeed(offline),
+        ),
+      ),
+    ),
+  );
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
@@ -27,25 +68,16 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
   return {
     threadTranscript: createEnvironmentCommand(runtime, {
       label: "environment-data:orchestration:thread-transcript",
-      execute: (input: { readonly threadId: ThreadId }) =>
-        Effect.gen(function* () {
-          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-          const prepared = yield* SubscriptionRef.get(supervisor.prepared);
-          if (Option.isNone(prepared)) {
-            return yield* new EnvironmentRpcUnavailableError({
-              environmentId: supervisor.target.environmentId,
-              message: "The source environment is not connected.",
-            });
-          }
-          return yield* fetchEnvironmentThreadTranscript({
-            prepared: prepared.value,
-            threadId: input.threadId,
-            signer: yield* Effect.serviceOption(ManagedRelayDpopSigner.ManagedRelayDpopSigner),
-            remoteAuthorization: yield* Effect.serviceOption(
-              RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
-            ),
-          });
-        }),
+      execute: (input: { readonly threadId: ThreadId }, _registry, environmentId) =>
+        loadThreadContinuation(environmentId, input.threadId).pipe(
+          Effect.map((continuation) => continuation.transcript),
+        ),
+    }),
+    /** The transcript with where it came from, for continuing a thread whose source is offline. */
+    threadContinuation: createEnvironmentCommand(runtime, {
+      label: "environment-data:orchestration:thread-continuation",
+      execute: (input: { readonly threadId: ThreadId }, _registry, environmentId) =>
+        loadThreadContinuation(environmentId, input.threadId),
     }),
     v2: {
       dispatchCommand: createEnvironmentRpcCommand(runtime, {

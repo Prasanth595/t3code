@@ -83,6 +83,7 @@ describe("buildThreadActionMenuItems", () => {
     const denied = buildThreadActionMenuItems({ ...baseState, canOperate: false, branch: "main" });
     expect(denied.filter((item) => !item.disabled).map((item) => item.id)).toEqual([
       "new-thread-on-branch",
+      "continue-elsewhere",
       "mark-unread",
       "copy",
       "project-settings",
@@ -103,7 +104,15 @@ describe("buildThreadActionMenuItems", () => {
           titleRegeneration: false,
         },
       }),
-    ).toEqual(["rename", "mark-unread", "copy", "project-settings", "archive", "delete"]);
+    ).toEqual([
+      "continue-elsewhere",
+      "rename",
+      "mark-unread",
+      "copy",
+      "project-settings",
+      "archive",
+      "delete",
+    ]);
   });
 
   it("groups project settings with utility actions before archive", () => {

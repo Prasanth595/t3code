@@ -35,6 +35,7 @@ export class MachinePeerError extends Schema.TaggedError<MachinePeerError>()("Ma
     "not-on-map",
     "unknown-machine",
     "no-agent-tools",
+    "no-arrow",
     "no-hostname",
     "pairing-refused",
     "unreachable",
@@ -74,6 +75,12 @@ export class MachinePeers extends Context.Service<
       readonly tool: string;
       readonly input: Readonly<Record<string, unknown>>;
     }) => Effect.Effect<unknown, MachinePeerError>;
+    /** POST a JSON body to a route of a peer that an arrow from this machine reaches. */
+    readonly postJson: (input: {
+      readonly machine: string;
+      readonly path: string;
+      readonly body: string;
+    }) => Effect.Effect<void, MachinePeerError>;
   }
 >()("t3/fork/machineMap/MachinePeers") {}
 
@@ -275,7 +282,61 @@ const make = Effect.gen(function* () {
       );
     });
 
-  return MachinePeers.of({ testArrow, callTool });
+  const postJson: MachinePeers["Service"]["postJson"] = (input) =>
+    Effect.gen(function* () {
+      const resolved = yield* resolvePeer(input.machine);
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (resolved.arrow === undefined || effectiveLevel(resolved.arrow, nowMs) === "none") {
+        return yield* new MachinePeerError({
+          reason: "no-arrow",
+          detail: `No arrow from this machine reaches ${resolved.peer.name}.`,
+        });
+      }
+      const headers = MachineMapState.tokenHeaders(resolved.token);
+      const post = (session: PeerSession) =>
+        HttpClientRequest.post(`${peerOrigin(resolved.peer)}${input.path}`).pipe(
+          HttpClientRequest.setHeaders({
+            ...headers,
+            authorization: `Bearer ${session.accessToken}`,
+          }),
+          HttpClientRequest.bodyText(input.body, "application/json"),
+          httpClient.execute,
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.timeout(REQUEST_TIMEOUT),
+        );
+      const pairOrFail = pair(resolved.peer, resolved.token, resolved.selfName).pipe(
+        Effect.mapError(
+          (cause) =>
+            new MachinePeerError({
+              reason: "pairing-refused",
+              detail: `${resolved.peer.name} refused the pairing: ${describe(cause)}.`,
+            }),
+        ),
+      );
+      const cached = sessions.get(resolved.peer.id);
+      const first = cached ?? (yield* pairOrFail);
+      yield* post(first).pipe(
+        // A level change on the peer revokes the session (MM-1306). Pair again once.
+        Effect.catch((cause) =>
+          cached !== undefined && describe(cause) === "HTTP 401"
+            ? Effect.sync(() => sessions.delete(resolved.peer.id)).pipe(
+                Effect.andThen(pairOrFail),
+                Effect.flatMap(post),
+              )
+            : Effect.fail(cause),
+        ),
+        Effect.mapError((cause) =>
+          Predicate.isTagged(cause, "MachinePeerError")
+            ? (cause as MachinePeerError)
+            : new MachinePeerError({
+                reason: "unreachable",
+                detail: `${resolved.peer.name} did not take the request: ${describe(cause)}.`,
+              }),
+        ),
+      );
+    });
+
+  return MachinePeers.of({ testArrow, callTool, postJson });
 });
 
 export const layer = Layer.effect(MachinePeers, make);

@@ -365,6 +365,17 @@ A thread address opened from outside T3 Code, for example from Slack or GitHub, 
   - When the desktop app is not running, the link that starts it is lost (upstream pingdotgg/t3code#18613). Revisit when pingdotgg/t3code#18422 merges upstream.
   - With `threadLinkChips` off, a thread address clicked in T3 web chat opens a new tab that counts as a link from outside, so it goes to the desktop app too. Revisit if users keep `threadLinkChips` off while this setting is on.
 
+### Continue on another machine
+
+Continues a thread in a new thread on another connected machine, also while the thread's own machine is offline. The thread menu (long-press a thread on mobile, right-click or the thread header menu on web and desktop) has "Continue on another machine". On mobile, "Messages not cached" in a thread has the same button.
+
+- **Setting:** none for the action. Server setting `threadBackupMachine`, default empty: the machine map name of a machine that keeps a copy of the transcripts of this machine's threads. Settings > Fork > Thread backups. Off by default, because it sends thread content to another machine.
+- **Works on:** web, desktop and mobile. Backups need the machine map and an arrow from this machine to the backup machine with standard access.
+- The transcript comes from the thread's machine while it is connected. Else it comes from the client's cached copy of the thread or from a backup on another connected machine, whichever is newer.
+- The new thread opens as a draft in the same repository on a connected machine, else in a project with the same title. The transcript is a `.jsonl` attachment, and the prompt names the source machine and the branch. Read and edit the draft before you send it. On mobile, without a matching project, the project list opens.
+- Backups: every 30 seconds, the machine sends each changed thread, the newest 4 MB of it. At start and when the setting changes, it sends the threads of the last 3 days. The backup machine keeps the newest 300 threads per source machine for 30 days, in `<T3 home>/userdata/thread-backups/`.
+- **Limits:** the new thread gets the conversation, not the files. Work that the source machine did not push is not on the other machine. A provider session does not move: the new thread is a new session that reads the transcript.
+
 ### New thread on mobile
 
 What New thread opens in the mobile app.

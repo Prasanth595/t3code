@@ -65,6 +65,7 @@ const FORK_PAGE_ROWS: Record<
   mobileSidebarGroups: "mobile-sidebar-groups",
   inkwireWhiteFrame: "inkwire-white-frame",
   voiceTranscriptionOpenAiApiKey: "voice-input-openai-key",
+  threadBackupMachine: "thread-backup-machine",
 };
 
 /** The settings that Restore defaults keeps, with the reason. */

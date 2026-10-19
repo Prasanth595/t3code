@@ -68,6 +68,7 @@ export * from "./clientRpcPermissions.ts";
 export * from "./forkChangelog.ts";
 export * from "./forkRpc.ts";
 export * from "./forkPreview.ts";
+export * from "./forkThreadBackup.ts";
 export * from "./forkKeybindings.ts";
 export * from "./sidebarGroups.ts";
 export * from "./machineMap.ts";

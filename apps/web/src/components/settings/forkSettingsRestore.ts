@@ -25,6 +25,7 @@ const FORK_RESTORED_SETTINGS = [
   ["threadLinkChips", "Thread link chips"],
   ["threadLinksOpenDesktopApp", "Thread addresses open the desktop app"],
   ["previewLocalServerGroups", "All local servers in the browser"],
+  ["threadBackupMachine", "Thread backups"],
   ["mobilePublishedThemes", "Published themes on mobile"],
   ["mobileNewThreadProject", "New thread on mobile"],
   ["mobileComposerCamera", "Camera on mobile"],

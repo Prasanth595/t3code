@@ -16,6 +16,7 @@ import * as Haptics from "expo-haptics";
 import { KeyboardAwareLegendList } from "@legendapp/list/keyboard";
 import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { ContinueElsewhereButton } from "./forkContinueElsewhere";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -1648,6 +1649,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
 
 function ThreadFeedPlaceholder(props: {
   readonly bottomInset: number;
+  readonly action?: ReactNode;
   readonly detail: string;
   readonly horizontalPadding: number;
   readonly title: string;
@@ -1670,6 +1672,7 @@ function ThreadFeedPlaceholder(props: {
         <Text className="text-center text-sm leading-normal text-foreground-secondary">
           {props.detail}
         </Text>
+        {props.action}
       </View>
     </View>
   );
@@ -2419,6 +2422,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       <ThreadFeedPlaceholder
         title={props.contentPresentation.title}
         detail={props.contentPresentation.detail}
+        action={
+          // Fork: continue the thread on a machine that is connected (forkContinueElsewhere.tsx).
+          <ContinueElsewhereButton environmentId={props.environmentId} threadId={props.threadId} />
+        }
         topInset={topContentInset}
         bottomInset={bottomContentInset}
         horizontalPadding={horizontalPadding}

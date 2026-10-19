@@ -215,6 +215,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.forkChangelogSyncStatus]: "forkChangelog",
   [WS_METHODS.forkChangelogStartSync]: "forkChangelog",
   [WS_METHODS.voiceInputTranscribe]: "voiceInput",
+  [WS_METHODS.forkThreadBackupGet]: "orchestration",
   [WS_METHODS.machineMapSubscribe]: "machineMap",
   [WS_METHODS.machineMapJoin]: "machineMap",
   [WS_METHODS.machineMapLeave]: "machineMap",

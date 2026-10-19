@@ -49,6 +49,7 @@ import {
 import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
 import { VoiceInputSettingsRow } from "./VoiceInputSettings";
 import { WebPushSettingsRow } from "./WebPushSettingsRow";
+import { ThreadBackupMachineRow } from "./ThreadBackupMachineRow";
 import { WorktreePathTemplateRow } from "./WorktreePathTemplateRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { forkSettingGroups, type ForkSettingRowId } from "./forkSettingsCatalog";
@@ -68,6 +69,7 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
  */
 const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "environment-label-from-machine-map": EnvironmentLabelSettingsRow,
+  "thread-backup-machine": ThreadBackupMachineRow,
   "tunnel-pairing": TunnelPairingSettingsRow,
   "installed-app": InstalledAppSettingsRow,
   "web-push": WebPushSettingsRow,

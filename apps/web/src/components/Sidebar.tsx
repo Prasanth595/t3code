@@ -1,3 +1,4 @@
+import { useContinueThreadElsewhere } from "../lib/forkContinueElsewhere";
 import {
   knownSlotLayout,
   THREAD_CARD_ELEMENTS,
@@ -2947,6 +2948,9 @@ export default function Sidebar() {
   const searchEnvironmentIds = useConnectedEnvironmentIds();
   const threadSearch = useThreadSearch(searchEnvironmentIds, threadSearchQuery);
   const handleNewThreadRef = useRef(newThreadContext.handleNewThread);
+  // Fork: "Continue on another machine" (lib/forkContinueElsewhere.ts).
+  const continueElsewhere = useContinueThreadElsewhere();
+  const continueElsewhereRef = useRef(continueElsewhere);
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
@@ -3533,6 +3537,7 @@ export default function Sidebar() {
     orderedThreadKeysRef.current = orderedThreadKeys;
     threadByKeyRef.current = threadByKey;
     handleNewThreadRef.current = newThreadContext.handleNewThread;
+    continueElsewhereRef.current = continueElsewhere;
     settledThreadKeysRef.current = settledThreadKeys;
     snoozedThreadKeysRef.current = snoozedThreadKeys;
     sectionByThreadKeyRef.current = sectionByThreadKey;
@@ -4430,6 +4435,9 @@ export default function Sidebar() {
                 environmentId: threadRef.environmentId,
                 projectId: thread.projectId,
               });
+            return;
+          case "continue-elsewhere":
+            await continueElsewhereRef.current(threadRef);
             return;
           case "new-thread-on-branch": {
             const result = await settlePromise(() =>
