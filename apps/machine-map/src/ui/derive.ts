@@ -4,6 +4,7 @@
  */
 import {
   isMachineLocalSetting,
+  type MachineClientSession,
   type MachineCommand,
   type MachineId,
   type MachineLevel,
@@ -37,6 +38,7 @@ export interface MachineQueue {
   readonly revisions: ReadonlyArray<MapRevision>;
   readonly commands: ReadonlyArray<MachineCommand>;
   readonly rotation: PendingRotation | undefined;
+  readonly rejoinRequired: boolean;
   /** MM-602: the machine never connected. Its work waits for it to join and is not counted. */
   readonly waitingToJoin: boolean;
   readonly count: number;
@@ -53,12 +55,13 @@ export function machineQueue(
   const commands = snapshot.commands.filter(
     (c) => c.machineId === machineId && c.status === "queued",
   );
-  const rotation = rotations.find((r) => r.machineId === machineId);
+  const rotation = rotations.find((r) => r.machineId === machineId && !r.expired);
   const waitingToJoin = !hasJoined(presence);
   return {
     revisions,
     commands,
     rotation,
+    rejoinRequired: rotations.some((r) => r.machineId === machineId && r.expired),
     waitingToJoin,
     count: waitingToJoin ? 0 : revisions.length + commands.length + (rotation ? 1 : 0),
   };
@@ -284,4 +287,57 @@ export function settingEntries(
       (a, b) =>
         Number(Object.hasOwn(shared, b)) - Number(Object.hasOwn(shared, a)) || a.localeCompare(b),
     );
+}
+
+/** One machine, client or sign-in on a machine, with all of its T3 sessions there. */
+export interface SessionGroup {
+  readonly key: string;
+  readonly sessions: ReadonlyArray<MachineClientSession>;
+  readonly connected: boolean;
+  /** The session seen last. Its label, details and `lastSeenAt` describe the group. */
+  readonly newest: MachineClientSession;
+}
+
+/** A group with no live session and no use in this long folds away. */
+const FOLD_AFTER_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The sessions of one machine grouped by subject and label. Pairing-link sessions share the
+ * subject `one-time-token`, so the label tells their sign-ins apart. A session without a label
+ * stays alone: unlabelled pairing links can be different devices. Live groups come first.
+ */
+export function groupClientSessions(
+  clients: ReadonlyArray<MachineClientSession>,
+  now: number,
+): { readonly shown: ReadonlyArray<SessionGroup>; readonly folded: ReadonlyArray<SessionGroup> } {
+  const byKey = new Map<string, Array<MachineClientSession>>();
+  for (const client of clients) {
+    const key =
+      client.label === null ? `session\n${client.sessionId}` : `${client.subject}\n${client.label}`;
+    byKey.set(key, [...(byKey.get(key) ?? []), client]);
+  }
+  const seenMs = (client: MachineClientSession) =>
+    client.lastSeenAt === null ? 0 : Date.parse(client.lastSeenAt);
+  const groups = [...byKey].map(([key, sessions]): SessionGroup => {
+    const sorted = sessions.toSorted((left, right) => seenMs(right) - seenMs(left));
+    const newest = sorted[0];
+    if (newest === undefined) throw new Error("A session group has no sessions.");
+    return {
+      key,
+      sessions: sorted,
+      connected: sorted.some((session) => session.connected),
+      newest,
+    };
+  });
+  const ordered = groups.toSorted(
+    (left, right) =>
+      Number(right.connected) - Number(left.connected) ||
+      seenMs(right.newest) - seenMs(left.newest),
+  );
+  const isOld = (group: SessionGroup) =>
+    !group.connected && now - seenMs(group.newest) > FOLD_AFTER_MS;
+  return {
+    shown: ordered.filter((group) => !isOld(group)),
+    folded: ordered.filter(isOld),
+  };
 }

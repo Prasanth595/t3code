@@ -7,24 +7,65 @@ import {
   ForkWsRpcGroup,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationV2ThreadLaunchInput,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { HttpServerResponse } from "effect/http";
 
 import type * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import type * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ForkChangelog from "./ForkChangelog.ts";
 import { requireLocalDesktop } from "./machineMap/browserAccess.ts";
 import * as MachineMap from "./machineMap/MachineMap.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./machineMap/machineAccess.ts";
 import * as MachineMapState from "./machineMap/MachineMapState.ts";
 import * as VoiceTranscription from "./voiceInput/VoiceTranscription.ts";
+import * as PreviewServerGroups from "./PreviewServerGroups.ts";
 import * as WebPush from "./webPush/WebPush.ts";
 
 /** The fork RPC tags, which the upstream handler object in `ws.ts` omits. */
 export const FORK_WS_RPC_TAGS = Object.values(FORK_WS_METHODS);
+
+// Reuse snapshots so older clients do not need a new config event type.
+export const environmentLabelUpdates = <E>(
+  loadConfig: Effect.Effect<ServerConfig, E>,
+  initialLabel: string,
+) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const map = yield* Effect.serviceOption(MachineMapState.MachineMapState);
+      if (Option.isNone(map)) return Stream.empty;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const changes = Stream.merge(
+        map.value.changes.pipe(
+          Stream.map(
+            (local) =>
+              `${local.enabled}:${local.token !== null}:${local.saved.desired?.self.name ?? ""}`,
+          ),
+          Stream.changes,
+        ),
+        settings.streamChanges.pipe(
+          Stream.map((value) => String(value.environmentLabelFromMachineMap)),
+          Stream.changes,
+        ),
+      ).pipe(
+        Stream.mapEffect(() => environment.getDescriptor.pipe(Effect.map((value) => value.label))),
+      );
+      return Stream.concat(Stream.make(initialLabel), changes).pipe(
+        Stream.changes,
+        Stream.drop(1),
+        Stream.mapEffect(() => loadConfig),
+        Stream.map((config) => ({ version: 1 as const, type: "snapshot" as const, config })),
+      );
+    }),
+  );
 
 // A handler layer of its own: one handler object for every RPC is too deep a type for tsc.
 export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
@@ -34,6 +75,8 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const machineMap = yield* MachineMap.MachineMap;
       const webPush = yield* WebPush.WebPush;
       const voiceTranscription = yield* VoiceTranscription.VoiceTranscription;
+      const portDiscovery = yield* PortScanner.PortDiscovery;
+      const previewServerGroups = yield* PreviewServerGroups.PreviewServerGroups;
       // Only the local desktop app gets the machine map token (MM-306, MM-1401).
       const machineMapClient = { desktop: isLocalDesktopSubject(currentSession.subject) };
       return ForkWsRpcGroup.of({
@@ -67,6 +110,9 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [FORK_WS_METHODS.webPushSubscribe]: (input) => webPush.subscribe(input).pipe(Effect.as({})),
         [FORK_WS_METHODS.webPushTest]: (input) => webPush.test(input.endpoint),
         [FORK_WS_METHODS.voiceInputTranscribe]: (input) => voiceTranscription.transcribe(input),
+        // The scanner polls only while retained, as for `subscribeDiscoveredLocalServers`.
+        [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: (_input) =>
+          Stream.unwrap(portDiscovery.retain.pipe(Effect.as(previewServerGroups.listeners))),
       });
     }),
   );

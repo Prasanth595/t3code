@@ -47,6 +47,7 @@ export const FORK_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command: "thread.archive",
     when: "(sidebarFocus || timelineFocus) && !editableFocus",
   },
+  { key: "mod+.", command: "thread.stop", when: "!terminalFocus" },
   { key: "mod+alt+s", command: "thread.snooze", when: "!terminalFocus" },
   { key: "mod+alt+r", command: "thread.rename", when: "!terminalFocus" },
   { key: "mod+shift+u", command: "thread.markUnread", when: "!terminalFocus" },
@@ -56,4 +57,6 @@ export const FORK_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "ctrl+shift+tab", command: "rightPanel.previousTab", when: DESKTOP_KEYS },
   { key: "ctrl+tab", command: "rightPanel.nextTab", when: DESKTOP_KEYS },
   { key: "mod+,", command: "settings.open", when: "isWeb" },
+  // Ctrl+/ is undo in shells, so the terminal keeps it.
+  { key: "mod+/", command: "keyboard.cheatSheet", when: "!terminalFocus" },
 ];

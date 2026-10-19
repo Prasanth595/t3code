@@ -1,0 +1,91 @@
+/* Fork: shape tokens that a published theme sets at runtime through ScopedVariables
+   (src/lib/forkPublishedThemes.ts, publishedThemeStyleVariables). Each default keeps the stock look. */
+@theme {
+  --default-border-width: var(--theme-border-width, 1px);
+
+  /* Pixel radii of the stock design, as tokens for the class rules below. */
+  --radius-3: 3px;
+  --radius-7: 7px;
+  --radius-10: 10px;
+  --radius-11: 11px;
+  --radius-12: 12px;
+  --radius-14: 14px;
+  --radius-16: 16px;
+  --radius-18: 18px;
+  --radius-20: 20px;
+  --radius-22: 22px;
+  --radius-24: 24px;
+  --radius-26: 26px;
+  --radius-28: 28px;
+}
+
+/* Fork: the fixed pixel radii of the stock design follow the theme radius through the tokens
+   above, without edits to the upstream class names. Known limit: a pixel radius that upstream
+   adds later keeps its size under a theme until it gets a rule here. */
+.rounded-\[3px\] {
+  border-radius: var(--radius-3);
+}
+.rounded-\[7px\] {
+  border-radius: var(--radius-7);
+}
+.rounded-\[10px\] {
+  border-radius: var(--radius-10);
+}
+.rounded-\[11px\] {
+  border-radius: var(--radius-11);
+}
+.rounded-\[12px\] {
+  border-radius: var(--radius-12);
+}
+.rounded-\[14px\] {
+  border-radius: var(--radius-14);
+}
+.rounded-\[16px\] {
+  border-radius: var(--radius-16);
+}
+.rounded-\[18px\] {
+  border-radius: var(--radius-18);
+}
+.rounded-\[20px\] {
+  border-radius: var(--radius-20);
+}
+.rounded-\[22px\] {
+  border-radius: var(--radius-22);
+}
+.rounded-\[24px\] {
+  border-radius: var(--radius-24);
+}
+.rounded-\[26px\] {
+  border-radius: var(--radius-26);
+}
+.rounded-\[28px\] {
+  border-radius: var(--radius-28);
+}
+.rounded-b-\[28px\] {
+  border-bottom-left-radius: var(--radius-28);
+  border-bottom-right-radius: var(--radius-28);
+}
+.rounded-t-\[28px\] {
+  border-top-left-radius: var(--radius-28);
+  border-top-right-radius: var(--radius-28);
+}
+@media android {
+  .android\:rounded-\[20px\] {
+    border-radius: var(--radius-20);
+  }
+  .android\:rounded-t-\[28px\] {
+    border-top-left-radius: var(--radius-28);
+    border-top-right-radius: var(--radius-28);
+  }
+}
+@media ios {
+  .ios\:rounded-\[18px\] {
+    border-radius: var(--radius-18);
+  }
+  .ios\:rounded-\[20px\] {
+    border-radius: var(--radius-20);
+  }
+  .ios\:rounded-\[22px\] {
+    border-radius: var(--radius-22);
+  }
+}

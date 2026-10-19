@@ -25,7 +25,7 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useProject, useThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
+import { useProject, useQuietThreadShell, useThreadShellsForProjectRefs } from "../state/entities";
 import {
   type EnvMode,
   type EnvironmentOption,
@@ -62,6 +62,7 @@ import {
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -221,6 +222,9 @@ const RunContextSelector = memo(function RunContextSelector({
             ? "Each model starts in its own worktree."
             : (workspacePath ?? workspaceLabel)
           : workspaceLabel}
+        <ShortcutHint
+          command={isPanel || isLocked || envModeLocked ? null : "composer.workspace"}
+        />
       </TooltipPopup>
     </Tooltip>
   );
@@ -242,7 +246,12 @@ const RunContextSelector = memo(function RunContextSelector({
             />
           )}
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>
+          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
+          <ShortcutHint
+            command={isPanel || isLocked || !showEnvironmentPicker ? null : "composer.host"}
+          />
+        </TooltipPopup>
       </Tooltip>
       {workspaceIcon}
     </span>
@@ -587,7 +596,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
   );
-  const serverThread = useThreadShell(threadRef);
+  const serverThread = useQuietThreadShell(threadRef);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)

@@ -2,9 +2,12 @@ import { Link } from "@tanstack/react-router";
 import type { ComponentType } from "react";
 
 import { Button } from "../ui/button";
+import { EnvironmentLabelSettingsRow } from "./EnvironmentLabelSettingsRow";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import {
   FocusLevelHighlightSettingsRow,
+  TooltipShortcutLimitSettingsRow,
+  TooltipShortcutsSettingsRow,
   KeyboardFocusLevelsSettingsRow,
 } from "./FocusLevelsSettingsRows";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
@@ -21,7 +24,14 @@ import { InkwireWhiteFrameSettingsRow } from "./InkwireSettingsRows";
 import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
 import { KeybindingSyncSettingsRow } from "./KeybindingSyncSettingsRow";
 import { MachineMapSettingsRows } from "./MachinesSettings";
+import {
+  MobileComposerCameraSettingsRow,
+  MobileSidebarGroupsSettingsRow,
+  MobileNewThreadProjectSettingsRow,
+  MobilePublishedThemesSettingsRow,
+} from "./MobileAppSettings";
 import { PreferOriginRemoteSettingsRow } from "./PreferOriginRemoteSettings";
+import { PreviewLocalServerGroupsSettingsRow } from "./PreviewLocalServerGroupsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { PullRequestWatchSettingsRows } from "./PullRequestWatchSettings";
 import { RecoverInterruptedTurnsSettings } from "./RecoverInterruptedTurnsSettings";
@@ -38,6 +48,7 @@ import {
 } from "./ThreadLinkChipsSettings";
 import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
 import { VoiceInputSettingsRow } from "./VoiceInputSettings";
+import { WebPushSettingsRow } from "./WebPushSettingsRow";
 import { WorktreePathTemplateRow } from "./WorktreePathTemplateRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { forkSettingGroups, type ForkSettingRowId } from "./forkSettingsCatalog";
@@ -56,8 +67,10 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
  * link-only.
  */
 const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
+  "environment-label-from-machine-map": EnvironmentLabelSettingsRow,
   "tunnel-pairing": TunnelPairingSettingsRow,
   "installed-app": InstalledAppSettingsRow,
+  "web-push": WebPushSettingsRow,
   "update-track": AboutVersionSection,
   "fork-auto-update": ForkAutoUpdateSettingsRow,
   "fork-changelog": ForkChangelogSettingsRow,
@@ -79,13 +92,20 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "terminal-app-shortcuts-first": TerminalAppShortcutsFirstSettingsRow,
   "keyboard-focus-levels": KeyboardFocusLevelsSettingsRow,
   "focus-level-highlight": FocusLevelHighlightSettingsRow,
+  "tooltip-shortcuts": TooltipShortcutsSettingsRow,
+  "tooltip-shortcut-limit": TooltipShortcutLimitSettingsRow,
   "terminal-close-confirmation": TerminalCloseConfirmationSettingsRow,
   "inkwire-white-frame": InkwireWhiteFrameSettingsRow,
   "thread-card-layout": ThreadCardLayoutSettingsRows,
   "thread-link-chips": ThreadLinkChipsSettingsRow,
   "thread-links-open-desktop-app": ThreadLinksOpenDesktopAppSettingsRow,
+  "preview-local-server-groups": PreviewLocalServerGroupsSettingsRow,
   "machine-map": MachineMapSettingsRows,
   "keybinding-sync": KeybindingSyncSettingsRow,
+  "mobile-published-themes": MobilePublishedThemesSettingsRow,
+  "mobile-new-thread-project": MobileNewThreadProjectSettingsRow,
+  "mobile-composer-camera": MobileComposerCameraSettingsRow,
+  "mobile-sidebar-groups": MobileSidebarGroupsSettingsRow,
 };
 
 /** Opens the row of `item` in its usual place, the way a search result does. */

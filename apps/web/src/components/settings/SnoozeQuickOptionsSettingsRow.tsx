@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, XIcon } from "lucide-react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import {
   BUILT_IN_SNOOZE_QUICK_OPTIONS,
   formatSnoozeTime,
@@ -67,11 +67,10 @@ function optionKeys(options: ReadonlyArray<SnoozeQuickOption>): string[] {
  */
 export function SnoozeQuickOptionsSettingsRow() {
   const saved = useClientSettings(selectSnoozeQuickOptions);
-  const updateSettings = useUpdateClientSettings();
   const options = saved ?? BUILT_IN_SNOOZE_QUICK_OPTIONS;
   const keys = optionKeys(options);
   const save = (next: ReadonlyArray<SnoozeQuickOption>) =>
-    void updateSettings({ snoozeQuickOptions: next });
+    void updateClientSettings({ snoozeQuickOptions: next });
   const replace = (index: number, option: SnoozeQuickOption) =>
     save(options.map((current, at) => (at === index ? option : current)));
   const move = (index: number, offset: -1 | 1) => {
@@ -94,7 +93,7 @@ export function SnoozeQuickOptionsSettingsRow() {
           <SettingResetButton
             label="snooze quick options"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 snoozeQuickOptions: DEFAULT_CLIENT_SETTINGS.snoozeQuickOptions,
               })
             }

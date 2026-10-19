@@ -70,6 +70,7 @@ import type {
   PortalSignIn,
   PushEndpointRequest,
   PushKeyResponse,
+  PushStatusResponse,
   PushMessage,
   PushSubscribeRequest,
   RemoveMachineResponse,
@@ -83,7 +84,7 @@ import type {
   HealthEvent,
   ResourceSampleEvent,
 } from "./api.ts";
-import { PauseState } from "./api.ts";
+import { CLOUDFLARE_STEP_PERMISSION, PauseState } from "./api.ts";
 import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
 import { sendPush, vapidKey, type PushTarget, type VapidKey } from "@t3tools/shared/webPush";
@@ -93,6 +94,8 @@ import {
   CloudflareApi,
   CloudflareApiError,
   goneIsDone,
+  isMfaNotAllowed,
+  isPermissionRefusal,
   tunnelTarget,
   type ApprovalsApp,
 } from "./cloudflare.ts";
@@ -191,6 +194,14 @@ class PortalError extends Error {
     this.status = status;
   }
 }
+
+type ApprovalsProblem = Exclude<ApprovalsStatus, { _tag: "ready" }>;
+
+/** The text of a problem for a refused approval. The page shows the steps only in its status. */
+const approvalsProblemText = (problem: ApprovalsProblem): string =>
+  problem._tag === "missing"
+    ? problem.reason
+    : "Do the Cloudflare step of Set up approvals first (MM-1208).";
 
 /** Header from the Worker with the client id of a verified machine token. */
 export const MACHINE_CLIENT_ID_HEADER = "X-Map-Machine-Client-Id";
@@ -573,12 +584,18 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   #pendingRotations(): Array<PendingRotation> {
-    return this.#sql<{ machine_id: string; created_at: string; expires_at: string }>(
-      "SELECT machine_id, created_at, expires_at FROM rotations ORDER BY created_at",
+    return this.#sql<{
+      machine_id: string;
+      created_at: string;
+      expires_at: string;
+      expired: number;
+    }>(
+      "SELECT machine_id, created_at, expires_at, sealed_secret = '' AS expired FROM rotations ORDER BY created_at",
     ).map((row) => ({
       machineId: MachineId.make(row.machine_id),
       createdAt: row.created_at,
       expiresAt: row.expires_at,
+      expired: row.expired === 1,
     }));
   }
 
@@ -729,17 +746,19 @@ export class MachineMapObject extends DurableObject<Env> {
    * MM-1207: the reason approvals do not work now, or null. It reads the app and the organization
    * from Cloudflare each time, so an edit in the dashboard stops approvals at once.
    */
-  async #approvalsProblem(host: string): Promise<string | null> {
+  async #approvalsProblem(host: string): Promise<ApprovalsProblem | null> {
     // Local development only, like `DEV_FAKE_ACCESS` in `access.ts`: no Cloudflare on loopback.
     const { hostname } = new URL(`http://${host}`);
     if (this.env.DEV_FAKE_ACCESS === "1" && (hostname === "localhost" || hostname === "127.0.0.1"))
       return null;
+    const missing = (reason: string): ApprovalsProblem => ({ _tag: "missing", reason });
     const api = this.#cloudflare();
-    if (!api) return "Approvals need the CF_API_TOKEN secret (MM-1205).";
+    if (!api) return missing("Approvals need the CF_API_TOKEN secret (MM-1205).");
     const stored = this.#approvalsApp();
-    if (!stored) return "Set up approvals first.";
+    if (!stored) return missing("Set up approvals first.");
     // A portal that set up approvals before app invites has no `/client` app yet (MM-914).
-    if (this.clientAppAud() === null) return "Set up approvals again, to add the app path.";
+    if (this.clientAppAud() === null)
+      return missing("Set up approvals again, to add the app path.");
     let app: ApprovalsApp;
     let methods: ReadonlyArray<string>;
     try {
@@ -748,14 +767,15 @@ export class MachineMapObject extends DurableObject<Env> {
         api.organizationMfaMethods(),
       ]);
     } catch (error) {
-      return `Cloudflare did not confirm the approvals app: ${errorMessage(error)}`;
+      return missing(`Cloudflare did not confirm the approvals app: ${errorMessage(error)}`);
     }
-    if (app.aud !== stored.aud) return "The approvals app changed. Set up approvals again.";
+    if (app.aud !== stored.aud)
+      return missing("The approvals app changed. Set up approvals again.");
     const problem = approvalsAppProblem(app, host, ownerEmails(this.env));
-    if (problem) return `${problem} Set up approvals again.`;
+    if (problem) return missing(`${problem} Set up approvals again.`);
     const allowed = app.mfa_config?.allowed_authenticators ?? [];
     if (!methods.some((method) => allowed.includes(method)))
-      return "Turn on independent MFA with passkeys or security keys in Zero Trust, Access settings.";
+      return { _tag: "cloudflareStep", step: "allowPasskey" };
     return null;
   }
 
@@ -1100,8 +1120,9 @@ export class MachineMapObject extends DurableObject<Env> {
 
   async #sendRotation(machineId: MachineId): Promise<boolean> {
     const row = this.#sql<{ token_client_id: string; sealed_secret: string }>(
-      "SELECT token_client_id, sealed_secret FROM rotations WHERE machine_id = ?",
+      "SELECT token_client_id, sealed_secret FROM rotations WHERE machine_id = ? AND sealed_secret != '' AND expires_at > ?",
       machineId,
+      nowIso(),
     )[0];
     if (!row) return false;
     const tokenSecret = await unseal(this.env.SECRET_KEY, row.sealed_secret);
@@ -1656,6 +1677,13 @@ export class MachineMapObject extends DurableObject<Env> {
         sealedTunnel,
       );
     });
+    // A join code supersedes a queued rotation; never send the superseded secret on reconnect.
+    const superseded = this.#sql(
+      "UPDATE rotations SET sealed_secret = '', expires_at = MIN(expires_at, ?) WHERE machine_id = ? AND sealed_secret != '' RETURNING machine_id",
+      nowIso(),
+      machineId,
+    );
+    if (superseded.length > 0) this.#broadcast(this.#rotationsEvent());
     return { machineId, code, expiresAt, tunnel: tunnel.setup };
   }
 
@@ -1823,9 +1851,9 @@ export class MachineMapObject extends DurableObject<Env> {
       ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM join_codes").map(
         (r) => r.expires_at,
       ),
-      ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM rotations").map(
-        (r) => r.expires_at,
-      ),
+      ...this.#sql<{ expires_at: string }>(
+        "SELECT expires_at FROM rotations WHERE sealed_secret != ''",
+      ).map((r) => r.expires_at),
       ...this.#healthAlarmTimes(),
     ];
     const at = earliest(times);
@@ -1933,15 +1961,12 @@ export class MachineMapObject extends DurableObject<Env> {
       if (isDue(row.expires_at, now))
         this.#sql("DELETE FROM join_codes WHERE code_hash = ?", row.code_hash);
     }
-    let rotationsChanged = false;
-    for (const row of this.#sql<{ machine_id: string; expires_at: string }>(
-      "SELECT machine_id, expires_at FROM rotations",
-    )) {
-      if (!isDue(row.expires_at, now)) continue;
-      this.#sql("DELETE FROM rotations WHERE machine_id = ?", row.machine_id);
-      rotationsChanged = true;
-    }
-    if (rotationsChanged) this.#broadcast(this.#rotationsEvent());
+    // Keep the recovery marker after deleting the secret, so a later page can explain the lockout.
+    const expiredRotations = this.#sql(
+      "UPDATE rotations SET sealed_secret = '' WHERE expires_at <= ? AND sealed_secret != '' RETURNING machine_id",
+      new Date(now).toISOString(),
+    );
+    if (expiredRotations.length > 0) this.#broadcast(this.#rotationsEvent());
     this.#sql("DELETE FROM enroll_attempts WHERE window_start < ?", now - ENROLL_WINDOW_MS);
     for (const machine of this.#map.machines) this.#checkOffline(machine.id, now);
     if (now >= this.#prunedAt() + PRUNE_EVERY_MS) this.#pruneResources(now);
@@ -2229,6 +2254,14 @@ export class MachineMapObject extends DurableObject<Env> {
       if (!this.env.SECRET_KEY) throw new PortalError(503, "Set the SECRET_KEY secret first.");
       const machine = findMachine(this.#map, machineId);
       if (!machine) throw new PortalError(404, `Unknown machine ${machineId}.`);
+      if (
+        this.#sql(
+          "SELECT machine_id FROM rotations WHERE machine_id = ? AND (sealed_secret = '' OR expires_at <= ?)",
+          machineId,
+          nowIso(),
+        ).length > 0
+      )
+        throw new PortalError(409, "Join again with a new code before rotating this token.");
       const api = this.#cloudflare();
       if (!api) throw new PortalError(400, "Token rotation needs the CF_API_TOKEN secret.");
       const tokenId = await this.#tokenId(api, machine);
@@ -2378,6 +2411,14 @@ export class MachineMapObject extends DurableObject<Env> {
     });
   }
 
+  pushStatus(owner: OwnerContext, request: PushEndpointRequest) {
+    return this.#run(owner, (): PushStatusResponse => ({
+      subscribed:
+        this.#sql("SELECT endpoint FROM push_subscriptions WHERE endpoint = ?", request.endpoint)
+          .length > 0,
+    }));
+  }
+
   /** MM-1807: one subscription per device. A new subscription of the same endpoint replaces it. */
   subscribePush(owner: OwnerContext, request: PushSubscribeRequest) {
     return this.#run(owner, () => {
@@ -2518,8 +2559,7 @@ export class MachineMapObject extends DurableObject<Env> {
   /** MM-1208: whether approvals work. `host` is the portal hostname of the page. */
   approvalsStatus(owner: OwnerContext, host: string) {
     return this.#run(owner, async (): Promise<ApprovalsStatus> => {
-      const problem = await this.#approvalsProblem(host);
-      return problem === null ? this.#approvalsReady() : { _tag: "missing", reason: problem };
+      return (await this.#approvalsProblem(host)) ?? this.#approvalsReady();
     });
   }
 
@@ -2541,23 +2581,41 @@ export class MachineMapObject extends DurableObject<Env> {
     return { _tag: "ready", warning: this.#revokeCheck?.warning ?? null };
   }
 
-  /** MM-1208: creates the approvals app, or makes it again when it drifted. */
+  /**
+   * MM-1208: creates the approvals app, or makes it again when it drifted, and the App Launcher
+   * app. A step that only the owner can do in Cloudflare comes back as a status, before any change.
+   */
   setUpApprovals(owner: OwnerContext, host: string) {
     return this.#run(owner, async (): Promise<ApprovalsStatus> => {
       const api = this.#cloudflare();
       if (!api) throw new PortalError(503, "Approvals need the CF_API_TOKEN secret (MM-1205).");
-      const app = await api.ensureApprovalsApp(host, ownerEmails(this.env));
-      this.#sql(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('approvals_app', ?)",
-        JSON.stringify({ id: app.id, aud: app.aud }),
-      );
-      // MM-914: the app of `/client` comes with it, so native apps can read their machines.
-      this.#sql(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('client_app_aud', ?)",
-        await api.ensureClientTokensApp(host),
-      );
-      const problem = await this.#approvalsProblem(host);
-      return problem === null ? this.#approvalsReady() : { _tag: "missing", reason: problem };
+      const owners = ownerEmails(this.env);
+      if ((await api.ensureOrganizationMfa()) === "cannotEdit")
+        return { _tag: "cloudflareStep", step: "allowPasskey" };
+      if ((await api.ensureAppLauncher(owners)) === "cannotCreate")
+        return { _tag: "cloudflareStep", step: "appLauncher" };
+      try {
+        const app = await api.ensureApprovalsApp(host, owners);
+        this.#sql(
+          "INSERT OR REPLACE INTO meta (key, value) VALUES ('approvals_app', ?)",
+          JSON.stringify({ id: app.id, aud: app.aud }),
+        );
+        // MM-914: the app of `/client` comes with it, so native apps can read their machines.
+        this.#sql(
+          "INSERT OR REPLACE INTO meta (key, value) VALUES ('client_app_aud', ?)",
+          await api.ensureClientTokensApp(host),
+        );
+      } catch (error) {
+        // The organization allows a method now, but Cloudflare can still refuse the MFA app.
+        if (isMfaNotAllowed(error)) return { _tag: "cloudflareStep", step: "allowPasskey" };
+        if (isPermissionRefusal(error))
+          throw new PortalError(
+            403,
+            `The CF_API_TOKEN cannot create Access apps. Add "${CLOUDFLARE_STEP_PERMISSION.appLauncher}" to the token (MM-1205), then select Set up approvals again.`,
+          );
+        throw error;
+      }
+      return (await this.#approvalsProblem(host)) ?? this.#approvalsReady();
     });
   }
 
@@ -2573,7 +2631,7 @@ export class MachineMapObject extends DurableObject<Env> {
   approveClient(owner: OwnerContext, host: string, request: ApproveClientRequest) {
     return this.#run(owner, async (): Promise<WriteResult> => {
       const problem = await this.#approvalsProblem(host);
-      if (problem) throw new PortalError(409, problem);
+      if (problem) throw new PortalError(409, approvalsProblemText(problem));
       const pending = this.#pendingClient(request.thumbprint);
       if (pending.state === "rejected") throw new PortalError(409, "Unblock this sign-in first.");
       const holder = clientWithKey(this.#map, pending.thumbprint);
@@ -2671,7 +2729,7 @@ export class MachineMapObject extends DurableObject<Env> {
   createInvite(owner: OwnerContext, host: string, request: InviteRequest) {
     return this.#run(owner, async (): Promise<InviteResponse> => {
       const problem = await this.#approvalsProblem(host);
-      if (problem) throw new PortalError(409, problem);
+      if (problem) throw new PortalError(409, approvalsProblemText(problem));
       let clientId: ClientId;
       if (request.client._tag === "existing") {
         const existing = findClient(this.#map, request.client.clientId);
@@ -2696,10 +2754,12 @@ export class MachineMapObject extends DurableObject<Env> {
           email: null,
           keys: [],
           serviceToken: null,
-          position: freePosition([
-            ...this.#map.machines.map((m) => m.position),
-            ...this.#map.clients.map((c) => c.position),
-          ]),
+          position:
+            request.client.position ??
+            freePosition([
+              ...this.#map.machines.map((m) => m.position),
+              ...this.#map.clients.map((c) => c.position),
+            ]),
           createdAt: nowIso(),
         };
         const arrows = request.arrows
@@ -3021,8 +3081,7 @@ export class MachineMapObject extends DurableObject<Env> {
       if (!row || !machine || isDue(row.expires_at, now)) {
         throw new PortalError(404, "Unknown, used or expired join code.");
       }
-      this.#broadcast({ _tag: "enrolled", machineId: machine.id });
-      return {
+      const result: EnrollResponse = {
         machineId: machine.id,
         name: machine.name,
         kind: machine.kind,
@@ -3033,6 +3092,10 @@ export class MachineMapObject extends DurableObject<Env> {
             ? null
             : decodeTunnelGrant(await unseal(this.env.SECRET_KEY, row.sealed_tunnel)),
       };
+      this.#sql("DELETE FROM rotations WHERE machine_id = ?", machine.id);
+      this.#broadcast(this.#rotationsEvent());
+      this.#broadcast({ _tag: "enrolled", machineId: machine.id });
+      return result;
     });
   }
 }

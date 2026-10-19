@@ -12,6 +12,7 @@ import { touchesOwnerOnlySettings } from "../rules/access.ts";
 import { applyChanges } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi, StepUpNeeded } from "./apiClient.ts";
+import { confirmWithPasskey, PasskeyStepUp } from "./Approvals.tsx";
 import {
   PortalContext,
   type CommandOptions,
@@ -38,6 +39,7 @@ import {
 } from "./route.ts";
 import { HealthView } from "./resources.tsx";
 import { usePortal, type Connection } from "./store.ts";
+import { readPendingInvite } from "./pendingInvite.ts";
 import {
   ClientsView,
   HistoryView,
@@ -73,7 +75,7 @@ const failedNotice = (error: unknown): Notice =>
   error instanceof StepUpNeeded
     ? {
         kind: "error",
-        text: "Confirm with your passkey, then make the change again.",
+        text: "This change needs a fresh passkey check. Make it again after the check.",
         passkey: true,
       }
     : { kind: "error", text: errorText(error) };
@@ -125,6 +127,10 @@ function useAppBadge(count: number) {
 /** MM-1806: an app shortcut opens a dialog with `?open=`, for example the big red button. */
 function takeLaunchDialog(): Dialog | null {
   const params = new URLSearchParams(location.search);
+  if (params.get("resume") === "invite") {
+    const saved = readPendingInvite();
+    if (saved) return { _tag: "resumeInvite", request: saved.request, phone: saved.phone };
+  }
   if (params.get("open") !== "emergency") return null;
   history.replaceState(null, "", `${location.pathname}${location.hash}`);
   return { _tag: "emergency" };
@@ -482,6 +488,9 @@ export function App() {
           >
             Add machine
           </button>
+          <button type="button" className="btn" onClick={() => setDialog({ _tag: "addPhone" })}>
+            Add phone
+          </button>
           <button type="button" className="btn" aria-pressed={draft !== null} onClick={toggleHold}>
             {draft === null ? "Hold changes" : "Stop holding"}
           </button>
@@ -562,7 +571,10 @@ export function App() {
             role={notice.kind === "error" ? "alert" : "status"}
           >
             {notice.kind === "error" && <span className="sticker">error</span>}
-            <span className="text">{notice.text}</span>
+            <div className="text">
+              {notice.text}
+              {notice.passkey === true && <PasskeyStepUp />}
+            </div>
             {notice.undo !== undefined && (
               <button
                 type="button"
@@ -578,13 +590,7 @@ export function App() {
               </button>
             )}
             {notice.passkey === true && (
-              <button
-                type="button"
-                className="btn small"
-                onClick={() => {
-                  location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
-                }}
-              >
+              <button type="button" className="btn small" onClick={confirmWithPasskey}>
                 Confirm with passkey
               </button>
             )}

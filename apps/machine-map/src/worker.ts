@@ -16,6 +16,7 @@ import {
   InviteRequest,
   EnrollRequest,
   JoinCodeRequest,
+  type PasskeyResponse,
   PushEndpointRequest,
   PushSubscribeRequest,
   RevisionRequest,
@@ -27,6 +28,8 @@ import { MACHINE_CLIENT_ID_HEADER, type Outcome, type OwnerContext } from "./Mac
 import { fetchNewestRelease } from "./releases.ts";
 import { describeUserAgent } from "./rules/device.ts";
 import { sha256Hex } from "./sealedSecret.ts";
+import { INVITE_PAGE } from "./clientInvitePage.ts";
+import { passkeyReturnUrl } from "./clientInvite.ts";
 
 export { MachineMapObject } from "./MachineMapObject.ts";
 
@@ -100,8 +103,7 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
   switch (route) {
     case "GET /start": {
       // The page comes here for the MFA, then goes back to its own route. Only a hash route.
-      const then = url.searchParams.get("then") ?? "";
-      return Response.redirect(new URL(`/${then.startsWith("#/") ? then : ""}`, url).href, 303);
+      return Response.redirect(passkeyReturnUrl(url), 303);
     }
     case "GET /check":
       return json({ ok: true });
@@ -128,11 +130,6 @@ async function grant(request: Request, env: Env, url: URL): Promise<Response> {
 }
 
 const RemoveClientRequest = Schema.Struct({ clientId: ClientId });
-
-/** MM-913: a phone browser that opens an invite link. The code is for the T3 app, not the page. */
-const INVITE_PAGE = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-<title>T3 invite</title><body style="font-family:system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem">
-<h1>Open this invite in the T3 app</h1><p>Scan the QR code with the T3 app on your phone, or paste this link there. The page itself does nothing.</p>`;
 
 const integer = (value: string | null): number | null => {
   if (value === null || value.trim() === "") return null;
@@ -234,6 +231,11 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.resume(owner));
     case "GET /fork-release":
       return json(await fetchNewestRelease());
+    // The team domain is the `auth_domain` of the Zero Trust organization.
+    case "GET /passkey":
+      return json({
+        enrollUrl: `https://${env.TEAM_DOMAIN}/AddMfaDevice`,
+      } satisfies PasskeyResponse);
     case "GET /clients/approvals":
       return toResponse(await stub.approvalsStatus(owner, url.host));
     case "POST /clients/approvals":
@@ -260,6 +262,10 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.signOutEverywhere(owner));
     case "GET /push":
       return toResponse(await stub.pushKey(owner));
+    case "POST /push/status": {
+      const body = await readBody(request, PushEndpointRequest);
+      return body instanceof Response ? body : toResponse(await stub.pushStatus(owner, body));
+    }
     case "POST /push/subscribe": {
       const body = await readBody(request, PushSubscribeRequest);
       return body instanceof Response ? body : toResponse(await stub.subscribePush(owner, body));

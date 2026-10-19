@@ -11,6 +11,7 @@ import { defaultMinSize, height, size, width } from "@expo/ui/jetpack-compose/mo
 import { View } from "react-native";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
+import { useThemeComposeModifiers } from "../../lib/forkThemeStyle";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { SymbolView } from "./AppSymbol";
 
@@ -21,6 +22,8 @@ export function FloatingActionButton(props: FloatingActionButtonProps) {
   const buttonSize = props.variant === "large" ? largeFabSize : fabSize;
   const primary = props.tone === "primary";
   const containerColor = colors[primary ? "--color-primary" : "--color-secondary"];
+  // Fork: a published theme sets the shape, the outline and the shadow (lib/forkThemeStyle.ts).
+  const themeModifiers = useThemeComposeModifiers(colors["--color-border"], containerColor);
   const contentColor =
     colors[primary ? "--color-primary-foreground" : "--color-secondary-foreground"];
   const Component =
@@ -47,6 +50,7 @@ export function FloatingActionButton(props: FloatingActionButtonProps) {
               defaultMinSize({ minWidth: buttonSize }),
               height(buttonSize),
               ...(props.variant === "extended" ? [] : [width(buttonSize)]),
+              ...themeModifiers,
             ]}
             containerColor={containerColor}
             onClick={props.onPress}

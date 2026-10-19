@@ -19,6 +19,7 @@ import type { ServerAuthInternalError } from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import type { CloudflareAccessConfig } from "../config.ts";
 import { type ClientPending, ownerBrowserAccess } from "./machineMap/browserAccess.ts";
+import { CLOUDFLARE_ACCESS_LABEL_PREFIX } from "./forkSessions.ts";
 import type * as MachineMapState from "./machineMap/MachineMapState.ts";
 
 type MachineMap = Option.Option<MachineMapState.MachineMapState["Service"]>;
@@ -128,7 +129,7 @@ export const makeIssueCloudflareAccessPairingCredential = (input: {
                                   // grants that outlive it (MM-922), so no upstream default here.
                                   scopes: MACHINE_LEVEL_SCOPES.standard,
                                   subject: "one-time-token",
-                                  label: `cloudflare-access ${identity.subject}`,
+                                  label: `${CLOUDFLARE_ACCESS_LABEL_PREFIX}${identity.subject}`,
                                 }),
                             ttl: Duration.minutes(2),
                           }),

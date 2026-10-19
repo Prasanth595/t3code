@@ -12,6 +12,7 @@ import { useCallback, useState } from "react";
 import { Pressable, View, type StyleProp, type ViewStyle } from "react-native";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useThemeComposeModifiers, useThemeRadius } from "../lib/forkThemeStyle";
 import { resolveScaledTextRole } from "../lib/appearancePreferences";
 
 /** Keep the animated width and icon positioning entirely inside Compose, not Yoga. */
@@ -28,6 +29,12 @@ export function ScrollComposeButton(props: {
   const scale = fabSize / nativeSize;
   const nativeIconSize = Math.round(iconSize / scale);
   const [buttonWidth, setButtonWidth] = useState(nativeSize);
+  // Fork: a published theme sets the shape, the outline and the shadow (lib/forkThemeStyle.ts).
+  const themeModifiers = useThemeComposeModifiers(
+    colors["--color-border"],
+    colors["--color-primary"],
+  );
+  const rippleRadius = useThemeRadius(16);
   const rememberWidth = useCallback(({ width }: { width: number }) => {
     setButtonWidth((previous) => Math.max(previous, width));
   }, []);
@@ -56,6 +63,7 @@ export function ScrollComposeButton(props: {
                   transformOriginX: 1,
                   transformOriginY: 0,
                 }),
+                ...themeModifiers,
                 onSizeChanged(rememberWidth),
               ]}
             >
@@ -96,7 +104,7 @@ export function ScrollComposeButton(props: {
           top: 0,
           bottom: 0,
           width: props.expanded ? buttonWidth * scale : fabSize,
-          borderRadius: 16 * scale,
+          borderRadius: rippleRadius * scale,
           overflow: "hidden",
         }}
       />

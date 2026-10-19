@@ -64,8 +64,6 @@
       "ignoreDependencies": ["playwright-core", "electron-builder"],
     },
     "apps/web": {
-      // Vitest loads this through the per-file @vitest-environment directive.
-      "ignoreDependencies": ["jsdom"],
       // Worktree setup (scripts/setup-worktree.ts) runs this directly.
       // Fork: the browser loads the service worker by URL (src/installedApp.ts).
       "entry": ["scripts/warm-dep-cache.ts", "public/sw.js"],
@@ -97,6 +95,8 @@
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
+        "@expo-google-fonts/bricolage-grotesque",
+        "@expo-google-fonts/jetbrains-mono",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
       ],

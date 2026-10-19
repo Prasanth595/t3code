@@ -3,6 +3,7 @@ import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import { ShortcutTooltip } from "../focusLevels/ShortcutHint";
 
 export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   count: number;
@@ -50,7 +51,11 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
         <ComposerBanner.Icon>
           <BookmarkIcon />
         </ComposerBanner.Icon>
-        <ComposerBanner.Content>Stash</ComposerBanner.Content>
+        <ComposerBanner.Content>
+          <ShortcutTooltip command="composer.stash" label="Stash" render={<span />}>
+            Stash
+          </ShortcutTooltip>
+        </ComposerBanner.Content>
         <ComposerBanner.Actions>{count}</ComposerBanner.Actions>
       </ComposerBanner.Row>
     </ComposerBanner.Root>

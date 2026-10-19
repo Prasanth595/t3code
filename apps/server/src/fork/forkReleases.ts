@@ -25,6 +25,11 @@ const ReleaseIndex = Schema.Array(
 );
 type ReleaseIndex = typeof ReleaseIndex.Type;
 
+/** A release is installable once it has `SHA256SUMS`. `t3 update` uses the same rule. */
+export const isInstallableForkRelease = (release: {
+  readonly assets: ReadonlyArray<{ readonly name: string }>;
+}) => release.assets.some((asset) => asset.name === CLI_RELEASE_CHECKSUMS_FILE);
+
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
 
 export class ForkReleaseLookupError extends Schema.TaggedError<ForkReleaseLookupError>()(
@@ -52,11 +57,7 @@ const installableReleases = (httpClient: HttpClient.HttpClient) =>
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(ReleaseIndex)),
       Effect.timeout(RELEASE_INDEX_TIMEOUT),
-      Effect.map((releases): ReleaseIndex =>
-        releases.filter((release) =>
-          release.assets.some((asset) => asset.name === CLI_RELEASE_CHECKSUMS_FILE),
-        ),
-      ),
+      Effect.map((releases): ReleaseIndex => releases.filter(isInstallableForkRelease)),
       Effect.mapError((cause) => new ForkReleaseLookupError({ cause })),
     );
 

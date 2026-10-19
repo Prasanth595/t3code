@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
   alternateComposerDispatchAction,
@@ -33,7 +34,7 @@ interface ComposerPrimaryActionsProps {
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
-  alternateShortcutLabel?: string | null;
+  alternateShortcutContext?: React.ComponentProps<typeof ShortcutHint>["context"];
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -88,7 +89,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canInterrupt,
   followUpBehavior = "steer",
   canSteer = true,
-  alternateShortcutLabel = null,
+  alternateShortcutContext,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -151,7 +152,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>
+        Interrupt
+        <ShortcutHint command="thread.stop" />
+      </TooltipPopup>
     </Tooltip>
   );
 
@@ -298,11 +302,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : null));
   const submitTooltip =
     submitStatus ??
-    (compactsBeforeSend
-      ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && !isEditingQueuedMessage && canSteer
-        ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
-        : submitLabel);
+    (compactsBeforeSend ? (
+      `Summarize ${compactTokens} tokens of history, then send`
+    ) : isRunning && !isEditingQueuedMessage && canSteer ? (
+      <>
+        Click to {followUpBehavior}, Ctrl/⌘-click to {alternateAction}
+        <ShortcutHint command="composer.sendAlternate" context={alternateShortcutContext ?? {}} />
+      </>
+    ) : (
+      submitLabel
+    ));
 
   const sendButton = (
     <button

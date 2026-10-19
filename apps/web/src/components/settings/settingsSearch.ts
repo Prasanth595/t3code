@@ -760,6 +760,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "browser-search-engine",
+    title: "Search engine",
+    to: "/settings/integrations",
+    searchTerms: ["address bar duckduckgo google bing brave kagi ecosia custom"],
+  },
+  {
     id: "pull-request-links-open-in-app",
     title: "Open pull requests in T3 Code",
     to: "/settings/integrations",
@@ -771,6 +777,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/integrations",
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
+  ...ForkSearch.PREVIEW_ITEMS,
   {
     id: "automatic-pull",
     title: "Automatically pull",

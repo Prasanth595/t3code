@@ -33,7 +33,7 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
-import { useProject, useThreadShell } from "../state/entities";
+import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
@@ -42,7 +42,7 @@ import { vcsEnvironment } from "../state/vcs";
 import { cn } from "../lib/utils";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./chat/threadDetailsPanelStyles";
 import { ThreadDetailsPrRows } from "./chat/ThreadDetailsPrRows";
-import { parsePullRequestReference } from "../pullRequestReference";
+import { parsePullRequestReference } from "@t3tools/client-runtime/pull-request-link-input";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import {
@@ -64,6 +64,7 @@ import {
 } from "./ThreadStatusIndicators";
 
 import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
+import { ShortcutTooltip } from "./focusLevels/ShortcutHint";
 import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
@@ -130,7 +131,7 @@ export function BranchToolbarBranchSelector({
     reportFailure: false,
   });
   const threadRef = scopeThreadRef(environmentId, threadId);
-  const serverThread = useThreadShell(threadRef);
+  const serverThread = useQuietThreadShell(threadRef);
   const serverSession = serverThread?.runtime ?? null;
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
@@ -697,7 +698,10 @@ export function BranchToolbarBranchSelector({
             }}
           />
         ) : null}
-        <span
+        <ShortcutTooltip
+          command={displayMode === "panel" ? null : "composer.branch"}
+          label={triggerLabel}
+          render={<span />}
           className="flex min-w-0"
           onMouseDownCapture={(event) => {
             if (event.button !== 0 || event.ctrlKey) {
@@ -734,7 +738,7 @@ export function BranchToolbarBranchSelector({
               <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
             ) : null}
           </ComboboxTrigger>
-        </span>
+        </ShortcutTooltip>
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
           <ThreadDetailsPrRows
             threadRef={threadRef}

@@ -2,8 +2,8 @@ name: Fork Sync
 
 # Merges pingdotgg/t3code main into fork main once a day. Main only moves
 # forward: no rebase and no force-push, so checkouts and tags stay valid.
-# A merge conflict, a failed typecheck or a failed fork test stops the sync,
-# reports it in an issue and calls the repair agent. See docs/fork.md.
+# A merge conflict (except one only in README.md), a failed typecheck or a failed fork test stops the sync,
+# reports it in an issue and calls the repair agent. See docs/fork/operations.md "Fork Sync".
 
 on:
   schedule:
@@ -58,7 +58,25 @@ jobs:
             echo "merged=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # A conflict in README.md alone has a fixed rule: the fork section up to the first
+          # `---` line stays on top, and the upstream README follows below it.
+          resolve_readme() {
+            [[ "$(git diff --name-only --diff-filter=U)" == "README.md" ]] || return 1
+            git cat-file -e :2:README.md && git cat-file -e :3:README.md || return 1
+            local fork_end
+            fork_end="$(git show :2:README.md | grep -n -m1 -x -F -- '---' | cut -d: -f1)"
+            [[ -n "$fork_end" ]] || return 1
+            { git show :2:README.md | head -n "$fork_end"; echo; git show :3:README.md; } > README.md
+            git add README.md
+            git commit --no-edit --quiet
+          }
           if ! git merge --no-edit -m "chore(sync): merge ${UPSTREAM_REPOSITORY} main" upstream/main > "$RUNNER_TEMP/merge.log" 2>&1; then
+            if resolve_readme; then
+              echo "::notice title=README.md conflict resolved::Kept the fork section above the first --- line and took the upstream README below it."
+              echo "merged=true" >> "$GITHUB_OUTPUT"
+              git log --oneline HEAD^1..HEAD^2 | head -50
+              exit 0
+            fi
             cat "$RUNNER_TEMP/merge.log"
             git status --short | grep -E '^(UU|AA|DU|UD|AU|UA|DD) ' >> "$RUNNER_TEMP/merge.log" || true
             git merge --abort
@@ -89,13 +107,25 @@ jobs:
         name: Fork tests
         run: |
           set -euo pipefail
-          mapfile -t files < <(git diff --name-only --diff-filter=AMR "$(git merge-base upstream/main HEAD)" HEAD -- '*.test.ts' '*.test.tsx')
-          if (( ${#files[@]} == 0 )); then
+          base="$(git merge-base upstream/main HEAD)"
+          mapfile -t files < <(git diff --name-only --diff-filter=AMR "$base" HEAD -- '*.test.ts' '*.test.tsx' ':!apps/web')
+          # apps/web tests run from apps/web: its config holds the unit and the browser project.
+          mapfile -t web_files < <(git -C apps/web diff --relative --name-only --diff-filter=AMR "$base" HEAD -- '*.test.ts' '*.test.tsx')
+          if (( ${#files[@]} + ${#web_files[@]} == 0 )); then
             echo "No fork test files."
             exit 0
           fi
-          printf '%s\n' "${files[@]}"
-          vp test run "${files[@]}"
+          if (( ${#files[@]} > 0 )); then
+            printf '%s\n' "${files[@]}"
+            vp test run "${files[@]}"
+          fi
+          if (( ${#web_files[@]} > 0 )); then
+            printf 'apps/web/%s\n' "${web_files[@]}"
+            if printf '%s\n' "${web_files[@]}" | grep -q '\.browser\.test\.'; then
+              node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+            fi
+            (cd apps/web && vp test run --project unit --project browser "${web_files[@]}")
+          fi
 
       # A fast-forward push. If main moved during the run, merge the new main
       # into the sync commit and push again. Main is never force-pushed.

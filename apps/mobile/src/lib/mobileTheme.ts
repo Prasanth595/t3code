@@ -15,9 +15,15 @@ import {
   type ThemePreviewColors,
 } from "@t3tools/shared/themePreview";
 
+import {
+  isPublishedMobileThemeId,
+  publishedMobileThemePalette,
+  type PublishedMobileThemeId,
+} from "./forkPublishedThemeRegistry";
+
 export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
 export const MOBILE_THEME_IDS = [...SHARED_MOBILE_THEME_IDS, "material-you"] as const;
-export type MobileThemeId = SharedMobileThemeId | "material-you";
+export type MobileThemeId = SharedMobileThemeId | "material-you" | PublishedMobileThemeId;
 export type MobileThemeAppearance = ThemeAppearance;
 export type MobileThemeMode = MobileThemeAppearance | "system";
 export type MobileThemeIds = Readonly<Record<MobileThemeAppearance, MobileThemeId>>;
@@ -35,7 +41,8 @@ export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVaria
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
 export function normalizeMobileThemeId(value: unknown): MobileThemeId {
-  return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
+  return typeof value === "string" &&
+    ((MOBILE_THEME_IDS as readonly string[]).includes(value) || isPublishedMobileThemeId(value))
     ? (value as MobileThemeId)
     : DEFAULT_MOBILE_THEME_ID;
 }
@@ -369,9 +376,16 @@ export const MOBILE_THEME_VARIABLE_NAMES = Object.keys(
 ) as ReadonlyArray<MobileThemeVariable>;
 
 export function getMobileThemeColors(
-  themeId: SharedMobileThemeId,
+  themeId: SharedMobileThemeId | PublishedMobileThemeId,
   appearance: MobileThemeAppearance,
 ): ThemeColors {
+  // Fork: a published theme that is not available keeps the stock palette.
+  if (isPublishedMobileThemeId(themeId)) {
+    return (
+      publishedMobileThemePalette(themeId, appearance) ??
+      getMobileThemeColors(DEFAULT_MOBILE_THEME_ID, appearance)
+    );
+  }
   if (themeId === DEFAULT_MOBILE_THEME_ID) {
     return appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
   }
@@ -380,7 +394,7 @@ export function getMobileThemeColors(
 }
 
 export function getMobileThemeVariables(
-  themeId: SharedMobileThemeId,
+  themeId: SharedMobileThemeId | PublishedMobileThemeId,
   appearance: MobileThemeAppearance,
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
@@ -429,7 +443,9 @@ export function getMobileThemePreviewColors(
   if (themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you")
     return STANDARD_THEME_PREVIEW_COLORS[appearance];
   const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
-  const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
+  const colors = isPublishedMobileThemeId(themeId)
+    ? getMobileThemeColors(themeId, appearance)
+    : (getThemeColorsForAppearance(theme, appearance) ?? theme.colors);
   return {
     canvas: themeColorToNativeColor(colors.canvas),
     accent: themeColorToNativeColor(colors.accent),

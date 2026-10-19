@@ -82,6 +82,7 @@ import {
   peersWithChangedLevel,
   reachablePeers,
 } from "./machineAccess.ts";
+import { CLOUDFLARE_ACCESS_LABEL_PREFIX } from "../forkSessions.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
@@ -830,7 +831,7 @@ const make = Effect.gen(function* () {
             sessions.filter(
               (session) =>
                 session.subject === "one-time-token" &&
-                session.client.label?.startsWith("cloudflare-access ") === true,
+                session.client.label?.startsWith(CLOUDFLARE_ACCESS_LABEL_PREFIX) === true,
             ),
             (session) => auth.revokeSession(session.sessionId),
             { discard: true },

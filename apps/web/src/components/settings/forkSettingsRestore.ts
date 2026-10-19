@@ -24,7 +24,13 @@ const FORK_RESTORED_SETTINGS = [
   ["preferOriginRemote", "Prefer origin remote"],
   ["threadLinkChips", "Thread link chips"],
   ["threadLinksOpenDesktopApp", "Thread addresses open the desktop app"],
+  ["previewLocalServerGroups", "All local servers in the browser"],
+  ["mobilePublishedThemes", "Published themes on mobile"],
+  ["mobileNewThreadProject", "New thread on mobile"],
+  ["mobileComposerCamera", "Camera on mobile"],
+  ["mobileSidebarGroups", "Sidebar groups on mobile"],
   ["keybindingSync", "Keybinding sync"],
+  ["environmentLabelFromMachineMap", "Environment name from machine map"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],
   ["agentSessionImportMaxMessages", "Imported messages per session"],
@@ -40,6 +46,8 @@ const FORK_RESTORED_SETTINGS = [
   ["keyboardFocusLevels", "Keyboard focus levels"],
   ["focusLevelHighlight", "Focus highlight"],
   ["inkwireWhiteFrame", "Inkwire white frame"],
+  ["tooltipShortcuts", "Shortcuts in tooltips"],
+  ["tooltipShortcutLimit", "Keys per tooltip"],
   ["confirmTerminalClose", "Terminal close confirmation"],
 ] as const satisfies ReadonlyArray<
   readonly [keyof UnifiedSettings & keyof ScopedSettingsPatch, string]

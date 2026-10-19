@@ -24,6 +24,7 @@ import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AuthSessions from "../persistence/AuthSessions.ts";
+import * as ForkSessions from "../fork/forkSessions.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   REUSABLE_DEV_SESSION_EXPIRES_AT,
@@ -1071,10 +1072,41 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  // Fork (MM-1305): one session per map machine or app client, and the end of idle fork sessions.
+  // A fork session has no proof key and no runtime ceiling, so its row holds every claim.
+  const forkSessions = yield* ForkSessions.makeForkSessions({
+    issue,
+    sign: (session) =>
+      encodeClaims({
+        v: 1,
+        kind: "session",
+        sid: session.sessionId,
+        sub: session.subject,
+        scopes: session.scopes,
+        method: session.method,
+        iat: session.issuedAt.epochMilliseconds,
+        exp: session.expiresAt.epochMilliseconds,
+      }).pipe(
+        Effect.map(base64UrlEncode),
+        Effect.map((payload) => `${payload}.${signPayload(payload, signingSecret)}`),
+        Effect.mapError(
+          (cause) => new SessionCredentialIssueError({ sessionId: session.sessionId, cause }),
+        ),
+      ),
+    connectedSessionIds: Ref.get(connectedSessionsRef).pipe(
+      Effect.map((connected) => [...connected.keys()]),
+    ),
+    publishRemoved: (sessionIds) =>
+      PubSub.publishAll(
+        changesPubSub,
+        sessionIds.map((sessionId) => ({ type: "clientRemoved" as const, sessionId })),
+      ).pipe(Effect.asVoid),
+  });
+
   return SessionStore.of({
     cookieName,
     legacyCookieName,
-    issue,
+    issue: forkSessions.issue,
     verify,
     issueWebSocketToken,
     verifyWebSocketToken,

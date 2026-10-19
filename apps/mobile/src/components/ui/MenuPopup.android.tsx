@@ -149,7 +149,13 @@ export function MenuPopup(props: MenuPopupProps) {
       <NativeThemeHost
         ignoreSafeAreaKeyboardInsets
         matchContents
-        style={{ width: props.menuWidth }}
+        // The measured content height leaves out each row's minimum height, which cut the menu
+        // off over an open keyboard. One row per action, plus the back or title row.
+        style={{
+          width: props.menuWidth,
+          minHeight:
+            (props.actions.length + (props.parent || props.title ? 1 : 0)) * menuItemHeight,
+        }}
       >
         <Column>{items}</Column>
       </NativeThemeHost>

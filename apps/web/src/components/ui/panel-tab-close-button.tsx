@@ -6,7 +6,7 @@ interface PanelTabCloseButtonProps {
   children: ReactNode;
   label: string;
   onClick: () => void;
-  tooltip?: string;
+  tooltip?: ReactNode;
 }
 
 export function PanelTabCloseButton({

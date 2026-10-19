@@ -5,7 +5,7 @@
  */
 import type { SidebarOwnerFilter } from "@t3tools/contracts";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import type { ProjectGroupingSettings } from "../../logicalProject";
 import {
   resolveSidebarProjectScopeKey,
@@ -39,7 +39,6 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
   const threads = filterSidebarV2VisibleThreads(input.threads, null);
   const repositoryOwnerFiltersEnabled = useClientSettings((s) => s.repositoryOwnerFilters);
   const savedOwnerFilter = useClientSettings((s) => s.sidebarOwnerFilter);
-  const updateClientSettings = useUpdateClientSettings();
   const ownerFilter = resolveSidebarOwnerFilter({
     enabled: repositoryOwnerFiltersEnabled,
     filter: savedOwnerFilter,

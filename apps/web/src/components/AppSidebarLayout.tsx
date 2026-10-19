@@ -11,13 +11,10 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { isElectron } from "../env";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
-import {
-  isRichTextBoldShortcut,
-  resolveShortcutCommand,
-  shortcutLabelForCommand,
-} from "../keybindings";
+import { isRichTextBoldShortcut, resolveShortcutCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { KeyboardCheatSheet } from "./focusLevels/KeyboardCheatSheet";
 import { useFocusLevelShortcuts } from "./focusLevels/useFocusLevelShortcuts";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
@@ -56,6 +53,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import { TitlebarPinnedScripts, usePinnedScriptsTargetStore } from "./PinnedScripts";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 
@@ -133,9 +131,6 @@ function SidebarControl({
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
-  const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
-    context: { usagePageOpen },
-  });
   const pinnedScriptsTarget = usePinnedScriptsTargetStore((state) => state.target);
 
   useEffect(() => {
@@ -192,7 +187,8 @@ function SidebarControl({
         }
       />
       <TooltipPopup side="bottom">
-        Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+        Toggle main sidebar
+        <ShortcutHint command="sidebar.toggle" context={{ usagePageOpen }} />
       </TooltipPopup>
     </Tooltip>
   );
@@ -352,6 +348,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
+        <KeyboardCheatSheet />
         <ProjectProjectionRetention />
         <Sidebar
           side="left"

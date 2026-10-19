@@ -21,6 +21,7 @@ import {
   ForkSyncStatus,
   ForkUpstreamPending,
 } from "./forkChangelog.ts";
+import { ForkLocalListenerList } from "./forkPreview.ts";
 import {
   MachineMapClientState,
   MachineMapDesktopReport,
@@ -66,6 +67,8 @@ export const FORK_WS_METHODS = {
 
   // Fork: environment-backed voice input (voiceInput.ts)
   voiceInputTranscribe: "voiceInput.transcribe",
+  // Fork: preview local server groups (forkPreview.ts)
+  forkPreviewSubscribeLocalListeners: "forkPreview.subscribeLocalListeners",
 } as const;
 
 const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
@@ -159,6 +162,16 @@ const WsVoiceInputTranscribeRpc = Rpc.make(FORK_WS_METHODS.voiceInputTranscribe,
   success: VoiceTranscribeResult,
   error: Schema.Union([VoiceTranscriptionRequestError, EnvironmentAuthorizationError]),
 });
+/** Fork: every local listener that the upstream list leaves out, again on each change. */
+const WsForkPreviewSubscribeLocalListenersRpc = Rpc.make(
+  FORK_WS_METHODS.forkPreviewSubscribeLocalListeners,
+  {
+    payload: Schema.Struct({}),
+    success: ForkLocalListenerList,
+    error: EnvironmentAuthorizationError,
+    stream: true,
+  },
+);
 
 export const ForkWsRpcGroup = RpcGroup.make(
   WsForkChangelogListReleasesRpc,
@@ -176,6 +189,7 @@ export const ForkWsRpcGroup = RpcGroup.make(
   WsWebPushSubscribeRpc,
   WsWebPushTestRpc,
   WsVoiceInputTranscribeRpc,
+  WsForkPreviewSubscribeLocalListenersRpc,
 );
 
 /** The fork part of `CLIENT_GUARDED_RPC_SCOPES`. */
@@ -207,4 +221,6 @@ export const FORK_RPC_READ_SCOPES = {
   [FORK_WS_METHODS.webPushPublicKey]: AuthOrchestrationReadScope,
   [FORK_WS_METHODS.webPushSubscribe]: AuthOrchestrationReadScope,
   [FORK_WS_METHODS.webPushTest]: AuthOrchestrationReadScope,
+  // Fork: the same data class as `subscribeDiscoveredLocalServers`.
+  [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: AuthOrchestrationReadScope,
 } as const;
