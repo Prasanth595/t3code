@@ -1442,19 +1442,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   useEffect(() => {
     if (!editor) return;
-    // Any serialized draft (text, chips, rules, empty fences) keeps the
-    // shortcut. This runs on every keydown, so serialize only once history is
-    // empty and once per document (selection changes keep the same doc).
-    let checkedDoc: ProseMirrorNode | null = null;
-    let hasDraft = false;
-    return registerEditableUndoHistory(editor.view.dom, () => {
-      if (undoDepth(editor.state) > 0) return true;
-      if (editor.state.doc !== checkedDoc) {
-        checkedDoc = editor.state.doc;
-        hasDraft = serializeEditorDoc(checkedDoc).value.length > 0;
-      }
-      return hasDraft;
-    });
+    // The serialized snapshot includes textless drafts such as rules and fences.
+    return registerEditableUndoHistory(
+      editor.view.dom,
+      () => undoDepth(editor.state) > 0 || snapshotRef.current.value.length > 0,
+    );
   }, [editor]);
 
   useEffect(() => {

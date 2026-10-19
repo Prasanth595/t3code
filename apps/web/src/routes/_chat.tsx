@@ -69,6 +69,7 @@ function ChatRouteGlobalShortcuts() {
   // editable owns history so one shortcut cannot undo both kinds of action.
   useEffect(() => {
     const onUndoKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
