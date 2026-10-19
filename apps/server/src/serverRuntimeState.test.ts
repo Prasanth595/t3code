@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootService.ts";
+import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_CONTEXT_ENV } from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
@@ -29,6 +30,7 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   readonly npmRuntime?: boolean;
   readonly missingServiceState?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly connected?: boolean;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -115,6 +117,12 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
     Effect.provideService(HostProcess.UserId, 501),
     Effect.provideService(HostProcess.HomeDirectory, root),
     Effect.provideService(HostProcess.Environment, input.environment ?? {}),
+    Effect.provideService(ServiceLauncherHostProcess, {
+      connected: input.connected ?? false,
+      send: () => false,
+      on: () => undefined,
+      off: () => undefined,
+    }),
     Effect.result,
   );
   assert.includeMembers(
@@ -268,6 +276,11 @@ describe("server ownership", () => {
               "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
             },
           },
+          {
+            platform: "darwin",
+            outputs: { "launchctl print": { code: 0 } },
+            environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" },
+          },
         ] as const) {
           const { result, t3Home } = yield* startBesideBootService(fixture);
           assert.equal(result._tag, "Failure");
@@ -345,7 +358,12 @@ describe("server ownership", () => {
         };
         for (const fixture of [
           { platform: "darwin", outputs, unitServesOtherHome: true },
-          { platform: "darwin", outputs, environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" } },
+          {
+            platform: "darwin",
+            outputs,
+            environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" },
+            connected: true,
+          },
           {
             platform: "darwin",
             outputs: {
