@@ -1202,19 +1202,15 @@ interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
-  displayPath: string;
   panelPath: string | null;
   line?: number | undefined;
   label: string;
   copyMarkdown: string;
   theme: "light" | "dark";
   threadRef?: ScopedThreadRef | undefined;
-  onOpen?: ((targetPath: string) => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
+  onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
-  /** The paths the copy actions use, once a bare filename is found in the workspace. */
-  resolveCopyPaths?:
-    | (() => Promise<{ readonly fullPath: string; readonly relativePath: string }>)
-    | undefined;
+  resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
@@ -1907,7 +1903,6 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
-  displayPath,
   panelPath,
   line,
   label,
@@ -1929,7 +1924,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     }
     void (async () => {
       try {
-        const result = await onOpen(targetPath);
+        const result = await onOpen();
         if (result._tag === "Success" || isAtomCommandInterrupted(result)) {
           return;
         }
@@ -2121,9 +2116,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
       if (clicked === "copy-relative" || clicked === "copy-full") {
-        const paths = resolveCopyPaths
-          ? await resolveCopyPaths()
-          : { fullPath: targetPath, relativePath: displayPath };
+        const paths = await resolveCopyPaths();
         handleCopy(
           clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
           clicked === "copy-relative" ? "Relative path" : "Full path",
@@ -2237,7 +2230,6 @@ function areMarkdownFileLinkPropsEqual(
     previous.targetPath === next.targetPath &&
     previous.iconPath === next.iconPath &&
     previous.environmentId === next.environmentId &&
-    previous.displayPath === next.displayPath &&
     previous.panelPath === next.panelPath &&
     previous.line === next.line &&
     previous.label === next.label &&
@@ -2617,19 +2609,17 @@ function useChatMarkdownState({
       openAt(match ?? panelPath);
     })();
   };
-  const resolveChipHostPath = (meta: MarkdownFileLinkMeta) =>
-    resolveMarkdownFileHostPath({ meta, cwd, findWorkspaceMatch: findWorkspaceBasenameMatch });
-  const openMarkdownFileInEditor = async (meta: MarkdownFileLinkMeta) =>
-    openInPreferredEditor(markdownFileEditorTarget(meta, await resolveChipHostPath(meta)));
-  const revealMarkdownFileInFileManager = async (meta: MarkdownFileLinkMeta) =>
-    revealFileInFileManager((await resolveChipHostPath(meta)).absolutePath);
-  const resolveMarkdownFileCopyPaths = async (meta: MarkdownFileLinkMeta) =>
-    markdownFileCopyPaths(meta, await resolveChipHostPath(meta), cwd);
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,
     mediaSource?: string,
   ) => {
+    const resolveHostPath = () =>
+      resolveMarkdownFileHostPath({
+        meta: fileLinkMeta,
+        cwd,
+        findWorkspaceMatch: findWorkspaceBasenameMatch,
+      });
     const mediaPath = mediaSource ?? fileLinkMeta.filePath;
     const canPreviewMedia =
       mediaMimeTypeFromExtension(
@@ -2645,7 +2635,6 @@ function useChatMarkdownState({
         href={fileLinkMeta.targetPath}
         targetPath={fileLinkMeta.targetPath}
         iconPath={fileLinkMeta.filePath}
-        displayPath={fileLinkMeta.displayPath}
         panelPath={panelPath}
         line={fileLinkMeta.line}
         label={fileLinkLabel(
@@ -2659,8 +2648,17 @@ function useChatMarkdownState({
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
-        {...(canUseShellActions ? { onOpen: () => openMarkdownFileInEditor(fileLinkMeta) } : {})}
-        resolveCopyPaths={() => resolveMarkdownFileCopyPaths(fileLinkMeta)}
+        onOpen={
+          canUseShellActions
+            ? async () =>
+                openInPreferredEditor(
+                  markdownFileEditorTarget(fileLinkMeta, await resolveHostPath()),
+                )
+            : undefined
+        }
+        resolveCopyPaths={async () =>
+          markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
+        }
         onOpenInPanel={openFileInPanel}
         onOpenMedia={
           threadRef && canPreviewMedia
@@ -2670,7 +2668,7 @@ function useChatMarkdownState({
         openInEditorMenuLabel={preferredEditorMenuLabel}
         onReveal={
           canUseShellActions && revealInFileManagerLabel !== undefined
-            ? () => revealMarkdownFileInFileManager(fileLinkMeta)
+            ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
             : undefined
         }
         revealLabel={revealInFileManagerLabel}
