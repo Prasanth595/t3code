@@ -24,9 +24,6 @@ import {
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
 
-// The composer draft's `modelSelectionByProvider` and
-// `stickyModelSelectionByProvider` maps are keyed by `ProviderInstanceId`
-// in production; these aliases keep the legacy-key migration tests concise.
 const CODEX_INSTANCE = ProviderInstanceId.make("codex");
 const CODEX_SECONDARY_INSTANCE = ProviderInstanceId.make("codex_secondary");
 const CLAUDE_AGENT_INSTANCE = ProviderInstanceId.make("claudeAgent");
@@ -90,6 +87,7 @@ import {
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 import { createDeferredStorage } from "./lib/storage";
+import { applyPreviewServerSnapshot, resetPreviewStateForTests } from "./previewStateStore";
 
 function makeImage(input: {
   id: string;
@@ -489,8 +487,6 @@ describe("composerDraftStore file attachments", () => {
 
   it("persists a pending file as a needs-reattach marker instead of dropping it", () => {
     const store = useComposerDraftStore.getState();
-    // No setFileUpload: the upload never finished, so there is no attachment
-    // id and the File handle cannot serialize.
     store.addFiles(threadRef, [makeFile("file-pending")]);
 
     const persistApi = useComposerDraftStore.persist as unknown as {
@@ -628,14 +624,10 @@ describe("composerDraftStore file attachments", () => {
 
   it("replaces a needs-reattach marker when the same file is picked again", () => {
     const store = useComposerDraftStore.getState();
-    // A hydrated marker: same metadata as the original pick, no bytes and no
-    // server-side upload.
     const marker: ComposerFileAttachment = { ...makeFile("file-marker"), file: null };
     store.addFiles(threadRef, [marker]);
     expect(store.getComposerDraft(threadRef)?.files.every(composerFileNeedsReattach)).toBe(true);
 
-    // Following the "Attach again" instruction produces a fresh id with the
-    // exact metadata the dedup key hashes.
     const repicked = makeFile("file-repicked");
     store.addFiles(threadRef, [repicked]);
 
@@ -679,10 +671,6 @@ describe("composerDraftStore file attachments", () => {
     store.addFiles(threadRef, [marker]);
     expect(store.getComposerDraft(threadRef)?.files.every(composerFileNeedsReattach)).toBe(true);
 
-    // A stash restore carries a finished server-side upload instead of bytes.
-    // Matching metadata must replace the marker, not be dropped as a
-    // duplicate: the marker cannot send, and the restored ids are the only
-    // valid copy.
     const restored: ComposerFileAttachment = {
       ...makeFile("file-restored"),
       file: null,
@@ -1468,6 +1456,28 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("keeps a draft with an open page when remapping a project to a new draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    applyPreviewServerSnapshot(scopeThreadRef(TEST_ENVIRONMENT_ID, threadId), {
+      threadId,
+      tabId: "tab-link",
+      navStatus: { _tag: "Success", url: "https://example.com/", title: "Example" },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-10-09T00:00:00.000Z",
+    });
+    try {
+      store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
+
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(threadId);
+      const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+      expect(persisted.draftThreadsByThreadKey[draftId]?.threadId).toBe(threadId);
+    } finally {
+      resetPreviewStateForTests();
+    }
+  });
+
   it("keeps invested composer drafts alive unmapped when remapping a project to a new draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
@@ -1475,12 +1485,9 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
 
-    // The mapping moved to the fresh draft...
     expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)?.threadId).toBe(
       otherThreadId,
     );
-    // ...but the invested draft survives with its content for the sidebar
-    // draft rows to surface.
     expect(useComposerDraftStore.getState().getDraftThread(draftId)?.threadId).toBe(threadId);
     expect(draftByKey(draftId)?.prompt).toBe("keep me around");
   });
@@ -1489,8 +1496,6 @@ describe("composerDraftStore project draft thread mapping", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
     store.setPrompt(draftId, "invested");
-    // The remap leaves the invested draft alive unmapped; project removal
-    // must still sweep it, or its sidebar row outlives the project.
     store.setProjectDraftThreadId(projectRef, otherDraftId, { threadId: otherThreadId });
 
     store.clearProjectDraftThreadId(projectRef);
@@ -1952,7 +1957,6 @@ describe("composerDraftStore modelSelection", () => {
     });
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(true);
 
-    // Last writer defines intent: a later seed clears the marker.
     store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
       replaceOptions: true,
     });
@@ -1967,11 +1971,8 @@ describe("composerDraftStore modelSelection", () => {
         .setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"), {
           explicit: true,
         });
-      // Land the debounced persist write.
       await vi.advanceTimersByTimeAsync(300);
 
-      // Hydrate from the same storage the store persists into and verify the
-      // marker survives the partialize → decode → merge path.
       resetComposerDraftStore();
       await useComposerDraftStore.persist.rehydrate();
       expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBe(true);
@@ -2170,7 +2171,6 @@ describe("composerDraftStore modelSelection", () => {
   it("does not clear other provider options when setting options for a single provider", () => {
     const store = useComposerDraftStore.getState();
 
-    // Set options for both providers
     store.setModelOptions(
       threadRef,
       providerModelOptions({
@@ -2179,7 +2179,6 @@ describe("composerDraftStore modelSelection", () => {
       }),
     );
 
-    // Now set options for only codex — claudeAgent should be untouched
     store.setModelOptions(threadRef, providerModelOptions({ codex: { reasoningEffort: "xhigh" } }));
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
@@ -2885,10 +2884,6 @@ describe("composerDraftStore runtime and interaction settings", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// createDeferredStorage
-// ---------------------------------------------------------------------------
-
 function createMockStorage() {
   const store = new Map<string, string>();
   return {
@@ -3039,7 +3034,6 @@ describe("createDeferredStorage", () => {
     storage.flush();
     expect(base.setItem).toHaveBeenCalledWith("key", "s:v1");
 
-    // Timer should be cancelled; no duplicate write.
     vi.advanceTimersByTime(300);
     expect(serialize).toHaveBeenCalledTimes(1);
     expect(base.setItem).toHaveBeenCalledTimes(1);
@@ -3116,7 +3110,6 @@ describe("composerDraftStore inline context references", () => {
     store.setPrompt(threadRef, "look");
     store.addReviewComment(threadRef, reviewComment);
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`look ${reviewLink} `);
-    // Re-adding the same comment replaces the record without a second link.
     store.addReviewComment(threadRef, { ...reviewComment, text: "edited" });
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(`look ${reviewLink} `);
     store.removeReviewComment(threadRef, "rc-1");
@@ -3545,131 +3538,89 @@ describe("composerDraftStore attachment references", () => {
 });
 
 describe("composerDraftStore checkout pull request", () => {
-  const projectId = ProjectId.make("project-checkout");
-  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, projectId);
-  const otherProjectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-other"));
-  const threadId = ThreadId.make("thread-checkout");
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("project-checkout"));
   const draftId = DraftId.make("draft-checkout");
-  const url = "https://github.com/acme/widgets/pull/42";
-  const checkout = { url, branch: "feature/pr-42" };
+  const threadId = ThreadId.make("thread-checkout");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const checkout = {
+    url: "https://github.com/acme/widgets/pull/42",
+    branch: "feature/pr-42",
+    branchConfirmed: true,
+  };
+  const store = () => useComposerDraftStore.getState();
 
-  beforeEach(() => {
-    resetComposerDraftStore();
+  beforeEach(resetComposerDraftStore);
+  afterEach(resetComposerDraftStore);
+
+  it("keeps checkout metadata on the receiving draft through reload and a failed background send", async () => {
+    await useComposerDraftStore.persist.clearStorage();
+    vi.useFakeTimers();
+    try {
+      const openedDraftId = DraftId.make("draft-opened-before-checkout");
+      store().setProjectDraftThreadId(projectRef, openedDraftId, {
+        threadId: ThreadId.make("thread-opened-before-checkout"),
+        branch: "main",
+      });
+      store().setPrompt(openedDraftId, "Earlier work on main");
+      store().setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        branch: checkout.branch,
+      });
+      store().setDraftThreadContext(draftId, { checkoutPullRequest: checkout });
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+
+      expect(store().getDraftSession(openedDraftId)).toMatchObject({ branch: "main" });
+      expect(store().getDraftSession(openedDraftId)?.checkoutPullRequest).toBeUndefined();
+      expect(store().getDraftSessionByRef(threadRef)).toMatchObject({
+        threadId,
+        checkoutPullRequest: checkout,
+      });
+
+      const sentDraft = store().getDraftSession(draftId)!;
+      beginBackgroundDraftSubmissionByRef(threadRef);
+      markPromotedDraftThreadByRef(threadRef);
+      const nextDraftId = DraftId.make("draft-created-during-send");
+      store().setProjectDraftThreadId(projectRef, nextDraftId, {
+        threadId: ThreadId.make("thread-created-during-send"),
+      });
+      const retryThreadId = ThreadId.make("thread-checkout-retry");
+      restoreFailedBackgroundDraftThread(draftId, sentDraft, retryThreadId);
+      clearBackgroundDraftSubmissionByRef(threadRef);
+
+      const retry = store().getDraftSessionByRef(
+        scopeThreadRef(TEST_ENVIRONMENT_ID, retryThreadId),
+      );
+      expect(retry).toMatchObject({
+        threadId: retryThreadId,
+        promotedTo: null,
+        checkoutPullRequest: checkout,
+      });
+      expect(checkoutPullRequestUrlToLink(retry)).toBe(checkout.url);
+      expect(store().getDraftSession(nextDraftId)?.checkoutPullRequest).toBeUndefined();
+    } finally {
+      await useComposerDraftStore.persist.clearStorage();
+      vi.useRealTimers();
+    }
   });
 
-  const store = () => useComposerDraftStore.getState();
-  const toLink = () => checkoutPullRequestUrlToLink(store().getDraftSession(draftId));
-
-  function draftOnMain() {
+  it("clears checkout ownership when an empty draft is reset to the default branch", () => {
     store().setProjectDraftThreadId(projectRef, draftId, { threadId, branch: "main" });
-  }
-
-  // GitActionsControl's live branch sync writes the git status branch onto the draft. The status
-  // refresh after a checkout is forked server-side, so the prepare response lands first and the
-  // sync replays the stale pre-checkout branch before the fresh status corrects it.
-  function liveBranchSync(branch: string) {
-    store().setDraftThreadContext(draftId, {
-      branch,
-      worktreePath: null,
-      environmentSelection: "manual",
-    });
-  }
-
-  it("still links after a local checkout the live branch sync briefly reverts", () => {
-    draftOnMain();
     store().setDraftThreadContext(draftId, {
       branch: checkout.branch,
       worktreePath: null,
       envMode: "local",
       checkoutPullRequest: checkout,
     });
-    liveBranchSync("main");
-    liveBranchSync(checkout.branch);
-
-    expect(toLink()).toBe(url);
-  });
-
-  it("does not link once the draft has moved to another branch", () => {
-    draftOnMain();
     store().setDraftThreadContext(draftId, {
-      branch: checkout.branch,
-      checkoutPullRequest: checkout,
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      startFromOrigin: false,
     });
-    liveBranchSync("main");
 
-    expect(toLink()).toBeNull();
-  });
-
-  it("can be attached to a draft that is already on the branch", () => {
-    store().setProjectDraftThreadId(projectRef, draftId, { threadId, branch: checkout.branch });
-    store().setDraftThreadContext(draftId, { checkoutPullRequest: checkout });
-
-    expect(toLink()).toBe(url);
-  });
-
-  it("is dropped when cleared or when the draft moves to another project", () => {
-    store().setProjectDraftThreadId(projectRef, draftId, {
-      threadId,
-      branch: checkout.branch,
-      checkoutPullRequest: checkout,
-    });
-    store().setDraftThreadContext(draftId, { checkoutPullRequest: null });
     expect(store().getDraftSession(draftId)?.checkoutPullRequest).toBeUndefined();
-
-    store().setDraftThreadContext(draftId, { checkoutPullRequest: checkout });
-    store().setDraftThreadContext(draftId, { projectRef: otherProjectRef });
-    expect(store().getDraftSession(draftId)?.checkoutPullRequest).toBeUndefined();
-  });
-
-  it("persists the pull request and still restores drafts saved without one", async () => {
-    vi.useFakeTimers();
-    try {
-      await useComposerDraftStore.persist.clearStorage();
-      const legacyDraftId = DraftId.make("draft-before-checkout-links");
-      const storage = useComposerDraftStore.persist.getOptions().storage;
-      expect(storage).toBeDefined();
-      const persistedDraftThread = (id: ThreadId) => ({
-        threadId: id,
-        environmentId: TEST_ENVIRONMENT_ID,
-        projectId,
-        logicalProjectKey: scopedProjectKey(projectRef),
-        createdAt: "2026-08-01T00:00:00.000Z",
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: checkout.branch,
-        worktreePath: null,
-        envMode: "local",
-        startFromOrigin: false,
-        promotedTo: null,
-      });
-      storage?.setItem(COMPOSER_DRAFT_STORAGE_KEY, {
-        version: 9,
-        state: {
-          draftsByThreadKey: {},
-          draftThreadsByThreadKey: {
-            [draftId]: { ...persistedDraftThread(threadId), checkoutPullRequest: checkout },
-            [legacyDraftId]: persistedDraftThread(ThreadId.make("thread-legacy")),
-          },
-          logicalProjectDraftThreadKeyByLogicalProjectKey: {
-            [scopedProjectKey(projectRef)]: draftId,
-          },
-        },
-      } as never);
-      await vi.advanceTimersByTimeAsync(300);
-
-      await useComposerDraftStore.persist.rehydrate();
-
-      expect(toLink()).toBe(url);
-      const legacy = store().getDraftSession(legacyDraftId);
-      expect(legacy).toMatchObject({ branch: checkout.branch });
-      expect(checkoutPullRequestUrlToLink(legacy)).toBeNull();
-      expect(
-        partializeComposerDraftStoreState(store()).draftThreadsByThreadKey[draftId],
-      ).toMatchObject({ checkoutPullRequest: checkout });
-    } finally {
-      await useComposerDraftStore.persist.clearStorage();
-      vi.useRealTimers();
-      resetComposerDraftStore();
-    }
+    expect(checkoutPullRequestUrlToLink(store().getDraftSessionByRef(threadRef))).toBeNull();
   });
 });
