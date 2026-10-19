@@ -4424,7 +4424,10 @@ describe("streaming v2 row projection", () => {
     ["Visible", "★ Insight\nKeep these line breaks"],
   ])("keeps row parity and history identity from %j to %j", (before, after) => {
     const initial = fixture(before);
-    const previous = deriveMessagesTimelineRowsWithState(initial.input);
+    const previous = deriveMessagesTimelineRowsWithState({
+      ...initial.input,
+      availableRevertTurnCounts: new Set([0]),
+    });
     Object.freeze(previous.rows);
     for (const row of previous.rows) Object.freeze(row);
     const timelineInput = {
@@ -4440,6 +4443,7 @@ describe("streaming v2 row projection", () => {
       timelineEntries: timeline.entries,
       latestRun: { ...initial.input.latestRun },
       turnDiffSummaries: initial.input.turnDiffSummaries.map((summary) => ({ ...summary })),
+      availableRevertTurnCounts: new Set([0]),
     };
     const next = deriveMessagesTimelineRowsWithState(input, previous);
     expect(next.rows).toEqual(

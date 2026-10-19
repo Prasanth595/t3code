@@ -62,10 +62,10 @@ import {
   CommandId,
   DEFAULT_MODEL,
   isProviderNativeSubagentThread,
-  latestProviderTurnForAttempt,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type OrchestrationV2ProviderTurn,
   type ProjectScript,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
@@ -73,6 +73,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
   type RunId,
+  type RunAttemptId,
   type RuntimeRequestId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderInteractionMode,
@@ -2899,14 +2900,28 @@ export default function ChatView(props: ChatViewProps) {
     )
       return available;
     available.add(0);
+    const attemptsById = new Map(serverProjection.attempts.map((attempt) => [attempt.id, attempt]));
+    const providerTurnsById = new Map<
+      OrchestrationV2ProviderTurn["id"],
+      OrchestrationV2ProviderTurn
+    >();
+    const latestTurnByAttempt = new Map<RunAttemptId, OrchestrationV2ProviderTurn>();
+    for (const turn of serverProjection.providerTurns) {
+      providerTurnsById.set(turn.id, turn);
+      if (turn.runAttemptId === null) continue;
+      const latest = latestTurnByAttempt.get(turn.runAttemptId);
+      if (latest === undefined || turn.ordinal > latest.ordinal) {
+        latestTurnByAttempt.set(turn.runAttemptId, turn);
+      }
+    }
     for (const run of serverProjection.runs) {
       if (run.activeAttemptId === null) continue;
-      const attempt = serverProjection.attempts.find(
-        (candidate) => candidate.id === run.activeAttemptId,
-      );
+      const attempt = attemptsById.get(run.activeAttemptId);
       const providerTurn =
-        latestProviderTurnForAttempt(serverProjection.providerTurns, run.activeAttemptId) ??
-        serverProjection.providerTurns.find((turn) => turn.id === attempt?.providerTurnId);
+        latestTurnByAttempt.get(run.activeAttemptId) ??
+        (attempt?.providerTurnId == null
+          ? undefined
+          : providerTurnsById.get(attempt.providerTurnId));
       // A ready file checkpoint alone cannot restore the provider conversation.
       if (providerTurn?.providerThreadId === providerThread.id) available.add(run.ordinal);
     }
