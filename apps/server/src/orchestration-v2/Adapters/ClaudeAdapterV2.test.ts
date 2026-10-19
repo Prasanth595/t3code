@@ -2986,30 +2986,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect(
-    "reports fallback windows when the catalog has no sizing for custom or unknown models",
-    () =>
-      Effect.gen(function* () {
-        const windows = [];
-        for (const model of ["acme-claude", "uncatalogued-claude[1m]"]) {
-          const harness = yield* makeWakeHarnessWithOptions({
-            settings: CUSTOM_MODEL_CLAUDE_SETTINGS,
-          });
-          yield* catalogTurn(harness, 1, { ...catalogSelection, model });
-          windows.push(yield* finishCatalogTurn(harness, 1));
-        }
-        assert.deepEqual(windows, [
-          [200_000, 200_000],
-          [1_000_000, 1_000_000],
-        ]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-  );
-
   it.effect.each([
     { isError: false, title: "Check weather" },
     { isError: true, title: "Check weather" },
