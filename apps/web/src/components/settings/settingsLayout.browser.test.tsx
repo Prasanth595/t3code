@@ -1,10 +1,65 @@
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { page, userEvent } from "vite-plus/test/browser";
+import "../../index.css";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { scrollToSettingsTarget } from "./settingsLayout";
+const state = vi.hoisted(() => ({ unsupported: false }));
+
+vi.mock("../../hooks/useSettings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useSettings")>()),
+  usePrimarySettingsAvailable: () => true,
+}));
+vi.mock("../../state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/environments")>()),
+  usePrimaryEnvironmentId: () => "Server",
+  usePrimaryEnvironment: () => null,
+}));
+vi.mock("../../state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/session")>()),
+  useEnvironmentScope: () => true,
+  useEnvironmentsWithScope: () => new Set(["Server"]),
+}));
+vi.mock("./useScopedSettings", () => ({
+  useClearScopedSettings: () => vi.fn(),
+  useClearProjectOverrides: () => vi.fn(),
+}));
+vi.mock("./SettingsScopeContext", async () => {
+  const { DEFAULT_SERVER_SETTINGS, EnvironmentId } = await import("@t3tools/contracts");
+  const { resolveScopedSettingsTargets } = await import("./scopedSettings");
+  const { resolveSettingsScope } = await import("./settingsScope");
+  return {
+    useOptionalSettingsScope: () => {
+      if (!state.unsupported) return null;
+      const environment = {
+        environmentId: EnvironmentId.make("Server"),
+        label: "Server",
+        connection: { phase: "connected" as const },
+        unsupportedSettingKeys: new Set(["reviewGuidesEnabled"]),
+        serverConfig: {
+          settings: DEFAULT_SERVER_SETTINGS,
+          environment: { capabilities: {}, platform: { machine: "server" } },
+        },
+      };
+      const environments = [environment];
+      const scope = resolveSettingsScope({}, [], environments);
+      return {
+        scope,
+        environments,
+        connectedEnvironments: environments,
+        targets: resolveScopedSettingsTargets(scope, environments),
+        groups: [],
+      };
+    },
+  };
+});
+
+import { scrollToSettingsTarget, SettingsRow } from "./settingsLayout";
 
 const PULSE = "settings-search-target-pulse";
 
 afterEach(() => {
+  state.unsupported = false;
   document.body.replaceChildren();
   vi.restoreAllMocks();
 });
@@ -64,5 +119,55 @@ describe("settings search targets", () => {
 
   it("leaves not-yet-mounted destinations to their mount lifecycle", () => {
     expect(scrollToSettingsTarget("archive")).toBe(false);
+  });
+});
+
+describe("unavailable settings", () => {
+  it("disables unsupported controls, children, and reset while explaining inheritance", async () => {
+    state.unsupported = true;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () =>
+        root.render(
+          <SettingsRow
+            title="Review guides"
+            serverScoped
+            settingKeys={["reviewGuidesEnabled"]}
+            resetAction={<button>Reset review guides</button>}
+            control={<button>Enable review guides</button>}
+          >
+            <textarea aria-label="Review guide preferences" />
+          </SettingsRow>,
+        ),
+      );
+      await expect
+        .element(page.getByText("Update T3 Code on Server to use this setting."))
+        .toBeVisible();
+      const control = container.querySelector<HTMLButtonElement>("button:not([aria-label])")!;
+      const editor = container.querySelector("textarea")!;
+      control.focus();
+      expect(document.activeElement).not.toBe(control);
+      editor.focus();
+      expect(document.activeElement).not.toBe(editor);
+      await expect
+        .element(page.getByRole("button", { name: "Reset review guides" }))
+        .not.toBeInTheDocument();
+      const inheritance = page.getByRole("button", {
+        name: /Not supported on Server.*Show where this value comes from/,
+      });
+      await userEvent.click(inheritance);
+      const popup = page.getByText(
+        "Not supported. Update T3 Code on this environment to use this setting.",
+      );
+      await expect.element(popup).toBeVisible();
+      const popupText = document.querySelector('[data-slot="popover-popup"]')?.textContent;
+      expect(popupText).not.toContain("Inherits");
+      expect(popupText).not.toContain("Default");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
   });
 });

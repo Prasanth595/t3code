@@ -4,6 +4,7 @@ import {
   ProjectId,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
+  type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
@@ -122,6 +123,10 @@ beforeEach(() => {
   for (const command of Object.values(commands)) {
     command.mockResolvedValue(AsyncResult.success(undefined));
   }
+  commands.updateSettings.mockImplementation(
+    ({ input }: { input: { patch: ServerSettingsPatch } }) =>
+      AsyncResult.success({ ...DEFAULT_SERVER_SETTINGS, ...input.patch }),
+  );
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -134,6 +139,21 @@ afterEach(async () => {
 });
 
 describe("useProjectScriptSettings", () => {
+  it("reports a dropped action save without installing its shortcut", async () => {
+    commands.updateSettings.mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
+    const { submit } = await renderSettings([]);
+    let result: Awaited<ReturnType<typeof submit>> | undefined;
+
+    await act(async () => {
+      result = await submit(null, input("mod+shift+k"));
+    });
+
+    expect(commands.updateSettings).toHaveBeenCalledOnce();
+    expect.soft(result?._tag).toBe("Failure");
+    expect.soft(commands.upsertKeybinding).not.toHaveBeenCalled();
+    expect(commands.removeKeybinding).not.toHaveBeenCalled();
+  });
+
   it("saves a recorded action shortcut", async () => {
     const { submit } = await renderSettings([]);
 
