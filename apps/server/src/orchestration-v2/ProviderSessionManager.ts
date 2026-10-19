@@ -179,11 +179,6 @@ export interface ProviderSessionManagerV2Shape {
     readonly threadId: ThreadId;
     readonly detail?: string;
     readonly reason?: "workspace_changed";
-    /**
-     * True for terminal detaches (thread archived or deleted): the thread's
-     * MCP credentials are revoked immediately instead of surviving for a
-     * potential re-attach.
-     */
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
 }
@@ -201,9 +196,7 @@ interface LiveSessionEntry {
   readonly supportsMultipleProviderThreads: boolean;
   readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly exposedRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
-  readonly eventSubscribers: Ref.Ref<
-    ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-  >;
+  readonly eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventSubscriber>>;
   readonly requestEventPermit: Semaphore.Semaphore;
   readonly scope: Scope.Closeable;
   readonly idleGeneration: number;
@@ -217,6 +210,11 @@ interface IdleThreadUnload {
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly generation: number;
   readonly fiber: Fiber.Fiber<void, never> | null;
+}
+
+interface ProviderSessionEventSubscriber {
+  readonly threadId: ThreadId | undefined;
+  readonly queue: Queue.Queue<ProviderSessionEventSignal, Cause.Done>;
 }
 
 type ProviderSessionEventSignal =
@@ -496,47 +494,44 @@ export const layerWithOptions = (
             );
 
       const publishToSubscribers = (
-        subscribers: Ref.Ref<
-          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-        >,
+        subscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventSubscriber>>,
         signal: ProviderSessionEventSignal,
       ) =>
         Ref.get(subscribers).pipe(
           Effect.flatMap((current) =>
-            Effect.forEach(current.values(), (queue) => Queue.offer(queue, signal), {
+            Effect.forEach(current.values(), ({ queue }) => Queue.offer(queue, signal), {
               discard: true,
             }),
           ),
         );
 
-      const failSubscribers = Effect.fn("ProviderSessionManager.failSubscribers")(function* (
+      const failSubscribers = (
         entry: LiveSessionEntry,
-        detail: string,
-        expectedDetach?: Pick<ProviderAdapter.ProviderAdapterSessionDetached, "threadId" | "reason">,
-      ) {
-          const error =
-            expectedDetach === undefined
-              ? new ProviderAdapter.ProviderAdapterEventStreamError({
-                  driver: entry.runtime.driver,
-                  providerSessionId: entry.runtime.providerSessionId,
-                  cause: detail,
-                })
-              : new ProviderAdapter.ProviderAdapterSessionDetached({
-                  driver: entry.runtime.driver,
-                  providerSessionId: entry.runtime.providerSessionId,
-                  ...expectedDetach,
-                        });
-        const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
-        yield* Effect.forEach(
-          subscribers.values(),
-          (queue) =>
-            Queue.offer(queue, {
-              type: "failure",
-              cause: Cause.fail(error),
-            }),
-          { discard: true },
-        );
-      });
+        error: ProviderAdapter.ProviderAdapterV2Error,
+        threadId?: ThreadId,
+      ) =>
+        Effect.gen(function* () {
+          const subscribers = yield* Ref.modify(entry.eventSubscribers, (current) => {
+            const failed: Array<ProviderSessionEventSubscriber> = [];
+            const remaining = new Map(current);
+            for (const [id, subscriber] of current) {
+              if (threadId === undefined || subscriber.threadId === threadId) {
+                failed.push(subscriber);
+                remaining.delete(id);
+              }
+            }
+            return [failed, remaining] as const;
+          });
+          yield* Effect.forEach(
+            subscribers,
+            ({ queue }) =>
+              Queue.offer(queue, {
+                type: "failure",
+                cause: Cause.fail(error),
+              }),
+            { discard: true },
+          );
+        });
 
       // Server shutdown interrupts subscribers rather than ending them: a
       // cleanly ended stream without a terminal fails its run, while an
@@ -546,7 +541,7 @@ export const layerWithOptions = (
           const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
           yield* Effect.forEach(
             subscribers.values(),
-            (queue) => Queue.clear(queue).pipe(Effect.andThen(Queue.interrupt(queue))),
+            ({ queue }) => Queue.clear(queue).pipe(Effect.andThen(Queue.interrupt(queue))),
             { discard: true },
           );
         },
@@ -558,7 +553,7 @@ export const layerWithOptions = (
         entry: LiveSessionEntry,
       ) {
         const subscribers = yield* Ref.getAndSet(entry.eventSubscribers, new Map());
-        yield* Effect.forEach(subscribers.values(), (queue) => Queue.end(queue), {
+        yield* Effect.forEach(subscribers.values(), ({ queue }) => Queue.end(queue), {
           discard: true,
         });
       });
@@ -986,7 +981,6 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
-        readonly expectedDetach?: Pick<ProviderAdapter.ProviderAdapterSessionDetached, "threadId" | "reason">;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1012,8 +1006,11 @@ export const layerWithOptions = (
                   } else {
                     yield* failSubscribers(
                       entry,
-                      input.detail ?? `Provider session released: ${input.reason}.`,
-                      input.expectedDetach,
+                      new ProviderAdapter.ProviderAdapterEventStreamError({
+                        driver: entry.runtime.driver,
+                        providerSessionId: entry.runtime.providerSessionId,
+                        cause: input.detail ?? `Provider session released: ${input.reason}.`,
+                      }),
                     );
                   }
                   const closeExit = yield* closeScopeWithin(entry.scope, {
@@ -1623,14 +1620,15 @@ export const layerWithOptions = (
       const makeEventSubscription = Effect.fn("ProviderSessionManager.makeEventSubscription")(
         function* (
           subscribers: Ref.Ref<
-            ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+            ReadonlyMap<number, ProviderSessionEventSubscriber>
           >,
+          threadId?: ThreadId,
         ): Effect.fn.Return<ProviderAdapter.ProviderAdapterV2EventSubscription> {
           const queue = yield* Queue.unbounded<ProviderSessionEventSignal, Cause.Done>();
           const subscriberId = yield* Ref.getAndUpdate(nextSubscriberId, (value) => value + 1);
           yield* Ref.update(subscribers, (current) => {
             const updated = new Map(current);
-            updated.set(subscriberId, queue);
+            updated.set(subscriberId, { threadId, queue });
             return updated;
           });
           const close = Ref.modify(subscribers, (current) => {
@@ -1661,12 +1659,11 @@ export const layerWithOptions = (
 
       const decorateRuntime = (
         runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        eventSubscribers: Ref.Ref<
-          ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-        >,
+        eventSubscribers: Ref.Ref<ReadonlyMap<number, ProviderSessionEventSubscriber>>,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
-        const subscribeEvents = makeEventSubscription(eventSubscribers);
+        const subscribeEvents = (threadId?: ThreadId) =>
+          makeEventSubscription(eventSubscribers, threadId);
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -1681,7 +1678,7 @@ export const layerWithOptions = (
           ...runtime,
           subscribeEvents,
           events: Stream.unwrap(
-            subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
+            subscribeEvents().pipe(Effect.map((subscription) => subscription.events)),
           ),
           ensureThread: (input) =>
             observeActivity(
@@ -2156,7 +2153,7 @@ export const layerWithOptions = (
                   }),
                 );
               const eventSubscribers = yield* Ref.make<
-                ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+                ReadonlyMap<number, ProviderSessionEventSubscriber>
               >(new Map());
               const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
               const entry: LiveSessionEntry = {
@@ -2290,6 +2287,7 @@ export const layerWithOptions = (
             const key = sessionKey(input.providerSessionId);
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             let detachedProviderThreads: ReadonlyArray<OrchestrationV2ProviderThread> = [];
+            let interruptActiveTurns = Effect.void;
             if (currentEntry?.supportsMultipleProviderThreads === true) {
               const projection = yield* Effect.option(
                 projectionStore.getThreadRecords(input.threadId, [
@@ -2307,7 +2305,7 @@ export const layerWithOptions = (
                 const activeTurns = projection.value.providerTurns.filter(
                   (turn) => turn.status === "running" && providerThreads.has(turn.providerThreadId),
                 );
-                yield* Effect.forEach(
+                interruptActiveTurns = Effect.forEach(
                   activeTurns,
                   (turn) =>
                     currentEntry.exposedRuntime
@@ -2387,6 +2385,19 @@ export const layerWithOptions = (
             if (Option.isNone(detached)) {
               return;
             }
+            if (input.reason !== undefined) {
+              yield* failSubscribers(
+                detached.value,
+                new ProviderAdapter.ProviderAdapterSessionDetached({
+                  driver: detached.value.runtime.driver,
+                  providerSessionId: input.providerSessionId,
+                  threadId: input.threadId,
+                  reason: input.reason,
+                }),
+                input.threadId,
+              );
+            }
+            yield* interruptActiveTurns;
             if (
               detached.value.attachedThreadIds.size === 0 &&
               !detached.value.supportsMultipleProviderThreads
@@ -2396,9 +2407,6 @@ export const layerWithOptions = (
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
-                ...(input.reason === undefined
-                  ? {}
-                  : { expectedDetach: { threadId: input.threadId, reason: input.reason } }),
               });
               return;
             }

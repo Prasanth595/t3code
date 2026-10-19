@@ -991,11 +991,9 @@ export const layer: Layer.Layer<
         const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
         const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
         const latestProviderThread = yield* Ref.make(input.providerThread);
-          const latestRootProviderTurn = yield* Ref.make<OrchestrationV2ProviderTurn | null>(null);
+          let latestRootProviderTurn: OrchestrationV2ProviderTurn | null = null;
           // A planned detach closes ingestion before the adapter can end its open root items.
-          const openRootTurnItems = yield* Ref.make<
-            ReadonlyMap<TurnItemId, OrchestrationV2TurnItem>
-          >(new Map());
+          const openRootTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
         const routeIdentity: ProviderEventRouteIdentity = {
           threadId: input.run.threadId,
           runId: input.run.id,
@@ -1005,7 +1003,7 @@ export const layer: Layer.Layer<
         const eventSubscription =
           input.session.subscribeEvents === undefined
             ? { events: input.session.events, close: Effect.void }
-            : yield* input.session.subscribeEvents;
+              : yield* input.session.subscribeEvents(input.run.threadId);
         const inheritedBackgroundTurnItems = yield* (
           input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
         ).pipe(
@@ -1306,7 +1304,7 @@ export const layer: Layer.Layer<
                         "Run interrupted because the workspace changed",
                       );
                       const routing = yield* Ref.get(eventRouting);
-                      const providerTurn = yield* Ref.get(latestRootProviderTurn);
+                      const providerTurn = latestRootProviderTurn;
                       const completedAt = yield* DateTime.now;
                       const terminal = {
                         type: "turn.terminal",
@@ -1338,9 +1336,8 @@ export const layer: Layer.Layer<
                             }
                           : state,
                       );
-                      const openItems = yield* Ref.getAndSet(openRootTurnItems, new Map());
                       return Stream.fromIterable<ProviderAdapter.ProviderAdapterV2Event>([
-                        ...[...openItems.values()].map((turnItem) => ({
+                        ...[...openRootTurnItems.values()].map((turnItem) => ({
                           type: "turn_item.updated" as const,
                           driver: input.providerThread.driver,
                           turnItem: {
@@ -1532,7 +1529,7 @@ export const layer: Layer.Layer<
                   (event.providerTurn.runAttemptId === input.attempt.id ||
                     event.providerTurn.id === (yield* Ref.get(eventRouting)).rootProviderTurnId)
                 ) {
-                  yield* Ref.set(latestRootProviderTurn, event.providerTurn);
+                  latestRootProviderTurn = event.providerTurn;
                 }
 
               if (
@@ -1545,14 +1542,11 @@ export const layer: Layer.Layer<
                   const turnItem = event.turnItem;
                   // Subagent items are ended by the run-owned cascade.
                   if (turnItem.type !== "subagent") {
-                    const open = turnItem.status === "running" || turnItem.status === "pending";
-                    yield* Ref.update(openRootTurnItems, (items) => {
-                      if (!open && !items.has(turnItem.id)) return items;
-                      const next = new Map(items);
-                      if (open) next.set(turnItem.id, turnItem);
-                      else next.delete(turnItem.id);
-                      return next;
-                    });
+                    if (isOrchestrationV2WorkActive(turnItem.status)) {
+                      openRootTurnItems.set(turnItem.id, turnItem);
+                    } else {
+                      openRootTurnItems.delete(turnItem.id);
+                    }
                   }
               }
               if (event.type === "turn.terminal") {
