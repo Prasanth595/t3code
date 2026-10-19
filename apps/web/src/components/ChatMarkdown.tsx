@@ -160,7 +160,6 @@ import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
-import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
@@ -1584,17 +1583,40 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
-  // Only file previews pass a mutation id. Chat markdown must not re-mint URLs,
-  // and a preview must refresh once the connection is ready, so an edit made
-  // while offline still replaces a cached failure or stale signed URL.
-  useWorkspaceMutationRefresh({
-    enabled: props.workspaceMutationId !== undefined && connectionReady,
-    mutationId: props.workspaceMutationId ?? null,
-    resourceKey: JSON.stringify([props.environmentId, resource]),
-    refresh: () => {
-      void refreshAssetUrl().catch(() => undefined);
-    },
-  });
+  const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
+  const handledRefreshToken = useRef<string | null | undefined>(undefined);
+  const assetLoading = assetUrl._tag === "Loading" || assetUrl.waiting === true;
+  useEffect(() => {
+    if (!connectionReady) {
+      handledRefreshToken.current = null;
+      return;
+    }
+    if (
+      props.workspaceMutationId === undefined ||
+      props.kind === "video" ||
+      (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
+      handledRefreshToken.current === refreshToken
+    ) {
+      return;
+    }
+    if (assetLoading) {
+      // Only the initial mount shares a pending request; edits and reconnects need a new one.
+      if (handledRefreshToken.current === undefined) {
+        handledRefreshToken.current = refreshToken;
+      }
+      return;
+    }
+    handledRefreshToken.current = refreshToken;
+    void refreshAssetUrl().catch(() => undefined);
+  }, [
+    assetLoading,
+    connectionReady,
+    props.kind,
+    props.workspaceMutationId,
+    refreshAssetUrl,
+    refreshToken,
+    resource._tag,
+  ]);
   const path =
     resource._tag === "media-file"
       ? resource.path
