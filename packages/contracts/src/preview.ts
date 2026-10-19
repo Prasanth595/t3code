@@ -249,7 +249,6 @@ export type PreviewCloseInput = typeof PreviewCloseInput.Type;
 export const PreviewReportProfilesInput = Schema.Struct({
   profiles: Schema.Array(BrowserProfile).check(Schema.isMaxLength(BROWSER_PROFILE_MAX_COUNT)),
   defaultProfileId: BrowserProfileId,
-  /** Latest explicit client preference wins; older clients may omit it. */
   recordingFrameRate: Schema.optional(BrowserRecordingFrameRate),
 });
 export type PreviewReportProfilesInput = typeof PreviewReportProfilesInput.Type;

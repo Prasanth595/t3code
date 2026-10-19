@@ -1305,8 +1305,7 @@ const make = Effect.gen(function* () {
     readonly profiles: ReadonlyArray<BrowserProfile>;
     readonly defaultProfileId: string;
   } | null = null;
-  // Like profiles, the latest explicit client report applies to this environment,
-  // including recordings started after the client disconnects.
+  // Retain the last explicit preference even after its client disconnects.
   let recordingFrameRate: BrowserRecordingFrameRate = DEFAULT_BROWSER_RECORDING_FRAME_RATE;
 
   const reportProfiles: ServerBrowser["Service"]["reportProfiles"] = (input) =>
