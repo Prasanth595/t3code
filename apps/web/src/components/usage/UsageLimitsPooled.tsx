@@ -14,7 +14,7 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
-import { Fragment, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -451,7 +451,7 @@ function PoolBar({
   const [dimensions, setDimensions] = useState({ width: 0, gap: 0 });
   const probeRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const probe = probeRef.current;
     const grid = gridRef.current;
     if (!probe || !grid) return;
