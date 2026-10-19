@@ -26,10 +26,15 @@ const SECRET = Buffer.from("secret-value-that-must-never-print").toString("base6
 
 const TEAM = "3TB6CJ6ZHV";
 
-// Stand-ins for the macOS tools, answering from STUB_* variables.
+// Stand-ins for the macOS tools, answering from STUB_* variables. find-identity lists
+// more than a pipe holds after the match, as a keychain with many identities does, so
+// a reader that stops at the first match makes it die of SIGPIPE every time, not by luck.
 const STUBS = {
   security: `case "$1" in
-  find-identity) echo "  1) ABCDEF \\"$STUB_IDENTITY\\""; echo "     1 valid identities found" ;;
+  find-identity)
+    echo "  1) ABCDEF \\"$STUB_IDENTITY\\""
+    for i in $(seq 2 3000); do echo "  $i) 0123456789ABCDEF \\"Apple Development: Someone Else (BBBBBBBBBB)\\""; done
+    echo "     3000 valid identities found" ;;
   cms) echo "<plist/>" ;;
 esac`,
   PlistBuddy: `case "$2" in
