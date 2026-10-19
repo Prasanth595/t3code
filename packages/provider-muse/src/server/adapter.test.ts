@@ -1492,10 +1492,15 @@ describe("MuseAdapterV2", () => {
         const harness = yield* makeHarness(fake);
         const { runtime, providerThread } = harness;
         const { nativeId } = yield* startConversation(harness, fake);
-        for (const itemId of ["background-1", "background-2"])
+        const joinedNativeId = "joined-background-turn";
+        yield* fake.emit("turn/started", { turnId: joinedNativeId });
+        for (const [itemId, turnId] of [
+          ["background-1", nativeId],
+          ["background-2", joinedNativeId],
+        ] as const)
           yield* fake.emit("item/started", {
-            turnId: nativeId,
-            item: toolCall(nativeId, itemId, 1, "inProgress", { background: true }),
+            turnId,
+            item: toolCall(turnId, itemId, 1, "inProgress", { background: true }),
           });
         yield* fake.emit("item/updated", {
           turnId: nativeId,
@@ -1544,14 +1549,23 @@ describe("MuseAdapterV2", () => {
         );
         assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
         yield* fake.emit("item/completed", {
-          turnId: nativeId,
-          item: toolCall(nativeId, "background-2", 2, "completed", { background: true }),
+          turnId: joinedNativeId,
+          item: toolCall(joinedNativeId, "background-2", 2, "completed", { background: true }),
         });
+        // This later notification is a barrier even if the joined completion was dropped.
+        yield* fake.emit("session/contextUsage", { usedTokens: 42 });
         yield* harness.takeEvent(
-          "turn_item.updated",
+          "provider_thread.updated",
+          (event) => event.providerThread.contextUsage?.usedTokens === 42,
+        );
+        const completed = harness.allEvents.findLast(
           (event) =>
-            event.turnItem.nativeItemRef?.nativeId === "background-2" &&
-            event.turnItem.status === "completed",
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "background-2",
+        );
+        assert.strictEqual(
+          completed?.type === "turn_item.updated" ? completed.turnItem.status : undefined,
+          "completed",
         );
         const cleared = harness.allEvents.findLast(
           (event) => event.type === "provider_thread.updated",
