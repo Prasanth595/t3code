@@ -1667,19 +1667,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return remoteName;
   });
 
-  const resolveRemoteBaseRef = Effect.fn("resolveRemoteBaseRef")(function* (
+  const resolveComparisonBaseRef = Effect.fn("resolveComparisonBaseRef")(function* (
     cwd: string,
     baseRef: string,
   ) {
-    if (!baseRef.includes("/") || baseRef.startsWith("refs/")) return null;
-    const comparisonRef = `refs/remotes/${baseRef}`;
-    const remoteBase = yield* executeGit(
-      "GitVcsDriver.resolveRemoteBaseRef",
+    const comparisonRef =
+      baseRef.startsWith("refs/heads/") || baseRef.startsWith("refs/remotes/")
+        ? baseRef
+        : baseRef.includes("/") && !baseRef.startsWith("refs/")
+          ? `refs/remotes/${baseRef}`
+          : null;
+    if (comparisonRef === null) return null;
+    const resolved = yield* executeGit(
+      "GitVcsDriver.resolveComparisonBaseRef",
       cwd,
       ["show-ref", "--verify", "--quiet", comparisonRef],
       { allowNonZeroExit: true },
     );
-    return remoteBase.exitCode === 0 ? { baseRef, comparisonRef } : null;
+    return resolved.exitCode === 0 ? { baseRef, comparisonRef } : null;
   });
 
   const resolveBaseBranchForNoUpstream = Effect.fn("resolveBaseBranchForNoUpstream")(function* (
@@ -1687,16 +1692,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     refName: string,
     options?: { readonly allowRemoteOfCurrent?: boolean },
   ) {
-    const configuredBaseBranch = yield* runGitStdout(
-      "GitVcsDriver.resolveBaseBranchForNoUpstream.config",
-      cwd,
-      ["config", "--get", `branch.${refName}.gh-merge-base`],
-      true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
+    const configuredBaseRef = yield* readConfigValue(cwd, `branch.${refName}.t3-merge-base-ref`);
+    if (
+      configuredBaseRef?.startsWith("refs/heads/") ||
+      configuredBaseRef?.startsWith("refs/remotes/")
+    ) {
+      const base = yield* resolveComparisonBaseRef(cwd, configuredBaseRef);
+      if (base !== null) return base;
+    }
 
-    // Keep the configured remote and compare its exact ref even when a local ref shadows it.
-    const configuredRemoteBase = yield* resolveRemoteBaseRef(cwd, configuredBaseBranch);
-    if (configuredRemoteBase !== null) return configuredRemoteBase;
+    const configuredBaseBranch =
+      (yield* readConfigValue(cwd, `branch.${refName}.gh-merge-base`)) ?? "";
+    const configuredBase = yield* resolveComparisonBaseRef(cwd, configuredBaseBranch);
+    if (
+      configuredBaseBranch.includes("/") &&
+      !configuredBaseBranch.startsWith("refs/") &&
+      (yield* branchExists(cwd, configuredBaseBranch))
+    ) {
+      const comparisonRef = `refs/heads/${configuredBaseBranch}`;
+      return { baseRef: configuredBase ? comparisonRef : configuredBaseBranch, comparisonRef };
+    }
+    if (configuredBase !== null) return configuredBase;
 
     const primaryRemoteName = yield* resolvePrimaryRemoteName(cwd).pipe(
       Effect.orElseSucceed(() => null),
@@ -2485,9 +2501,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
         const remoteName = publishRemoteName ?? currentUpstream.remoteName;
         const publishBranch = yield* resolvePublishBranchName(cwd, branch);
-        // `-u` retargets the upstream to the published branch, so keep the
-        // base recorded first; base resolution reads gh-merge-base before the
-        // upstream ref.
+        // Publishing retargets the upstream, so preserve its comparison base first.
         const configuredMergeBase = yield* runGitStdout(
           "GitVcsDriver.pushCurrentBranch.readMergeBase",
           cwd,
@@ -2500,6 +2514,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             `branch.${branch}.gh-merge-base`,
             currentUpstream.branchName,
           ]);
+          if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
+            yield* runGit("GitVcsDriver.pushCurrentBranch.recordComparisonRef", cwd, [
+              "config",
+              `branch.${branch}.t3-merge-base-ref`,
+              `refs/remotes/${currentUpstream.upstreamRef}`,
+            ]);
+          }
         }
         yield* runGit(
           "GitVcsDriver.pushCurrentBranch.pushOwnBranch",
@@ -2766,7 +2787,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ) {
     const base =
       explicitBaseRef !== undefined
-        ? ((yield* resolveRemoteBaseRef(cwd, explicitBaseRef)) ?? {
+        ? ((yield* resolveComparisonBaseRef(cwd, explicitBaseRef)) ?? {
             baseRef: explicitBaseRef,
             comparisonRef:
               !explicitBaseRef.startsWith("refs/") && (yield* branchExists(cwd, explicitBaseRef))
@@ -3159,13 +3180,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       );
       return remoteName && (yield* remoteBranchExists({ cwd, remoteName, refName }))
-        ? { baseRef: `${remoteName}/${refName}`, branchName: refName }
+        ? { baseRef: `refs/remotes/${remoteName}/${refName}`, branchName: refName }
         : null;
     }
     const ref = result.stdout.trim();
     if (ref.startsWith("refs/heads/")) {
       const branchName = ref.slice("refs/heads/".length);
-      return { baseRef: branchName, branchName };
+      return { baseRef: ref, branchName };
     }
     if (!ref.startsWith("refs/remotes/")) return null;
     const remoteNames = yield* listRemoteNames(cwd);
@@ -3173,7 +3194,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ref.slice("refs/remotes/".length),
       remoteNames.toSorted((left, right) => right.length - left.length),
     );
-    return remoteRef ? { baseRef: remoteRef.remoteRef, branchName: remoteRef.branchName } : null;
+    return remoteRef ? { baseRef: ref, branchName: remoteRef.branchName } : null;
   });
 
   const resolveBranchName = Effect.fn("GitVcsDriver.resolveBranchName")(function* (
@@ -3612,6 +3633,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
           "config",
           `branch.${input.newRefName}.gh-merge-base`,
+          base.branchName,
+        ]);
+        // gh consumes its key as a provider branch; T3 also needs the exact comparison ref.
+        yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
+          "config",
+          `branch.${input.newRefName}.t3-merge-base-ref`,
           base.baseRef,
         ]);
       }

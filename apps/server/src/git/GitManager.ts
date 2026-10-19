@@ -1973,19 +1973,26 @@ export const make = Effect.gen(function* () {
     upstreamRef: string | null,
     headContext: Pick<BranchHeadContext, "isCrossRepository" | "remoteName">,
   ) {
+    const configuredRef = yield* gitCore.readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`);
+    if (configuredRef?.startsWith("refs/heads/") || configuredRef?.startsWith("refs/remotes/")) {
+      const configuredBranch = yield* gitCore.resolveBranchName(cwd, configuredRef);
+      if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredRef };
+    }
+
     const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
     if (configured) {
-      if (
-        configured.startsWith("refs/remotes/") ||
-        (configured.includes("/") && !configured.startsWith("refs/"))
-      ) {
-        const remoteRef = configured.startsWith("refs/remotes/")
-          ? configured
-          : `refs/remotes/${configured}`;
+      const localRef = configured.startsWith("refs/") ? configured : `refs/heads/${configured}`;
+      const localBranch = yield* gitCore.resolveBranchName(cwd, localRef);
+      if (localBranch) {
+        return {
+          baseBranch: localBranch,
+          baseRef: configured.includes("/") ? localRef : localBranch,
+        };
+      }
+      if (configured.includes("/") && !configured.startsWith("refs/")) {
+        const remoteRef = `refs/remotes/${configured}`;
         const remoteBranch = yield* gitCore.resolveBranchName(cwd, remoteRef);
-        if (remoteBranch) {
-          return { baseBranch: remoteBranch, baseRef: remoteRef.slice("refs/remotes/".length) };
-        }
+        if (remoteBranch) return { baseBranch: remoteBranch, baseRef: remoteRef };
       }
       const configuredBranch = yield* gitCore.resolveBranchName(cwd, configured);
       if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredBranch };
@@ -2023,6 +2030,7 @@ export const make = Effect.gen(function* () {
     cwd: string,
     baseBranch: string,
   ) {
+    if (baseBranch.startsWith("refs/")) return baseBranch;
     const remoteName = yield* gitCore
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));

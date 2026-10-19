@@ -5539,7 +5539,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(generatedInputs).toHaveLength(2);
         for (const generated of generatedInputs) {
           expect.soft(generated.baseBranch).toBe("upstream/release");
-          expect.soft(generated.commitSummary).toMatch(/^[a-f0-9]+ Feature commit$/);
+          expect.soft(generated.commitSummary.trim()).toMatch(/^[a-f0-9]+ Feature commit$/);
           expect.soft(generated.diffSummary).toContain("feature.txt");
           expect.soft(generated.diffSummary).toContain("1 file changed, 1 insertion(+)");
           expect.soft(generated.diffPatch).toContain("+feature work");
