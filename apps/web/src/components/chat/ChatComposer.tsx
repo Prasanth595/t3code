@@ -3135,7 +3135,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ],
         {
           allowDuplicates:
-            getComposerDraft(attachmentDraftTarget)?.previewAnnotations.some(
+            getComposerDraft(composerDraftTarget)?.previewAnnotations.some(
               (annotation) => annotation.id === localId,
             ) ?? false,
         },
