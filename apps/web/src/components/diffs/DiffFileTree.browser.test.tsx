@@ -239,7 +239,7 @@ describe("diff tree file activation", () => {
     expect(targets).toHaveLength(2);
   });
 
-  it("keeps selection and collapsed folders through a colliding slice and refresh", async () => {
+  it("keeps selection, focus, and collapsed folders through a colliding slice and refresh", async () => {
     const files: DiffFileTreeEntry[] = [
       { path: "office", status: "deleted" },
       { path: "src/route.ts", status: "modified" },
@@ -247,12 +247,15 @@ describe("diff tree file activation", () => {
     await mount({ files });
     await activate("src/");
     await activate("office");
+    await act(async () => model().focusPath("office"));
+    expect(model().getFocusedPath()).toBe("office");
     expect(row("office").getAttribute("aria-selected")).toBe("true");
     const appended: DiffFileTreeEntry[] = [...files, { path: "office/config.ts", status: "added" }];
     await mount({ files: appended });
     expect(row("src/").getAttribute("aria-expanded")).toBe("false");
     expect(fileRows()[0]!.getAttribute("aria-selected")).toBe("true");
     expect(row("office/").getAttribute("aria-selected")).toBe("false");
+    expect.soft(model().getFocusedPath()).toBe("office\u200b");
     expect(targets).toEqual([{ type: "item", id: "office\0office", align: "start" }]);
     await activate(fileRows()[0]!);
     await activate(fileRows()[1]!);
