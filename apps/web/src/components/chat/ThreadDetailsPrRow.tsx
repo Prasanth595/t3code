@@ -367,7 +367,19 @@ export function ThreadDetailsPrRow({
                 tooltip: `Merge this pull request (${selectedMergeMethod})`,
                 onClick: () => setConfirmingMerge(true),
               }
-            : null;
+            : panelAction === "merge" && stackGate.stack.error !== null
+              ? {
+                  // Nothing refreshes a failed stack lookup on its own, and without the stack
+                  // this row offers no merge at all.
+                  label: "Retry stack",
+                  pendingLabel: "Retrying...",
+                  pending: false,
+                  destructive: false,
+                  suffix: null,
+                  tooltip: "Could not load this pull request's stack. Retry to merge it.",
+                  onClick: stackGate.stack.refresh,
+                }
+              : null;
 
   const watching =
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";

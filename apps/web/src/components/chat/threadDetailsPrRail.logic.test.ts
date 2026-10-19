@@ -49,6 +49,15 @@ describe("threadDetailsPrGroups", () => {
     expect(current?.base).toBe("staging");
     expect(others.map((group) => group.layers.map((entry) => entry.number))).toEqual([[9]]);
   });
+
+  it("keeps sibling pull requests on one base branch out of a rail", () => {
+    const base = link(1, "layer-1", "staging");
+    const left = link(2, "left", "layer-1");
+    const right = link(3, "right", "layer-1");
+    const { current, others } = threadDetailsPrGroups([base, left, right], right);
+    expect(current?.layers.map((entry) => entry.number)).toEqual([3]);
+    expect(others.map((group) => group.layers.map((entry) => entry.number))).toEqual([[1], [2]]);
+  });
 });
 
 describe("prRailItems", () => {

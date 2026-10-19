@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   addToast: vi.fn(),
   updateToast: vi.fn(),
   serverConfigs: new Map() as Map<unknown, unknown>,
+  stackError: null as string | null,
+  refreshStack: vi.fn(),
   stack: null as null | {
     readonly id: string;
     readonly number: number;
@@ -44,9 +46,14 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
 vi.mock(import("~/state/usePullRequestStack"), async (importOriginal) => ({
   ...(await importOriginal()),
   usePullRequestStackGate: (() => ({
-    stack: { data: state.stack, isFresh: true, error: null },
-    supportsStackActions: state.stack !== null,
-    canMergeSinglePullRequest: state.stack === null,
+    stack: {
+      data: state.stack,
+      isFresh: state.stackError === null,
+      error: state.stackError,
+      refresh: state.refreshStack,
+    },
+    supportsStackActions: state.stack !== null || state.stackError !== null,
+    canMergeSinglePullRequest: state.stack === null && state.stackError === null,
   })) as never,
 }));
 const queryData = () => ({
@@ -135,6 +142,36 @@ afterEach(() => {
   state.extraStatus = null;
   state.serverConfigs = new Map();
   state.stack = null;
+  state.stackError = null;
+  state.refreshStack.mockReset();
+});
+
+it("offers a retry instead of a dead end when the stack lookup fails", () => {
+  state.stackError = "GitHub stack lookup failed";
+  act(() =>
+    root.render(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    ),
+  );
+  const labels = [...container.querySelectorAll("button")].map((button) =>
+    button.textContent?.trim(),
+  );
+  expect(labels).not.toContain("Merge");
+  act(() =>
+    [...container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Retry stack")!
+      .click(),
+  );
+  expect(state.refreshStack).toHaveBeenCalledTimes(1);
 });
 
 it("offers to merge a stacked pull request only with its whole stack", () => {

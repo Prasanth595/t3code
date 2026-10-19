@@ -4,6 +4,7 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
+  type PullRequestListLine,
 } from "@t3tools/shared/threadPullRequests";
 
 export interface PrRailGroup {
@@ -17,18 +18,25 @@ export function threadDetailsPrGroups(
   links: ReadonlyArray<ThreadPullRequestLink>,
   currentLink: ThreadPullRequestLink | null,
 ): { readonly current: PrRailGroup | null; readonly others: ReadonlyArray<PrRailGroup> } {
-  const byChain = new Map<string, Array<ThreadPullRequestLink>>();
+  const byChain = new Map<string, Array<PullRequestListLine>>();
   for (const line of pullRequestListLines(
     resolveThreadPullRequestChains(visibleThreadPullRequests(links)),
   )) {
-    const layers = byChain.get(line.chainKey) ?? [];
-    layers.push(line.link);
-    byChain.set(line.chainKey, layers);
+    const lines = byChain.get(line.chainKey) ?? [];
+    lines.push(line);
+    byChain.set(line.chainKey, lines);
   }
+  // A derived chain is a tree: PRs that share a base branch are siblings, not layers of one
+  // stack. Only a chain where each line sits one level above the last reads as a rail.
+  const chains = [...byChain].flatMap(([key, lines]) =>
+    lines.every((line, index) => line.depth === index)
+      ? [{ key, baseFirst: lines.map((line) => line.link) }]
+      : lines.map((line) => ({ key: threadPullRequestKeyOf(line.link), baseFirst: [line.link] })),
+  );
   const currentKey = currentLink === null ? null : threadPullRequestKeyOf(currentLink);
   let current: PrRailGroup | null = null;
   const others: Array<PrRailGroup> = [];
-  for (const [key, baseFirst] of byChain) {
+  for (const { key, baseFirst } of chains) {
     const bottom = baseFirst[0]!;
     const group = {
       key,
