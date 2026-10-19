@@ -2476,6 +2476,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
         >();
+      const runtimeRequestReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
+        >();
       const systemNoticeReceipts =
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
@@ -2584,6 +2588,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             if (event.type === "subagent.updated") {
               yield* Queue.offer(subagentReceipts, event);
             }
+            if (event.type === "runtime_request.updated") {
+              yield* Queue.offer(runtimeRequestReceipts, event);
+            }
             if (event.type === "turn.terminal") {
               yield* Queue.offer(terminalReceipts, event);
             }
@@ -2626,6 +2633,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         terminalReceipts,
         subagentReceipts,
         systemNoticeReceipts,
+        runtimeRequestReceipts,
         getOpenedOptions: () => openedOptions,
         terminalEvents,
         hasPendingBackgroundWork,
@@ -6527,206 +6535,227 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each([
-    "accept",
-    "decline",
-    "full-access",
-    "without-agent-id",
-    "no-subagent",
-    "earlier-run",
-    "wrong-agent",
-    "aborted",
-    "stopping",
-    "replaced-process",
-    "resumed",
-  ] as const)("handles a settled subagent permission request: %s", (scenario) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const closeStarted = yield* Deferred.make<void>();
-        const finishClose = yield* Deferred.make<void>();
-        const harness = yield* makeWakeHarnessWithOptions({
-          freshQueueOnReopen: true,
-          close: (messages) =>
-            scenario === "stopping"
-              ? Deferred.succeed(closeStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(finishClose)),
-                  Effect.andThen(Queue.shutdown(messages)),
-                )
-              : Queue.shutdown(messages),
-        });
-        const now = yield* DateTime.now;
-        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: scenario === "full-access" ? "full-access" : "approval-required",
-          interactionMode: "default",
-          cwd: "/workspace",
-        });
-        const start = (ordinal: number) =>
-          harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now,
-              attemptId: RunAttemptId.make(`attempt-idle-permission-${ordinal}`),
-              providerTurnOrdinal: ordinal,
-              text: "Start the subagent, then return.",
-              attachments: [],
-              runtimePolicy,
-            }),
-          );
-        const taskStarted = (toolUseId: string) =>
-          claudeSdkFrame({
-            type: "system",
-            subtype: "task_started",
-            task_id: "idle-permission-agent",
-            tool_use_id: toolUseId,
-            description: "Background permission probe",
-            subagent_type: "general-purpose",
-            task_type: "local_agent",
-            is_backgrounded: true,
-            prompt: "Read a file after the parent returns.",
-            uuid: `idle-permission-${toolUseId}`,
-            session_id: WAKE_NATIVE_SESSION,
-          });
-        const resultFrame = (ordinal: number) =>
-          makeResultFrame({ uuid: `idle-permission-result-${ordinal}`, result: "Started." });
-        yield* start(1);
-        const callback = harness.getOpenedOptions()!.canUseTool!;
-        if (scenario !== "no-subagent") {
-          yield* harness.offerAndWait(taskStarted("idle-launch"));
-        }
-        if (scenario === "resumed") {
-          yield* harness.offerAndWait(
-            claudeSdkFrame({
-              type: "system",
-              subtype: "task_notification",
-              task_id: "idle-permission-agent",
-              tool_use_id: "idle-launch",
-              status: "completed",
-              output_file: "/tmp/idle-permission-agent.output",
-              summary: "First answer.",
-              uuid: "idle-permission-completed",
-              session_id: WAKE_NATIVE_SESSION,
-            }),
-          );
-        }
-        yield* harness.offerAndWait(resultFrame(1));
-        yield* Queue.take(harness.terminalReceipts);
-        const stop =
-          scenario === "stopping" || scenario === "replaced-process"
-            ? yield* harness.runtime
-                .interruptTurn({
-                  providerThread: harness.providerThread,
-                  providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
-                  requestRuntimeRestart: true,
-                })
-                .pipe(Effect.forkScoped)
-            : null;
-        if (scenario === "stopping") yield* Deferred.await(closeStarted);
-        else if (stop !== null) yield* Fiber.join(stop);
-        if (
-          scenario === "earlier-run" ||
-          scenario === "resumed" ||
-          scenario === "replaced-process"
-        ) {
-          yield* start(2);
-          if (scenario === "replaced-process") {
-            yield* Queue.offer(harness.processQueues[1]!, taskStarted("replacement-launch"));
-            yield* Queue.take(harness.subagentReceipts);
-            yield* Queue.offer(harness.processQueues[1]!, resultFrame(2));
-          } else {
-            if (scenario === "resumed") {
-              yield* harness.offerAndWait(taskStarted("idle-send-message"));
-            }
-            yield* harness.offerAndWait(resultFrame(2));
-          }
-          yield* Queue.take(harness.terminalReceipts);
-        }
-        const controller = new AbortController();
-        if (scenario === "aborted") controller.abort();
-        let callbackReturned = false;
-        const permission = yield* Effect.promise(async () => {
-          const decision = await callback(
-            "Read",
-            { file_path: "/etc/hosts" },
-            {
-              signal: controller.signal,
-              toolUseID: "idle-read",
-              requestId: "idle-permission-request",
-              ...(scenario === "without-agent-id"
-                ? {}
-                : {
-                    agentID: scenario === "wrong-agent" ? "another-agent" : "idle-permission-agent",
-                  }),
-            },
-          );
-          callbackReturned = true;
-          return decision;
-        }).pipe(Effect.forkScoped);
-        const needsApproval =
-          scenario === "accept" ||
-          scenario === "decline" ||
-          scenario === "resumed" ||
-          scenario === "without-agent-id";
-        if (needsApproval) {
-          yield* awaitUntil(
-            () =>
-              callbackReturned ||
-              harness.events.some((event) => event.type === "runtime_request.updated"),
-            "settled subagent approval",
-          );
-          const request = harness.events.findLast(
-            (event) => event.type === "runtime_request.updated",
-          );
-          assert.equal(request?.type, "runtime_request.updated");
-          if (request?.type !== "runtime_request.updated") return;
-          assert.equal(
-            request.runtimeRequest.providerTurnId,
-            harness.terminalEvents().at(-1)!.providerTurnId,
-          );
-          const node = harness.events.findLast(
-            (event) =>
-              event.type === "node.updated" && event.node.id === request.runtimeRequest.nodeId,
-          );
-          assert.equal(node?.type, "node.updated");
-          if (node?.type !== "node.updated") return;
-          assert.strictEqual(node.node.parentNodeId, node.node.rootNodeId);
-          yield* harness.runtime.respondToRuntimeRequest({
-            requestId: request.runtimeRequest.id,
-            decision: scenario === "decline" ? "decline" : "accept",
-          });
-        }
-        const decision = yield* Fiber.join(permission);
-        const allowed =
-          scenario === "accept" ||
-          scenario === "resumed" ||
-          scenario === "full-access" ||
-          scenario === "without-agent-id";
-        assert.equal(decision?.behavior, allowed ? "allow" : "deny");
-        if (!needsApproval) {
-          assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
-          if (!allowed) {
-            assert.equal(
-              decision?.behavior === "deny" ? decision.message : null,
-              "Claude V2 adapter has no active turn for this tool request.",
-            );
-          }
-        }
-        assert.isFalse(
-          harness.events.some(
-            (event) =>
-              event.type === "turn_item.updated" &&
-              event.turnItem.type === "dynamic_tool" &&
-              event.turnItem.nativeItemRef?.nativeId === "idle-read",
+  const makeIdlePermissionHarness = Effect.fnUntraced(function* (
+    runtimeMode: "approval-required" | "full-access" = "approval-required",
+    options?: Parameters<typeof makeWakeHarnessWithOptions>[0],
+  ) {
+    const harness = yield* makeWakeHarnessWithOptions(options);
+    let ordinal = 0;
+    let sequence = 0;
+    const uuid = () => `idle-permission-${++sequence}`;
+    const start = () =>
+      harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: DateTime.makeUnsafe(0),
+          attemptId: RunAttemptId.make(`idle-permission-${++ordinal}`),
+          providerTurnOrdinal: ordinal,
+          text: "Run the auditor.",
+          attachments: [],
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode,
+            interactionMode: "default",
+            cwd: "/workspace",
+          }),
+        }),
+      );
+    const offer = (message: SDKMessage) => Queue.offer(harness.processQueues.at(-1)!, message);
+    const taskStarted = (toolUseId = "launch", background = true) =>
+      claudeSdkFrame({
+        ...makeSubagentTaskStartedFrame({ taskId: "auditor", toolUseId, uuid: uuid() }),
+        is_backgrounded: background,
+      });
+    const settle = Effect.fnUntraced(function* () {
+      yield* offer(makeResultFrame({ uuid: uuid(), result: "Returned to the user." }));
+      return yield* Queue.take(harness.terminalReceipts);
+    });
+    const callback = () => harness.getOpenedOptions()!.canUseTool!;
+    const request = (
+      agentID: string | undefined,
+      signal = new AbortController().signal,
+      canUseTool = callback(),
+    ) =>
+      Effect.promise(() =>
+        canUseTool(
+          "Read",
+          { file_path: "/etc/hosts" },
+          {
+            signal,
+            toolUseID: uuid(),
+            requestId: uuid(),
+            ...(agentID === undefined ? {} : { agentID }),
+          },
+        ),
+      );
+    const approve = Effect.fnUntraced(function* (
+      agentID: string | undefined,
+      decision: "accept" | "decline",
+    ) {
+      const permission = yield* request(agentID).pipe(Effect.forkScoped);
+      const { runtimeRequest } = yield* Effect.raceFirst(
+        Queue.take(harness.runtimeRequestReceipts),
+        Fiber.join(permission).pipe(
+          Effect.flatMap((result) =>
+            Effect.die(`Permission returned before approval: ${result?.behavior}`),
           ),
-        );
-        if (scenario === "stopping" && stop !== null) {
-          yield* Deferred.succeed(finishClose, undefined);
-          yield* Fiber.join(stop);
-        }
+        ),
+      );
+      assert.equal(runtimeRequest.providerTurnId, harness.terminalEvents().at(-1)!.providerTurnId);
+      const node = harness.events.findLast(
+        (event) => event.type === "node.updated" && event.node.id === runtimeRequest.nodeId,
+      );
+      assert.equal(node?.type, "node.updated");
+      if (node?.type !== "node.updated") return;
+      assert.strictEqual(node.node.parentNodeId, node.node.rootNodeId);
+      assert.isFalse(
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.nativeItemRef?.nativeId === runtimeRequest.nativeRequestRef?.nativeId,
+        ),
+      );
+      yield* harness.runtime.respondToRuntimeRequest({ requestId: runtimeRequest.id, decision });
+      assert.equal(
+        (yield* Fiber.join(permission))?.behavior,
+        decision === "accept" ? "allow" : "deny",
+      );
+    });
+    return { ...harness, start, offer, taskStarted, settle, callback, request, approve };
+  });
+
+  it.effect("asks for settled subagent approval with or without an agent ID", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeIdlePermissionHarness();
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted());
+      yield* harness.settle();
+      yield* harness.approve("auditor", "accept");
+      yield* harness.approve(undefined, "decline");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect(
+    "limits full-access settled permissions to an eligible subagent of the latest run",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeIdlePermissionHarness("full-access");
+        yield* harness.start();
+        yield* harness.settle();
+        assert.equal((yield* harness.request(undefined))?.behavior, "deny");
+        yield* harness.start();
+        yield* harness.offer(harness.taskStarted());
+        yield* harness.settle();
+        assert.equal((yield* harness.request("auditor"))?.behavior, "allow");
+        assert.equal((yield* harness.request("another-agent"))?.behavior, "deny");
+        assert.equal((yield* harness.request("auditor", AbortSignal.abort()))?.behavior, "deny");
+        yield* harness.start();
+        yield* harness.settle();
+        // Older runs still stream work, but only the latest settled run ingests approvals.
+        assert.equal((yield* harness.request("auditor"))?.behavior, "deny");
+        assert.equal((yield* harness.request(undefined))?.behavior, "deny");
+        assert.isFalse(harness.events.some((event) => event.type === "runtime_request.updated"));
       }).pipe(
+        Effect.scoped,
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
+      ),
+  );
+
+  it.effect("denies settled subagent callbacks while stopping and after process replacement", () =>
+    Effect.gen(function* () {
+      const closeStarted = yield* Deferred.make<void>();
+      const finishClose = yield* Deferred.make<void>();
+      const harness = yield* makeIdlePermissionHarness("full-access", {
+        freshQueueOnReopen: true,
+        close: (messages) =>
+          Deferred.succeed(closeStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(finishClose)),
+            Effect.andThen(Queue.shutdown(messages)),
+          ),
+      });
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted());
+      const terminal = yield* harness.settle();
+      const oldCallback = harness.callback();
+      const stop = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: terminal.providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(closeStarted);
+      assert.equal((yield* harness.request("auditor"))?.behavior, "deny");
+      yield* Deferred.succeed(finishClose, undefined);
+      yield* Fiber.join(stop);
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted("replacement-launch"));
+      yield* harness.settle();
+      assert.equal((yield* harness.request("auditor"))?.behavior, "allow");
+      assert.equal((yield* harness.request("auditor", undefined, oldCallback))?.behavior, "deny");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("approves a completed foreground subagent resumed in the latest settled run", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeIdlePermissionHarness();
+      yield* harness.start();
+      yield* harness.offer(harness.taskStarted("launch", false));
+      yield* harness.offer(
+        makeSubagentNotificationFrame({
+          taskId: "auditor",
+          toolUseId: "launch",
+          summary: "First answer.",
+          uuid: "initial-answer",
+        }),
+      );
+      yield* harness.settle();
+      yield* harness.start();
+      yield* harness.offer(
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            id: "resume-auditor",
+            type: "message",
+            role: "assistant",
+            model: "claude-sonnet-4-6",
+            content: [
+              {
+                type: "tool_use",
+                id: "resume",
+                name: "SendMessage",
+                input: {
+                  to: "auditor",
+                  message: "Continue the audit.",
+                },
+              },
+            ],
+          },
+          parent_tool_use_id: null,
+          uuid: "resume-message",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.offer(harness.taskStarted("resume"));
+      yield* harness.settle();
+      yield* harness.approve("auditor", "accept");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
   );
