@@ -1,15 +1,21 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, type ReactNode } from "react";
-import { BackHandler, Keyboard, type TextInputInstance } from "react-native";
-import { AndroidHeaderIconButton } from "../../components/ui/AndroidScreenHeader";
+import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
+import {
+  AndroidHeaderIconButton,
+  AndroidScreenHeader,
+} from "../../components/ui/AndroidScreenHeader";
+import { CompactBrandTitle } from "../../components/CompactBrandTitle";
 import { SearchField } from "../../components/ui/SearchField";
-import { AndroidWorkspaceHeader } from "../workspace/AndroidWorkspaceHeader";
+import { WorkspaceConnectionTitle } from "../home/WorkspaceConnectionTitle";
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 
 /** PR search shares the thread list's native Android header placement. */
 export function PullRequestToolbar(props: {
   readonly filters: ReactNode;
+  readonly sidebar?: boolean;
   readonly onRequestVisibility?: () => void;
 }) {
   const navigation = useNavigation();
@@ -18,6 +24,7 @@ export function PullRequestToolbar(props: {
   const homeFocused = useNavigationState((state) => state.routes[state.index]?.name === "Home");
   const listFocused = homeFocused && workspace.state.selectedTab === "pullRequests";
   const { onRequestVisibility } = props;
+  const showThreads = useWorkspaceListNavigation("threads");
   const tab = workspace.state.tabs.pullRequests;
   const input = useRef<TextInputInstance>(null);
   const searching = tab.searchMode !== "resting";
@@ -52,7 +59,7 @@ export function PullRequestToolbar(props: {
     return () => subscription.remove();
   }, [searching, closeSearch, listFocused, navigation, isTabActive]);
   return (
-    <AndroidWorkspaceHeader
+    <AndroidScreenHeader
       title="Pull requests"
       titleContent={
         searching ? (
@@ -64,7 +71,26 @@ export function PullRequestToolbar(props: {
             value={tab.query}
             onChangeText={(query) => dispatch({ type: "query", tab: "pullRequests", query })}
           />
-        ) : undefined
+        ) : (
+          <View className="min-w-0 flex-1 pl-3">
+            <WorkspaceConnectionTitle
+              grow
+              brand={
+                <CompactBrandTitle
+                  allowFontScaling={false}
+                  accessibilityLabel="T3 Code, Pull requests"
+                  fit
+                />
+              }
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsEnvironments" },
+                })
+              }
+            />
+          </View>
+        )
       }
       leading={
         searching ? (
@@ -74,6 +100,28 @@ export function PullRequestToolbar(props: {
             onPress={closeSearch}
           />
         ) : undefined
+      }
+      actions={
+        !searching && props.sidebar
+          ? [
+              {
+                accessibilityLabel: "Show threads",
+                icon: "text.bubble",
+                onPress: showThreads,
+                overflowOnly: true,
+              },
+              {
+                accessibilityLabel: "Open settings",
+                icon: "gearshape",
+                onPress: () =>
+                  navigation.navigate("SettingsSheet", {
+                    screen: "SettingsContent",
+                    params: { screen: "Settings" },
+                  }),
+                overflowOnly: true,
+              },
+            ]
+          : []
       }
       trailing={
         <>
@@ -85,6 +133,18 @@ export function PullRequestToolbar(props: {
             />
           ) : null}
           {props.filters}
+          {!searching && !props.sidebar ? (
+            <AndroidHeaderIconButton
+              accessibilityLabel="Open settings"
+              icon="gearshape"
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "Settings" },
+                })
+              }
+            />
+          ) : null}
         </>
       }
     />

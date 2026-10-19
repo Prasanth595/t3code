@@ -26,6 +26,7 @@ const SORTS = {
   created: "Newest created",
   oldest: "Oldest updated",
 } as const;
+const ROW_STYLE = { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
 const id = (field: string, value: string) => JSON.stringify([field, value]);
 function choices(field: string, options: Readonly<Record<string, string>>, selected: string) {
   return Object.entries(options).map(([value, title]) => ({
@@ -253,7 +254,10 @@ export function PullRequestListFilters(props: {
     author ?? "",
   );
   if (Platform.OS === "android") {
-    const active = count > 0 || value.sort !== "updated" || props.environmentId !== null;
+    const active =
+      count > 0 ||
+      value.sort !== "updated" ||
+      (props.environments.length > 1 && props.environmentId !== null);
     return (
       <AndroidAnchoredMenu
         title="Filter pull requests"
@@ -285,11 +289,7 @@ export function PullRequestListFilters(props: {
     );
   }
   return (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 }}
-    >
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={ROW_STYLE}>
       <ListFilterMenu
         label={count ? String(count) : "Filters"}
         icon
