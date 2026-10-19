@@ -30,6 +30,7 @@ apps/desktop/src/preload.ts
 apps/mobile/app.config.ts
 apps/mobile/src/Stack.tsx
 apps/mobile/src/features/settings/SettingsRouteScreen.tsx
+apps/mobile/src/state/use-remote-environment-registry.ts
 apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
 apps/server/src/httpCors.test.ts
@@ -55,3 +56,4 @@ packages/shared/src/providerAuthReturnUrl.test.ts
 packages/shared/src/providerAuthReturnUrl.ts
 scripts/build-desktop-artifact.test.ts
 scripts/build-desktop-artifact.ts
+vite.config.ts

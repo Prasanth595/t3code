@@ -36,8 +36,9 @@ const UNREACHABLE = "The server is unreachable.";
 const NO_FACTORY_PAGES = "This server has no Factory pages.";
 
 /**
- * The scopes the Factory pages' own routes check, and nothing of the wider app: the session
- * the WebView ends up with cannot drive terminals, providers or the filesystem.
+ * Only what the Factory pages' own routes check. The session the WebView ends up with has no
+ * terminal, provider or filesystem scope, though orchestration:operate still lets it start
+ * agents, which is what the Factory does.
  */
 export const FACTORY_SESSION_SCOPES: ReadonlyArray<AuthGrantScope> = [
   AuthOrchestrationReadScope,
@@ -46,7 +47,11 @@ export const FACTORY_SESSION_SCOPES: ReadonlyArray<AuthGrantScope> = [
   AuthEnvironmentMaintainScope,
 ];
 
-/** How the session reads in the server's Connections settings, where it is revoked. */
+/**
+ * How the session reads in the server's Connections settings, and how revokeFactorySessions
+ * finds it. Every phone uses the same label, so removing an environment from one phone also
+ * signs out another phone's Factory screen, which then signs itself in again on its next open.
+ */
 export const FACTORY_SESSION_LABEL = "T3 Code Mobile · Factory";
 
 export function originOf(url: string): string | null {
@@ -216,6 +221,52 @@ export async function mintPairingToken(
       mint,
     ).pipe(
       Effect.map((issued) => ({ ok: true, credential: issued.credential }) as const),
+      Effect.catch((error) =>
+        Effect.succeed({ ok: false, reason: mintFailureReason(error) } as const),
+      ),
+      Effect.provide(layerRemoteHttpClient(timedFetch)),
+    ),
+  );
+}
+
+/**
+ * Revokes every browser session this app's Factory screen created on the server, so removing
+ * the environment from the phone leaves no signed-in cookie behind. Best effort: the caller
+ * removes the environment either way.
+ */
+export async function revokeFactorySessions(
+  server: FactoryServer,
+  fetchFn: FactoryFetch,
+): Promise<FactoryResult<{ readonly revoked: number }>> {
+  if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
+  const headers = { authorization: `Bearer ${server.bearerToken}` };
+  const revoke = Effect.gen(function* () {
+    const auth = yield* makeEnvironmentHttpApiGroupClient(server.httpBaseUrl, "auth");
+    const sessions = yield* auth.clients({ headers });
+    const factorySessions = sessions.filter(
+      (session) =>
+        session.method === "browser-session-cookie" &&
+        session.client.label === FACTORY_SESSION_LABEL,
+    );
+    let revoked = 0;
+    for (const session of factorySessions) {
+      const result = yield* auth.revokeClient({
+        headers,
+        payload: { sessionId: session.sessionId },
+      });
+      if (result.revoked) revoked += 1;
+    }
+    return revoked;
+  });
+  const timedFetch: typeof fetch = (input, init) =>
+    request(fetchFn, input instanceof Request ? input.url : String(input), init ?? {});
+  return Effect.runPromise(
+    executeEnvironmentHttpRequest(
+      environmentEndpointUrl(server.httpBaseUrl, "/api/auth/clients"),
+      REQUEST_TIMEOUT_MS,
+      revoke,
+    ).pipe(
+      Effect.map((revoked) => ({ ok: true, revoked }) as const),
       Effect.catch((error) =>
         Effect.succeed({ ok: false, reason: mintFailureReason(error) } as const),
       ),

@@ -16,6 +16,7 @@ import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 import { serverEnvironment } from "./server";
+import { forgetFactorySession } from "../factory/forgetFactorySession";
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
   Atom.keepAlive,
@@ -165,6 +166,7 @@ export function useRemoteConnections() {
         text: "Remove",
         style: "destructive",
         onPress: () => {
+          forgetFactorySession(environmentId);
           void controller.removeEnvironment(environmentId);
         },
       } as const;

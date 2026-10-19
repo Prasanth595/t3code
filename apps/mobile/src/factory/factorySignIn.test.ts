@@ -14,6 +14,7 @@ import {
   mintPairingToken,
   parseFactoryMessage,
   probeFactory,
+  revokeFactorySessions,
   nextSignIn,
   type FactoryFetch,
   type SignInState,
@@ -365,6 +366,80 @@ describe("mintAndInject", () => {
     await expect(run).resolves.toBe("stale");
     expect(events).toEqual([]);
     expect(injected).toEqual([]);
+  });
+});
+
+describe("revokeFactorySessions", () => {
+  const session = (sessionId: string, method: string, label?: string) => ({
+    sessionId,
+    subject: "one-time-token",
+    scopes: ["orchestration:read"],
+    method,
+    client: { deviceType: "mobile", ...(label ? { label } : {}) },
+    issuedAt: "2026-10-01T00:00:00Z",
+    expiresAt: "2026-11-01T00:00:00Z",
+    lastConnectedAt: null,
+    connected: false,
+    current: false,
+  });
+  const clients = [
+    session("s-phone", "bearer-access-token", "T3 Code Mobile"),
+    session("s-factory-1", "browser-session-cookie", FACTORY_SESSION_LABEL),
+    session("s-browser", "browser-session-cookie"),
+    session("s-factory-2", "browser-session-cookie", FACTORY_SESSION_LABEL),
+  ];
+
+  function serverWith(sessions: unknown[]) {
+    const revoked: string[] = [];
+    const authorizations: string[] = [];
+    const fetchFn: FactoryFetch = async (url, init) => {
+      authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+      if (url === `${BASE}/api/auth/clients`) return json(200, sessions);
+      if (url === `${BASE}/api/auth/clients/revoke`) {
+        const body = JSON.parse(String(init?.body)) as { sessionId: string };
+        revoked.push(body.sessionId);
+        return json(200, { revoked: true });
+      }
+      return json(404, "");
+    };
+    return { fetchFn, revoked, authorizations };
+  }
+
+  it("revokes only the browser sessions this screen labelled, with the bearer", async () => {
+    const { fetchFn, revoked, authorizations } = serverWith(clients);
+    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({ ok: true, revoked: 2 });
+    expect(revoked).toEqual(["s-factory-1", "s-factory-2"]);
+    expect(new Set(authorizations)).toEqual(new Set([`Bearer ${BEARER}`]));
+  });
+
+  it("revokes nothing when the screen never signed in", async () => {
+    const { fetchFn, revoked } = serverWith([clients[0]!, clients[2]!]);
+    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({ ok: true, revoked: 0 });
+    expect(revoked).toEqual([]);
+  });
+
+  it("reports an unreachable server without touching the bearer", async () => {
+    const result = await revokeFactorySessions(server, async () => {
+      throw new TypeError(`Network request failed for ${BEARER}`);
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toContain("unreachable");
+      expect(result.reason).not.toContain(BEARER);
+    }
+  });
+
+  it("does nothing without a bearer", async () => {
+    let called = false;
+    const result = await revokeFactorySessions(
+      { httpBaseUrl: BASE, bearerToken: null },
+      async () => {
+        called = true;
+        return json(200, []);
+      },
+    );
+    expect(called).toBe(false);
+    expect(result.ok).toBe(false);
   });
 });
 
