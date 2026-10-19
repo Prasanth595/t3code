@@ -45,6 +45,7 @@ import { MCP_APP_OUTPUT_KEY, readMcpAppReference } from "@t3tools/shared/mcpApp"
 import { resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
@@ -1988,6 +1989,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
+                      raw: {
+                        ...client.raw,
+                        request: (method, params) =>
+                          onRequest(method, params).pipe(
+                            Effect.andThen(client.raw.request(method, params)),
+                          ),
+                      },
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
@@ -2983,106 +2991,121 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  const autoModeTurnTranscript = (input: {
-    readonly scenario: string;
-    /** Omit to leave `config/read` unanswered. */
-    readonly configReadReply?: Record<string, unknown>;
-    /** Omit when the adapter does not send `configRequirements/read`. */
-    readonly requirementsReply?: Record<string, unknown>;
-    readonly sandboxPolicy: Record<string, unknown>;
-  }) => {
-    const nativeThreadId = `${input.scenario}-thread`;
-    const nativeTurnId = `${input.scenario}-turn`;
-    const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "fetch" });
-    const turnStartId = input.requirementsReply === undefined ? 4 : 5;
-    return makeCodexReplayTranscript({
-      scenario: input.scenario,
-      entries: [
-        ...preamble.slice(0, 5),
-        {
+  const runWorkspaceWriteTurns = (
+    rounds: ReadonlyArray<{
+      readonly mode: "auto" | "auto-accept-edits" | "full-access";
+      readonly configReply?: Record<string, unknown> | null;
+      readonly requirementsReply?: Record<string, unknown> | null;
+      readonly sandboxPolicy: Record<string, unknown>;
+      readonly warns?: boolean;
+    }>,
+  ) =>
+    Effect.gen(function* () {
+      const nativeThreadId = "workspace-write-thread";
+      const entries = codexReplayPreamble({
+        nativeThreadId,
+        nativeTurnId: "unused",
+        prompt: "fetch",
+      }).slice(0, 5);
+      let requestId = 3;
+      const request = (method: string, params: unknown, reply: Record<string, unknown> | null) => {
+        const id = requestId++;
+        entries.push({
           type: "expect_outbound",
-          label: "config/read",
-          frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
-        },
-        ...(input.configReadReply === undefined
-          ? []
-          : [
-              {
-                type: "emit_inbound" as const,
-                label: "config/read",
-                frame: { id: 3, ...input.configReadReply },
-              },
-            ]),
-        ...(input.requirementsReply === undefined
-          ? []
-          : [
-              {
-                type: "expect_outbound" as const,
-                label: "configRequirements/read",
-                frame: { id: 4, method: "configRequirements/read" },
-              },
-              {
-                type: "emit_inbound" as const,
-                label: "configRequirements/read",
-                frame: { id: 4, ...input.requirementsReply },
-              },
-            ]),
-        {
-          type: "expect_outbound",
-          label: "turn/start",
-          frame: {
-            id: turnStartId,
-            method: "turn/start",
-            params: {
-              threadId: nativeThreadId,
-              input: [{ type: "text", text: "fetch" }],
-              cwd: "/workspace",
-              model: "gpt-5.4",
-              approvalPolicy: "on-request",
-              approvalsReviewer: "auto_review",
-              sandboxPolicy: input.sandboxPolicy,
-              summary: "detailed",
-            },
+          label: method,
+          frame: { id, method, ...(params === undefined ? {} : { params }) },
+        });
+        if (reply !== null)
+          entries.push({ type: "emit_inbound", label: method, frame: { id, ...reply } });
+      };
+      for (const [index, round] of rounds.entries()) {
+        if (round.configReply !== undefined)
+          request("config/read", { cwd: "/workspace" }, round.configReply);
+        if (round.requirementsReply !== undefined)
+          request("configRequirements/read", undefined, round.requirementsReply);
+        request(
+          "turn/start",
+          {
+            threadId: nativeThreadId,
+            input: [{ type: "text", text: "fetch" }],
+            cwd: "/workspace",
+            model: "gpt-5.4",
+            approvalPolicy: round.mode === "full-access" ? "never" : "on-request",
+            approvalsReviewer: round.mode === "auto" ? "auto_review" : "user",
+            sandboxPolicy: round.sandboxPolicy,
+            summary: "detailed",
           },
-        },
-        {
-          type: "emit_inbound",
-          label: "turn/start",
-          frame: {
-            id: turnStartId,
-            result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
-          },
-        },
-        {
+          { result: { turn: makeCodexReplayTurn({ id: `turn-${index}`, status: "inProgress" }) } },
+        );
+        entries.push({
           type: "emit_inbound",
           label: "turn/completed",
           frame: {
             method: "turn/completed",
             params: {
               threadId: nativeThreadId,
-              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              turn: makeCodexReplayTurn({ id: `turn-${index}`, status: "completed" }),
             },
           },
-        },
-      ],
-    });
-  };
-
-  const runAutoModeTurn = (transcript: CodexReplay.CodexAppServerReplayTranscript) =>
-    Effect.gen(function* () {
-      const harness = yield* makeCodexReplayHarness(transcript);
-      yield* harness.runtime.startTurn({
-        ...makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make(`${transcript.scenario}-attempt`),
-          text: "fetch",
-        }),
-        runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" },
-      });
-      yield* harness.firstTerminal;
-      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        });
+      }
+      const terminals = yield* Effect.forEach(rounds, () => Deferred.make<void>());
+      let completed = 0;
+      const unansweredRead = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario: "workspace-write", entries }),
+        (event) =>
+          event.type === "turn.terminal"
+            ? Deferred.succeed(terminals[completed++]!, undefined)
+            : Effect.void,
+        (method) =>
+          rounds.some((round) =>
+            method === "config/read"
+              ? round.configReply === null
+              : method === "configRequirements/read" && round.requirementsReply === null,
+          )
+            ? Deferred.succeed(unansweredRead, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      );
+      for (const [index, round] of rounds.entries()) {
+        const warnings: Array<unknown> = [];
+        const started = harness.runtime
+          .startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`workspace-write-${index}`),
+              text: "fetch",
+            }),
+            runOrdinal: index + 1,
+            providerTurnOrdinal: index + 1,
+            runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: round.mode },
+          })
+          .pipe(
+            Effect.provide(
+              Logger.layer(
+                [
+                  Logger.make(({ logLevel, message }) => {
+                    if (logLevel === "Warn") warnings.push(message);
+                  }),
+                ],
+                { mergeWithExisting: false },
+              ),
+            ),
+          );
+        if (round.configReply === null || round.requirementsReply === null) {
+          const fiber = yield* started.pipe(Effect.forkScoped);
+          yield* Deferred.await(unansweredRead);
+          yield* TestClock.adjust("5 seconds");
+          yield* Fiber.join(fiber);
+        } else {
+          yield* started;
+        }
+        yield* Deferred.await(terminals[index]!);
+        assert.equal(harness.terminalEvents()[index]?.status, "completed");
+        assert.lengthOf(warnings, round.warns ? 1 : 0);
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -3090,184 +3113,102 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-  it.effect("keeps configured workspace-write sandbox fields on Auto turns", () =>
-    runAutoModeTurn(
-      autoModeTurnTranscript({
-        scenario: "workspace-write-config",
-        configReadReply: {
-          result: {
-            config: {
-              sandbox_workspace_write: {
-                writable_roots: ["/cache"],
-                network_access: true,
-                exclude_tmpdir_env_var: true,
-                exclude_slash_tmp: false,
-              },
-            },
-            origins: {},
-          },
-        },
+  const workspaceWriteConfig = {
+    network_access: true,
+    writable_roots: ["/cache"],
+    exclude_tmpdir_env_var: true,
+    exclude_slash_tmp: false,
+  };
+
+  it.effect("refreshes workspace-write config across turns and runtime-mode changes", () =>
+    runWorkspaceWriteTurns([
+      {
+        mode: "auto",
+        configReply: { result: { config: { sandbox_workspace_write: workspaceWriteConfig } } },
         requirementsReply: { result: { requirements: null } },
         sandboxPolicy: {
           type: "workspaceWrite",
-          writableRoots: ["/cache"],
           networkAccess: true,
+          writableRoots: ["/cache"],
           excludeTmpdirEnvVar: true,
           excludeSlashTmp: false,
         },
-      }),
-    ),
-  );
-
-  const configuredNetworkAccessReply = {
-    result: {
-      config: {
-        default_permissions: null,
-        sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true },
       },
-      origins: {},
-    },
-  };
-
-  it.effect("keeps the bare workspace-write policy under managed permission profiles", () =>
-    runAutoModeTurn(
-      autoModeTurnTranscript({
-        scenario: "workspace-write-config-managed",
-        configReadReply: configuredNetworkAccessReply,
-        requirementsReply: {
+      { mode: "full-access", sandboxPolicy: { type: "dangerFullAccess" } },
+      {
+        mode: "auto-accept-edits",
+        configReply: {
           result: {
-            requirements: { allowedPermissionProfiles: { ":workspace": true, ":read-only": true } },
+            config: { sandbox_workspace_write: { network_access: false, exclude_slash_tmp: true } },
           },
         },
-        sandboxPolicy: { type: "workspaceWrite" },
-      }),
-    ),
-  );
-
-  it.effect(
-    "keeps the bare workspace-write policy when default_permissions selects a profile",
-    () =>
-      runAutoModeTurn(
-        autoModeTurnTranscript({
-          scenario: "workspace-write-config-default-permissions",
-          configReadReply: {
-            result: {
-              config: {
-                default_permissions: ":workspace",
-                sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true },
-              },
-              origins: {},
-            },
-          },
-          sandboxPolicy: { type: "workspaceWrite" },
-        }),
-      ),
-  );
-
-  // Codex 0.162.1 started with `-c default_permissions=":workspace"` over a user
-  // `sandbox_mode = "workspace-write"` runs the thread under `:workspace`.
-  it.effect(
-    "keeps the bare workspace-write policy when a launch argument selects a profile over sandbox_mode",
-    () =>
-      runAutoModeTurn(
-        autoModeTurnTranscript({
-          scenario: "workspace-write-config-session-flag-profile",
-          configReadReply: {
-            result: {
-              config: {
-                default_permissions: ":workspace",
-                sandbox_mode: "workspace-write",
-                sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true },
-              },
-              origins: {
-                default_permissions: { name: { type: "sessionFlags" }, version: "sha256:flags" },
-                sandbox_mode: {
-                  name: { type: "user", file: "/codex-home/config.toml", profile: null },
-                  version: "sha256:user",
-                },
-              },
-            },
-          },
-          sandboxPolicy: { type: "workspaceWrite" },
-        }),
-      ),
-  );
-
-  it.effect("skips configRequirements/read when the config has no workspace-write table", () =>
-    runAutoModeTurn(
-      autoModeTurnTranscript({
-        scenario: "workspace-write-config-absent",
-        configReadReply: { result: { config: {}, origins: {} } },
-        sandboxPolicy: { type: "workspaceWrite" },
-      }),
-    ),
-  );
-
-  it.effect("copies the table when requirements do not manage permission profiles", () =>
-    runAutoModeTurn(
-      autoModeTurnTranscript({
-        scenario: "workspace-write-config-unmanaged-requirements",
-        configReadReply: configuredNetworkAccessReply,
         requirementsReply: {
-          result: { requirements: { allowedSandboxModes: ["read-only", "workspace-write"] } },
+          result: { requirements: { allowedSandboxModes: ["workspace-write"] } },
         },
-        sandboxPolicy: { type: "workspaceWrite", writableRoots: ["/cache"], networkAccess: true },
-      }),
-    ),
+        sandboxPolicy: { type: "workspaceWrite", networkAccess: false, excludeSlashTmp: true },
+      },
+      {
+        mode: "auto-accept-edits",
+        configReply: { result: { config: {} } },
+        sandboxPolicy: { type: "workspaceWrite" },
+      },
+    ]),
   );
 
-  it.effect(
-    "keeps the bare workspace-write policy when Codex rejects configRequirements/read",
-    () =>
-      runAutoModeTurn(
-        autoModeTurnTranscript({
-          scenario: "workspace-write-config-requirements-unsupported",
-          configReadReply: configuredNetworkAccessReply,
-          requirementsReply: { error: { code: -32601, message: "Method not found" } },
+  it.effect.each(["selected", "managed"] as const)(
+    "does not import legacy workspace-write permissions under a %s profile",
+    (profile) =>
+      runWorkspaceWriteTurns([
+        {
+          mode: "auto",
+          configReply: {
+            result: {
+              config: {
+                sandbox_workspace_write: workspaceWriteConfig,
+                ...(profile === "selected"
+                  ? { default_permissions: ":workspace", sandbox_mode: "workspace-write" }
+                  : {}),
+              },
+            },
+          },
+          ...(profile === "managed"
+            ? {
+                requirementsReply: {
+                  result: {
+                    requirements: {
+                      allowedPermissionProfiles: { ":workspace": true, ":read-only": true },
+                    },
+                  },
+                },
+              }
+            : {}),
           sandboxPolicy: { type: "workspaceWrite" },
-        }),
-      ),
+        },
+      ]),
   );
 
-  it.effect("sends the bare workspace-write policy when Codex rejects config/read", () =>
-    runAutoModeTurn(
-      autoModeTurnTranscript({
-        scenario: "workspace-write-config-unsupported",
-        configReadReply: { error: { code: -32601, message: "Method not found" } },
-        sandboxPolicy: { type: "workspaceWrite" },
-      }),
-    ),
-  );
-
-  it.effect("sends the bare workspace-write policy when config/read does not answer", () =>
-    Effect.gen(function* () {
-      const transcript = autoModeTurnTranscript({
-        scenario: "workspace-write-config-timeout",
-        sandboxPolicy: { type: "workspaceWrite" },
-      });
-      const harness = yield* makeCodexReplayHarness(transcript);
-      const started = yield* harness.runtime
-        .startTurn({
-          ...makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`${transcript.scenario}-attempt`),
-            text: "fetch",
-          }),
-          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" },
-        })
-        .pipe(Effect.forkScoped);
-      yield* TestClock.adjust("5 seconds");
-      yield* Fiber.join(started);
-      yield* harness.firstTerminal;
-      assert.equal(harness.terminalEvents()[0]?.status, "completed");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-      ),
-    ),
+  it.effect.each(["invalid config", "requirements error", "requirements timeout"] as const)(
+    "warns and completes with bare workspace-write policy after %s",
+    (failure) =>
+      runWorkspaceWriteTurns([
+        {
+          mode: "auto",
+          configReply: {
+            result: {
+              config: {
+                sandbox_workspace_write:
+                  failure === "invalid config" ? { network_access: "yes" } : workspaceWriteConfig,
+              },
+            },
+          },
+          ...(failure === "requirements error"
+            ? { requirementsReply: { error: { code: -32601, message: "Method not found" } } }
+            : {}),
+          ...(failure === "requirements timeout" ? { requirementsReply: null } : {}),
+          sandboxPolicy: { type: "workspaceWrite" },
+          warns: true,
+        },
+      ]),
   );
 
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
