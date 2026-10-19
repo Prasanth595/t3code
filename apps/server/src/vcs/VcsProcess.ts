@@ -18,6 +18,8 @@ import {
   VcsProcessStdinWriteError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import * as ProcessRunner from "../processRunner.ts";
 
 export interface VcsProcessInput {
@@ -42,7 +44,6 @@ export interface VcsProcessOutput {
   readonly stderr: string;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
-  /** Present on real process output; optional so narrow test doubles remain lightweight. */
   readonly stdoutInvalidUtf8?: boolean;
   readonly stderrInvalidUtf8?: boolean;
 }
@@ -61,6 +62,54 @@ const VCS_PROCESS_CONCURRENCY = 8;
 const GITHUB_PROCESS_CONCURRENCY = 4;
 
 export const CHECKPOINT_CAPTURE_OPERATION = "GitVcsDriver.checkpoints.captureCheckpoint";
+
+/**
+ * Appends `key=value` to the `GIT_CONFIG_*` entries git reads as command-line
+ * config, so argv stays the same on every platform and nothing is written to
+ * the user's config. The entry goes after any inherited ones. Windows env names
+ * are case-insensitive (elsewhere git reads only `GIT_CONFIG_COUNT`), so there the
+ * count is found regardless of casing, read from
+ * the last spelling (a per-command value spread over process.env), and updated
+ * under every spelling so the child sees it whichever one Node keeps. A count
+ * git would reject is left alone so git still reports it.
+ */
+export const gitConfigEnv = (
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+  platform: NodeJS.Platform,
+): NodeJS.ProcessEnv => {
+  const countKeys = Object.keys(env).filter((name) =>
+    platform === "win32" ? name.toUpperCase() === "GIT_CONFIG_COUNT" : name === "GIT_CONFIG_COUNT",
+  );
+  const countKey = countKeys.at(-1) ?? "GIT_CONFIG_COUNT";
+  const inherited = env[countKey];
+  if (
+    inherited !== undefined &&
+    inherited !== "" &&
+    // Git parses the count with strtoul: leading whitespace, an optional sign
+    // (only -0 is non-negative), digits, and nothing after them.
+    /^[ \t\r\n\v\f]*(?:\+?\d+|-0+)/.exec(inherited)?.[0] !== inherited
+  ) {
+    return {};
+  }
+  const count = inherited === undefined || inherited === "" ? 0 : Number.parseInt(inherited, 10);
+  return {
+    ...Object.fromEntries([...countKeys, countKey].map((name) => [name, String(count + 1)])),
+    [`GIT_CONFIG_KEY_${count}`]: key,
+    [`GIT_CONFIG_VALUE_${count}`]: value,
+  };
+};
+
+/**
+ * Git otherwise opens any folder holding `HEAD`, `objects/` and `refs/` as a
+ * bare repository and applies its `config`, including commands such as
+ * `core.fsmonitor`. Files saved in a project or checked out from a clone can
+ * form one, so git started by T3 (or by gh and friends) only opens a bare
+ * repository named with `--git-dir` or `GIT_DIR`. Git before 2.38 ignores it.
+ */
+export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: NodeJS.Platform) =>
+  gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
 const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFailureKind => {
   const normalized = stderr.toLowerCase();
@@ -113,98 +162,74 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
-// macOS maps core.fsyncMethod=fsync to F_FULLFSYNC. SMB, NFS, and AFP return
-// ENOTSUP for that flush; writeout-only is the strongest flush they support.
-const isUnsupportedFullFsync = (stderr: string) =>
-  /fsync error on [^\n]+: operation not supported/i.test(stderr);
-
-const WRITEOUT_ONLY_FSYNC = "core.fsyncMethod=writeout-only";
-const FULL_FSYNC = "core.fsyncMethod=fsync";
-
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
-    const runAttempt = (attempt: VcsProcessInput) => {
-      const baseError = {
-        operation: attempt.operation,
-        command: attempt.command,
-        cwd: attempt.cwd,
-        argumentCount: attempt.args.length,
-      };
-      return processRunner
-        .run({
-          command: attempt.command,
-          args: attempt.args,
-          cwd: attempt.cwd,
-          ...(attempt.spawnCwd !== undefined ? { spawnCwd: attempt.spawnCwd } : {}),
-          ...(attempt.stdin !== undefined ? { stdin: attempt.stdin } : {}),
-          ...(attempt.onStdoutChunk !== undefined ? { onStdoutChunk: attempt.onStdoutChunk } : {}),
-          ...(attempt.env !== undefined ? { env: attempt.env } : {}),
-          timeout: attempt.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-          maxOutputBytes: attempt.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-          outputMode: attempt.outputMode ?? "truncate",
-          truncatedMarker: attempt.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
-          timeoutBehavior: "error",
-        })
-        .pipe(
-          Effect.map((result) => ({ result, baseError })),
-          Effect.mapError(
-            Match.valueTags({
-              ProcessSpawnError: (error) =>
-                VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
-              ProcessOutputLimitError: (error) =>
-                new VcsProcessOutputLimitError({
-                  ...baseError,
-                  stream: error.stream,
-                  maxBytes: error.maxBytes,
-                  observedBytes: error.observedBytes,
-                }),
-              ProcessTimeoutError: (error) =>
-                VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
-              ProcessStdinError: (error) =>
-                new VcsProcessStdinWriteError({
-                  ...baseError,
-                  stdinBytes: error.stdinBytes,
-                  cause: error.cause,
-                }),
-              ProcessReadError: (error) =>
-                new VcsProcessOutputReadError({
-                  ...baseError,
-                  stream: error.stream,
-                  cause: error.cause,
-                }),
-            }),
-          ),
-        );
+    const baseError = {
+      operation: input.operation,
+      command: input.command,
+      cwd: input.cwd,
+      argumentCount: input.args.length,
     };
 
-    let attempt = input;
-    let { result, baseError } = yield* runAttempt(attempt);
-    // One rewrite. Recursing through Effect.fn erases the error channel.
-    if (
-      result.code !== null &&
-      result.code !== 0 &&
-      !attempt.allowNonZeroExit &&
-      attempt.command === "git" &&
-      attempt.args.includes(FULL_FSYNC) &&
-      isUnsupportedFullFsync(result.stderr)
-    ) {
-      attempt = {
-        ...attempt,
-        args: attempt.args.map((arg) => (arg === FULL_FSYNC ? WRITEOUT_ONLY_FSYNC : arg)),
-      };
-      ({ result, baseError } = yield* runAttempt(attempt));
-    }
+    const result = yield* processRunner
+      .run({
+        command: input.command,
+        args: input.args,
+        cwd: input.cwd,
+        ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
+        ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
+        ...(input.onStdoutChunk !== undefined ? { onStdoutChunk: input.onStdoutChunk } : {}),
+        env: {
+          ...input.env,
+          ...explicitBareRepositoryEnv({ ...process.env, ...input.env }, hostPlatform),
+        },
+        timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+        outputMode: input.outputMode ?? "truncate",
+        truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
+        timeoutBehavior: "error",
+      })
+      .pipe(
+        Effect.mapError(
+          Match.valueTags({
+            ProcessSpawnError: (error) =>
+              VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
+            ProcessOutputLimitError: (error) =>
+              new VcsProcessOutputLimitError({
+                ...baseError,
+                stream: error.stream,
+                maxBytes: error.maxBytes,
+                observedBytes: error.observedBytes,
+              }),
+            ProcessTimeoutError: (error) =>
+              VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
+            ProcessStdinError: (error) =>
+              new VcsProcessStdinWriteError({
+                ...baseError,
+                stdinBytes: error.stdinBytes,
+                cause: error.cause,
+              }),
+            ProcessReadError: (error) =>
+              new VcsProcessOutputReadError({
+                ...baseError,
+                stream: error.stream,
+                cause: error.cause,
+              }),
+          }),
+        ),
+      );
 
     if (result.code === null) {
       return yield* new VcsProcessMissingExitCodeError(baseError);
     }
 
-    if (!attempt.allowNonZeroExit && result.code !== 0) {
-      const failureKind = classifyNonZeroExit(attempt.command, result.stderr);
+    if (!input.allowNonZeroExit && result.code !== 0) {
+      const failureKind = classifyNonZeroExit(input.command, result.stderr);
       return yield* VcsProcessExitError.fromProcessExit(
         baseError,
         {
@@ -213,7 +238,7 @@ export const make = Effect.gen(function* () {
           stderrTruncated: result.stderrTruncated,
         },
         failureKind,
-        attempt.command === "git" &&
+        input.command === "git" &&
           failureKind === "command-failed" &&
           isTransientGitExit(result.stderr),
       );
@@ -237,7 +262,6 @@ export const make = Effect.gen(function* () {
       input.operation === CHECKPOINT_CAPTURE_OPERATION &&
       input.onStdoutChunk === undefined
     ) {
-      // Retry the failed command, retaining the private index/tree and recovery's outer deadline.
       return yield* bounded.pipe(
         Effect.tapError((error) =>
           Effect.logDebug("checkpoint Git command failed", {
