@@ -29,7 +29,13 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
+import {
+  areAllDirectoriesExpanded,
+  setAllDirectoriesExpanded,
+  readExpandedPaths,
+  syncPersistedExpansion,
+  writeExpandedPaths,
+} from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
@@ -41,6 +47,8 @@ interface FileBrowserPanelProps {
   projectName: string;
   selectedPath: string | null;
   selectedPathRevealId: number;
+  selectedPathRevealHandled: boolean;
+  onSelectedPathRevealHandled: () => void;
   onOpenFile: (relativePath: string) => void;
   /**
    * Set when `cwd` is a host folder outside the workspace rather than the
@@ -140,6 +148,8 @@ export default function FileBrowserPanel({
   projectName,
   selectedPath,
   selectedPathRevealId,
+  selectedPathRevealHandled,
+  onSelectedPathRevealHandled,
   onOpenFile,
   onRefreshSelectedFile,
   workspaceMutationId,
@@ -158,6 +168,7 @@ export default function FileBrowserPanel({
     error,
     isPending,
     loadingDirectories,
+    loadedDirectories,
   } = useDirectoryEntries(environmentId, cwd);
   const [query, setQuery] = useState("");
   const [expandAll, setExpandAll] = useState(false);
@@ -175,7 +186,27 @@ export default function FileBrowserPanel({
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
-  const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  const handledRevealRef = useRef<{
+    path: string;
+    revealId: number;
+    selectionMissing?: boolean;
+  } | null>(null);
+  // Preserve a collapse across remounts, but still reveal later active-file changes.
+  const initialHandledRevealRef = useRef(
+    selectedPathRevealHandled ? { path: selectedPath, revealId: selectedPathRevealId } : null,
+  );
+  const shouldSkipInitialReveal = useStableCallback((path: string | null, revealId: number) => {
+    const initialReveal = initialHandledRevealRef.current;
+    if (
+      selectedPathRevealHandled &&
+      initialReveal?.path === path &&
+      initialReveal?.revealId === revealId
+    ) {
+      return true;
+    }
+    initialHandledRevealRef.current = null;
+    return false;
+  });
 
   // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
   // capture the right-click position ourselves; contextmenu is a composed
@@ -333,11 +364,36 @@ export default function FileBrowserPanel({
     search.close();
   };
   const expandedPathsRef = useRef(new Set<string>());
+  // The panel is keyed by workspace. Read storage after the previous panel's
+  // cleanup so a pending toggle survives a switch to another surface.
+  const expansionStorageKey = `t3code.fileTreeExpanded:${environmentId}:${cwd}`;
+  const persistedExpansionRef = useRef<{
+    persisted: Set<string>;
+    pendingRestore: Set<string>;
+  } | null>(null);
   useEffect(() => {
+    if (persistedExpansionRef.current === null) {
+      const persisted = readExpandedPaths(expansionStorageKey);
+      persistedExpansionRef.current = { persisted, pendingRestore: new Set(persisted) };
+    }
+    const { persisted, pendingRestore } = persistedExpansionRef.current;
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
+    let active = true;
+    let scheduled = false;
+    let reconciling = false;
+    const syncExpansion = () => {
+      if (model.isSearchOpen()) return;
+      return syncPersistedExpansion({
+        model,
+        directoryPaths,
+        loadedDirectories,
+        persisted,
+        pendingRestore,
+      });
+    };
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
       for (const path of directoryPaths) {
@@ -353,9 +409,32 @@ export default function FileBrowserPanel({
         }
       }
     };
-    loadExpanded();
-    return model.subscribe(loadExpanded);
-  }, [directoryPaths, load, model]);
+    const flush = () => {
+      if (!active) return;
+      scheduled = false;
+      reconciling = true;
+      const changed = syncExpansion();
+      loadExpanded();
+      reconciling = false;
+      if (changed) writeExpandedPaths(expansionStorageKey, persisted);
+    };
+    const schedule = () => {
+      if (scheduled || reconciling) return;
+      scheduled = true;
+      queueMicrotask(flush);
+    };
+    schedule();
+    const unsubscribe = model.subscribe(schedule);
+    return () => {
+      unsubscribe();
+      // Capture a final toggle before the panel disappears; queued work must not
+      // overwrite a newer panel's state or start directory loads after unmount.
+      if (scheduled && syncExpansion()) {
+        writeExpandedPaths(expansionStorageKey, persisted);
+      }
+      active = false;
+    };
+  }, [directoryPaths, expansionStorageKey, load, loadedDirectories, model]);
   useEffect(() => {
     model.setGitStatus(
       entries
@@ -367,13 +446,13 @@ export default function FileBrowserPanel({
     );
   }, [entries, model]);
   useEffect(() => {
-    if (!selectedPath) return;
+    if (shouldSkipInitialReveal(selectedPath, selectedPathRevealId) || !selectedPath) return;
     const controller = new AbortController();
     void loadFileAncestors(selectedPath, load, { signal: controller.signal });
     return () => {
       controller.abort();
     };
-  }, [load, selectedPath]);
+  }, [load, selectedPath, selectedPathRevealId, shouldSkipInitialReveal]);
   const handleSearchValueChange = (value: string) => {
     setQuery(value);
     if (value.trim().length === 0) {
@@ -419,24 +498,51 @@ export default function FileBrowserPanel({
       handledRevealRef.current = null;
       return;
     }
-    const selectedKind = entryKinds.get(selectedPath);
-    if (selectedKind === undefined) {
-      handledRevealRef.current = null;
-      return;
-    }
+    const skipInitialReveal = shouldSkipInitialReveal(selectedPath, selectedPathRevealId);
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
     const handledReveal = handledRevealRef.current;
-    // Entry refreshes rebuild treePaths while the same preview stays open.
-    // Replaying a handled reveal would close an active tree search and steal focus.
-    if (
+    const sameReveal =
       handledReveal?.path === revealRequest.path &&
-      handledReveal.revealId === revealRequest.revealId
-    ) {
+      handledReveal.revealId === revealRequest.revealId;
+    const selectedKind = entryKinds.get(selectedPath);
+    if (selectedKind === undefined) {
+      // Closing search can remove a provisional result before its listing arrives.
+      if (sameReveal) handledReveal.selectionMissing = true;
+      else handledRevealRef.current = null;
       return;
     }
     const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
     const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
+    const acknowledgeReveal = () => {
+      // Search-only rows can disappear before their directory listings arrive.
+      if (
+        !selectedPathRevealHandled &&
+        directoryEntries.some((entry) => entry.path === selectedPath)
+      ) {
+        onSelectedPathRevealHandled();
+      }
+    };
+    // Entry refreshes rebuild treePaths while the same preview stays open.
+    // Replaying a handled reveal would close an active tree search and steal focus.
+    if (sameReveal && !handledReveal.selectionMissing) {
+      acknowledgeReveal();
+      return;
+    }
+    // A retained preview needs selection in the new model without replaying its reveal.
+    if (skipInitialReveal || (sameReveal && model.isSearchOpen())) {
+      handledRevealRef.current = revealRequest;
+      syncingSelectionRef.current = true;
+      for (const path of model.getSelectedPaths()) {
+        model.getItem(path)?.deselect();
+      }
+      selectedItem.select();
+      acknowledgeReveal();
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
+      return;
+    }
 
     // A selection that originated inside the tree (clicking a row, possibly
     // in an active tree search) is already visible; re-revealing it would
@@ -448,6 +554,7 @@ export default function FileBrowserPanel({
     if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
       treeSelectionPathRef.current = null;
       handledRevealRef.current = revealRequest;
+      acknowledgeReveal();
       return;
     }
     treeSelectionPathRef.current = null;
@@ -476,10 +583,20 @@ export default function FileBrowserPanel({
       focus: true,
       offset: "center",
     });
+    acknowledgeReveal();
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [entryKinds, model, selectedPath, selectedPathRevealId]);
+  }, [
+    directoryEntries,
+    entryKinds,
+    model,
+    selectedPath,
+    selectedPathRevealId,
+    selectedPathRevealHandled,
+    shouldSkipInitialReveal,
+    onSelectedPathRevealHandled,
+  ]);
 
   // The capture phase runs before the tree's own dragstart handler selects
   // the dragged row, so the drag flag is up before that selection emits.

@@ -132,6 +132,8 @@ interface FilePreviewPanelProps {
   openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
+  explorerRevealHandled: boolean;
+  onExplorerRevealHandled: () => void;
   onOpenFile: (relativePath: string) => void;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
@@ -983,6 +985,8 @@ export default function FilePreviewPanel({
   openInShortcutEnabled,
   revealLine,
   revealRequestId,
+  explorerRevealHandled,
+  onExplorerRevealHandled,
   onOpenFile,
   onNavigateFolder,
   folderTrail,
@@ -1463,6 +1467,8 @@ export default function FilePreviewPanel({
                   : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
               }
               selectedPathRevealId={revealRequestId}
+              selectedPathRevealHandled={explorerRevealHandled}
+              onSelectedPathRevealHandled={onExplorerRevealHandled}
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
               {...(previewPath && !isMedia && !isPdf
