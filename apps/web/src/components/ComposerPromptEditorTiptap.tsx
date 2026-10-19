@@ -1,3 +1,4 @@
+import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import {
   Extension,
@@ -316,12 +317,14 @@ const ComposerSkillExtension = Node.create({
   },
 });
 
-/** Chip presentation for `$name`, or null when the provider has no such skill. */
+/** Chip presentation for `$name`, or null when the provider does not offer it to users. */
 function composerSkillMeta(
   skills: ReadonlyArray<ServerProviderSkill>,
   name: string,
 ): SkillMeta | null {
-  const skill = skills.find((candidate) => candidate.name === name);
+  const skill = skills.find(
+    (candidate) => candidate.name === name && isProviderSkillUserInvocable(candidate),
+  );
   if (!skill) return null;
   const shortDescription = skill.shortDescription?.trim();
   return {
@@ -335,7 +338,9 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skills = use(RichComposerSkillsContext);
   const skillName = (node.attrs.skillName as string) ?? "";
   const skillDescription = (node.attrs.skillDescription as string | null) ?? null;
-  const skill = skills.find((candidate) => candidate.name === skillName);
+  const skill = skills.find(
+    (candidate) => candidate.name === skillName && isProviderSkillUserInvocable(candidate),
+  );
   const description = skill
     ? skill.description?.trim() || skill.shortDescription?.trim()
     : skillDescription;
@@ -354,7 +359,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
         <div className="space-y-3 p-2 text-sm">
           <p className="font-medium">{skillLabel}</p>
           <p>{description || "No description is available for this skill."}</p>
-          {skill?.path ? (
+          {skill?.path && actions.environmentId ? (
             <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
               View instructions
             </Button>

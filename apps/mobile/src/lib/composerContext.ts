@@ -1,3 +1,4 @@
+import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import { filePreviewKind } from "@t3tools/shared/filePreview";
 import { videoMimeType } from "@t3tools/shared/video";
@@ -10,6 +11,7 @@ import {
   type PullRequestContextMetadata,
   type ReviewCommentContextRecord,
   type ScopedThreadRef,
+  type ServerProviderSkill,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -145,6 +147,18 @@ export function pullRequestComposerContext(
     diff: "",
     pullRequest: metadata,
   };
+}
+
+export function composerSkillLabels(
+  skills: ReadonlyArray<
+    Pick<ServerProviderSkill, "name" | "displayName" | "enabled" | "userInvocable">
+  >,
+) {
+  return new Map(
+    skills
+      .filter(isProviderSkillUserInvocable)
+      .map((skill) => [skill.name, skill.displayName?.trim() || skill.name]),
+  );
 }
 
 export function composerContextEditorTokens(

@@ -256,15 +256,21 @@ it("keeps the caret inside unknown dollar text across rich and plain remounts", 
 
 it("reconciles provider skills and metadata without losing formatting, caret, or undo", async () => {
   const value = "run **use $babysit now** then $HOME";
-  const editor = await mountEditor(value);
+  const disabled = { ...babysit, enabled: false };
+  const agentOnly = { ...babysit, userInvocable: false };
+  const editor = await mountEditor(value, true, [disabled]);
+  expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
+  await mountEditor(value, true, [agentOnly]);
+  expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
   await act(async () => {
     editor.commands.setTextSelection("run use $baby".length + 1);
   });
-  await mountEditor(value, true, [babysit]);
+  await mountEditor(value, true, [disabled, babysit]);
   expect(editor.state.doc.textContent).toBe("run use  now then $HOME");
   const chip = serializeEditorDoc(editor.state.doc).runs.find((run) => run.kind === "token")!;
   expect(editor.state.selection.from).toBe(chip.pmPos + 1);
-  await mountEditor(value, true, []);
+  await mountEditor(value, true, [disabled]);
+  expect.soft(editor.state.doc.textContent).toBe("run use $babysit now then $HOME");
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
   await act(async () => {
     editor.commands.insertContent("X");
@@ -280,7 +286,7 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
   await act(async () => {
     editor.commands.deleteRange({ from: chip.pmPos, to: chip.pmPos + 1 });
   });
-  await mountEditor(value, true, []);
+  await mountEditor(value, true, [agentOnly]);
   await act(async () => {
     editor.commands.undo();
   });
@@ -295,6 +301,7 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
   });
   expect(document.body.textContent).toContain("Previous provider description");
   await mountEditor(value, true, [
+    { ...disabled, displayName: "Disabled Babysit" },
     {
       ...babysit,
       displayName: "Current Babysit",
