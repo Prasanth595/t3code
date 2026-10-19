@@ -232,31 +232,30 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       return 0
     }
     // Comment heights and viewport resizing do not change unwrapped text widths.
-    if (widthRows === rows && widthTokens === tokens && widthStyle == style) {
-      return measuredContentWidth
-    }
-    if (widthStyle != style) widthEntries = emptyMap()
-    val next = HashMap<String, WidthEntry>()
-    var widest = 0f
-    for (row in rows) {
-      if (row.kind != "line" && row.kind != "hunk") continue
-      val rowTokens = if (row.kind == "line") tokens[row.id] else null
-      val cached = widthEntries[row.id]
-      val entry = if (cached?.row == row && cached.tokens == rowTokens) {
-        cached
-      } else {
-        WidthEntry(row, rowTokens, measureRowWidth(row, rowTokens, style))
+    if (widthRows !== rows || widthTokens !== tokens || widthStyle != style) {
+      if (widthStyle != style) widthEntries = emptyMap()
+      val next = HashMap<String, WidthEntry>()
+      var widest = 0f
+      for (row in rows) {
+        if (row.kind != "line" && row.kind != "hunk") continue
+        val rowTokens = if (row.kind == "line") tokens[row.id] else null
+        val cached = widthEntries[row.id]
+        val entry = if (cached?.row == row && cached.tokens == rowTokens) {
+          cached
+        } else {
+          WidthEntry(row, rowTokens, measureRowWidth(row, rowTokens, style))
+        }
+        next[row.id] = entry
+        widest = max(widest, entry.width)
       }
-      next[row.id] = entry
-      widest = max(widest, entry.width)
+      widthEntries = next
+      widthRows = rows
+      widthTokens = tokens
+      widthStyle = style
+      measuredContentWidth = ceil(
+        style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f + widest,
+      ).toInt()
     }
-    widthEntries = next
-    widthRows = rows
-    widthTokens = tokens
-    widthStyle = style
-    measuredContentWidth = ceil(
-      style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f + widest,
-    ).toInt()
     return measuredContentWidth
   }
 
