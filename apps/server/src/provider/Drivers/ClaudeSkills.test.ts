@@ -85,12 +85,14 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       const configDir = path.join(tempDir, "claude-home");
       const workspace = path.join(tempDir, "workspace");
       const nestedWorkspace = path.join(workspace, "packages", "app");
+      const aliasedWorkspace = path.join(tempDir, "aliased-workspace");
       const userInstall = path.join(configDir, "plugins", "user");
       const projectInstall = path.join(configDir, "plugins", "project");
       const localInstall = path.join(configDir, "plugins", "local");
       const managedInstall = path.join(configDir, "plugins", "managed");
       yield* fs.makeDirectory(path.join(workspace, ".git"), { recursive: true });
       yield* fs.makeDirectory(nestedWorkspace, { recursive: true });
+      yield* fs.symlink(workspace, aliasedWorkspace);
       for (const install of [userInstall, projectInstall, localInstall, managedInstall]) {
         yield* writeSkill(path.join(install, "skills"), "review", "# Review");
       }
@@ -99,6 +101,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         JSON.stringify({
           plugins: {
             "plugin@shop": [
+              { scope: "project", projectPath: aliasedWorkspace, installPath: localInstall },
               { scope: "project", projectPath: workspace, installPath: projectInstall },
               { scope: "user", installPath: userInstall },
               { scope: "managed", installPath: managedInstall },
@@ -157,6 +160,10 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       );
       assert.deepEqual(
         yield* discoverClaudeSkills({ homePath: configDir }, nestedWorkspace),
+        localSettings,
+      );
+      assert.deepEqual(
+        yield* discoverClaudeSkills({ homePath: configDir }, aliasedWorkspace),
         localSettings,
       );
       yield* fs.writeFileString(

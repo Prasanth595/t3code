@@ -335,7 +335,11 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
     );
   if (installed === undefined) return [];
   const roots: Array<ClaudeSkillRoot> = [];
-  const workspace = cwd === undefined ? undefined : path.resolve(cwd);
+  // The CLI's process.cwd() resolves symlinks; registry projectPath values remain lexical.
+  const workspace =
+    cwd === undefined
+      ? undefined
+      : yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
   const repositoryRoot =
     workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
