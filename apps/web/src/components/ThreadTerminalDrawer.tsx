@@ -88,6 +88,7 @@ import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import { observeResize } from "../lib/observeResize";
 import {
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
@@ -97,14 +98,44 @@ import {
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 
-function maxDrawerHeight(): number {
-  if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
-  return Math.max(MIN_DRAWER_HEIGHT, Math.floor(window.innerHeight * MAX_DRAWER_HEIGHT_RATIO));
+interface DrawerLayout {
+  viewportHeight: number;
+  chatColumnHeight?: number;
+  headerHeight?: number;
+  composerHeight?: number;
 }
 
-function clampDrawerHeight(height: number, maxHeight = maxDrawerHeight()): number {
+export function resolveTerminalDrawerMaxHeight(input: DrawerLayout): number {
+  const windowCap = Math.max(
+    MIN_DRAWER_HEIGHT,
+    Math.floor(input.viewportHeight * MAX_DRAWER_HEIGHT_RATIO),
+  );
+  if (input.chatColumnHeight === undefined) return windowCap;
+  // The composer overlays the timeline, so flex layout cannot reserve its
+  // height; without this cap a tall drawer pushes it into the header.
+  return Math.min(
+    windowCap,
+    Math.max(0, input.chatColumnHeight - (input.headerHeight ?? 0) - (input.composerHeight ?? 0)),
+  );
+}
+
+export function clampDrawerHeight(height: number, maxHeight: number): number {
   const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
   return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
+}
+
+function chatColumnOf(drawer: HTMLElement | null): HTMLElement | null {
+  return drawer?.closest<HTMLElement>("[data-chat-column]") ?? null;
+}
+
+function readDrawerLayout(column: HTMLElement | null): Omit<DrawerLayout, "composerHeight"> {
+  const viewportHeight = typeof window === "undefined" ? 0 : window.innerHeight;
+  if (!column) return { viewportHeight };
+  return {
+    viewportHeight,
+    chatColumnHeight: column.clientHeight,
+    headerHeight: column.querySelector<HTMLElement>("[data-chat-header]")?.offsetHeight ?? 0,
+  };
 }
 
 function writeSystemMessage(terminal: GhosttyTerminalSurface, message: string): void {
@@ -1123,6 +1154,8 @@ interface ThreadTerminalDrawerProps {
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
   height: number;
+  /** Space the chat column keeps for the composer overlay; only read in drawer mode. */
+  composerHeight?: number;
   terminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -1389,6 +1422,7 @@ export default function ThreadTerminalDrawer({
   runtimeEnv,
   visible = true,
   height,
+  composerHeight = 0,
   terminalIds,
   activeTerminalId,
   terminalGroups,
@@ -1417,14 +1451,16 @@ export default function ThreadTerminalDrawer({
     Schema.Boolean,
   );
   const controlledDrawerHeight = height;
-  const [windowMaxDrawerHeight, setWindowMaxDrawerHeight] = useState(maxDrawerHeight);
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const [drawerLayout, setDrawerLayout] = useState(() => readDrawerLayout(null));
+  const maxDrawerHeight = resolveTerminalDrawerMaxHeight({ ...drawerLayout, composerHeight });
   const [drawerHeightState, setDrawerHeightState] = useState(() => ({
     threadId,
     height: controlledDrawerHeight,
   }));
   const preferredDrawerHeight =
     drawerHeightState.threadId === threadId ? drawerHeightState.height : controlledDrawerHeight;
-  const drawerHeight = clampDrawerHeight(preferredDrawerHeight, windowMaxDrawerHeight);
+  const drawerHeight = clampDrawerHeight(preferredDrawerHeight, maxDrawerHeight);
   const setDrawerHeight = (update: SetStateAction<number>) => {
     setDrawerHeightState((current) => {
       const currentHeight = current.threadId === threadId ? current.height : controlledDrawerHeight;
@@ -1435,12 +1471,6 @@ export default function ThreadTerminalDrawer({
     });
   };
   const [resizeEpoch, setResizeEpoch] = useState(0);
-  const [shownVisible, setShownVisible] = useState(visible);
-  if (shownVisible !== visible) {
-    setShownVisible(visible);
-    // The window may have resized while the drawer was hidden and not listening.
-    if (visible) setWindowMaxDrawerHeight(maxDrawerHeight());
-  }
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef({ threadId, height: controlledDrawerHeight });
   const resizeStateRef = useRef<{
@@ -1659,6 +1689,7 @@ export default function ThreadTerminalDrawer({
     event.preventDefault();
     const clampedHeight = clampDrawerHeight(
       resizeState.startHeight + (resizeState.startY - event.clientY),
+      maxDrawerHeight,
     );
     if (clampedHeight === drawerHeightRef.current) {
       return;
@@ -1676,11 +1707,11 @@ export default function ThreadTerminalDrawer({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     // A drag that ends where it started keeps the stored preference, which may
-    // be taller than the window-capped height the drag started from.
+    // be taller than the capped height the drag started from.
     if (!didResizeDuringDragRef.current || drawerHeightRef.current === resizeState.startHeight) {
       // React skips the write when the rendered height did not change, so put
-      // back the preference as the current window caps it.
-      const renderedHeight = clampDrawerHeight(preferredDrawerHeight);
+      // back the preference as the current layout caps it.
+      const renderedHeight = clampDrawerHeight(preferredDrawerHeight, maxDrawerHeight);
       drawerHeightRef.current = renderedHeight;
       resizeState.drawer?.style.setProperty("height", `${renderedHeight}px`);
       return;
@@ -1690,26 +1721,39 @@ export default function ThreadTerminalDrawer({
     setResizeEpoch((value) => value + 1);
   };
 
-  useEffect(() => {
+  const updateDrawerLayout = useEffectEvent((column: HTMLElement | null) => {
+    const layout = readDrawerLayout(column);
+    const resizeState = resizeStateRef.current;
+    const liveHeight = clampDrawerHeight(
+      drawerHeightRef.current,
+      resolveTerminalDrawerMaxHeight({ ...layout, composerHeight }),
+    );
+    if (resizeState && liveHeight !== drawerHeightRef.current) {
+      drawerHeightRef.current = liveHeight;
+      resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
+    }
+    setDrawerLayout(layout);
+    setResizeEpoch((value) => value + 1);
+  });
+  useLayoutEffect(() => {
     if (!visible) {
       return;
     }
-
-    const onWindowResize = () => {
-      const resizeState = resizeStateRef.current;
-      const liveHeight = clampDrawerHeight(drawerHeightRef.current);
-      if (resizeState && liveHeight !== drawerHeightRef.current) {
-        drawerHeightRef.current = liveHeight;
-        resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
-      }
-      setWindowMaxDrawerHeight(maxDrawerHeight());
-      setResizeEpoch((value) => value + 1);
-    };
-    window.addEventListener("resize", onWindowResize);
+    // The column and window may have resized while the drawer was hidden and
+    // not listening, so measure before the first visible paint.
+    const column = isPanel ? null : chatColumnOf(drawerRef.current);
+    const onResize = () => updateDrawerLayout(column);
+    onResize();
+    const header = column?.querySelector<HTMLElement>("[data-chat-header]");
+    const stopObserving = column
+      ? observeResize(header ? [column, header] : column, onResize)
+      : undefined;
+    window.addEventListener("resize", onResize);
     return () => {
-      window.removeEventListener("resize", onWindowResize);
+      stopObserving?.();
+      window.removeEventListener("resize", onResize);
     };
-  }, [visible]);
+  }, [isPanel, visible]);
 
   const syncPreferredHeight = useEffectEvent(() => syncHeight(preferredDrawerHeight));
   useEffect(() => () => syncPreferredHeight(), []);
@@ -1717,6 +1761,7 @@ export default function ThreadTerminalDrawer({
   if (normalizedTerminalIds.length === 0) {
     return (
       <aside
+        ref={drawerRef}
         data-thread-terminal-drawer
         data-terminal-owner={isPanel ? "right-panel" : "drawer"}
         className={cn(
@@ -1754,6 +1799,7 @@ export default function ThreadTerminalDrawer({
 
   return (
     <aside
+      ref={drawerRef}
       data-thread-terminal-drawer
       data-terminal-owner={isPanel ? "right-panel" : "drawer"}
       className={cn(
