@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { useRender } from "@base-ui/react/use-render";
 import { XIcon } from "lucide-react";
 import { useRef } from "react";
 import { cn } from "~/lib/utils";
@@ -16,22 +17,16 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 
 const Dialog = DialogPrimitive.Root;
 
-/** Marks a dialog's primary action, the button that takes focus on open. */
-const DIALOG_ACTION_SLOT = "dialog-action";
-
-/**
- * Focuses the dialog's primary action on open, so Enter and Space confirm it and Tab
- * reaches Cancel. Dialogs without one, such as destructive confirms, keep Base UI's default.
- */
 function useDialogActionInitialFocus() {
   const popupRef = useRef<HTMLDivElement>(null);
   const initialFocus = (openType: string) => {
-    // Touch opens focus the popup itself, as Base UI does, so no virtual keyboard opens.
+    // Match Base UI: touch opens focus the popup to avoid opening the virtual keyboard.
     if (openType === "touch") return popupRef.current;
-    const action = popupRef.current?.querySelector<HTMLElement>(
-      `[data-slot="${DIALOG_ACTION_SLOT}"]:not(:disabled)`,
+    return (
+      popupRef.current?.querySelector<HTMLElement>(
+        '[data-slot="dialog-action"]:not(:disabled):not([aria-disabled="true"])',
+      ) ?? true
     );
-    return action ?? true;
   };
   return { popupRef, initialFocus };
 }
@@ -90,6 +85,34 @@ function DialogPopup({
   variant?: "default" | "media";
 }) {
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
+  const popup = useRender({
+    ref: popupRef,
+    render: (
+      <DialogPrimitive.Popup
+        className={cn(
+          variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
+          "row-start-2 text-popover-foreground",
+          variant === "default" && "max-h-full max-w-lg",
+          bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
+          className,
+        )}
+        data-slot="dialog-popup"
+        initialFocus={initialFocus}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            aria-label="Close"
+            className="absolute end-2 top-2"
+            render={<Button size="icon" variant="ghost" />}
+          >
+            <XIcon />
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Popup>
+    ),
+  });
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -101,51 +124,18 @@ function DialogPopup({
             "z-[60] grid-rows-1 place-items-center px-4 pb-6 pt-[calc(var(--native-titlebar-height,0px)+1.5rem)] [-webkit-app-region:no-drag]",
         )}
       >
-        <DialogPrimitive.Popup
-          className={cn(
-            variant === "media" ? DIALOG_MEDIA_POPUP_CLASS : DIALOG_POPUP_CLASS,
-            "row-start-2 text-popover-foreground",
-            variant === "default" && "max-h-full max-w-lg",
-            bottomStickOnMobile && DIALOG_MOBILE_SHEET_CLASS,
-            className,
-          )}
-          data-slot="dialog-popup"
-          ref={popupRef}
-          initialFocus={initialFocus}
-          {...props}
-        >
-          {children}
-          {showCloseButton && (
-            <DialogPrimitive.Close
-              aria-label="Close"
-              className="absolute end-2 top-2"
-              render={<Button size="icon" variant="ghost" />}
-            >
-              <XIcon />
-            </DialogPrimitive.Close>
-          )}
-        </DialogPrimitive.Popup>
+        {popup}
       </DialogViewport>
     </DialogPortal>
   );
 }
 
-const DESTRUCTIVE_VARIANTS = [
-  "destructive",
-  "destructive-outline",
-  "ghost-destructive",
-] as const satisfies readonly ButtonVariant[];
-
 type DialogActionProps = Omit<React.ComponentProps<typeof Button>, "variant"> & {
-  variant?: Exclude<ButtonVariant, (typeof DESTRUCTIVE_VARIANTS)[number]>;
+  variant?: Exclude<ButtonVariant, `${string}destructive${string}`>;
 };
 
-/**
- * Marks a non-destructive action for initial focus when the dialog opens.
- * For destructive confirmations, use a plain Button and place Cancel first.
- */
 function DialogAction(props: DialogActionProps) {
-  return <Button data-slot={DIALOG_ACTION_SLOT} {...props} />;
+  return <Button data-slot="dialog-action" {...props} />;
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {

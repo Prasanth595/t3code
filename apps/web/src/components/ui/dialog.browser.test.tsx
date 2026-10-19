@@ -55,10 +55,11 @@ describe("dialog keyboard interaction", () => {
 
   it("activates a dialog action with Space after opening from the keyboard", async () => {
     const retry = vi.fn();
+    const popup = createRef<HTMLDivElement>();
     await render(
       <Dialog>
         <DialogTrigger>Open retry</DialogTrigger>
-        <DialogPopup>
+        <DialogPopup ref={popup}>
           <DialogTitle>Import failed</DialogTitle>
           <DialogClose>Cancel</DialogClose>
           <DialogAction onClick={retry}>Try again</DialogAction>
@@ -69,6 +70,7 @@ describe("dialog keyboard interaction", () => {
     await act(async () => userEvent.keyboard("{Enter}"));
 
     await expect.element(page.getByRole("button", { name: "Try again" })).toHaveFocus();
+    expect(popup.current).toBe(page.getByRole("dialog").element());
     expect(retry).not.toHaveBeenCalled();
     await act(async () => userEvent.keyboard(" "));
     expect(retry).toHaveBeenCalledOnce();
@@ -77,11 +79,15 @@ describe("dialog keyboard interaction", () => {
   it.each(["disabled action", "caller initialFocus"] as const)(
     "falls back to Cancel for %s",
     async (reason) => {
+      const popup = createRef<HTMLDivElement>();
       const cancel = createRef<HTMLButtonElement>();
       const confirm = vi.fn();
       await render(
         <Dialog defaultOpen>
-          <DialogPopup {...(reason === "caller initialFocus" ? { initialFocus: cancel } : {})}>
+          <DialogPopup
+            ref={popup}
+            {...(reason === "caller initialFocus" ? { initialFocus: cancel } : {})}
+          >
             <DialogTitle>Install update?</DialogTitle>
             <DialogClose ref={cancel} render={<Button variant="outline" />}>
               Cancel
@@ -102,10 +108,17 @@ describe("dialog keyboard interaction", () => {
 
   it("focuses the popup instead of its input or action when opened by touch", async () => {
     const install = vi.fn();
+    const popup = createRef<HTMLDivElement>();
+    const cleanup = vi.fn();
     await render(
       <Dialog>
         <DialogTrigger>Open installer</DialogTrigger>
-        <DialogPopup>
+        <DialogPopup
+          ref={(element) => {
+            popup.current = element;
+            return cleanup;
+          }}
+        >
           <DialogTitle>Install relay client</DialogTitle>
           <input aria-label="Install directory" />
           <DialogClose>Cancel</DialogClose>
@@ -126,7 +139,11 @@ describe("dialog keyboard interaction", () => {
     });
 
     await expect.element(page.getByRole("dialog")).toHaveFocus();
+    expect(popup.current).toBe(page.getByRole("dialog").element());
     await act(async () => userEvent.keyboard("{Enter}"));
     expect(install).not.toHaveBeenCalled();
+    await act(async () => userEvent.keyboard("{Escape}"));
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    expect(cleanup).toHaveBeenCalled();
   });
 });
