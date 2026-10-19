@@ -554,9 +554,22 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect.skipIf(hostPlatform === "win32")(
-    "reports IPv6 startup diagnostics and preserves the previous release after SIGABRT",
-    () =>
+  it.effect.each([
+    {
+      name: "IPv6 startup failure",
+      stderr:
+        "enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)",
+      message:
+        "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown.",
+    },
+    {
+      name: "other startup failure",
+      stderr: "Private startup diagnostics: internal runtime failure",
+      message: "The downloaded Antigravity runtime could not start in this environment.",
+    },
+  ])(
+    "reports a fixed diagnostic for $name and preserves the previous release after SIGABRT",
+    (testCase) =>
       Effect.gen(function* () {
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const { installation, stagingReleased } = yield* makeHarness({
@@ -570,7 +583,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
                 command._tag === "StandardCommand" && command.command.endsWith(executableName)
                   ? ChildProcess.make(process.execPath, [
                       "-e",
-                      "process.stderr.write('enforce_kernel_ipv6_support.cc:70] Check failed: AddressFamilySupported(AF_INET6, &loopback6_ok)', () => process.kill(process.pid, 'SIGABRT'));",
+                      `process.stderr.write(${encodeJsonString(testCase.stderr)}, () => process.kill(process.pid, 'SIGABRT'));`,
                     ])
                   : command,
               ),
@@ -580,13 +593,12 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         yield* installation.start;
         expect(yield* terminalState(installation)).toMatchObject({
           phase: "failed",
-          message: expect.stringContaining("IPv6"),
+          message: testCase.message,
         });
-        expect((yield* installation.state).message).toContain("ipv6.disable=1");
-        expect((yield* installation.state).message).toContain("wsl --shutdown");
         yield* Deferred.await(stagingReleased);
         yield* expectPreviousRelease(installation);
       }),
+    { skip: hostPlatform === "win32" },
   );
 
   it.effect("accepts an encoded Content-Length when the body is compressed", () =>
