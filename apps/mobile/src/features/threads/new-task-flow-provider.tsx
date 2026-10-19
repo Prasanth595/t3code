@@ -1,4 +1,4 @@
-import { useAtomValue } from "@effect/atom-react";
+import { useAtom } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
@@ -286,9 +286,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [submitting, setSubmitting] = useState(false);
   // Share the draft's synchronous store so cleanup cannot render ahead of this snapshot.
   const [submittedModelSelectionAtom] = useState(() => Atom.make<ModelSelection | null>(null));
-  const submittedModelSelection = useAtomValue(submittedModelSelectionAtom);
-  const setSubmittedModelSelection = (value: ModelSelection | null) =>
-    appAtomRegistry.set(submittedModelSelectionAtom, value);
+  const [submittedModelSelection, setSubmittedModelSelection] = useAtom(
+    submittedModelSelectionAtom,
+  );
   const [branchQuery, setBranchQuery] = useState("");
   const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
   const [editingPendingTask, setEditingPendingTask] = useState<QueuedThreadMessage | null>(null);
@@ -546,8 +546,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   );
 
   const selectedModel = resolveNewTaskModelSelection({
-    // Draft cleanup happens before the sheet finishes leaving. Keep showing
-    // the model that was sent until this sheet and its provider unmount.
     submittedSelection: submittedModelSelection,
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
