@@ -1149,66 +1149,88 @@ it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   );
 });
 
-it.effect("GitVcsDriver flushes checkpoint objects and refs to disk before publishing them", () => {
-  const observedArgs: ReadonlyArray<string>[] = [];
+it.effect.each([
+  { version: "git version 2.37.0", fsyncMethod: "batch", versionFails: false },
+  { version: "git version 2.36.0 (Apple Git-136)", fsyncMethod: "fsync", versionFails: false },
+  { version: "unrecognized Git build", fsyncMethod: "fsync", versionFails: false },
+  { version: "git version 2.43.0", fsyncMethod: "fsync", versionFails: true },
+])(
+  "GitVcsDriver flushes checkpoint objects and refs using $fsyncMethod for $version (probe fails: $versionFails)",
+  ({ version, fsyncMethod, versionFails }) => {
+    const observedArgs: ReadonlyArray<string>[] = [];
 
-  return Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    return Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
 
-    yield* driver.checkpoints.captureCheckpoint({
-      cwd: "/repo",
-      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
-    });
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd: "/repo",
+        checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread/turn/1"),
+      });
 
-    const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
-    const writes = observedArgs.filter((args) =>
-      writeCommands.some((command) => args.includes(command)),
-    );
-    assert.strictEqual(writes.length, 4);
-    for (const args of writes) {
-      const command = args.findIndex((arg) => writeCommands.includes(arg));
-      for (const setting of ["core.fsync=objects,reference", "core.fsyncMethod=batch"]) {
-        const index = args.indexOf(setting);
-        assert.strictEqual(args[index - 1], "-c", args.join(" "));
-        assert.isBelow(index, command);
+      const writeCommands = ["add", "write-tree", "commit-tree", "update-ref"];
+      const writes = observedArgs.filter((args) =>
+        writeCommands.some((command) => args.includes(command)),
+      );
+      assert.strictEqual(writes.length, 4);
+      for (const args of writes) {
+        const command = args.findIndex((arg) => writeCommands.includes(arg));
+        for (const setting of ["core.fsync=objects,reference", `core.fsyncMethod=${fsyncMethod}`]) {
+          const index = args.indexOf(setting);
+          assert.strictEqual(args[index - 1], "-c", args.join(" "));
+          assert.isBelow(index, command);
+        }
       }
-    }
-    assert.deepStrictEqual(observedArgs.at(-1), [
-      "-C",
-      "/repo",
-      "-c",
-      "core.fsync=objects,reference",
-      "-c",
-      "core.fsyncMethod=batch",
-      "update-ref",
-      "refs/t3/checkpoints/thread/turn/1",
-      "commit0000",
-    ]);
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        NodeServices.layer,
-        Layer.mock(VcsProcess.VcsProcess)({
-          run: (input) =>
-            Effect.sync(() => {
-              observedArgs.push(input.args);
-              const stdout = input.args.includes("write-tree")
-                ? "tree0000\n"
-                : input.args.includes("commit-tree")
-                  ? "commit0000\n"
-                  : input.args.includes("--git-common-dir")
-                    ? ".git\n"
-                    : "";
-              return {
-                exitCode: ChildProcessSpawner.ExitCode(0),
-                stdout,
-                stderr: "",
-                stdoutTruncated: false,
-                stderrTruncated: false,
-              };
-            }),
-        }),
+      assert.deepStrictEqual(observedArgs.at(-1), [
+        "-C",
+        "/repo",
+        "-c",
+        "core.fsync=objects,reference",
+        "-c",
+        `core.fsyncMethod=${fsyncMethod}`,
+        "update-ref",
+        "refs/t3/checkpoints/thread/turn/1",
+        "commit0000",
+      ]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: (input) =>
+              Effect.gen(function* () {
+                observedArgs.push(input.args);
+                const isVersion = input.args.includes("--version");
+                if (isVersion && versionFails && !input.allowNonZeroExit) {
+                  return yield* new VcsProcessExitError({
+                    operation: input.operation,
+                    command: input.command,
+                    cwd: input.cwd,
+                    argumentCount: input.args.length,
+                    exitCode: 128,
+                    failureKind: "command-failed",
+                    detail: "Version probe failed.",
+                  });
+                }
+                const stdout = isVersion
+                  ? `${version}\n`
+                  : input.args.includes("write-tree")
+                    ? "tree0000\n"
+                    : input.args.includes("commit-tree")
+                      ? "commit0000\n"
+                      : input.args.includes("--git-common-dir")
+                        ? ".git\n"
+                        : "";
+                return {
+                  exitCode: ChildProcessSpawner.ExitCode(isVersion && versionFails ? 128 : 0),
+                  stdout,
+                  stderr: "",
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                };
+              }),
+          }),
+        ),
       ),
-    ),
-  );
-});
+    );
+  },
+);
