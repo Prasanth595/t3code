@@ -22,6 +22,7 @@ import {
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
+  type ScopedSettingsPatch,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
 
@@ -779,35 +780,41 @@ describe("model selection patches at project scope", () => {
         [projectId]: {
           defaultModelSelection: saved,
           sourceControlWriterModelSelection: saved,
+          reviewGuideModelSelection: saved,
           textGenerationModelSelection: saved,
         },
       },
     },
   });
 
-  it("replaces old options when switching models and keeps an omitted provider", () => {
+  it("replaces old options and keeps omitted model identity fields", () => {
     const plan = planScopedSettingsPatch(checkout, [customized], {
       defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" },
       sourceControlWriterModelSelection: { model: "gpt-5.6-mini" },
+      reviewGuideModelSelection: { instanceId: codex },
       textGenerationModelSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
-    });
+    } as ScopedSettingsPatch);
     expect(plan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]).toEqual({
       defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" },
       sourceControlWriterModelSelection: { instanceId: codex, model: "gpt-5.6-mini" },
+      reviewGuideModelSelection: { instanceId: codex, model: "gpt-5.6" },
       textGenerationModelSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
     });
   });
 
   it("keeps saved model identities when changing only options", () => {
     const options = [{ id: "reasoningEffort", value: "low" }];
+    // Exercise partial selections before the planner completes them for the wire.
     const plan = planScopedSettingsPatch(checkout, [customized], {
       defaultModelSelection: { options },
       sourceControlWriterModelSelection: { options },
+      reviewGuideModelSelection: { options },
       textGenerationModelSelection: { options },
-    });
+    } as unknown as ScopedSettingsPatch);
     expect(plan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]).toEqual({
       defaultModelSelection: { instanceId: codex, model: "gpt-5.6", options },
       sourceControlWriterModelSelection: { instanceId: codex, model: "gpt-5.6", options },
+      reviewGuideModelSelection: { instanceId: codex, model: "gpt-5.6", options },
       textGenerationModelSelection: { instanceId: codex, model: "gpt-5.6", options },
     });
   });
