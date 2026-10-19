@@ -511,12 +511,24 @@ export default function FileBrowserPanel({
       else handledRevealRef.current = null;
       return;
     }
-    // Entry refreshes rebuild treePaths while the same preview stays open.
-    // Replaying a handled reveal would close an active tree search and steal focus.
-    if (sameReveal && !handledReveal.selectionMissing) return;
     const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
     const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
+    const acknowledgeReveal = () => {
+      // Search-only rows can disappear before their directory listings arrive.
+      if (
+        !selectedPathRevealHandled &&
+        directoryEntries.some((entry) => entry.path === selectedPath)
+      ) {
+        onSelectedPathRevealHandled();
+      }
+    };
+    // Entry refreshes rebuild treePaths while the same preview stays open.
+    // Replaying a handled reveal would close an active tree search and steal focus.
+    if (sameReveal && !handledReveal.selectionMissing) {
+      acknowledgeReveal();
+      return;
+    }
     // A retained preview needs selection in the new model without replaying its reveal.
     if (skipInitialReveal || (sameReveal && model.isSearchOpen())) {
       handledRevealRef.current = revealRequest;
@@ -525,6 +537,7 @@ export default function FileBrowserPanel({
         model.getItem(path)?.deselect();
       }
       selectedItem.select();
+      acknowledgeReveal();
       queueMicrotask(() => {
         syncingSelectionRef.current = false;
       });
@@ -541,12 +554,11 @@ export default function FileBrowserPanel({
     if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
       treeSelectionPathRef.current = null;
       handledRevealRef.current = revealRequest;
-      onSelectedPathRevealHandled();
+      acknowledgeReveal();
       return;
     }
     treeSelectionPathRef.current = null;
     handledRevealRef.current = revealRequest;
-    onSelectedPathRevealHandled();
 
     syncingSelectionRef.current = true;
     setQuery("");
@@ -571,14 +583,17 @@ export default function FileBrowserPanel({
       focus: true,
       offset: "center",
     });
+    acknowledgeReveal();
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
   }, [
+    directoryEntries,
     entryKinds,
     model,
     selectedPath,
     selectedPathRevealId,
+    selectedPathRevealHandled,
     shouldSkipInitialReveal,
     onSelectedPathRevealHandled,
   ]);
