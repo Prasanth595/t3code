@@ -2577,13 +2577,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect("status drops the last known PR when the tracked remote is repointed", () =>
+  it.effect("status keeps the last known PR when the branch gains its first upstream", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/pr-sticky-first-push"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+
+      const existingPr = {
+        number: 215,
+        title: "Sticky first-push PR",
+        url: "https://github.com/pingdotgg/codething-mvp/pull/215",
+        baseRefName: "main",
+        headRefName: "feature/pr-sticky-first-push",
+      };
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [JSON.stringify([existingPr])],
+          failWith:
+            "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI and run `gh auth login`.",
+          failAfterCalls: 1,
+        },
+      });
+
+      const first = yield* manager.status({ cwd: repoDir });
+      expect(first.pr?.number).toBe(215);
+
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-sticky-first-push"]);
+      yield* manager.invalidateStatus(repoDir);
+
+      const second = yield* manager.status({ cwd: repoDir });
+      expect(second.pr?.number).toBe(215);
+    }),
+  );
+
+  it.effect("status refreshes checkout identity and PR when its remote changes", () =>
+    Effect.gen(function* () {
+      const workspaceDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(workspaceDir);
+      yield* runGit(workspaceDir, ["checkout", "-b", "feature/pr-repointed"]);
+      const repoDir = NodePath.join(workspaceDir, "checkout");
+      yield* makeDirectory(repoDir);
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/pr-repointed"]);
       const originalRemoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", originalRemoteDir]);
+      const originalUrl = "https://github.com/pingdotgg/codething-mvp.git";
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        originalUrl,
+        originalRemoteDir,
+      );
+      yield* runGit(workspaceDir, ["remote", "add", "origin", originalUrl]);
       yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-repointed"]);
 
       const existingPr = {
@@ -2602,17 +2649,32 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       });
 
+      const workspaceStatus = yield* manager.localStatus({ cwd: workspaceDir });
+      expect.soft(workspaceStatus.repositoryKey).toBe("github.com/pingdotgg/codething-mvp");
       const first = yield* manager.status({ cwd: repoDir });
       expect(first.pr?.number).toBe(216);
+      expect.soft(first.repositoryKey).toBe("github.com/pingdotgg/codething-mvp");
 
       const replacementRemoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "replacement", replacementRemoteDir]);
       yield* runGit(repoDir, ["push", "replacement", "feature/pr-repointed"]);
-      yield* runGit(repoDir, ["remote", "set-url", "origin", replacementRemoteDir]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "https://github.com/pingdotgg/unrelated.git",
+        replacementRemoteDir,
+      );
       yield* manager.invalidateStatus(repoDir);
 
       const second = yield* manager.status({ cwd: repoDir });
       expect(second.pr).toBeNull();
+      expect(second.refName).toBe(first.refName);
+      expect.soft(second.repositoryKey).toBe("github.com/pingdotgg/unrelated");
+      const local = yield* manager.localStatus({ cwd: repoDir });
+      expect.soft(local.repositoryKey).toBe("github.com/pingdotgg/unrelated");
+      expect
+        .soft((yield* manager.localStatus({ cwd: workspaceDir })).repositoryKey)
+        .toBe("github.com/pingdotgg/codething-mvp");
     }),
   );
 

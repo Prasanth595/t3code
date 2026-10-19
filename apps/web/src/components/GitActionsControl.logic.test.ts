@@ -254,7 +254,7 @@ describe("linked PR git actions", () => {
       title: "Existing PR",
       headBranch: "feature/test",
       baseBranch: "main",
-      isDraft: false,
+      isDraft: true,
       updatedAt: null,
       syncedAt: "2026-01-01T00:00:00.000Z",
     },
@@ -262,12 +262,17 @@ describe("linked PR git actions", () => {
 
   it("updates the linked PR from quick actions and menus, and restores creation after unlinking", () => {
     for (const hasWorkingTreeChanges of [true, false]) {
-      const original = status({ hasWorkingTreeChanges, aheadCount: 1 });
-      const resolved = resolveThreadGitStatus(original, [linked], "github.com/team/repo");
+      const original = status({
+        hasWorkingTreeChanges,
+        aheadCount: 1,
+        repositoryKey: "github.com/team/repo",
+      });
+      const resolved = resolveThreadGitStatus(original, [linked]);
       const action = hasWorkingTreeChanges ? "commit_push" : "push";
       assert.equal(resolveQuickAction(resolved, false).action, action);
       assert.equal(resolveMobileQuickAction(resolved, false).action, action);
       assert.equal(resolved?.pr?.url, linked.url);
+      assert.equal(resolved?.pr?.isDraft, true);
       assert.deepEqual(
         buildMenuItems(resolved, false).map((item) => item.id),
         ["commit", "push"],
@@ -277,7 +282,7 @@ describe("linked PR git actions", () => {
         "open_pr",
       );
 
-      const unlinked = resolveThreadGitStatus(original, [], "github.com/team/repo");
+      const unlinked = resolveThreadGitStatus(original, []);
       assert.equal(original.pr, null);
       assert.equal(
         resolveQuickAction(unlinked, false).action,
@@ -293,7 +298,10 @@ describe("linked PR git actions", () => {
   });
 
   it("only uses loaded, visible, open links for the checkout repository and branch", () => {
-    const original = status({ hasWorkingTreeChanges: true });
+    const original = status({
+      hasWorkingTreeChanges: true,
+      repositoryKey: "github.com/team/repo",
+    });
     for (const candidate of [
       { ...linked, snapshot: { ...linked.snapshot!, state: "closed" as const } },
       { ...linked, snapshot: { ...linked.snapshot!, state: "merged" as const } },
@@ -307,10 +315,14 @@ describe("linked PR git actions", () => {
         url: "https://github.example.com/team/repo/pull/42",
       },
     ]) {
-      assert.equal(resolveThreadGitStatus(original, [candidate], "github.com/team/repo"), original);
+      assert.equal(resolveThreadGitStatus(original, [candidate]), original);
     }
-    for (const repositoryKey of [null, undefined]) {
-      assert.equal(resolveThreadGitStatus(original, [linked], repositoryKey), original);
+    for (const repositoryKey of ["github.com/team/unrelated", undefined]) {
+      const checkout = status({ hasWorkingTreeChanges: true, repositoryKey });
+      const resolved = resolveThreadGitStatus(checkout, [linked]);
+      assert.equal(resolved, checkout);
+      assert.equal(resolveQuickAction(resolved, false).action, "commit_push_pr");
+      assert.equal(resolveMobileQuickAction(resolved, false).action, "commit_push_pr");
     }
   });
 
@@ -325,7 +337,7 @@ describe("linked PR git actions", () => {
         state,
       };
       assert.equal(
-        resolveThreadGitStatus(status({ pr }), [linked], "github.com/team/repo")?.pr,
+        resolveThreadGitStatus(status({ pr, repositoryKey: "github.com/team/repo" }), [linked])?.pr,
         pr,
       );
     }
