@@ -4812,6 +4812,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode = { type: "start_immediately" };
         }
       }
+      // Stop leaves the run reading as running until its provider stops. A plain
+      // send in that window waits in the held queue instead of steering text the
+      // agent never receives; an explicit steer or restart still fails below.
+      if (
+        command.deliveryIntent === "auto" &&
+        (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") &&
+        (yield* stopReachedRun(command, command.threadId, dispatchMode.targetRunId))
+      ) {
+        dispatchMode = { type: "queue_after_active" };
+      }
       if (
         command.notification !== undefined &&
         (command.createdBy !== "agent" ||

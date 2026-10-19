@@ -874,3 +874,57 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
     }),
   ),
 );
+
+it.effect("queues a plain send behind the held queue when Stop reached the run", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { started, steered, layer, startFirstTurn } =
+        yield* nextTurnSelectionHarness("plain-send-after-stop");
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        const send = (id: string, delivery: "queue" | "auto") =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(`message:${id}`),
+            text: id,
+            attachments: [],
+            modelSelection: runSelection,
+            ...(delivery === "queue"
+              ? { dispatchMode: { type: "queue_after_active" } }
+              : { dispatchMode: { type: "start_immediately" }, deliveryIntent: "auto" }),
+            createdBy: "user",
+            creationSource: "web",
+          });
+        yield* send("queued", "queue");
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop"),
+          threadId,
+          runId: started[0]!.runId,
+          holdQueue: true,
+        });
+        // The provider has not stopped yet, so a plain send still resolves to a steer.
+        yield* send("sent", "auto");
+        yield* worker.drain();
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, []);
+        assert.equal(started.length, 1);
+        const queued = projection.runs
+          .filter((run) => run.status === "queued")
+          .sort((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0));
+        assert.deepEqual(
+          queued.map(
+            (run) => projection.messages.find((message) => message.id === run.userMessageId)?.text,
+          ),
+          ["queued", "sent"],
+        );
+        assert.isTrue(queued.every((run) => run.queueHeld === true));
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
