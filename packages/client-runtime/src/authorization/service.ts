@@ -251,9 +251,8 @@ export const make = Effect.gen(function* () {
       detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
     });
 
-  // A missing identity before an attempt captures one means the client has not
-  // finished loading its cloud session. Only a captured identity that goes away
-  // or changes is evidence of a sign-out or account switch.
+  // No identity before an attempt captures one is the cloud session still
+  // loading, not a sign-out; only a captured identity that changes is.
   const sessionPending = () =>
     new ConnectionTransientError({
       reason: "session-pending",

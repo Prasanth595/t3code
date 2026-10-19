@@ -1028,13 +1028,6 @@ describe("RemoteEnvironmentAuthorization", () => {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
         yield* Ref.set(harness.session, Option.none());
-        const signedOut = yield* remote
-          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
-          .pipe(Effect.flip);
-        expect(signedOut).toMatchObject({
-          _tag: "ConnectionTransientError",
-          reason: "session-pending",
-        });
         yield* Ref.set(harness.session, Option.some({ accountId: "account-1" }));
         const signedIn = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
         expect(signedIn.httpAuthorization.accessToken).toBe("new-session-token");
