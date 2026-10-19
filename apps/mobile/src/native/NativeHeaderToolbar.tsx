@@ -1,4 +1,4 @@
-import { useNavigation, type ParamListBase } from "@react-navigation/native";
+import { useNavigation, useRoute, type ParamListBase } from "@react-navigation/native";
 import type {
   NativeStackHeaderItem,
   NativeStackHeaderItemMenu,
@@ -226,6 +226,7 @@ function NativeHeaderToolbarRoot(props: {
   readonly children?: ReactNode;
 }) {
   const navigation = useNativeStackNavigation();
+  const route = useRoute();
   const tabActivity = use(NativeWorkspaceTabActivityContext);
   const isTabActive = tabActivity?.isActive;
   const items = useMemo(() => collectToolbarItems(props.children), [props.children]);
@@ -253,7 +254,7 @@ function NativeHeaderToolbarRoot(props: {
 
   return (
     <NativeStackScreenOptions
-      optionsVersion={items}
+      optionsVersion={[items, route.params]}
       options={
         props.placement === "bottom"
           ? { unstable_headerToolbarItems: () => items }
