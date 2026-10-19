@@ -53,13 +53,9 @@ describe("threadContextsReferencedByAnswer", () => {
     "Deleted work",
   );
 
-  it("keeps only the threads whose chips are still in the answer", () => {
+  it("preserves remaining chips without restoring deleted thread records", () => {
     const answer = `Compare ${formatInlineContextReference(threadContextReference(kept))}`;
-    expect(threadContextsReferencedByAnswer(answer, [kept, deleted])).toEqual([kept]);
-  });
-
-  it("drops the record of a chip deleted from the answer", () => {
-    expect(threadContextsReferencedByAnswer("Compare ", [deleted])).toEqual([]);
+    expect(threadContextsReferencedByAnswer(answer, [deleted, kept])).toEqual([kept]);
   });
 });
 
