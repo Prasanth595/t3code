@@ -1802,7 +1802,7 @@ it.layer(
       const { manager, ptyAdapter, logsDir } = yield* createManager(100);
       const logPath = yield* historyLogPath(logsDir);
       const text = `${Array.from({ length: 30 }, (_, i) => `history ${i}\r\n`).join("")}prompt % `;
-      const dirty = `${text}\u001b[>7u\u001b[?1049h\u001b[>7u\u001b[?25l\u001b[?1;66;67;1003;1004;1006;2004h\u001b[?1035;1036ldead app`;
+      const dirty = `${text}\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?1049h\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?25l\u001b[?1;66;67;1003;1004;1006;2004h\u001b[?1035;1036ldead app`;
       const clean = replay(text);
       expect(clean).toMatchObject({ screen: 0, visible: 1, kitty: 0, mouse: 0, release: "" });
       expect(clean.text).toContain("history 0");
@@ -1821,6 +1821,12 @@ it.layer(
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       const first = yield* manager.open(openInput());
       expect(replay(first.history)).toEqual(clean);
+      expect(replay(first.history + "\u001b[<u\u001b[<u")).toEqual(clean);
+      expect(replay(first.history + "\u001b[?1049h\u001b[<u\u001b[<unext app")).toEqual(
+        replay(text + "\u001b[?1049hnext app"),
+      );
+      const trimmed = (history: string) => history.slice(history.indexOf("dead app"));
+      expect(replay(trimmed(first.history)).cursor).toEqual(replay(trimmed(dirty)).cursor);
       expect(replay(first.history + "\u001b[?1049hnext app")).toEqual(
         replay(text + "\u001b[?1049hnext app"),
       );

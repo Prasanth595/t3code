@@ -986,21 +986,20 @@ export class BoundedTerminalHistory {
   }
 }
 
-// Visit both screens to clear their active Kitty flags. A 1049 round trip
-// from the main screen preserves its cursor, text, and scrollback.
+// Pop beyond Ghostty's eight-entry Kitty stacks on both screens before clearing
+// flags. A 1049 round trip preserves the main cursor, text, and scrollback.
 const INHERITED_INPUT_RESET =
-  "\u001b[?1049h\u001b[=0;1u\u001b[?1049l" +
+  "\u001b[?1049h\u001b[<100u\u001b[=0;1u\u001b[?1049l" +
   "\u001b[?1;9;66;67;1000;1002;1003;1004;1005;1006;1015;2004l" +
-  "\u001b[?25;1035;1036h\u001b[=0;1u";
+  "\u001b[?25;1035;1036h\u001b[<100u\u001b[=0;1u";
 
 function neutralizeInheritedHistory(history: string): string {
   if (!history.includes("\u001b")) return history;
   // An unconditional 1049 reset restores a stale saved cursor on the main
   // screen. The exit must match the inherited screen's cursor-save behavior.
   let alternateScreen: number | undefined;
-  for (const fragment of history.split("\u001b").slice(1)) {
-    const match = /^(?:\[\?([0-9;]+)([hl])|(c))/u.exec(fragment);
-    if (!match) continue;
+  // eslint-disable-next-line no-control-regex -- Match replayed alternate-screen controls.
+  for (const match of history.matchAll(/\u001b(?:\[\?([0-9;]+)([hl])|(c))/gu)) {
     if (match[3]) alternateScreen = undefined;
     for (const parameter of (match[1] ?? "").split(";")) {
       const mode = Number(parameter);
@@ -1009,8 +1008,10 @@ function neutralizeInheritedHistory(history: string): string {
       }
     }
   }
-  // Start the reset on the main screen so its cursor save cannot be lost.
-  const leaveAlternateScreen = alternateScreen === undefined ? "" : `\u001b[?${alternateScreen}l`;
+  // A client may trim away the entry, leaving us on main: save its current
+  // cursor before exiting. On alternate this saves only the alternate cursor.
+  const leaveAlternateScreen =
+    alternateScreen === undefined ? "" : `\u001b7\u001b[?${alternateScreen}l`;
   return history + leaveAlternateScreen + INHERITED_INPUT_RESET;
 }
 
