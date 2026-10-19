@@ -658,9 +658,6 @@ const make = Effect.gen(function* () {
     let settings = DEFAULT_SERVER_SETTINGS;
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
-    // A file that failed to decode must stay on disk for the user to repair;
-    // the fold below only writes when it started from the file's real contents.
-    let settingsFileTrusted = true;
     let parseFailure = Option.none<unknown>();
 
     if (yield* readConfigExists) {
@@ -676,7 +673,6 @@ const make = Effect.gen(function* () {
       }
       if (decoded._tag === "Failure" || legacySettings._tag === "Failure") {
         const failure = decoded._tag === "Failure" ? decoded : legacySettings;
-        settingsFileTrusted = false;
         // The file may hold an opt-out we can no longer read; never resume threads on a guess.
         settings = { ...DEFAULT_SERVER_SETTINGS, continueThreadsAfterServerUpdate: false };
         if (failure._tag === "Failure") {
@@ -692,6 +688,8 @@ const make = Effect.gen(function* () {
       }
     }
 
+    // A file that failed to decode must stay on disk for the user to repair.
+    const settingsFileTrusted = Option.isNone(parseFailure);
     const providerHistory = yield* sql<{
       readonly providerName: string;
       readonly providerInstanceId: string | null;
@@ -792,11 +790,7 @@ const make = Effect.gen(function* () {
     return { settings: migrated, parseFailure };
   });
 
-  const settingsCache = yield* Cache.makeWith<
-    typeof cacheKey,
-    { readonly settings: ServerSettings; readonly parseFailure: Option.Option<unknown> },
-    ServerSettingsError
-  >(() => loadSettingsFromDisk, {
+  const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadSettingsFromDisk, {
     capacity: 1,
     timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
   });
