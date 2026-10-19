@@ -1286,12 +1286,13 @@ export default function ChatView(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  // Keyed by thread so the fork dialog closes when the route changes.
   const [forkSource, setForkSource] = useState<{
     sourceThreadId: ThreadId;
     runId: RunId;
     threadKey: string;
   } | null>(null);
+  // ChatView survives route changes; a pending fork must not reopen its dialog on return.
+  if (forkSource !== null && forkSource.threadKey !== routeThreadKey) setForkSource(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
