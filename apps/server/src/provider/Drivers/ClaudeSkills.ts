@@ -168,6 +168,36 @@ const findRepositoryRoot = Effect.fn("findRepositoryRoot")(function* (
   }
 });
 
+const findPluginRepositoryRoot = Effect.fn("findPluginRepositoryRoot")(function* (cwd: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* findRepositoryRoot(cwd);
+  if (root === undefined) return undefined;
+  const gitFile = yield* fileSystem
+    .readFileString(path.join(root, ".git"))
+    .pipe(Effect.orElseSucceed(() => ""));
+  if (!gitFile.trim().startsWith("gitdir:")) return root;
+  const gitDirectory = path.resolve(root, gitFile.trim().slice(7).trim());
+  const commonFile = yield* fileSystem
+    .readFileString(path.join(gitDirectory, "commondir"))
+    .pipe(Effect.orElseSucceed(() => ""));
+  const worktreeFile = yield* fileSystem
+    .readFileString(path.join(gitDirectory, "gitdir"))
+    .pipe(Effect.orElseSucceed(() => ""));
+  if (!commonFile.trim() || !worktreeFile.trim()) return root;
+  const commonDirectory = path.resolve(gitDirectory, commonFile.trim());
+  if (
+    path.dirname(gitDirectory) !== path.join(commonDirectory, "worktrees") ||
+    path.resolve(gitDirectory, worktreeFile.trim()) !== path.join(root, ".git")
+  ) {
+    return root;
+  }
+  // Claude shares plugin install records across linked worktrees, using their common repository.
+  return path.basename(commonDirectory) === ".git"
+    ? path.dirname(commonDirectory)
+    : commonDirectory;
+});
+
 /**
  * The CLI validates the whole map, not each entry: verified against it, one
  * entry with an unknown value (or a boolean) makes it drop every override in
@@ -260,7 +290,7 @@ const InstalledPlugins = Schema.fromJsonString(
 );
 const decodeInstalledPlugin = Schema.decodeUnknownOption(
   Schema.Struct({
-    scope: Schema.Literals(["user", "project", "local"]),
+    scope: Schema.Literals(["user", "project", "local", "managed"]),
     installPath: Schema.NonEmptyString,
     projectPath: Schema.optional(Schema.NonEmptyString),
   }),
@@ -296,22 +326,36 @@ const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function*
       Effect.flatMap(Schema.decodeUnknownEffect(InstalledPlugins)),
       Effect.orElseSucceed(() => undefined),
     );
+  if (installed === undefined) return [];
   const roots: Array<ClaudeSkillRoot> = [];
   const workspace = cwd === undefined ? undefined : path.resolve(cwd);
-  const scopePriority = { user: 0, project: 1, local: 2 };
+  const repositoryRoot =
+    workspace === undefined ? undefined : yield* findPluginRepositoryRoot(workspace);
 
-  for (const [key, entries] of Object.entries(installed?.plugins ?? {}).sort()) {
+  for (const [key, entries] of Object.entries(installed.plugins).sort()) {
     if (enabledPlugins.get(key) !== true) continue;
-    const install = entries
-      .flatMap((entry) => Option.toArray(decodeInstalledPlugin(entry)))
-      .filter(
-        (record) =>
-          record.scope === "user" ||
-          (record.projectPath !== undefined && path.resolve(record.projectPath) === workspace),
-      )
-      .sort((left, right) => scopePriority[right.scope] - scopePriority[left.scope])[0];
+    const applicable = yield* Effect.filter(
+      entries.flatMap((entry) => Option.toArray(decodeInstalledPlugin(entry))),
+      (record) =>
+        Effect.gen(function* () {
+          if (record.scope === "user" || record.scope === "managed") return true;
+          if (record.projectPath === undefined || workspace === undefined) return false;
+          if (path.resolve(record.projectPath) === workspace) return true;
+          return (
+            repositoryRoot !== undefined &&
+            (yield* findPluginRepositoryRoot(record.projectPath)) === repositoryRoot
+          );
+        }),
+    );
+    // The native loader keeps registry order, preferring the first install that exists.
+    const existing = yield* Effect.findFirst(applicable, (record) =>
+      fileSystem
+        .exists(path.resolve(cwd ?? ".", record.installPath))
+        .pipe(Effect.orElseSucceed(() => false)),
+    );
+    const install = Option.getOrElse(existing, () => applicable[0]);
     if (!install) continue;
-    const scope = install.scope === "user" ? "user" : "project";
+    const scope = install.scope === "user" || install.scope === "managed" ? "user" : "project";
     const installPath = path.resolve(cwd ?? ".", install.installPath);
     const manifest = yield* fileSystem
       .readFileString(path.join(installPath, ".claude-plugin", "plugin.json"))
