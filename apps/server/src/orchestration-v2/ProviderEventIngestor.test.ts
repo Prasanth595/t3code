@@ -963,8 +963,8 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
-  it.effect.each(["interrupted", "control"] as const)(
-    "dismisses only native questions when a provider turn ends with %s",
+  it.effect.each(["interrupted", "control", "control-interrupted"] as const)(
+    "dismisses native questions, and approvals only of a stopped turn, when a provider turn ends with %s",
     (terminal) =>
       Effect.gen(function* () {
         const now = yield* DateTime.now;
@@ -1001,16 +1001,19 @@ layer("ProviderEventIngestorV2", (it) => {
           { key: "answered", responseCapability: { type: "live", providerSessionId } },
           { key: "other-turn", responseCapability: { type: "live", providerSessionId } },
           { key: "approval", responseCapability: { type: "live", providerSessionId } },
+          { key: "other-turn-approval", responseCapability: { type: "live", providerSessionId } },
         ] as const;
+        const stopped = terminal === "interrupted" || terminal === "control-interrupted";
         const fixtures = specs.map((spec, ordinal) => {
           const nodeId = NodeId.make(`${threadId}:${spec.key}`);
           const resolved = spec.key === "answered";
+          const approval = spec.key === "approval" || spec.key === "other-turn-approval";
           const request: OrchestrationV2RuntimeRequest = {
             id: RuntimeRequestId.make(`${threadId}:${spec.key}`),
             nodeId,
-            providerTurnId: spec.key === "other-turn" ? otherTurnId : providerTurnId,
+            providerTurnId: spec.key.startsWith("other-turn") ? otherTurnId : providerTurnId,
             nativeRequestRef: null,
-            kind: spec.key === "approval" ? "command" : "user_input",
+            kind: approval ? "command" : "user_input",
             status: resolved ? "resolved" : "pending",
             responseCapability: spec.responseCapability,
             createdAt: now,
@@ -1022,7 +1025,7 @@ layer("ProviderEventIngestorV2", (it) => {
             runId: null,
             parentNodeId: null,
             rootNodeId: nodeId,
-            kind: spec.key === "approval" ? "approval_request" : "user_input_request",
+            kind: approval ? "approval_request" : "user_input_request",
             status: resolved ? "completed" : "waiting",
             countsForRun: false,
             providerThreadId,
@@ -1048,7 +1051,7 @@ layer("ProviderEventIngestorV2", (it) => {
             startedAt: now,
             completedAt: resolved ? now : null,
             updatedAt: now,
-            ...(spec.key === "approval"
+            ...(approval
               ? { type: "approval_request", requestId: request.id, requestKind: "command" }
               : {
                   type: "user_input_request",
@@ -1080,14 +1083,15 @@ layer("ProviderEventIngestorV2", (it) => {
           providerInstanceId: modelSelection.instanceId,
           threadId,
           event:
-            terminal === "control"
+            terminal === "control" || terminal === "control-interrupted"
               ? {
                   type: "turn.terminal" as const,
                   driver: CODEX_DRIVER,
                   providerThreadId,
                   providerTurnId,
                   runOrdinal: 1,
-                  status: "completed" as const,
+                  status:
+                    terminal === "control" ? ("completed" as const) : ("interrupted" as const),
                   failure: null,
                   threadDisposition: "reusable" as const,
                 }
@@ -1110,7 +1114,10 @@ layer("ProviderEventIngestorV2", (it) => {
         const stored = yield* ingestor.ingestNormalized(input);
         const projection = yield* projectionStore.getThreadProjection(threadId);
         for (const fixture of fixtures) {
-          const closed = fixture.key === "native" || fixture.key === "unavailable";
+          const closed =
+            fixture.key === "native" ||
+            fixture.key === "unavailable" ||
+            (fixture.key === "approval" && stopped);
           const request = projection.runtimeRequests.find(
             (item) => item.id === fixture.request.id,
           )!;
@@ -1123,19 +1130,24 @@ layer("ProviderEventIngestorV2", (it) => {
             assert.isNotNull(node.completedAt);
             assert.equal(item.status, "cancelled");
             assert.isNotNull(item.completedAt);
+            if (fixture.key === "approval") {
+              assert.equal(request.responseCapability.type, "not_resumable");
+            }
           } else {
             assert.equal(request.status, fixture.request.status);
             assert.equal(node.status, fixture.node.status);
             assert.equal(item.status, fixture.item.status);
           }
         }
+        const dismissedCount = stopped ? 3 : 2;
         assert.equal(
           stored.filter((entry) => entry.event.type === "runtime-request.updated").length,
-          2,
+          dismissedCount,
         );
         assert.isEmpty(
-          (yield* projectionStore.getPendingNativeUserInputs(threadId, providerTurnId))
-            .runtimeRequests,
+          (yield* projectionStore.getPendingNativeRequests(threadId, providerTurnId, {
+            includeApprovals: stopped,
+          })).runtimeRequests,
         );
         const replayed = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
         assert.equal(
@@ -1144,7 +1156,7 @@ layer("ProviderEventIngestorV2", (it) => {
               entry.event.type === "runtime-request.updated" &&
               entry.event.payload.status === "cancelled",
           ).length,
-          2,
+          dismissedCount,
         );
         const repeated = yield* ingestor.ingestNormalized(input);
         assert.isFalse(repeated.some((entry) => entry.event.type === "runtime-request.updated"));
