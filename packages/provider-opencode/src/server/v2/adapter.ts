@@ -299,8 +299,8 @@ interface ThreadState {
       readonly text: string;
     }
   >;
-  /** Background shell jobs still running, by OpenCode's shell id. */
-  readonly shells: Set<string>;
+  /** Shells stay at their launch directory when the session moves. */
+  readonly shells: Map<string, string>;
   /**
    * Shell jobs whose end arrived before their launch result, by shell id.
    * OpenCode reports a short job's end without waiting for its launch to return.
@@ -620,6 +620,7 @@ const boundaryAfter = (
 };
 
 const isProviderAdapterError = Schema.is(ProviderAdapter.ProviderAdapterV2Error);
+const isShellId = Schema.is(Shell.ID);
 
 const modelRef = (selection: ProviderAdapter.ProviderAdapterV2TurnInput["modelSelection"]) => {
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
@@ -780,7 +781,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       subagent,
       wakes: [],
       reports: new Map(),
-      shells: new Set(),
+      shells: new Map(),
       endedShells: new Set(),
       queuedShells: new Set(),
       stoppedChildren: new Set(),
@@ -2211,16 +2212,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
-    /**
-     * Counts a session's background shell jobs from its live events, so a held
-     * execution's events count too even when no turn replays them. A shell
-     * returns at launch; OpenCode queues its end for the session that ran it.
-     */
+    /** Held executions must count shell events even if no turn replays them. */
     const trackShells = (state: ThreadState, event: OpenCode2Client.OpenCode2StreamEvent) => {
       if (event.type === "session.tool.success") {
         const shellId = stringField(event.data.metadata, "shellID");
-        if (event.data.metadata?.["status"] !== "running" || shellId === undefined) return;
-        if (!state.endedShells.delete(shellId)) state.shells.add(shellId);
+        if (event.data.metadata?.["status"] !== "running" || !isShellId(shellId)) return;
+        if (!state.endedShells.delete(shellId) && !state.shells.has(shellId)) {
+          state.shells.set(shellId, state.directory);
+        }
       } else if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
         const metadata = event.data.item.payload.metadata;
         if (stringField(metadata, "source") !== "shell") return;
@@ -2575,20 +2574,25 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (state.shells.size === 0 && state.queuedShells.size === 0) continue;
         // Executions do not own background shells. Read each known job before
         // its inbox, so a completion lost with the stream cannot pin it forever.
-        const running = yield* Effect.forEach(state.shells, (id) =>
-          client.shell
-            .get({ id: Shell.ID.make(id), location: { directory: state.directory } })
-            .pipe(
-              Effect.map(({ data }) => (data.status === "running" ? id : undefined)),
-              Effect.catchTags({ ShellNotFoundError: () => Effect.void }),
+        const runningShells = yield* Effect.forEach(state.shells, ([id, directory]) =>
+          client.shell.get({ id: Shell.ID.make(id), location: { directory } }).pipe(
+            Effect.map(({ data }) =>
+              data.status === "running" ? ([id, directory] as const) : undefined,
             ),
+            Effect.catchTags({
+              ShellNotFoundError: () => Effect.void,
+              LocationNotFoundError: () => Effect.void,
+            }),
+          ),
         );
-        const inbox = yield* client.session.inbox.list({
-          sessionID: Session.ID.make(state.sessionId),
-        });
+        const inbox = yield* client.session.inbox
+          .list({ sessionID: Session.ID.make(state.sessionId) })
+          .pipe(Effect.catchTags({ SessionNotFoundError: () => Effect.void }));
         state.shells.clear();
-        for (const id of running) if (id !== undefined) state.shells.add(id);
         state.queuedShells.clear();
+        // A deleted session cannot receive results even if its shells still run.
+        if (inbox === undefined) continue;
+        for (const shell of runningShells) if (shell !== undefined) state.shells.set(...shell);
         for (const item of inbox) {
           if (
             item.type !== "synthetic" ||
