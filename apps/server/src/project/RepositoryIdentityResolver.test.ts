@@ -309,7 +309,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         expect(input.args).toEqual(["-G", "-l", "git", "-p", "2222", "review"]);
         expect(Duration.toMillis(Duration.fromInputUnsafe(input.timeout!))).toBe(5_000);
         expect(input.timeoutBehavior).toBe("timedOutResult");
-        return Effect.succeed(processOutput("hostname gitlab.com\nuser git\nport 2222\n"));
+        const hostname = input.cwd === "/repo" ? "gitlab.com" : "github.com";
+        return Effect.succeed(processOutput(`hostname ${hostname}\nuser git\nport 2222\n`));
       });
       expect(identity?.canonicalKey).toBe("gitlab.com/team/app");
       expect(identity?.provider).toBe("gitlab");

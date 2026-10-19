@@ -86,6 +86,7 @@ const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (
   const result = yield* processRunner
     .run({
       command: "ssh",
+      cwd,
       args: [
         "-G",
         ...(remote.user ? ["-l", remote.user] : []),
