@@ -175,7 +175,7 @@ export function normalizeGitRemoteUrl(value: string): string {
   return normalized;
 }
 
-export function parseGitConfigValue(raw: string): string {
+function parseGitConfigValue(raw: string): string {
   let out = "";
   let quoted = false;
   for (let index = 0; index < raw.length; index += 1) {
@@ -193,6 +193,26 @@ export function parseGitConfigValue(raw: string): string {
     out += char;
   }
   return out.trim();
+}
+
+export function isBareGitConfig(configText: string): boolean {
+  let inCore = false;
+  let bare = false;
+  for (const rawLine of configText.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    // Git accepts the first setting on the section header's own line.
+    const header = /^\[\s*([^\]]*?)\s*\](.*)$/.exec(line);
+    if (header !== null) {
+      inCore = header[1]!.toLowerCase() === "core";
+      line = header[2]!.trim();
+    }
+    if (!inCore) continue;
+    const match = /^bare\s*(?:=(.*)|[#;].*)?$/i.exec(line);
+    if (match === null) continue;
+    const value = match[1] === undefined ? "true" : parseGitConfigValue(match[1]).toLowerCase();
+    bare = value === "true" || value === "yes" || value === "on" || value === "1";
+  }
+  return bare;
 }
 
 export function parseOriginUrlFromGitConfig(configText: string): string | null {

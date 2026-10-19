@@ -26,7 +26,7 @@ import * as Stream from "effect/Stream";
 
 import {
   normalizeGitRemoteUrl,
-  parseGitConfigValue,
+  isBareGitConfig,
   parseGitHubRepositoryNameWithOwnerFromRemoteUrl,
   parseOriginUrlFromGitConfig,
 } from "@t3tools/shared/git";
@@ -526,26 +526,6 @@ function isT3ManagedWorktree(
   );
 }
 
-function isBareGitConfig(configText: string): boolean {
-  let inCore = false;
-  let bare = false;
-  for (const rawLine of configText.split(/\r?\n/)) {
-    let line = rawLine.trim();
-    // Git accepts the first setting on the section header's own line.
-    const header = /^\[\s*([^\]]*?)\s*\](.*)$/.exec(line);
-    if (header !== null) {
-      inCore = header[1]!.toLowerCase() === "core";
-      line = header[2]!.trim();
-    }
-    if (!inCore) continue;
-    const match = /^bare\s*(?:=(.*)|[#;].*)?$/i.exec(line);
-    if (match === null) continue;
-    const value = match[1] === undefined ? "true" : parseGitConfigValue(match[1]).toLowerCase();
-    bare = value === "true" || value === "yes" || value === "on" || value === "1";
-  }
-  return bare;
-}
-
 function extractCwd(line: string): string | null {
   let parsed: unknown;
   try {
@@ -656,7 +636,6 @@ export const make = Effect.gen(function* () {
     return `path:${normalizeProjectPathForComparison(realPath)}`;
   });
 
-  // Bare repositories have no main checkout, so their linked worktrees must be offered.
   const readGitIdentity = Effect.fn("AgentSessionScanner.readGitIdentity")(function* (
     directory: string,
   ): Effect.fn.Return<
@@ -668,7 +647,6 @@ export const make = Effect.gen(function* () {
     const gitStats = yield* statOption(gitPath);
     if (Option.isNone(gitStats)) return { _tag: "NotGit" } as const;
     let gitDir = gitPath;
-    let linkedWorktree = false;
     if (gitStats.value.type !== "Directory") {
       const pointer = yield* fileSystem
         .readFileString(gitPath)
@@ -676,18 +654,20 @@ export const make = Effect.gen(function* () {
       const target = /^gitdir:\s*(.+)$/m.exec(pointer)?.[1]?.trim();
       if (target === undefined || target.length === 0) return { _tag: "NotGit" } as const;
       gitDir = path.resolve(directory, target);
-      if (/[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir)) {
-        const commonDir = yield* fileSystem
-          .readFileString(path.join(gitDir, "commondir"))
-          .pipe(Effect.orElseSucceed(() => ""));
-        if (commonDir.trim().length === 0) return { _tag: "Worktree" } as const;
-        gitDir = path.resolve(gitDir, commonDir.trim());
-        linkedWorktree = true;
-      }
+    }
+    const linkedWorktree =
+      gitStats.value.type !== "Directory" && /[\\/]worktrees[\\/][^\\/]+[\\/]?$/.test(gitDir);
+    if (linkedWorktree) {
+      const commonDir = yield* fileSystem
+        .readFileString(path.join(gitDir, "commondir"))
+        .pipe(Effect.orElseSucceed(() => ""));
+      if (commonDir.trim().length === 0) return { _tag: "Worktree" } as const;
+      gitDir = path.resolve(gitDir, commonDir.trim());
     }
     const configText = yield* fileSystem
       .readFileString(path.join(gitDir, "config"))
       .pipe(Effect.orElseSucceed(() => ""));
+    // Bare repositories have no main checkout, so offer their linked worktrees independently.
     if (linkedWorktree && !isBareGitConfig(configText)) return { _tag: "Worktree" } as const;
     const originUrl = parseOriginUrlFromGitConfig(configText);
     return {
