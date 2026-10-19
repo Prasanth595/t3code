@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
-import { act } from "react";
+import { act, createContext, use } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
@@ -99,3 +99,29 @@ it.each(["left", "right", "bottom"] as const)(
     expect(harness.openedDocuments).toEqual(["first/guide.pdf"]);
   },
 );
+
+// React Navigation's context defaults throw from getters, and dev elements keep their owner fiber.
+const ThrowingDefaultContext = createContext({
+  get value(): never {
+    throw new Error("Couldn't find a navigation context.");
+  },
+});
+
+function CustomViewToolbar() {
+  use(ThrowingDefaultContext);
+  return (
+    <NativeHeaderToolbar placement="right">
+      <NativeHeaderToolbar.Custom>
+        <span>Status</span>
+      </NativeHeaderToolbar.Custom>
+    </NativeHeaderToolbar>
+  );
+}
+
+it("applies custom header views created under contexts whose defaults throw", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root ??= createRoot(document.createElement("div"));
+  act(() => root!.render(<CustomViewToolbar />));
+
+  expect(harness.renderedItems.map((item) => item.type)).toEqual(["custom"]);
+});

@@ -3,7 +3,7 @@ import type {
   NativeStackNavigationOptions,
   NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
-import { use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { isValidElement, use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 import type { ColorValue } from "react-native";
 
@@ -81,6 +81,13 @@ function optionsSignature(value: unknown, seen = new WeakSet<object>()): string 
       // React refs carry mutable native instances that must not make static
       // screen options appear different after every render.
       if ("current" in object) return "[ref]";
+      // Custom header views are elements. Only their type, key, and props describe them;
+      // dev-only internals such as the owner fiber reach context defaults that throw.
+      if (isValidElement(object)) {
+        const type = object.type as { displayName?: string; name?: string } | string;
+        const typeName = typeof type === "string" ? type : (type.displayName ?? type.name);
+        return `element:${typeName}:${String(object.key)}:${optionsSignature(object.props, seen)}`;
+      }
       return `{${Object.keys(value as Record<string, unknown>)
         .sort()
         .map(
