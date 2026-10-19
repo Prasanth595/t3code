@@ -75,12 +75,23 @@ export const writeFactoryServerBearer = Effect.fn("desktop.factoryServer.writeBe
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const file = yield* credentialPath;
   yield* ensureFactoryServerBearerStorable;
+  const tempPath = `${file}.${process.pid}.tmp`;
   yield* Effect.gen(function* () {
     const encryptedBearer = Base64.encode(yield* safeStorage.encryptString(bearer));
     const encoded = yield* encodeDocument({ version: 1, encryptedBearer });
-    const tempPath = `${file}.${process.pid}.tmp`;
     yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
     yield* fileSystem.writeFileString(tempPath, `${encoded}\n`);
     yield* fileSystem.rename(tempPath, file);
-  }).pipe(Effect.mapError(wrap));
+  }).pipe(
+    Effect.mapError(wrap),
+    Effect.ensuring(
+      fileSystem
+        .remove(tempPath, { force: true })
+        .pipe(
+          Effect.catch((error) =>
+            logWarning("could not remove a temporary factory server credential file", { error }),
+          ),
+        ),
+    ),
+  );
 });
