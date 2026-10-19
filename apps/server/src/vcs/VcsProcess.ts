@@ -165,10 +165,13 @@ const isTransientGitExit = (stderr: string) =>
 
 // macOS implements core.fsyncMethod=fsync as F_FULLFSYNC, which SMB, NFS and AFP
 // mounts reject with ENOTSUP; writeout-only is the strongest flush they offer.
+// Object writes report the errno; a ref lock write only says it could not write,
+// so that message is matched too. A rerun that still fails surfaces as usual.
 const FULL_FSYNC_ARG = "core.fsyncMethod=fsync";
 const WRITEOUT_ONLY_FSYNC_ARG = "core.fsyncMethod=writeout-only";
 const isUnsupportedFullFsync = (stderr: string) =>
-  /fsync error on [^\n]+: operation not supported/i.test(stderr);
+  /fsync error on [^\n]+: operation not supported/i.test(stderr) ||
+  /cannot update ref [^\n]+: couldn't write [^\n]+\.lock'/i.test(stderr);
 
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
