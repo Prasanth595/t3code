@@ -1,9 +1,15 @@
+import { createCommandPermissions } from "./commandPermissions.ts";
+import { RpcPermissionGuard } from "../rpc/client.ts";
+import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
+  AuthSourceControlWriteScope,
+  AuthOrchestrationOperateScope,
   ProjectId,
   PullRequestOperationError,
   WS_METHODS,
   type PullRequestStack,
+  type AuthSessionState,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
@@ -194,6 +200,7 @@ for (const scenario of [
             : route(WS_METHODS.pullRequestsRunAction, input)
         ).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(GitHubRoutingPermissions, {
             ...trustedRouting,
             get: () => Effect.succeed(trusted ? "read-write" : "off"),
@@ -301,6 +308,7 @@ it.effect("shares active read identity probes while keeping later reads and muta
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
       );
     }),
   ),
@@ -554,6 +562,7 @@ it.effect.each(["github", "gitlab", "bitbucket", "azure-devops"] as const)(
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
         const environment = provider === "github" ? "local" : "origin";
@@ -573,6 +582,70 @@ it.effect.each(["github", "gitlab", "bitbucket", "azure-devops"] as const)(
         }
       }),
     ),
+);
+
+it.effect("forgets routed viewed marks when a viewed-files batch fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const reference = {
+        projectId: ProjectId.make("project-1"),
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+      };
+      const invalidations: { environment: string; input: unknown }[] = [];
+      const identity = () =>
+        Effect.succeed({
+          host: reference.host,
+          provider: "github",
+          accountId: "123",
+          viewer: "maria-rcks",
+        });
+      const clientFor = (environment: string) =>
+        ({
+          [WS_METHODS.pullRequestsRouting]: identity,
+          [WS_METHODS.pullRequestsRoutingIdentity]: identity,
+          [WS_METHODS.pullRequestsFilesViewed]: () =>
+            Effect.succeed({ files: [{ path: "a.ts", state: "unviewed" }], truncated: false }),
+          // The host may have applied part of the batch before refusing the rest.
+          [WS_METHODS.pullRequestsSetFilesViewed]: () => Effect.fail("second path refused"),
+          [WS_METHODS.pullRequestsInvalidate]: (input: unknown) =>
+            Effect.sync(() => {
+              invalidations.push({ environment, input });
+            }),
+        }) as unknown as WsRpcProtocolClient;
+      const { environmentRegistry, supervisor } = yield* makeTestRuntime(
+        clientFor("origin"),
+        clientFor("local"),
+      );
+      const route = createPullRequestRouter();
+      const write = yield* Effect.gen(function* () {
+        yield* route(WS_METHODS.pullRequestsFilesViewed, reference);
+        return yield* Effect.exit(
+          route(WS_METHODS.pullRequestsSetFilesViewed, {
+            ...reference,
+            files: [
+              { path: "a.ts", viewed: true },
+              { path: "b.ts", viewed: true },
+            ],
+          }),
+        );
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+      expect(write._tag).toBe("Failure");
+      expect(invalidations).toContainEqual({
+        environment: "local",
+        input: { reference: expect.objectContaining(reference), filesViewedOnly: true },
+      });
+      for (const call of invalidations) {
+        expect(call.input).toMatchObject({ filesViewedOnly: true });
+      }
+    }),
+  ),
 );
 
 const TARGET = new PrimaryConnectionTarget({
@@ -720,10 +793,12 @@ it.effect.each(["default", "origin-off", "destination-off", "read-only"] as cons
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
         );
         yield* permission === "default"
           ? request
           : request.pipe(
+              Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
               Effect.provideService(GitHubRoutingPermissions, {
                 ...trustedRouting,
                 get: (entry) =>
@@ -840,8 +915,8 @@ it.effect.each(
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-        // This also represents a user enabling the stale catalog entry after re-resolution.
         Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
       );
       yield* stored === "unavailable"
         ? route
@@ -897,6 +972,7 @@ it.live.each(["origin", "alternate"] as const)(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
           Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.flip,
         );
         expect(error._tag).toBe("PullRequestOperationError");
@@ -958,6 +1034,7 @@ it.effect.each(
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       );
       const fiber = yield* request.pipe(Effect.forkChild);
@@ -982,6 +1059,7 @@ it.effect.each(
 it.live("keeps source workspace metadata when an alternate answers a detail read", () =>
   Effect.scoped(
     Effect.gen(function* () {
+      const noted = yield* Deferred.make<unknown>();
       const clientFor = (local: boolean) =>
         ({
           [local ? WS_METHODS.pullRequestsRoutingIdentity : WS_METHODS.pullRequestsRouting]: () =>
@@ -1000,8 +1078,12 @@ it.live("keeps source workspace metadata when an alternate answers a detail read
                   projectTitle: "local project",
                   workspaceRoot: "/Users/local/repo",
                   title: "github title",
+                  state: "closed",
+                  updatedAt: "2026-10-10T01:52:36Z",
                 })
               : Effect.never,
+          [WS_METHODS.pullRequestsReportState]: (input: unknown) =>
+            Deferred.succeed(noted, input).pipe(Effect.asVoid),
         }) as unknown as WsRpcProtocolClient;
       const { environmentRegistry, supervisor } = yield* makeTestRuntime(
         clientFor(false),
@@ -1014,6 +1096,7 @@ it.live("keeps source workspace metadata when an alternate answers a detail read
       }).pipe(
         Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
         Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
         Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
       );
       expect(result).toEqual({
@@ -1021,6 +1104,12 @@ it.live("keeps source workspace metadata when an alternate answers a detail read
         projectTitle: "source project",
         workspaceRoot: "/srv/source/repo",
         title: "github title",
+        state: "closed",
+        updatedAt: "2026-10-10T01:52:36Z",
+      });
+      expect(yield* Deferred.await(noted)).toEqual({
+        reference: { projectId: "project-1", repository: "acme/web", number: 7 },
+        state: "closed",
       });
     }),
   ),
@@ -1101,6 +1190,7 @@ it.live(
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
       }),
@@ -1470,7 +1560,6 @@ it.effect("shares close, reopen, and merge with an untouched client's mounted PR
           }),
         );
         expect(AsyncResult.isSuccess(result)).toBe(true);
-        // The second client receives only the server push: no local refresh or timer tick.
         yield* detailChanged.await;
         yield* summaryChanged.await;
         yield* listChanged.await;
@@ -1649,6 +1738,7 @@ it.effect.each([false, true])(
         }).pipe(
           Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
           Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+          Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
         expect(result).toEqual({ state: "open", checks: [] });
@@ -1884,7 +1974,6 @@ it.effect("updates reviewer requests and enriched reviewers without rereading th
         ]);
       }
       expect(reads).toBe(3);
-      // A slow activity read started before the write must not hide the new request.
       pauseActivity = true;
       registry.refresh(activity);
       yield* activityStarted.await;
@@ -1903,7 +1992,6 @@ it.effect("updates reviewer requests and enriched reviewers without rereading th
       yield* request(false);
       expect((yield* AtomRegistry.getResult(registry, activity)).reviewers).toEqual([hostActor]);
 
-      // A caller without an open picker still needs authoritative reviewer identities.
       const otherTarget = { ...target, input: { ...target.input, number: 2 } };
       const otherDetail = atoms.detail(otherTarget);
       registry.mount(otherDetail);
@@ -1977,6 +2065,124 @@ it.effect("refreshes stack state after reopening and head SHAs after a turn", ()
       yield* PubSub.publish(refreshEvents, 1);
       yield* refreshed.await;
       expect((yield* AtomRegistry.getResult(registry, stack))?.layers[0]?.headSha).toBe("new-head");
+    }),
+  ),
+);
+
+vi.mock("./session.ts", () => ({
+  createEnvironmentSessionAtoms: () => ({ sessionStateAtom: grantedSessions }),
+}));
+const grantedSessions = Atom.family((_id: EnvironmentId) =>
+  Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
+    AsyncResult.success({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable" as const,
+        bootstrapMethods: [],
+        sessionMethods: [],
+        sessionCookieName: "test",
+      },
+      scopes: [AuthSourceControlWriteScope],
+    }),
+  ),
+);
+
+it.effect("denies a routed write when only the origin has source-control permission", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let writes = 0;
+      const identity = { host: "github.com", provider: "github", viewer: "test", accountId: "123" };
+      const client = {
+        [WS_METHODS.pullRequestsRouting]: () => Effect.succeed(identity),
+        [WS_METHODS.pullRequestsRoutingIdentity]: () => Effect.succeed(identity),
+        [WS_METHODS.pullRequestsRunAction]: () =>
+          Effect.sync(() => {
+            writes++;
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const fixture = yield* makeTestRuntime(client, client);
+      const local = EnvironmentId.make("local-environment");
+      const stop = fixture.registry.mount(grantedSessions(local));
+      yield* Effect.addFinalizer(() => Effect.sync(stop));
+      fixture.registry.set(
+        grantedSessions(local),
+        AsyncResult.success({
+          authenticated: true,
+          scopes: [],
+          auth: {
+            policy: "remote-reachable" as const,
+            bootstrapMethods: [],
+            sessionMethods: [],
+            sessionCookieName: "test",
+          },
+        }),
+      );
+      const error = yield* createPullRequestRouter()(WS_METHODS.pullRequestsRunAction, {
+        projectId: ProjectId.make("project"),
+        repository: "acme/repo",
+        number: 1,
+        action: "merge",
+      }).pipe(
+        Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, fixture.environmentRegistry),
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, fixture.supervisor),
+        Effect.provideService(GitHubRoutingPermissions, trustedRouting),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (id, method, input) =>
+            createCommandPermissions(fixture.runtime, method).authorize(
+              fixture.registry,
+              id,
+              input,
+            ),
+        }),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("EnvironmentAuthorizationError");
+      expect(writes).toBe(0);
+    }),
+  ),
+);
+
+it.effect("publishes the accepted guide run before the follow-up read finishes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const accepted = {
+        guide: null,
+        currentHeadSha: "head",
+        run: { _tag: "Running" as const, headSha: "head", startedAt: "2026-10-11T00:00:00.000Z" },
+      };
+      let reads = 0;
+      const refreshStarted = yield* Latch.make();
+      const client = {
+        [WS_METHODS.pullRequestsSubscribeRefreshes]: () => Stream.never,
+        [WS_METHODS.pullRequestsReviewGuide]: () =>
+          Effect.gen(function* () {
+            if (++reads > 1) {
+              yield* refreshStarted.open;
+              return yield* Effect.never;
+            }
+            return { guide: null, run: null, currentHeadSha: "head" };
+          }),
+        [WS_METHODS.pullRequestsGenerateReviewGuide]: () => Effect.succeed(accepted),
+      } as unknown as WsRpcProtocolClient;
+      const { atoms, registry } = yield* makeTestRuntime(client);
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 },
+      };
+      registry.update(
+        grantedSessions(target.environmentId),
+        AsyncResult.map((session) => ({
+          ...session,
+          scopes: [...(session.scopes ?? []), AuthOrchestrationOperateScope],
+        })),
+      );
+      const query = atoms.reviewGuide(target);
+      registry.mount(query);
+      yield* AtomRegistry.getResult(registry, query, { suspendOnWaiting: true });
+      const result = yield* Effect.promise(() => atoms.generateReviewGuide.run(registry, target));
+      expect(result._tag).toBe("Success");
+      yield* refreshStarted.await;
+      expect(Option.getOrNull(AsyncResult.value(registry.get(query)))).toEqual(accepted);
     }),
   ),
 );
