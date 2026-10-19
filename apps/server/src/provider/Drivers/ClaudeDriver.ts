@@ -176,7 +176,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           enabled,
           config,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          modelCatalog,
+          scopedLimitNames,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
