@@ -26,6 +26,7 @@ const state = vi.hoisted(() => ({
   stackError: null as string | null,
   refreshStack: vi.fn(),
   runStackAction: vi.fn(),
+  stackRefreshing: false,
   stack: null as null | {
     readonly id: string;
     readonly number: number;
@@ -54,6 +55,7 @@ vi.mock(import("~/state/usePullRequestStack"), async (importOriginal) => ({
     stack: {
       data: state.stack,
       isFresh: state.stackError === null,
+      isPending: state.stackRefreshing,
       error: state.stackError,
       refresh: state.refreshStack,
     },
@@ -148,6 +150,7 @@ afterEach(() => {
   state.serverConfigs = new Map();
   state.stack = null;
   state.stackError = null;
+  state.stackRefreshing = false;
   state.refreshStack.mockReset();
 });
 
@@ -236,6 +239,28 @@ it("offers to merge a stacked pull request only with its whole stack", async () 
     }),
   );
   expect(state.refreshStack).toHaveBeenCalledTimes(1);
+
+  // Until that refresh lands, the old layers must not be offered for another merge.
+  state.stackRefreshing = true;
+  act(() =>
+    root.render(
+      <ThreadDetailsPrRow
+        environmentId={environmentId}
+        pr={null}
+        number={1}
+        reference={{ host: "github.com", repository: "owner/repo", number: 1 }}
+        status={null}
+        project={{ id: ProjectId.make("project") } as never}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    ),
+  );
+  const mergeStack = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Merge stack",
+  );
+  expect(mergeStack?.disabled).toBe(true);
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {

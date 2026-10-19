@@ -191,6 +191,8 @@ export function ThreadDetailsPrRow({
     detail !== null
       ? {
           stack: stackGate.stack.data,
+          // A refresh keeps the old layers while it runs; merging on them replays stale heads.
+          refreshing: stackGate.stack.isPending,
           reference: { ...reference, number: stackTop.number },
           hostLabel: sourceControlClients.get(detail.provider).label,
         }
@@ -540,6 +542,7 @@ export function ThreadDetailsPrRow({
 function ThreadDetailsStackMergeControl({
   environmentId,
   stack,
+  refreshing,
   reference,
   hostLabel,
   mergeMethod,
@@ -547,6 +550,7 @@ function ThreadDetailsStackMergeControl({
 }: {
   environmentId: EnvironmentId;
   stack: PullRequestStack;
+  refreshing: boolean;
   reference: PullRequestRef;
   hostLabel: string;
   mergeMethod: PullRequestMergeMethod;
@@ -573,7 +577,7 @@ function ThreadDetailsStackMergeControl({
               size="sm"
               part="meta"
               tone="primary"
-              disabled={action.mergeDisabled}
+              disabled={refreshing || action.mergeDisabled}
               onClick={() => action.request("merge")}
             />
           }
