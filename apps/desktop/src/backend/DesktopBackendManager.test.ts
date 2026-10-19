@@ -431,17 +431,15 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("reports a backend killed by a signal as a signal exit", () =>
+  it.effect("reports a SIGKILL exit without an exit code", () =>
     Effect.gen(function* () {
-      // The shape Effect's Node spawner fails `exitCode` with when the child
-      // exits with a null code and a signal.
       const exitCause = PlatformError.systemError({
         _tag: "Unknown",
         module: "ChildProcess",
         method: "exitCode",
         cause: new Error("Process interrupted due to receipt of signal: 'SIGKILL'"),
       });
-      const spawnerLayer = Layer.succeed(
+      const layerSpawner = Layer.succeed(
         ChildProcessSpawner.ChildProcessSpawner,
         ChildProcessSpawner.make(() =>
           Effect.succeed(makeProcess({ exitCode: Effect.fail(exitCause) })),
@@ -451,10 +449,9 @@ describe("DesktopBackendManager", () => {
       const exit = yield* DesktopBackendManager.runBackendProcess({
         ...baseConfig,
         desktopTelemetryStream: Stream.empty,
-      }).pipe(Effect.scoped, Effect.provide(Layer.merge(spawnerLayer, healthyHttpClientLayer)));
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHealthyHttpClient)));
 
-      assert.isTrue(Option.isNone(exit.code));
-      assert.equal(exit.reason, "killed by SIGKILL");
+      assert.deepEqual(exit, { code: Option.none(), reason: "killed by SIGKILL" });
     }),
   );
 

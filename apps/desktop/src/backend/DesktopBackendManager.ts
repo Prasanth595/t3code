@@ -178,16 +178,6 @@ export class BackendProcessExitStatusError extends Schema.TaggedError<BackendPro
   }
 }
 
-// Node reports no exit code for a child killed by a signal, so Effect's
-// spawner fails `exitCode` and leaves the signal name only in the cause's
-// message. Returns that signal, or undefined for a genuine read failure.
-const SIGNAL_EXIT_PATTERN = /receipt of signal: '(SIG[A-Z0-9]+)'/;
-function signalFromExitCodeFailure(error: PlatformError.PlatformError): string | undefined {
-  return error.cause instanceof Error
-    ? SIGNAL_EXIT_PATTERN.exec(error.cause.message)?.[1]
-    : undefined;
-}
-
 export const BackendProcessError = Schema.Union([
   BackendProcessBootstrapEncodeError,
   BackendProcessSpawnError,
@@ -578,27 +568,31 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
-    Effect.map((exitCode): BackendProcessExit => ({
+    Effect.map((exitCode) => ({
       code: Option.some(exitCode),
       reason: `code=${exitCode}`,
     })),
     Effect.catch((cause) => {
-      const signal = signalFromExitCodeFailure(cause);
-      return signal === undefined
-        ? Effect.fail(
-            new BackendProcessExitStatusError({
-              executablePath: options.executablePath,
-              entryPath: options.entryPath,
-              cwd: options.cwd,
-              httpBaseUrl: options.httpBaseUrl,
-              pid: Number(handle.pid),
-              cause,
-            }),
-          )
-        : Effect.succeed<BackendProcessExit>({
-            code: Option.none(),
-            reason: `killed by ${signal}`,
-          });
+      // Effect's Node spawner exposes signal exits only through this cause message.
+      const signal =
+        cause.cause instanceof Error
+          ? /^Process interrupted due to receipt of signal: '(SIG[A-Z0-9]+)'$/.exec(
+              cause.cause.message,
+            )?.[1]
+          : undefined;
+      if (signal !== undefined) {
+        return Effect.succeed({ code: Option.none(), reason: `killed by ${signal}` });
+      }
+      return Effect.fail(
+        new BackendProcessExitStatusError({
+          executablePath: options.executablePath,
+          entryPath: options.entryPath,
+          cwd: options.cwd,
+          httpBaseUrl: options.httpBaseUrl,
+          pid: Number(handle.pid),
+          cause,
+        }),
+      );
     }),
     Effect.exit,
   );
