@@ -1748,9 +1748,13 @@ describe("ClaudeAdapterV2 attachments", () => {
           );
           const expectedDocumentPath = path.join(attachmentsDir, attachmentRelativePath(document)!);
           const attachmentNotes = `\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`;
-          const requestBlock = { type: "text", text: expectedText + attachmentNotes };
+          const requestBlock = { type: "text" as const, text: expectedText + attachmentNotes };
           const expectedContent = command
-            ? [requestBlock, expectedImageBlock, { type: "text", text: command + attachmentNotes }]
+            ? [
+                requestBlock,
+                expectedImageBlock,
+                { type: "text" as const, text: command + attachmentNotes },
+              ]
             : [expectedImageBlock, requestBlock];
           assert.deepEqual(offeredMessages[0]?.message.content, expectedContent);
 
