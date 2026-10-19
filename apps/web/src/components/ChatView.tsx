@@ -1853,7 +1853,7 @@ export default function ChatView(props: ChatViewProps) {
         event.altKey &&
         !event.metaKey &&
         !event.shiftKey &&
-        event.key.toLowerCase() === "s" &&
+        (event.code === "KeyS" || event.key.toLowerCase() === "s") &&
         !event.repeat
       ) {
         event.preventDefault();

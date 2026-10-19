@@ -321,3 +321,53 @@ it.effect.each(cases)(
       assert.deepEqual(side.thread.modelSelection, modelSelection);
     }).pipe(Effect.provide(layer)),
 );
+
+it.effect.each(cases)(
+  "refuses existing and deleted SideChat targets without changing $driver conversations",
+  ({ modelSelection, layer }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const source = ThreadId.make("collision-source");
+      const side = ThreadId.make("collision-side");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("collision-create"),
+        threadId: source,
+        projectId: ProjectId.make("side-project"),
+        title: "Preserve me",
+        modelSelection,
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const open = (targetThreadId: ThreadId, suffix: string) =>
+        orchestrator.dispatch({
+          type: "thread.side-chat.create",
+          commandId: CommandId.make(`collision-open:${suffix}`),
+          sourceThreadId: source,
+          targetThreadId,
+          createdBy: "user",
+          creationSource: "web",
+        });
+      yield* open(side, "first");
+      for (const [target, suffix] of [
+        [source, "main"],
+        [side, "side"],
+        [side, "deleted"],
+      ] as const) {
+        if (suffix === "deleted")
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("collision-delete"),
+            threadId: side,
+          });
+        const before = yield* orchestrator.getThreadProjection(target);
+        const error = yield* open(target, suffix).pipe(Effect.flip);
+        assert.equal(error._tag, "OrchestratorThreadAlreadyExistsError");
+        assert.deepEqual(yield* orchestrator.getThreadProjection(target), before);
+      }
+    }).pipe(Effect.provide(layer)),
+);

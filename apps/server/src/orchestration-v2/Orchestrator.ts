@@ -3643,8 +3643,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "thread.side-chat.create" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
+    // As with thread.create, tombstones also reserve their ids.
+    const existing = yield* projectionStore.getThread(command.targetThreadId).pipe(
+      Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: command.targetThreadId, cause }),
+      ),
+    );
+    if (existing !== null)
+      return yield* new OrchestratorThreadAlreadyExistsError({
+        commandId: command.commandId,
+        threadId: command.targetThreadId,
+      });
     const sourceProjection = yield* projectionStore
-      .getThreadProjection(command.sourceThreadId)
+      .getSideChatSource(command.sourceThreadId)
       .pipe(
         Effect.mapError(
           (cause) => new OrchestratorProjectionError({ threadId: command.sourceThreadId, cause }),
