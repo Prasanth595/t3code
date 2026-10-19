@@ -30,8 +30,8 @@ import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  makeTargetedProviderUpdateAction,
   invalidateLatestProviderVersion,
+  makeTargetedProviderUpdateAction,
   resolveLatestProviderUpdateAction,
   resolveLatestProviderVersion,
   type ProviderMaintenanceCommandAction,
@@ -450,8 +450,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             }
 
             const manifest = yield* manifestService.current;
-            // An unpinned update installs whatever the installer offers now,
-            // so the compatibility check reads it fresh, not from the cache.
+            // Check compatibility against what an unpinned command would install now.
             const candidateVersion =
               targetVersion ??
               (yield* invalidateLatestProviderVersion(fresh).pipe(
@@ -513,7 +512,6 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               provider,
               { fresh: true },
             );
-            // Homebrew's "latest" moves once the upgrade lands; read it again.
             yield* invalidateLatestProviderVersion(verified).pipe(
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             );

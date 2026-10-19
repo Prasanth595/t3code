@@ -523,8 +523,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
 
 /**
  * `brew upgrade` capabilities once the keg's prefix is confirmed by a `brew`
- * that reports it as its own, with `latestVersion` from `brew info`. Null when
- * no `brew` is found or it owns another prefix.
+ * that reports it as its own. Version checks defer `brew info` until needed.
+ * Null when no `brew` is found or it owns another prefix.
  */
 export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProviderMaintenance")(
   function* (
@@ -563,8 +563,7 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
       updateArgs: args,
       updateLockKey: "homebrew",
       updateCommand: ["brew", ...args].join(" "),
-      // Homebrew lags npm by hours on every release, so compare against what
-      // `brew upgrade` can actually deliver and never fall back to npm.
+      // Brew's release can lag npm; only its own channel can say what upgrade installs.
       latestVersion: null,
       lookupLatestVersion: runProbe(
         brewPath,
@@ -805,10 +804,6 @@ const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (pack
   return payload ? nonEmptyString(payload.version) : null;
 });
 
-/**
- * The installer's answer depends on what its update command upgrades and
- * through which executable (a brew prefix, a formula or cask), so that is the key.
- */
 function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities) {
   const update = capabilities.update;
   return capabilities.lookupLatestVersion && update
@@ -822,13 +817,7 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
   const installerKey = installerLatestVersionKey(maintenanceCapabilities);
   if (installerKey && maintenanceCapabilities.lookupLatestVersion) {
-    const installerLatest = yield* latestVersions.cached(
-      installerKey,
-      maintenanceCapabilities.lookupLatestVersion,
-    );
-    if (installerLatest !== null) {
-      return installerLatest;
-    }
+    return yield* latestVersions.cached(installerKey, maintenanceCapabilities.lookupLatestVersion);
   }
   if (maintenanceCapabilities.latestVersion !== undefined) {
     return maintenanceCapabilities.latestVersion;
@@ -841,18 +830,12 @@ export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVers
   return yield* latestVersions.cached(packageName, fetchNpmLatestVersion(packageName));
 });
 
-/**
- * Drop every cached latest version these capabilities read, so the next
- * advisory asks the installer and the registry again.
- */
 export const invalidateLatestProviderVersion = Effect.fn("invalidateLatestProviderVersion")(
   function* (maintenanceCapabilities: ProviderMaintenanceCapabilities) {
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-    const installerKey = installerLatestVersionKey(maintenanceCapabilities);
-    if (installerKey) yield* latestVersions.invalidate(installerKey);
-    if (maintenanceCapabilities.packageName) {
-      yield* latestVersions.invalidate(maintenanceCapabilities.packageName);
-    }
+    const key =
+      installerLatestVersionKey(maintenanceCapabilities) ?? maintenanceCapabilities.packageName;
+    if (key) yield* latestVersions.invalidate(key);
   },
 );
 
