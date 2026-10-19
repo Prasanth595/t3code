@@ -27,7 +27,6 @@ const decodeReasoningLevels = Schema.decodeUnknownOption(
   Schema.Array(Schema.Struct({ effort: Schema.NonEmptyString })),
 );
 
-/** Account choices come from OpenAI; its reasoning metadata fills gaps in native capabilities. */
 export const chatGptModels = Effect.fn("chatGptModels")(function* (
   accessToken: string,
   nativeModels: ReadonlyArray<ServerProviderModel>,
@@ -45,30 +44,26 @@ export const chatGptModels = Effect.fn("chatGptModels")(function* (
     .map((model) => {
       const native = nativeModels.find((candidate) => candidate.slug === model.slug);
       let capabilities = native?.capabilities ?? null;
-      const reasoningLevels = Option.getOrUndefined(
-        decodeReasoningLevels(model.supported_reasoning_levels),
-      );
       if (
-        !capabilities?.optionDescriptors?.some(
-          (descriptor) => descriptor.id === "reasoningEffort",
-        ) &&
-        reasoningLevels &&
-        reasoningLevels.length > 0
+        !capabilities?.optionDescriptors?.some((descriptor) => descriptor.id === "reasoningEffort")
       ) {
+        const reasoningLevels = Option.getOrElse(
+          decodeReasoningLevels(model.supported_reasoning_levels),
+          () => [],
+        );
         const reasoningDescriptor = mapCodexReasoningEffortDescriptor({
-          ...(typeof model.default_reasoning_level === "string" && model.default_reasoning_level
+          ...(typeof model.default_reasoning_level === "string"
             ? { defaultReasoningEffort: model.default_reasoning_level }
             : {}),
           supportedReasoningEfforts: reasoningLevels.map((level) => ({
             reasoningEffort: level.effort,
           })),
         });
-        capabilities = createModelCapabilities({
-          optionDescriptors: [
-            ...(reasoningDescriptor ? [reasoningDescriptor] : []),
-            ...(capabilities?.optionDescriptors ?? []),
-          ],
-        });
+        if (reasoningDescriptor) {
+          capabilities = createModelCapabilities({
+            optionDescriptors: [reasoningDescriptor, ...(capabilities?.optionDescriptors ?? [])],
+          });
+        }
       }
       return {
         ...native,
