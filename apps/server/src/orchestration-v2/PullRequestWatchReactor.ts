@@ -424,6 +424,10 @@ export const make = Effect.gen(function* () {
     const last = lastReads.get(group.key);
     const plan = planRead(group, last, fingerprint, now);
     if (!plan.detail) return;
+    if (fingerprint !== null && last?.remarks !== fingerprint.remarks) {
+      // Discard stale tails before reading so a pagination failure cannot reuse them on retry.
+      threadTails.delete(group.key);
+    }
     const reference = referenceOf(group);
     // The reads are recorded against this fingerprint, so a cached answer older than it must not
     // stand in for them. Clients are not told: this only drops this pull request's cached reads.
