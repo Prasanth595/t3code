@@ -261,109 +261,213 @@ describe("CloudManagedEndpointRuntime", () => {
     }),
   );
 
-  it("recognizes QUIC stalls without matching other transport errors", () => {
-    expect(
-      ManagedEndpointRuntime.isQuicStallRelayClientOutput(
-        '2026-10-16T20:29:43Z ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=1 event=0 ip=198.41.192.67',
-      ),
-    ).toBe(true);
-    expect(
-      ManagedEndpointRuntime.isQuicStallRelayClientOutput(
-        '2026-10-16T20:29:41Z ERR Connection terminated error="datagram manager error: timeout: no recent network activity" connIndex=1',
-      ),
-    ).toBe(true);
-    expect(
-      ManagedEndpointRuntime.isQuicStallRelayClientOutput(
-        '2026-10-16T20:30:00Z ERR Register tunnel error from server side error="context deadline exceeded" connIndex=0',
-      ),
-    ).toBe(false);
-  });
+  const tunnelConfig = {
+    providerKind: "cloudflare_tunnel" as const,
+    connectorToken: "token",
+    tunnelId: "tunnel-1",
+  };
+  const quicDialWarning =
+    '2026-10-16T20:29:43Z ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=1\n';
+  const quicDatagramWarning =
+    '2026-10-16T20:29:41Z ERR Connection terminated error="datagram manager error: timeout: no recent network activity" connIndex=1\n';
 
-  const makeStallingSpawner = Effect.gen(function* () {
+  const makeTransportSpawner = Effect.fnUntraced(function* (
+    options: {
+      transport?: string;
+      failSpawn?: number;
+      isRunning?: Effect.Effect<boolean>;
+    } = {},
+  ) {
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        const previous = process.env.TUNNEL_TRANSPORT_PROTOCOL;
+        if (options.transport === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
+        else process.env.TUNNEL_TRANSPORT_PROTOCOL = options.transport;
+        return previous;
+      }),
+      (previous) =>
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env.TUNNEL_TRANSPORT_PROTOCOL;
+          else process.env.TUNNEL_TRANSPORT_PROTOCOL = previous;
+        }),
+    );
     const spawned: Array<ChildProcess.StandardCommand> = [];
     const killed: Array<number> = [];
-    const output = yield* Queue.unbounded<Uint8Array>();
-    const checkpoints = yield* Queue.unbounded<void>();
-    const secondSpawned = yield* Deferred.make<void>();
-    const observedOutput = Stream.fromQueue(output).pipe(
-      Stream.tap((chunk) =>
-        new TextDecoder().decode(chunk) === "checkpoint\n"
-          ? Queue.offer(checkpoints, undefined)
-          : Effect.void,
-      ),
-    );
+    const outputs: Array<Queue.Queue<Uint8Array>> = [];
+    const exits: Array<Deferred.Deferred<ChildProcessSpawner.ExitCode>> = [];
+    const started = yield* Queue.unbounded<number>();
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (!ChildProcess.isStandardCommand(command)) {
-          throw new Error("Expected standard command.");
+          return yield* Effect.die("Expected standard command.");
         }
-        const pid = 800 + spawned.length;
+        const index = spawned.length;
         spawned.push(command);
-        if (spawned.length === 2) yield* Deferred.succeed(secondSpawned, undefined);
-        const handle = makeHandle({
-          pid,
-          onKill: () => {
-            killed.push(pid);
-          },
-          output: pid === 800 ? observedOutput : Stream.empty,
+        if (index === options.failSpawn) {
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "cloudflared temporarily unavailable",
+          });
+        }
+        const output = yield* Queue.unbounded<Uint8Array>();
+        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        outputs[index] = output;
+        exits[index] = exit;
+        const handle = ChildProcessSpawner.makeHandle({
+          ...makeHandle({
+            pid: 800 + index,
+            exitCode: Deferred.await(exit),
+            output: Stream.fromQueue(output),
+            onKill: () => {
+              killed.push(800 + index);
+              Deferred.doneUnsafe(exit, Exit.succeed(ChildProcessSpawner.ExitCode(143)));
+            },
+          }),
+          isRunning: options.isRunning ?? Effect.succeed(true),
         });
         yield* Effect.addFinalizer(() => handle.kill().pipe(Effect.ignore));
+        yield* Queue.offer(started, index);
         return handle;
       }),
     );
-    const stall = (count: number) =>
-      Effect.gen(function* () {
-        const encoder = new TextEncoder();
-        yield* Queue.offer(
-          output,
-          encoder.encode(
-            '2026-10-16T20:29:43Z ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=1\n'.repeat(
-              count,
-            ),
-          ),
-        );
-        yield* Queue.offer(output, encoder.encode("checkpoint\n"));
-        yield* Queue.take(checkpoints);
-      });
-    return { spawner, spawned, killed, secondSpawned, stall };
+    const emit = (index: number, lines: string) =>
+      Queue.offer(outputs[index]!, new TextEncoder().encode(lines));
+    const observe = (
+      runtime: ManagedEndpointRuntime.CloudManagedEndpointRuntime["Service"],
+      index: number,
+      lines = "",
+    ) =>
+      emit(
+        index,
+        lines + "2026-10-16T20:30:00Z INF Registered tunnel connection connIndex=0\n",
+      ).pipe(Effect.andThen(Stream.runHead(runtime.tunnelConnected)));
+    return { spawner, spawned, killed, exits, started, emit, observe };
   });
 
-  it.effect("moves a connector whose QUIC connections keep stalling to HTTP/2", () =>
+  it.effect("falls back after 30 recent QUIC stalls across exits, until the runtime restarts", () =>
     Effect.gen(function* () {
-      const { spawner, spawned, killed, secondSpawned, stall } = yield* makeStallingSpawner;
-      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
-      yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-        tunnelId: "tunnel-1",
-      });
+      const fixture = yield* makeTransportSpawner();
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      expect(fixture.spawned[0]!.args).not.toContain("--protocol");
 
-      yield* stall(30);
-      yield* Deferred.await(secondSpawned);
+      yield* fixture.observe(runtime, 0, quicDialWarning.repeat(20));
+      yield* TestClock.adjust(Duration.minutes(4));
+      yield* fixture.observe(runtime, 0, quicDatagramWarning.repeat(9));
+      yield* TestClock.adjust(Duration.minutes(1));
+      // The first 20 have expired, but the newer nine must survive this restart.
+      yield* Deferred.succeed(fixture.exits[0]!, ChildProcessSpawner.ExitCode(1));
+      expect(yield* Queue.take(fixture.started)).toBe(1);
+      yield* fixture.observe(runtime, 1, quicDialWarning.repeat(20));
+      yield* fixture.observe(
+        runtime,
+        1,
+        '2026-10-16T20:30:00Z ERR Register tunnel error from server side error="context deadline exceeded" connIndex=0\n'.repeat(
+          30,
+        ),
+      );
+      expect(fixture.spawned).toHaveLength(2);
+      expect(fixture.spawned[1]!.args).not.toContain("--protocol");
 
-      expect(spawned[0]!.args).not.toContain("--protocol");
-      expect(spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
-      expect(killed).toEqual([800]);
+      yield* fixture.emit(1, quicDatagramWarning);
+      expect(yield* Queue.take(fixture.started)).toBe(2);
+      yield* fixture.observe(runtime, 2);
+      expect(fixture.killed).toEqual([800, 801]);
+      expect(fixture.spawned[2]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+
+      yield* TestClock.adjust(Duration.seconds(30));
+      yield* Deferred.succeed(fixture.exits[2]!, ChildProcessSpawner.ExitCode(1));
+      expect(yield* Queue.take(fixture.started)).toBe(3);
+      yield* fixture.observe(runtime, 3);
+      expect(fixture.spawned[3]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+      yield* runtime.applyConfig(null);
+      expect(fixture.killed).toEqual([800, 801, 802, 803]);
+
+      const freshRuntime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* freshRuntime.applyConfig(tunnelConfig);
+      expect(yield* Queue.take(fixture.started)).toBe(4);
+      expect(fixture.spawned[4]!.args).not.toContain("--protocol");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("preserves an explicit transport choice despite repeated QUIC stalls", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner({ transport: "quic" });
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      yield* fixture.observe(runtime, 0, quicDialWarning.repeat(30));
+      yield* fixture.observe(runtime, 0, quicDatagramWarning.repeat(30));
+      expect(fixture.spawned).toHaveLength(1);
+      expect(fixture.killed).toEqual([]);
+      expect(fixture.spawned[0]!.args).not.toContain("--protocol");
+      expect(fixture.spawned[0]!.options.env?.TUNNEL_TRANSPORT_PROTOCOL).toBe("quic");
     }),
   );
 
-  it.effect("keeps QUIC when stalls are spread beyond the window", () =>
+  it.effect("requests recovery after a failed HTTP/2 spawn and retries with HTTP/2", () =>
     Effect.gen(function* () {
-      const { spawner, spawned, secondSpawned, stall } = yield* makeStallingSpawner;
-      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
-      yield* runtime.applyConfig({
-        providerKind: "cloudflare_tunnel",
-        connectorToken: "token",
-        tunnelId: "tunnel-1",
-      });
+      const fixture = yield* makeTransportSpawner({ failSpawn: 1 });
+      const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+      yield* runtime.applyConfig(tunnelConfig);
+      expect(yield* Queue.take(fixture.started)).toBe(0);
+      yield* fixture.emit(0, quicDialWarning.repeat(30));
 
-      for (let round = 0; round < 6; round += 1) {
-        yield* stall(10);
-        yield* TestClock.adjust(Duration.minutes(3));
+      const requested = Option.getOrThrow(yield* Stream.runHead(runtime.recoveryRequests));
+      expect(requested).toEqual(tunnelConfig);
+      expect(fixture.killed).toEqual([800]);
+      expect(fixture.spawned).toHaveLength(2);
+      expect(fixture.spawned[1]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+      expect(yield* runtime.applyConfig(requested)).toMatchObject({ status: "running", pid: 802 });
+      yield* fixture.observe(runtime, 2);
+      expect(fixture.spawned[2]!.args.slice(-3)).toEqual(["--protocol", "http2", "run"]);
+    }),
+  );
+
+  it.effect("discards a pending fallback when its connector is replaced or removed", () =>
+    Effect.gen(function* () {
+      for (const nextConfig of [{ ...tunnelConfig, connectorToken: "replacement" }, null]) {
+        yield* Effect.gen(function* () {
+          const checking = yield* Deferred.make<void>();
+          const releaseCheck = yield* Deferred.make<void>();
+          const fixture = yield* makeTransportSpawner({
+            isRunning: Deferred.succeed(checking, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseCheck)),
+              Effect.as(true),
+            ),
+          });
+          const runtime = yield* buildCloudManagedEndpointRuntime(fixture.spawner);
+          yield* runtime.applyConfig(tunnelConfig);
+          yield* fixture.observe(runtime, 0);
+
+          // Hold reconciliation in a process probe so config changes queue before fallback.
+          const probe = yield* runtime.applyConfig(tunnelConfig).pipe(Effect.forkChild);
+          yield* Deferred.await(checking);
+          const change = yield* runtime
+            .applyConfig(nextConfig)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* fixture.observe(runtime, 0, quicDialWarning.repeat(30));
+          yield* Deferred.succeed(releaseCheck, undefined);
+          yield* Fiber.join(probe);
+          yield* Fiber.join(change);
+          yield* TestClock.adjust(Duration.zero);
+
+          expect(fixture.killed).toEqual([800]);
+          expect(fixture.spawned).toHaveLength(nextConfig ? 2 : 1);
+          if (nextConfig) {
+            expect(fixture.spawned[1]!.options.env?.TUNNEL_TOKEN).toBe("replacement");
+            expect(fixture.spawned[1]!.args).not.toContain("--protocol");
+          }
+          yield* runtime.applyConfig(null);
+          // Buffered output and the old exit cannot revive a removed configuration.
+          yield* fixture.emit(0, quicDialWarning.repeat(30));
+          yield* TestClock.adjust(Duration.minutes(5));
+          expect(fixture.spawned).toHaveLength(nextConfig ? 2 : 1);
+          expect(fixture.killed).toEqual(nextConfig ? [800, 801] : [800]);
+        }).pipe(Effect.scoped);
       }
-
-      expect(yield* Deferred.isDone(secondSpawned)).toBe(false);
-      expect(spawned).toHaveLength(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
