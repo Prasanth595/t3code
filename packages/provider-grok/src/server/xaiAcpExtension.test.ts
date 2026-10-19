@@ -79,6 +79,16 @@ describe("xAiPromptCompleteFromSessionUpdate", () => {
     expect(
       xAiPromptCompleteFromSessionUpdate({
         sessionId: "root",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "subagent-completed-00000000-0000-4000-8000-000000000002",
+          stop_reason: "end_turn",
+        },
+      }),
+    ).toBeNull();
+    expect(
+      xAiPromptCompleteFromSessionUpdate({
+        sessionId: "root",
         update: { sessionUpdate: "turn_completed", stop_reason: "end_turn" },
       }),
     ).toBeNull();
@@ -1470,6 +1480,7 @@ describe("XAiAcpExtension", () => {
       childSessionId: "child-session",
       status: "completed",
       result: "SUBAGENT_DONE",
+      willWake: true,
     });
     expect(finished({ status: "failed", error: "tool crashed" })).toMatchObject({
       status: "failed",
@@ -1532,6 +1543,7 @@ describe("XAiAcpExtension", () => {
           childSessionId: "child-session",
           status: "completed",
           result: "SUBAGENT_DONE",
+          willWake: false,
         },
       ]);
 

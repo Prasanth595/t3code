@@ -37,7 +37,7 @@ import {
   extractGrokPlanMarkdownFromToolCallData,
   extractXAiAcpBackgroundToolMutation,
   extractXAiAcpSubagentEndNotice,
-  extractXAiAcpSubagentUpdate,
+  extractXAiAcpSubagentUpdates,
   extractXAiAskUserQuestionIdentity,
   extractXAiAskUserQuestions,
   extractXAiBackgroundTaskCompletion,
@@ -309,7 +309,7 @@ export function makeGrokAcpAdapterFlavor(
           : { class: "provider_error" }),
       }),
     registerExtensions: registerGrokAcpExtensions,
-    extractSubagentUpdate: extractXAiAcpSubagentUpdate,
+    extractSubagentUpdates: extractXAiAcpSubagentUpdates,
     extractSubagentEndNotice: extractXAiAcpSubagentEndNotice,
     normalizeToolCall: normalizeXAiAcpToolCallState,
     extractProposedPlanMarkdown: (toolCall) =>

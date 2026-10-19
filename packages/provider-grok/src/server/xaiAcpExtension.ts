@@ -37,6 +37,7 @@ const XAiSessionUpdateNotification = Schema.Struct({
     status: Schema.optional(Schema.String),
     output: Schema.optional(Schema.NullOr(Schema.String)),
     error: Schema.optional(Schema.NullOr(Schema.String)),
+    will_wake: Schema.optional(Schema.Boolean),
   }),
   _meta: Schema.optional(Schema.Unknown),
 });
@@ -52,6 +53,14 @@ const xAiSessionNotificationMethods = [
 ] as const;
 
 const XAI_TASK_COMPLETED_PROMPT_ID_PREFIX = "task-completed-";
+const XAI_SUBAGENT_COMPLETED_PROMPT_ID_PREFIX = "subagent-completed-";
+
+function isXAiWakePromptId(promptId: string): boolean {
+  return (
+    promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX) ||
+    promptId.startsWith(XAI_SUBAGENT_COMPLETED_PROMPT_ID_PREFIX)
+  );
+}
 
 export function xAiPromptCompleteFromSessionUpdate(
   notification: XAiSessionUpdateNotification,
@@ -61,9 +70,8 @@ export function xAiPromptCompleteFromSessionUpdate(
     return null;
   }
   const promptId = nonEmptyString(update.prompt_id) ?? nonEmptyString(update.promptId);
-  // Require prompt id so we never session-fallback match a background task
-  // completion (`task-completed-*`) or an unrelated CLI turn.
-  if (promptId === undefined || promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX)) {
+  // Background wake ids must never session-fallback match the root prompt.
+  if (promptId === undefined || isXAiWakePromptId(promptId)) {
     return null;
   }
   const stopReason = nonEmptyString(update.stop_reason) ?? nonEmptyString(update.stopReason);
@@ -76,14 +84,15 @@ export function xAiPromptCompleteFromSessionUpdate(
 }
 
 /**
- * Grok answers a finished background command in its own turn, tagging every
- * frame with a `task-completed-*` prompt id instead of the one T3 sent.
+ * Grok answers finished background work in its own turn. Command wakes use a
+ * `task-completed-*` prompt id. Subagent wakes use `subagent-completed-<id>`.
+ * Neither id is the prompt T3 sent.
  */
 export function isXAiTaskCompletedWakeNotification(
   notification: EffectAcpSchema.SessionNotification,
 ): boolean {
   const promptId = notification._meta?.promptId;
-  return typeof promptId === "string" && promptId.startsWith(XAI_TASK_COMPLETED_PROMPT_ID_PREFIX);
+  return typeof promptId === "string" && isXAiWakePromptId(promptId);
 }
 
 interface PendingXAiPromptCompletion {
@@ -321,6 +330,76 @@ export function isXAiPersistentMonitor(toolCall: AcpToolCallState): boolean {
   return rawInput?.persistent === true;
 }
 
+function xAiCleanedTaskOutput(record: Record<string, unknown>): string | null {
+  const structured =
+    nonEmptyString(record.output) ??
+    nonEmptyString(record.text) ??
+    nonEmptyString(record.error) ??
+    decodeByteText(record.output);
+  if (structured === undefined) return null;
+  const cleaned = structured
+    .replace(/<subagent_meta>[\s\S]*?<\/subagent_meta>/gi, "")
+    .replace(/<subagent_result>[\s\S]*?<\/subagent_result>/gi, "")
+    .trim();
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function xAiStatusFromTaskOutputRecord(
+  record: Record<string, unknown>,
+  toolFailed: boolean,
+): "running" | "completed" | "failed" {
+  // An outer failure can belong to a sibling; prefer this row's own outcome.
+  const structuredStatus = nonEmptyString(record.status)?.toLowerCase();
+  if (
+    structuredStatus === "completed" ||
+    structuredStatus === "success" ||
+    structuredStatus === "succeeded"
+  ) {
+    return "completed";
+  }
+  if (
+    structuredStatus === "failed" ||
+    structuredStatus === "error" ||
+    structuredStatus === "cancelled" ||
+    structuredStatus === "canceled" ||
+    structuredStatus === "stopped" ||
+    structuredStatus === "killed"
+  ) {
+    return "failed";
+  }
+  if (structuredStatus === "running" || structuredStatus === "pending") return "running";
+  if (typeof record.exit_code === "number") {
+    return record.exit_code === 0 ? "completed" : "failed";
+  }
+  return toolFailed ? "failed" : "running";
+}
+
+function xAiMultiResultCompletions(toolCall: AcpToolCallState) {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const multi = unknownRecord(rawOutput?.MultiResult) ?? unknownRecord(rawOutput?.multiResult);
+  if (multi === undefined) return undefined;
+  const results = multi.results ?? multi.Results;
+  if (!Array.isArray(results)) return [];
+  return results.flatMap((entry) => {
+    const record = unknownRecord(entry);
+    const taskId = nonEmptyString(record?.task_id) ?? nonEmptyString(record?.taskId);
+    if (
+      record === undefined ||
+      taskId === undefined ||
+      !new RegExp(`^${XAI_UUID_RE}$`, "i").test(taskId)
+    ) {
+      return [];
+    }
+    return [
+      {
+        taskId,
+        status: xAiStatusFromTaskOutputRecord(record, toolCall.status === "failed"),
+        appendOutput: xAiCleanedTaskOutput(record) ?? "",
+      },
+    ];
+  });
+}
+
 export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): ReadonlyArray<{
   readonly taskId: string;
   readonly status: "running" | "completed" | "failed";
@@ -328,6 +407,8 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
 }> {
   const rawInput = unknownRecord(toolCall.data.rawInput);
   if (!isXAiGetSubagentOutputTool(toolCall, rawInput)) return [];
+  const multi = xAiMultiResultCompletions(toolCall);
+  if (multi !== undefined) return multi;
   const text = xAiToolOutputText(toolCall);
   const status = statusFromGetOutputTool(toolCall, text);
   const appendOutput = resultFromGetOutputTool(toolCall, text) ?? "";
@@ -502,14 +583,15 @@ export const registerXAiBackgroundTaskTracking = (
  * A background subagent's end, sent on its PARENT session as `{ sessionUpdate:
  * "subagent_finished", child_session_id, status, output, error }` (grok-build
  * `crates/codegen/xai-grok-shell/src/extensions/notification.rs`
- * `SessionUpdate::SubagentFinished`). Grok follows it with its own `subagent-completed-<id>` wake
- * turn when `will_wake` is true.
+ * `SessionUpdate::SubagentFinished`). With `will_wake`, Grok starts its own
+ * wake only if the parent prompt is already free; otherwise T3 must continue it.
  */
 export interface XAiSubagentFinishedNotice {
   readonly sessionId: string;
   readonly childSessionId: string;
   readonly status: "completed" | "failed" | "cancelled";
   readonly result: string | null;
+  readonly willWake: boolean;
 }
 
 export function xAiSubagentFinishedNotice(
@@ -526,6 +608,7 @@ export function xAiSubagentFinishedNotice(
     childSessionId,
     status,
     result: nonEmptyString(text ?? undefined) ?? null,
+    willWake: update.will_wake === true,
   };
 }
 
@@ -817,6 +900,28 @@ function statusFromGetOutputTool(
   // a task-level terminal status or exit code, the requested task is still
   // running and must remain registered for subsequent polling.
   return "running";
+}
+
+export function extractXAiAcpSubagentUpdates(
+  toolCall: AcpToolCallState,
+): ReadonlyArray<XAiAcpSubagentUpdate> {
+  if (isXAiGetSubagentOutputTool(toolCall, unknownRecord(toolCall.data.rawInput))) {
+    const multi = xAiMultiResultCompletions(toolCall);
+    if (multi !== undefined) {
+      return multi.map(({ taskId, status, appendOutput }) => ({
+        nativeTaskId: toolCall.toolCallId,
+        prompt: "",
+        title: null,
+        model: null,
+        status,
+        childSessionId: taskId,
+        result: appendOutput || null,
+        suppressNormalTool: true,
+      }));
+    }
+  }
+  const single = extractXAiAcpSubagentUpdate(toolCall);
+  return single === undefined ? [] : [single];
 }
 
 /**

@@ -14,6 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
+  CommandId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -73,7 +74,7 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   AcpProviderCapabilitiesV2,
   acpProviderItemNativeId,
@@ -99,6 +100,11 @@ import {
   acpRegistryPromptFailure,
   registerMistralVibeAcpExtensions,
 } from "@t3tools/provider-acp-registry/testing";
+
+import * as Orchestrator from "../Orchestrator.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
+import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
@@ -602,6 +608,562 @@ function makeTurnInput(input: {
     runtimePolicy: input.runtimePolicy,
   };
 }
+
+describe("Grok child results", () => {
+  const firstChild = "019f44a6-4820-7402-925d-bc862ee711dd";
+  const secondChild = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";
+  const monitorId = "019f44b8-8e98-7c80-a40e-df1e26a5f9e3";
+  const makeSession = Effect.fnUntraced(function* () {
+    const path = yield* Path.Path;
+    const instanceId = ProviderInstanceId.make("grok-child-results");
+    const threadId = ThreadId.make("thread-grok-child-results");
+    const promptStarted = yield* Deferred.make<void>();
+    const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+    const promptSettled = yield* Deferred.make<void>();
+    const prompts: Array<Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0]> =
+      [];
+    const requests: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+    const notifications = new Map<string, (payload: unknown) => Effect.Effect<void>>();
+    let sessionUpdate:
+      | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]>[0]
+      | undefined;
+    const adapter = yield* makeGrokAdapterV2({
+      instanceId,
+      settings: DEFAULT_GROK_SETTINGS,
+      environment: {},
+      hostPlatform: "linux",
+      selfInvocation: yield* resolveSelfInvocation(),
+      testHooks: {
+        afterPromptSettledWithBackgroundWork: () =>
+          Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
+      },
+      continuationRequests: {
+        offer: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+          }),
+      },
+      makeRuntime: makeMockRuntime({
+        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        mockAgentPath: yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        ),
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          handleSessionUpdate: (handler) =>
+            Effect.sync(() => {
+              sessionUpdate = handler;
+            }),
+          handleExtNotification: (method, schema, handler) =>
+            Effect.sync(() => {
+              notifications.set(method, (payload) =>
+                Schema.decodeUnknownEffect(schema)(payload).pipe(
+                  Effect.flatMap(handler),
+                  Effect.orDie,
+                ),
+              );
+            }),
+          prompt: (payload) =>
+            Effect.gen(function* () {
+              prompts.push(payload);
+              yield* Deferred.succeed(promptStarted, undefined);
+              return yield* Deferred.await(promptGate);
+            }),
+        }),
+      }),
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("session-grok-child-results"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+    const observed: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+    yield* runtime.events.pipe(
+      Stream.runForEach((event) => {
+        observed.push(event);
+        return Queue.offer(events, event);
+      }),
+      Effect.forkScoped,
+    );
+    const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+    const turn = makeTurnInput({
+      threadId,
+      providerThread,
+      instanceId,
+      runtimePolicy,
+      now: yield* DateTime.now,
+    });
+    yield* runtime.startTurn(turn);
+    yield* Deferred.await(promptStarted);
+    assert.isDefined(sessionUpdate);
+    const update = (value: EffectAcpSchema.SessionNotification["update"]) =>
+      sessionUpdate!({ sessionId: "mock-session-1", update: value });
+    const nextEvent = Effect.fnUntraced(function* (
+      matches: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+    ) {
+      while (true) {
+        const event = yield* Queue.take(events);
+        if (matches(event)) return event;
+      }
+    });
+    const wake = (promptId: string, text: string) =>
+      sessionUpdate!({
+        sessionId: "mock-session-1",
+        _meta: { promptId },
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      });
+    const startFollowup = (
+      ordinal: number,
+      message: ProviderAdapter.ProviderAdapterV2TurnInput["message"],
+    ) =>
+      runtime.startTurn({
+        ...turn,
+        runId: RunId.make(`run-grok-child-results-${ordinal}`),
+        runOrdinal: ordinal,
+        providerTurnOrdinal: ordinal,
+        attemptId: RunAttemptId.make(`attempt-grok-child-results-${ordinal}`),
+        rootNodeId: NodeId.make(`node-grok-child-results-${ordinal}`),
+        message,
+      });
+    const spawn = (id: string, title: string) =>
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: `spawn-${id}`,
+        title: "spawn_subagent",
+        status: "completed",
+        rawInput: { prompt: `Run ${title}`, description: title },
+        rawOutput: { type: "Text", text: `Subagent started in background.\nsubagent_id: ${id}` },
+      });
+    const finish = (id: string, output: string) =>
+      notifications.get("_x.ai/session_notification")!({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "subagent_finished",
+          child_session_id: id,
+          status: "completed",
+          output,
+          will_wake: true,
+        },
+      });
+    const waitAll = (
+      id: string,
+      rows: ReadonlyArray<Record<string, unknown>>,
+      taskIds: ReadonlyArray<string>,
+      status: "completed" | "failed" = "completed",
+    ) =>
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: id,
+        title: "get_command_or_subagent_output",
+        status,
+        rawInput: { task_ids: taskIds },
+        rawOutput: { type: "TaskOutput", MultiResult: { mode: "wait_all", results: rows } },
+      });
+    const settle = Effect.gen(function* () {
+      yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
+      const event = yield* nextEvent((event) => event.type === "turn.terminal");
+      assert.equal(event.type === "turn.terminal" && event.status, "completed");
+    });
+    return {
+      adapter,
+      runtime,
+      turn,
+      prompts,
+      requests,
+      observed,
+      update,
+      spawn,
+      finish,
+      waitAll,
+      nextEvent,
+      wake,
+      startFollowup,
+      settleWithRunningChild: Deferred.succeed(promptGate, { stopReason: "end_turn" }).pipe(
+        Effect.andThen(Deferred.await(promptSettled)),
+      ),
+      settle,
+    };
+  });
+
+  it.effect(
+    "settles mixed wait_all children independently and keeps command monitors out of child threads",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* makeSession();
+        yield* session.spawn(firstChild, "Review");
+        yield* session.spawn(secondChild, "Tests");
+        yield* session.update({
+          sessionUpdate: "tool_call",
+          toolCallId: "monitor",
+          title: "Monitor",
+          kind: "execute",
+          status: "completed",
+          rawInput: { variant: "Monitor", command: "npm test" },
+          rawOutput: { type: "Monitor", task_id: monitorId },
+        });
+        yield* session.waitAll(
+          "mixed",
+          [
+            { task_id: firstChild, status: "completed", output: "REVIEW_DONE" },
+            { task_id: secondChild, status: "running", output: "TESTS_RUNNING" },
+            { task_id: monitorId, exit_code: 0, output: "COMMAND_DONE" },
+            { task_id: "invalid", status: "completed", output: "INVALID" },
+          ],
+          [firstChild, secondChild, monitorId, "019f44c0-1111-7222-8333-444455556666"],
+          "failed",
+        );
+        yield* session.update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Mixed poll received." },
+        });
+        yield* session.nextEvent(
+          (event) =>
+            event.type === "message.updated" && event.message.text === "Mixed poll received.",
+        );
+        const children = session.observed.flatMap((event) =>
+          event.type === "subagent.updated" ? [event.subagent] : [],
+        );
+        const latest = new Map(children.map((child) => [child.title, child]));
+        assert.equal(latest.size, 2, "invalid, absent and monitor rows must not create children");
+        assert.equal(latest.get("Review")?.status, "completed");
+        assert.equal(latest.get("Review")?.result, "REVIEW_DONE");
+        assert.equal(latest.get("Tests")?.status, "running");
+        yield* session.waitAll(
+          "last-child",
+          [{ task_id: secondChild, exit_code: 0, output: "TESTS_DONE" }],
+          [secondChild],
+          "failed",
+        );
+        const completed = yield* session.nextEvent(
+          (event) => event.type === "subagent.updated" && event.subagent.result === "TESTS_DONE",
+        );
+        assert.equal(
+          completed.type === "subagent.updated" && completed.subagent.status,
+          "completed",
+        );
+        yield* session.finish(secondChild, "TESTS_DONE");
+        yield* session.waitAll(
+          "stale-poll",
+          [{ task_id: secondChild, status: "running" }],
+          [secondChild],
+        );
+        yield* session.settle;
+        assert.lengthOf(session.requests, 0, "tool results were already delivered to the parent");
+        assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "delivers unobserved will_wake results in one parent prompt and excludes results already read by tools",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* makeSession();
+        const observedChild = "019f44c0-1111-7222-8333-444455556666";
+        for (const [id, title] of [
+          [firstChild, "Review"],
+          [secondChild, "Tests"],
+          [observedChild, "Already read"],
+        ] as const) {
+          yield* session.spawn(id, title);
+        }
+        yield* session.finish(firstChild, "REVIEW_DONE");
+        yield* session.finish(secondChild, "TESTS_DONE");
+        yield* session.finish(observedChild, "ALREADY_READ");
+        yield* session.waitAll(
+          "read-child",
+          [{ task_id: observedChild, status: "completed", output: "ALREADY_READ" }],
+          [observedChild],
+        );
+        assert.lengthOf(session.requests, 0, "the original parent prompt is still open");
+        yield* session.settle;
+        assert.lengthOf(session.requests, 1);
+        const request = session.requests[0]!;
+        assert.equal(request.delivery, "message_text");
+        assert.include(request.detail, 'Subagent "Review" completed.');
+        assert.include(request.detail, 'Subagent "Tests" completed.');
+        assert.notInclude(request.detail, "ALREADY_READ");
+        yield* session.runtime.startTurn({
+          ...session.turn,
+          runId: RunId.make("run-grok-child-continuation"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-grok-child-continuation"),
+          rootNodeId: NodeId.make("node-grok-child-continuation"),
+          message: {
+            createdBy: "agent",
+            creationSource: "server",
+            messageId: request.messageId!,
+            text: request.detail!,
+            attachments: [],
+          },
+        });
+        yield* session.nextEvent((event) => event.type === "turn.terminal");
+        assert.lengthOf(session.prompts, 2);
+        const delivered = session.prompts[1]!.prompt.flatMap((part) =>
+          part.type === "text" ? [part.text] : [],
+        ).join("\n");
+        assert.include(delivered, "REVIEW_DONE");
+        assert.include(delivered, "TESTS_DONE");
+        assert.notInclude(delivered, "ALREADY_READ");
+        assert.lengthOf(session.requests, 1, "the continuation must not offer itself again");
+        assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const makeMixedWakeSession = Effect.fnUntraced(function* () {
+    const session = yield* makeSession();
+    yield* session.spawn(firstChild, "Review");
+    yield* session.spawn(secondChild, "Tests");
+    yield* session.finish(firstChild, "REVIEW_DONE");
+    yield* session.settleWithRunningChild;
+    assert.lengthOf(session.requests, 0, "the running sibling still holds the root turn");
+    yield* session.finish(secondChild, "TESTS_DONE");
+    yield* session.wake(`subagent-completed-${secondChild}`, "NATIVE_TESTS_DONE");
+    yield* session.nextEvent((event) => event.type === "turn.terminal");
+    assert.lengthOf(session.requests, 1);
+    const request = session.requests[0]!;
+    assert.equal(request.delivery, "message_text");
+    assert.include(request.detail, "REVIEW_DONE");
+    assert.notInclude(request.detail, "TESTS_DONE");
+    return { ...session, request };
+  });
+
+  it.effect("delivers held child result text after an earlier provider continuation", () =>
+    Effect.gen(function* () {
+      const session = yield* makeMixedWakeSession();
+      // A previously queued native continuation can start before this text offer is consumed.
+      yield* session.startFollowup(2, {
+        createdBy: "agent",
+        creationSource: "provider",
+        messageId: MessageId.make("message-grok-earlier-native-continuation"),
+        text: "Background activity updated.",
+        attachments: [],
+      });
+      yield* TestClock.adjust("3 seconds");
+      const nativeTerminal = yield* session.nextEvent(
+        (event) => event.type === "turn.terminal" && event.runOrdinal === 2,
+      );
+      assert.equal(nativeTerminal.type === "turn.terminal" && nativeTerminal.status, "completed");
+      assert.lengthOf(session.prompts, 1, "the native continuation attaches without prompting");
+
+      yield* session.startFollowup(3, {
+        createdBy: "agent",
+        creationSource: "server",
+        messageId: session.request.messageId!,
+        text: session.request.detail!,
+        attachments: [],
+      });
+      const textTerminal = yield* session.nextEvent(
+        (event) => event.type === "turn.terminal" && event.runOrdinal === 3,
+      );
+      assert.equal(textTerminal.type === "turn.terminal" && textTerminal.status, "completed");
+      const delivered = session.prompts
+        .slice(1)
+        .flatMap((prompt) =>
+          prompt.prompt.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+        )
+        .join("\n");
+      assert.include(delivered, "REVIEW_DONE", "the held child result must still reach the model");
+      assert.lengthOf(session.prompts, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("drains a native wake alongside child result text and remains wakeable", () =>
+    Effect.gen(function* () {
+      const session = yield* makeMixedWakeSession();
+      assert.isDefined(session.request.dispatchIfCurrent);
+      assert.isTrue(Option.isSome(yield* session.request.dispatchIfCurrent!(Effect.void)));
+      const messageId =
+        session.request.messageId ?? MessageId.make("message-grok-mixed-continuation");
+      yield* session.startFollowup(2, {
+        createdBy: "agent",
+        creationSource: "server",
+        messageId,
+        text: session.request.detail!,
+        attachments: [],
+      });
+      yield* session.nextEvent((event) => event.type === "turn.terminal" && event.runOrdinal === 2);
+      assert.lengthOf(session.prompts, 2);
+      const delivered = session.prompts[1]!.prompt.flatMap((part) =>
+        part.type === "text" ? [part.text] : [],
+      ).join("\n");
+      assert.include(delivered, "REVIEW_DONE");
+      assert.notInclude(delivered, "TESTS_DONE");
+
+      const offersBeforeLaterWake = session.requests.length;
+      // The handler returning is a barrier even when a stuck latch suppresses the next offer.
+      yield* session.wake("task-completed-later", "LATER_NATIVE_WAKE");
+      assert.deepEqual(
+        {
+          nativeOutputDelivered: session.observed.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.role === "assistant" &&
+              event.message.runId === RunId.make("run-grok-child-results-2") &&
+              event.message.text.includes("NATIVE_TESTS_DONE"),
+          ),
+          laterWakeOffered: session.requests.length > offersBeforeLaterWake,
+        },
+        { nativeOutputDelivered: true, laterWakeOffered: true },
+      );
+      assert.equal(session.requests.at(-1)?.delivery, "adapter_buffered");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "invalidates held and durably queued child result text on a user turn while retaining native wake output",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* makeMixedWakeSession();
+        assert.isDefined(session.request.dispatchIfCurrent);
+        const userMessageId = MessageId.make("message-grok-new-user-turn");
+        // Hold the effect worker at the durable starting boundary, before adapter.startTurn.
+        const queuedMessages = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = session.turn.threadId;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-grok-queued-wake"),
+            threadId,
+            projectId: session.turn.appThread.projectId,
+            title: "Queued Grok wake",
+            modelSelection: session.turn.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("dispatch-grok-new-user"),
+            threadId,
+            messageId: userMessageId,
+            text: "A new user request.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const starting = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            starting.runs.map((run) => run.status),
+            ["starting"],
+          );
+          const dispatched = yield* Deferred.make<void>();
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...session.request,
+            dispatchIfCurrent: (effect) =>
+              session.request.dispatchIfCurrent!(effect).pipe(
+                Effect.ensuring(Deferred.succeed(dispatched, undefined)),
+              ),
+          });
+          yield* Deferred.await(dispatched);
+          const persisted = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            persisted.runs.map((run) => run.status),
+            ["starting", "queued"],
+          );
+          const queuedRun = queuedRunsInDeliveryOrder(persisted)[0]!;
+          assert.equal(queuedRun.userMessageId, session.request.messageId);
+          const wake = persisted.messages.find(
+            (message) => message.id === queuedRun.userMessageId,
+          )!;
+          const user = persisted.messages.find((message) => message.id === userMessageId)!;
+          assert.equal(wake.creationSource, "server");
+          assert.include(wake.text, "REVIEW_DONE");
+          return { user, wake };
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              ProviderContinuationRequests.layer,
+              ProviderReplayHarness.layerWithRegistry(
+                { name: "grok-queued-wake" },
+                ProviderAdapterRegistry.layerFromAdapters([session.adapter]),
+                { runEffectWorker: false, runContinuationWorker: true },
+              ),
+            ),
+          ),
+        );
+        assert.lengthOf(session.prompts, 1, "durable dispatch has not started the user prompt");
+        yield* session.startFollowup(2, {
+          ...queuedMessages.user,
+          messageId: queuedMessages.user.id,
+        });
+        let staleTextDispatched = false;
+        const staleDispatch = yield* session.request.dispatchIfCurrent!(
+          Effect.sync(() => {
+            staleTextDispatched = true;
+          }),
+        );
+        yield* session.nextEvent(
+          (event) => event.type === "turn.terminal" && event.runOrdinal === 2,
+        );
+        assert.lengthOf(session.prompts, 2);
+        assert.notInclude(JSON.stringify(session.prompts[1]!.prompt), "REVIEW_DONE");
+
+        // Consume the persisted FIFO wake after the user turn, without consulting the old offer.
+        yield* session.startFollowup(3, {
+          ...queuedMessages.wake,
+          messageId: queuedMessages.wake.id,
+        });
+        yield* session.nextEvent(
+          (event) => event.type === "turn.terminal" && event.runOrdinal === 3,
+        );
+        const promptsBeforeDrain = session.prompts.length;
+        yield* session.startFollowup(4, {
+          createdBy: "agent",
+          creationSource: "provider",
+          messageId: MessageId.make("message-grok-native-drain"),
+          text: "Background task completed.",
+          attachments: [],
+        });
+        // A following chunk lets a lost buffer fail by assertion instead of waiting for its text.
+        yield* session.update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Drain barrier." },
+        });
+        yield* session.nextEvent(
+          (event) =>
+            event.type === "message.updated" && event.message.text.endsWith("Drain barrier."),
+        );
+        assert.isTrue(
+          session.observed.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.role === "assistant" &&
+              event.message.runId !== session.turn.runId &&
+              event.message.text.includes("NATIVE_TESTS_DONE"),
+          ),
+          "invalidating stale text must retain native wake output for delivery",
+        );
+        assert.lengthOf(
+          session.prompts,
+          promptsBeforeDrain,
+          "native output drains without another prompt",
+        );
+        assert.deepEqual(
+          { stillCurrent: Option.isSome(staleDispatch), staleTextDispatched },
+          { stillCurrent: false, staleTextDispatched: false },
+        );
+        assert.notInclude(
+          JSON.stringify(session.prompts.slice(1).map((prompt) => prompt.prompt)),
+          "REVIEW_DONE",
+          "a durably queued child result must not prompt stale detail after the user turn",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+});
 
 describe("AcpAdapterV2", () => {
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
