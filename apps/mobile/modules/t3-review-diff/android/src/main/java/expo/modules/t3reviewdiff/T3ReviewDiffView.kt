@@ -480,6 +480,9 @@ internal data class DiffRow(
   val commentSectionTitle: String
 ) {
   val resolvedFileId: String get() = fileId.ifEmpty { id }
+
+  // Rows are decoded off-thread; drawing must not rescan long lines to classify them.
+  val isAscii: Boolean = content.all { it in ' '..'~' }
 }
 
 internal data class DiffWordDiffRange(
@@ -714,6 +717,7 @@ private class DiffCanvasView(context: Context) : View(context) {
     },
   )
   private var rowOffsets = intArrayOf(0)
+  private var fileHeaderIndices = intArrayOf()
 
   private var codeWrap = CodeWrapLayout.NONE
   private var verticalOffset = 0
@@ -723,8 +727,9 @@ private class DiffCanvasView(context: Context) : View(context) {
   var rows: List<DiffRow> = emptyList()
     set(value) {
       field = value
+      fileHeaderIndices = value.indices.filter { value[it].kind == "file" }.toIntArray()
       headerPathOffsetsByFileId.keys.retainAll(
-        value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
+        fileHeaderIndices.map { value[it].resolvedFileId }.toSet(),
       )
       rebuildOffsets()
     }
@@ -1244,7 +1249,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       drawing.configureCodePaint(theme.text, 0, style)
       drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(canvas, row.content, tokensByRowId[row.id], codeX, baseline, style, lines)
+      drawing.drawCode(canvas, row, tokensByRowId[row.id], codeX, baseline, style, lines)
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)
@@ -1290,11 +1295,11 @@ private class DiffCanvasView(context: Context) : View(context) {
   @Suppress("ReturnCount")
   private fun stickyFileHeader(firstVisibleIndex: Int): StickyFileHeader? {
     if (rows.isEmpty()) return null
-    val fileIndex = (firstVisibleIndex.coerceIn(0, rows.lastIndex) downTo 0)
-      .firstOrNull { rows[it].kind == "file" }
-      ?: return null
+    val match = fileHeaderIndices.binarySearch(firstVisibleIndex.coerceIn(0, rows.lastIndex))
+    val position = if (match >= 0) match else -match - 2
+    val fileIndex = fileHeaderIndices.getOrNull(position) ?: return null
     val headerHeight = rowHeight(rows[fileIndex])
-    val nextFileIndex = ((fileIndex + 1)..rows.lastIndex).firstOrNull { rows[it].kind == "file" }
+    val nextFileIndex = fileHeaderIndices.getOrNull(position + 1)
     val top = nextFileIndex
       ?.let { min(0, rowOffsets[it] - verticalOffset - headerHeight) }
       ?: 0

@@ -1,12 +1,15 @@
 package expo.modules.t3reviewdiff
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.Spanned
 import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
+import android.view.View
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
@@ -14,6 +17,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -139,6 +143,78 @@ class ReviewDiffCodeLayoutTest {
     val span = text.getSpans(0, text.length, BackgroundColorSpan::class.java).single()
     assertEquals(3, text.getSpanStart(span))
     assertEquals(21, text.getSpanEnd(span))
+  }
+
+  @Test
+  fun clippedAsciiMatchesVisibleTextAcrossWrapAndTokenBoundaries() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val prefix = "const value = 123; ".repeat(30)
+    val cases = listOf(false to "regular", true to "regular", false to "medium", true to "medium")
+    for ((wrap, weight) in cases) {
+      val content = prefix.repeat(if (weight == "regular") 1_000 else 2)
+      val tokens =
+        listOf(DiffToken(content.take(350), null, 0), DiffToken(content.drop(350), null, 0))
+          .takeIf { weight == "regular" }
+      val style = DiffStyle.defaults(1f).copy(wordWrap = wrap, codeFontWeight = weight)
+      drawing.configureCodePaint(drawing.theme.text, 0, style)
+      val codePaint = TextPaint(drawing.textPaint)
+      val singleLine = CodeWrapLayout.NONE.lines("line")
+      val lines = if (wrap) createCodeLines(prefix, codePaint, 180) else singleLine
+      val expected = Bitmap.createBitmap(200, 100, Bitmap.Config.ARGB_8888)
+      val actual = Bitmap.createBitmap(200, 100, Bitmap.Config.ARGB_8888)
+      val x = if (wrap) 0f else -173f
+      val baseline = if (wrap) -170f else 30f
+      val expectedCanvas = Canvas(expected)
+      for (line in lines.starts.indices) {
+        val text = prefix.substring(lines.starts[line], lines.end(line, prefix.length))
+        expectedCanvas.drawText(text, x, baseline + line * lines.height, codePaint)
+      }
+      val canvas = object : Canvas(actual) {
+        override fun drawText(
+          text: String,
+          start: Int,
+          end: Int,
+          x: Float,
+          y: Float,
+          paint: Paint
+        ) {
+          if (weight == "regular") assertTrue("Offscreen text reached Canvas", end - start < 100)
+          super.drawText(text, start, end, x, y, paint)
+        }
+      }
+      val fullLines = if (wrap) createCodeLines(content, codePaint, 180) else lines
+      drawing.drawCode(canvas, row(content), tokens, x, baseline, style, fullLines)
+      assertTrue("wrap=$wrap weight=$weight", actual.sameAs(expected))
+      actual.recycle()
+      expected.recycle()
+    }
+  }
+
+  @Test
+  fun stickyHeadersDoNotReadOffscreenRowsWhileDrawing() {
+    val type = Class.forName("expo.modules.t3reviewdiff.DiffCanvasView")
+    val constructor = type.getDeclaredConstructor(Context::class.java).apply { isAccessible = true }
+    val view = constructor.newInstance(RuntimeEnvironment.getApplication()) as View
+    view.layout(0, 0, 200, 200)
+    val header = row("").copy(kind = "file")
+    val source = listOf(header) + List(10_000) { row("x") } + header
+    var reads = 0
+    val rows = object : AbstractList<DiffRow>() {
+      override val size: Int get() = source.size
+      override fun get(index: Int): DiffRow = source[index].also { reads += 1 }
+    }
+    type.getDeclaredMethod("setRows", List::class.java).apply {
+      isAccessible = true
+    }.invoke(view, rows)
+    val top = type.getDeclaredMethod("rowTop", Int::class.java).apply {
+      isAccessible = true
+    }.invoke(view, 5_000)
+    type.getDeclaredMethod("setVerticalOffset", Int::class.java).apply {
+      isAccessible = true
+    }.invoke(view, top)
+    reads = 0
+    view.draw(Canvas(Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888)))
+    assertTrue("Drawing read $reads rows", reads < 100)
   }
 
   private fun row(content: String) = DiffRow(

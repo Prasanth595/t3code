@@ -6,10 +6,13 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
+import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -273,7 +276,7 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   @Suppress("LongParameterList")
   fun drawCode(
     canvas: Canvas,
-    content: String,
+    row: DiffRow,
     tokens: List<DiffToken>?,
     codeX: Float,
     baseline: Float,
@@ -288,13 +291,20 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       canvas.restore()
       return
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(content, null, 0)) else tokens
-    var line = 0
+    val runs = tokens.orEmpty().ifEmpty { listOf(DiffToken(row.content, null, 0)) }
+    val clip = canvas.clipBounds
+    var line = ceil(
+      (clip.top - baseline - textPaint.fontMetrics.descent) / max(1, lines.height),
+    ).toInt().coerceIn(0, lines.starts.lastIndex)
     var x = codeX
     var column = 0
     runs.forEach { run ->
+      if (run.content.isEmpty()) return@forEach
       configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-      var start = 0
+      // Android's style fallbacks can be proportional; only slice known monospace faces.
+      val fixedPitch = row.isAscii && ReviewDiffTypefaces.isFixedPitch(textPaint.typeface)
+      val characterWidth = if (fixedPitch) textPaint.measureText("M") else 0f
+      var start = max(0, lines.starts[line] - column)
       while (start < run.content.length) {
         while (line + 1 < lines.starts.size && lines.starts[line + 1] <= column + start) {
           line += 1
@@ -302,15 +312,43 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         }
         val end = min(run.content.length, lines.end(line, Int.MAX_VALUE) - column)
         val lineBaseline = baseline + line * lines.height
-        if (lineBaseline + textPaint.fontMetrics.descent >= canvas.clipBounds.top &&
-          lineBaseline + textPaint.fontMetrics.ascent <= canvas.clipBounds.bottom
+        val metrics = textPaint.fontMetrics
+        // Keep Unicode's per-run visibility checks when fallback font metrics differ.
+        if (row.isAscii && lineBaseline + metrics.ascent > clip.bottom) return
+        if (lineBaseline + metrics.descent >= clip.top &&
+          lineBaseline + metrics.ascent <= clip.bottom
         ) {
-          canvas.drawText(run.content, start, end, x, lineBaseline, textPaint)
-          x += textPaint.measureText(run.content, start, end)
+          x += canvas.drawRun(clip, run.content, start, end, x, lineBaseline, characterWidth)
         }
         start = end
       }
       column += run.content.length
+    }
+  }
+
+  @Suppress("LongParameterList")
+  private fun Canvas.drawRun(
+    clip: Rect,
+    content: String,
+    start: Int,
+    end: Int,
+    x: Float,
+    baseline: Float,
+    characterWidth: Float
+  ): Float {
+    var first = start
+    var last = end
+    if (characterWidth > 0) {
+      first += max(0, floor((clip.left - x) / characterWidth).toInt() - 1)
+      last = min(end, start + ceil((clip.right - x) / characterWidth).toInt() + 1)
+    }
+    if (first < last) {
+      val drawX = x + (first - start) * characterWidth
+      drawText(content, first, last, drawX, baseline, textPaint)
+    }
+    return when {
+      characterWidth > 0 -> (end - start) * characterWidth
+      else -> textPaint.measureText(content, start, end)
     }
   }
 
@@ -396,6 +434,8 @@ private object ReviewDiffTypefaces {
   val regular: Typeface = Typeface.create("monospace", Typeface.NORMAL)
   private val medium: Typeface = Typeface.create("monospace-medium", Typeface.NORMAL)
   val bold: Typeface = Typeface.create("monospace", Typeface.BOLD)
+
+  fun isFixedPitch(typeface: Typeface) = typeface == regular || typeface == bold
 
   fun forWeight(weight: String): Typeface = when (weight.lowercase()) {
     "medium", "semibold", "semi-bold" -> medium
