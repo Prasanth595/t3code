@@ -14,23 +14,12 @@ interface HighlightedBlock {
 
 const composerCodeBlockHighlightKey = new PluginKey<DecorationSet>("composerCodeBlockHighlight");
 
-/**
- * Any edit changes a block's signature, so each keystroke re-tokenizes the
- * whole block synchronously on the main thread: a few milliseconds for a couple
- * of hundred lines, but ~80ms at a thousand, which stalls typing.
- */
+// Tokenizing larger fences can stall the main thread.
 export const MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH = 20_000;
 
-/**
- * Any edit changes a block's signature, so a fence would be re-tokenized on
- * every keystroke. Past this many characters (about 60 lines) that costs more
- * than a few milliseconds, and a frame by 150 lines, so while such a fence is
- * being typed in it keeps the colors it had, moved with its text, and is
- * re-tokenized once typing pauses. Shorter fences still repaint per keystroke.
- */
-export const DEFERRED_HIGHLIGHT_CODE_BLOCK_LENGTH = 2_000;
-/** How long typing pauses before a long fence is re-tokenized. */
-export const DEFERRED_HIGHLIGHT_DELAY_MS = 300;
+// Keep mapped colors while typing in long fences, then refresh after a pause.
+const DEFERRED_HIGHLIGHT_CODE_BLOCK_LENGTH = 2_000;
+const DEFERRED_HIGHLIGHT_DELAY_MS = 300;
 
 export function shouldHighlightCodeBlock(code: string): boolean {
   return code.length <= MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH;
@@ -94,12 +83,7 @@ export function composerCodeBlockHighlight(options: {
             let scannedDoc: ProseMirrorNode | null = null;
             let deferredRefresh: ReturnType<typeof setTimeout> | undefined;
 
-            /**
-             * Returning early when nothing is pending is what stops the
-             * dispatch below from re-triggering this on its own update.
-             * `deferLong` holds back the fences too long to tokenize per
-             * keystroke until typing pauses.
-             */
+            // Repaint dispatches and selection changes must not restart the debounce.
             const refresh = (deferLong: boolean) => {
               const theme = options.resolveTheme();
               const themeChanged = theme !== paintedTheme;
@@ -110,7 +94,8 @@ export function composerCodeBlockHighlight(options: {
               clearTimeout(deferredRefresh);
               scannedDoc = view.state.doc;
               const blocks = collectCodeBlocks(view.state);
-              live = new Set(blocks.map(({ node }) => blockSignature(node, theme)));
+              const signatures = new Set(blocks.map(({ node }) => blockSignature(node, theme)));
+              live = signatures;
               for (const signature of cache.keys()) {
                 if (!live.has(signature)) cache.delete(signature);
               }
@@ -119,11 +104,12 @@ export function composerCodeBlockHighlight(options: {
                   shouldHighlightCodeBlock(node.textContent) &&
                   !cache.has(blockSignature(node, theme)),
               );
-              const pending = deferLong
-                ? missing.filter(
-                    ({ node }) => node.textContent.length <= DEFERRED_HIGHLIGHT_CODE_BLOCK_LENGTH,
-                  )
-                : missing;
+              const pending =
+                deferLong && !themeChanged
+                  ? missing.filter(
+                      ({ node }) => node.textContent.length <= DEFERRED_HIGHLIGHT_CODE_BLOCK_LENGTH,
+                    )
+                  : missing;
               if (pending.length < missing.length) {
                 deferredRefresh = setTimeout(() => {
                   scannedDoc = null;
@@ -144,10 +130,10 @@ export function composerCodeBlockHighlight(options: {
                   const language =
                     languageOfInfoString(String(node.attrs.language ?? "")) || "text";
                   const signature = blockSignature(node, theme);
-                  // A highlighter that fails to load leaves the block plain, held
-                  // as a result so the colors it had before an edit do not stay.
+                  // Cache failure as plain text to clear retained colors.
                   const highlighter = await getSyntaxHighlighterPromise(language).catch(() => null);
-                  if (disposed || cache.has(signature) || !live.has(signature)) return;
+                  // An older request must not bypass the debounce if its text returns.
+                  if (disposed || live !== signatures || cache.has(signature)) return;
                   cache.set(signature, {
                     signature,
                     decorations: highlighter
@@ -156,7 +142,7 @@ export function composerCodeBlockHighlight(options: {
                   });
                 }),
               ).then(() => {
-                if (disposed) return;
+                if (disposed || live !== signatures) return;
                 view.dispatch(view.state.tr.setMeta(composerCodeBlockHighlightKey, true));
               });
             };
@@ -226,9 +212,7 @@ function buildDecorations(
     if (!shouldHighlightCodeBlock(node.textContent)) continue;
     const highlighted = cache.get(blockSignature(node, theme));
     if (!highlighted) {
-      // Edited and not yet re-tokenized: keep the colors the block had, which
-      // the transaction has already moved along with its text. A token split
-      // across two blocks would otherwise color both, and what lies between.
+      // A mapped token can span split fences and the paragraph between them.
       const start = pos + 1;
       const end = start + node.content.size;
       for (const decoration of previous.find(start, end)) {
@@ -257,7 +241,7 @@ function buildDecorations(
   return DecorationSet.create(state.doc, decorations);
 }
 
-/** The color rides in the spec too, so a kept decoration can be cut to its block. */
+// Keep the color available when clipping mapped decorations to a fence.
 function colorDecoration(from: number, to: number, color: string): Decoration {
   return Decoration.inline(from, to, { style: `color:${color}` }, { color });
 }

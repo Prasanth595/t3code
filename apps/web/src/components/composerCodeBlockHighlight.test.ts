@@ -17,7 +17,7 @@ import {
 
 vi.mock("~/lib/syntaxHighlighting", () => ({ getSyntaxHighlighterPromise: vi.fn() }));
 
-const THEME = "github-dark" as DiffThemeName;
+const THEME = "pierre-dark" as DiffThemeName;
 
 function fakeHighlighter(colorFor: (content: string) => string | undefined) {
   return {
@@ -146,7 +146,7 @@ describe("highlighting edited fences", () => {
     vi.unstubAllGlobals();
   });
 
-  async function mountFence(text: string) {
+  async function mountFence(text: string, resolveTheme = () => THEME) {
     vi.useFakeTimers();
     const highlighter = fakeHighlighter((content) =>
       content.startsWith("x") ? "#ff0000" : undefined,
@@ -157,7 +157,7 @@ describe("highlighting edited fences", () => {
       extensions: [
         StarterKit.configure({ codeBlock: false, trailingNode: false }),
         ComposerCodeBlockExtension,
-        composerCodeBlockHighlight({ resolveTheme: () => THEME }),
+        composerCodeBlockHighlight({ resolveTheme }),
       ],
       content: {
         type: "doc",
@@ -233,6 +233,47 @@ describe("highlighting edited fences", () => {
 
     expect(fence.tokenize).toHaveBeenCalledTimes(2);
     expect(fence.colored()).toEqual(["x", "x"]);
+  });
+
+  it("ignores a pending highlight when its text is edited away and restored", async () => {
+    const fence = await mountFence(`x ${"y".repeat(1_999)}`);
+    const staleHighlighter = fakeHighlighter(() => "#00ff00");
+    const staleTokenize = vi.spyOn(staleHighlighter, "codeToTokens");
+    let finishLoading!: () => void;
+    vi.mocked(getSyntaxHighlighterPromise).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishLoading = () => resolve(staleHighlighter);
+        }),
+    );
+
+    await fence.edit((tr) => tr.insertText("x ", 1));
+    await vi.advanceTimersByTimeAsync(300);
+    await fence.edit((tr) => tr.insertText("y ", 1));
+    await fence.edit((tr) => tr.delete(1, 3));
+    finishLoading();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(staleTokenize).not.toHaveBeenCalled();
+    expect(fence.colored()).toEqual(["x"]);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fence.tokenize).toHaveBeenCalledTimes(2);
+    expect(fence.colored()).toEqual(["x", "x"]);
+  });
+
+  it("refreshes a long fence immediately when the theme changes during a pending edit", async () => {
+    let theme = THEME;
+    const fence = await mountFence(`x ${"y".repeat(1_999)}`, () => theme);
+    await fence.edit((tr) => tr.insertText("x ", 1));
+
+    theme = "pierre-light";
+    await fence.edit((tr) => tr.setMeta("theme", true));
+
+    expect(fence.tokenize).toHaveBeenCalledTimes(2);
+    expect(fence.tokenize).toHaveBeenLastCalledWith(expect.any(String), { lang: "ts", theme });
+    expect(fence.colored()).toEqual(["x", "x"]);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fence.tokenize).toHaveBeenCalledTimes(2);
   });
 
   it("refreshes immediately when an edit leaves the fence at 2,000 characters", async () => {
