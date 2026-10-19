@@ -188,12 +188,10 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
     isAntigravity && provider.status === "warning" && provider.auth.status === "unknown";
   const isPendingInitialProbe =
     provider.enabled && !provider.installed && provider.status === "warning";
-  const didInstalledProviderProbeFail =
+  const isIncompleteInstalledProbe =
     provider.installed &&
     (provider.status === "error" || (isCodex && provider.status === "warning"));
-  return (
-    isPendingAntigravityAuthentication || isPendingInitialProbe || didInstalledProviderProbeFail
-  );
+  return isPendingAntigravityAuthentication || isPendingInitialProbe || isIncompleteInstalledProbe;
 };
 
 const shouldRetainMissingOpenCodeMetadata = (provider: ServerProvider): boolean =>

@@ -1418,7 +1418,7 @@ it.layer(
         }
       });
 
-      it("keeps discovered models during startup and failed probes without restoring removed custom models", () => {
+      it("keeps discovered models during startup, errors, and discovery warnings without restoring removed custom models", () => {
         for (const provider of [
           pendingProvider,
           failedProvider,
