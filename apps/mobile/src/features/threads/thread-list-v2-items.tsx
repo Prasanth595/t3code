@@ -65,6 +65,7 @@ import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { pullRequestStatus } from "../pull-requests/pullRequestStatus";
+import { useContinueElsewhereMenu } from "./forkContinueElsewhere";
 import { useThreadGroupMenu } from "./forkThreadGroupMenu";
 
 interface StatusLabel {
@@ -737,6 +738,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   // Fork: "Move to group" while sidebar group tabs are on (forkThreadGroupMenu.ts).
   const { items: groupMenuItems, handle: handleGroupMenu } = useThreadGroupMenu(thread);
+  // Fork: "Continue on another machine", also while the thread's machine is offline.
+  const { items: continueMenuItems, handle: handleContinueMenu } = useContinueElsewhereMenu(thread);
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
       { id: "rename", title: "Rename", image: "square.and.pencil" },
@@ -745,8 +748,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         isRegenerating: thread.titleRegeneration != null,
       }),
       ...groupMenuItems,
+      ...continueMenuItems,
     ],
-    [props.titleRegenerationSupported, thread.titleRegeneration, groupMenuItems],
+    [props.titleRegenerationSupported, thread.titleRegeneration, groupMenuItems, continueMenuItems],
   );
   const snoozableCardMenuActions = useMemo<MenuAction[]>(
     () => [
@@ -807,6 +811,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (handleGroupMenu(nativeEvent.event)) return;
+      if (handleContinueMenu(nativeEvent.event)) return;
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -845,6 +850,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     },
     [
       handleGroupMenu,
+      handleContinueMenu,
       onNewThreadOnBranch,
       thread,
       handleArchive,

@@ -27,6 +27,7 @@ import { isLocalDesktopSubject, isMachineSubject } from "./machineMap/machineAcc
 import * as MachineMapState from "./machineMap/MachineMapState.ts";
 import * as VoiceTranscription from "./voiceInput/VoiceTranscription.ts";
 import * as PreviewServerGroups from "./PreviewServerGroups.ts";
+import * as ThreadBackups from "./threadBackup/ThreadBackups.ts";
 import * as WebPush from "./webPush/WebPush.ts";
 
 /** The fork RPC tags, which the upstream handler object in `ws.ts` omits. */
@@ -74,6 +75,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const forkChangelog = yield* ForkChangelog.ForkChangelog;
       const machineMap = yield* MachineMap.MachineMap;
       const webPush = yield* WebPush.WebPush;
+      const threadBackups = yield* ThreadBackups.ThreadBackups;
       const voiceTranscription = yield* VoiceTranscription.VoiceTranscription;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const previewServerGroups = yield* PreviewServerGroups.PreviewServerGroups;
@@ -110,6 +112,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [FORK_WS_METHODS.webPushSubscribe]: (input) => webPush.subscribe(input).pipe(Effect.as({})),
         [FORK_WS_METHODS.webPushTest]: (input) => webPush.test(input.endpoint),
         [FORK_WS_METHODS.voiceInputTranscribe]: (input) => voiceTranscription.transcribe(input),
+        [FORK_WS_METHODS.forkThreadBackupGet]: (input) => threadBackups.get(input),
         // The scanner polls only while retained, as for `subscribeDiscoveredLocalServers`.
         [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: (_input) =>
           Stream.unwrap(portDiscovery.retain.pipe(Effect.as(previewServerGroups.listeners))),

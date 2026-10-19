@@ -174,6 +174,7 @@ import * as ForkUpdates from "./fork/ForkUpdates.ts";
 import * as MachineHost from "./fork/machineMap/MachineHost.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
+import * as ThreadBackups from "./fork/threadBackup/ThreadBackups.ts";
 import * as WebPush from "./fork/webPush/WebPush.ts";
 import * as VoiceTranscription from "./fork/voiceInput/VoiceTranscription.ts";
 import * as MachinePeers from "./fork/machineMap/MachinePeers.ts";
@@ -646,8 +647,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
-  // Fork: the machine map portal connection. Off by default (machineMap setting).
-  layerMachineMap,
+  // Fork: the machine map portal connection. Off by default (machineMap setting). Thread
+  // backups go to a peer through its MachinePeers sessions (threadBackupMachine setting).
+  ThreadBackups.layerWorker.pipe(
+    Layer.provideMerge(ThreadBackups.layer),
+    Layer.provideMerge(layerMachineMap),
+  ),
   // Fork: Web Push to the browsers that subscribed on this server.
   WebPush.layerWorker.pipe(Layer.provideMerge(WebPush.layer)),
   // Fork: environment-backed voice input transcription.
@@ -755,6 +760,8 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
+    // Fork: thread backups from other machines of the map.
+    ThreadBackups.routeLayer,
     DeviceHubProxy.layer,
     ServerBrowserStream.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

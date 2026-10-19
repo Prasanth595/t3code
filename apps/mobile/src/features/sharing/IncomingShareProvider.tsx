@@ -38,6 +38,8 @@ type IncomingShareContextValue = {
     expectedDestination: IncomingShareDestination,
   ) => Promise<void>;
   readonly consumeShare: (shareId: string) => Promise<void>;
+  /** Fork: files an app-made draft, which then opens like a share (forkContinueElsewhere.ts). */
+  readonly addShare: (draft: IncomingShareDraft) => Promise<void>;
   readonly refresh: () => Promise<void>;
 };
 
@@ -297,6 +299,12 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       setDrafts(snapshot);
     }
   }, []);
+  const addShare = useCallback(async (draft: IncomingShareDraft) => {
+    const snapshot = await incomingShareInbox.add(draft);
+    if (mountedRef.current) {
+      setDrafts(snapshot);
+    }
+  }, []);
   const reserveShare = useCallback(
     async (shareId: string, destination: IncomingShareDestination) => {
       const snapshot = await incomingShareInbox.reserve(shareId, destination);
@@ -329,9 +337,11 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       releaseShareReservation,
       reserveShare,
       consumeShare,
+      addShare,
       refresh,
     }),
     [
+      addShare,
       consumeShare,
       drafts,
       error,

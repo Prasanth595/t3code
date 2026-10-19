@@ -307,6 +307,13 @@ export const TUNNEL_PAIRING_ITEMS = [
 // Fork: machine map (apps/machine-map/SPEC.md MM-203).
 export const MACHINE_MAP_ITEMS = [
   {
+    id: "thread-backup-machine",
+    title: "Thread backups",
+    to: "/settings/fork",
+    searchTerms: ["thread backup copy transcript offline continue another machine vps machine map"],
+    environmentOnly: true,
+  },
+  {
     id: "environment-label-from-machine-map",
     title: "Environment name from machine map",
     to: "/settings/fork",

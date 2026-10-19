@@ -32,6 +32,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **[Sibling client sessions](docs/fork/features.md#sibling-client-sessions):** a browser client session lasts 1 day, also on sibling machines.
 - **[App invites and app tokens](docs/fork/features.md#app-invites-and-app-tokens):** "Invite an app" shows a QR code that a native app uses once.
 - **[Machines panel](docs/fork/features.md#machines-panel):** a read-only map in the right panel of a thread.
+- **[Continue on another machine](docs/fork/features.md#continue-on-another-machine):** continue a thread on another machine while its own machine is offline, from an optional thread backup.
 
 **Updates and releases**
 

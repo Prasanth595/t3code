@@ -3,6 +3,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
+  | "continue-elsewhere"
   | "filter-by-project"
   | "project-settings"
   | "pin"
@@ -92,6 +93,8 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "new-thread-on-branch",
+    // Fork: reads the thread and opens a draft elsewhere; the thread itself is unchanged.
+    "continue-elsewhere",
     "project-settings",
     "mark-unread",
     "copy",
@@ -114,6 +117,8 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
+    // Fork: works while the thread's machine is offline (lib/forkContinueElsewhere.ts).
+    { id: "continue-elsewhere" as const, label: "Continue on another machine", icon: "git-branch" },
     ...(state.supports.pinning
       ? [
           state.isPinned

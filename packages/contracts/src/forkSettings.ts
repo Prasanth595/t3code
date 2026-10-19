@@ -373,6 +373,12 @@ export const ForkServerSettingsFields = {
   mobileComposerCamera: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: the home thread list of the mobile app shows the `sidebarGroups` tabs. */
   mobileSidebarGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the machine map name of the machine that keeps a copy of the transcripts of this
+   * server's threads, so a client can continue a thread there while this server is offline.
+   * Empty keeps no copy. Off by default, because it sends thread content to another machine.
+   */
+  threadBackupMachine: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -401,6 +407,7 @@ export const ForkServerSettingsPatchFields = {
   mobileNewThreadProject: Schema.optionalKey(MobileNewThreadProject),
   mobileComposerCamera: Schema.optionalKey(Schema.Boolean),
   mobileSidebarGroups: Schema.optionalKey(Schema.Boolean),
+  threadBackupMachine: Schema.optionalKey(TrimmedString),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

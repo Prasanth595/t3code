@@ -22,6 +22,7 @@ import {
   ForkUpstreamPending,
 } from "./forkChangelog.ts";
 import { ForkLocalListenerList } from "./forkPreview.ts";
+import { ForkThreadBackup, ForkThreadBackupGetInput } from "./forkThreadBackup.ts";
 import {
   MachineMapClientState,
   MachineMapDesktopReport,
@@ -69,6 +70,9 @@ export const FORK_WS_METHODS = {
   voiceInputTranscribe: "voiceInput.transcribe",
   // Fork: preview local server groups (forkPreview.ts)
   forkPreviewSubscribeLocalListeners: "forkPreview.subscribeLocalListeners",
+
+  // Fork: thread backups (forkThreadBackup.ts)
+  forkThreadBackupGet: "forkThreadBackup.get",
 } as const;
 
 const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
@@ -173,6 +177,13 @@ const WsForkPreviewSubscribeLocalListenersRpc = Rpc.make(
   },
 );
 
+/** Fork: the backup that this server holds of a thread of another machine, or null. */
+const WsForkThreadBackupGetRpc = Rpc.make(FORK_WS_METHODS.forkThreadBackupGet, {
+  payload: ForkThreadBackupGetInput,
+  success: Schema.NullOr(ForkThreadBackup),
+  error: EnvironmentAuthorizationError,
+});
+
 export const ForkWsRpcGroup = RpcGroup.make(
   WsForkChangelogListReleasesRpc,
   WsForkChangelogReleaseChangesRpc,
@@ -190,6 +201,7 @@ export const ForkWsRpcGroup = RpcGroup.make(
   WsWebPushTestRpc,
   WsVoiceInputTranscribeRpc,
   WsForkPreviewSubscribeLocalListenersRpc,
+  WsForkThreadBackupGetRpc,
 );
 
 /** The fork part of `CLIENT_GUARDED_RPC_SCOPES`. */
@@ -223,4 +235,6 @@ export const FORK_RPC_READ_SCOPES = {
   [FORK_WS_METHODS.webPushTest]: AuthOrchestrationReadScope,
   // Fork: the same data class as `subscribeDiscoveredLocalServers`.
   [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: AuthOrchestrationReadScope,
+  // Fork: thread content that the source machine allowed this one to hold.
+  [FORK_WS_METHODS.forkThreadBackupGet]: AuthOrchestrationReadScope,
 } as const;

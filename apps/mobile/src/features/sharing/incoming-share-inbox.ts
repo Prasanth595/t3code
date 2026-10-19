@@ -139,6 +139,14 @@ export class IncomingShareInbox {
     });
   }
 
+  /** Files a draft that the app made itself, such as a thread to continue elsewhere. */
+  add(draft: IncomingShareDraft): Promise<ReadonlyArray<IncomingShareDraft>> {
+    return this.runExclusive(async () => {
+      await this.dependencies.writeDraft(draft);
+      return sortAndDedupeIncomingShares([draft, ...(await this.dependencies.loadDrafts())]);
+    });
+  }
+
   reserve(
     shareId: string,
     destination: IncomingShareDestination,
