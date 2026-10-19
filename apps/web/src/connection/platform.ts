@@ -180,49 +180,35 @@ function sshPreparationError(cause: unknown) {
   });
 }
 
-const abandonedSshSetups = new Map<string, Promise<DesktopSshEnvironmentBootstrap>>();
-const sshDisconnects = new Map<string, number>();
+// IPC keeps running after its waiter is interrupted. A retry can adopt only
+// that interrupted waiter's unfinished setup.
+const pendingSshSetups = new Map<
+  string,
+  { readonly promise: Promise<DesktopSshEnvironmentBootstrap>; signal: AbortSignal }
+>();
 
-/**
- * Sets up the SSH environment and mints a pairing credential. The desktop runs
- * one setup per target at a time and cannot stop one once sent, so on a slow
- * host an attempt can time out while its setup still runs. The next attempt
- * awaits that setup instead of queueing another behind it, and spends the
- * credential it mints.
- */
-export const ensureDesktopSshEnvironment = (
-  bridge: DesktopBridge,
-  target: DesktopSshEnvironmentTarget,
-) =>
+const ensureDesktopSshEnvironment = (bridge: DesktopBridge, target: DesktopSshEnvironmentTarget) =>
   Effect.tryPromise({
     try: (signal) => {
       const key = sshTargetKey(target);
-      const setup =
-        abandonedSshSetups.get(key) ??
-        bridge.ensureSshEnvironment(target, { issuePairingToken: true });
-      abandonedSshSetups.delete(key);
-      const disconnects = sshDisconnects.get(key);
-      signal.addEventListener("abort", () => {
-        // A disconnect since this attempt began tears the setup down.
-        if (sshDisconnects.get(key) !== disconnects) return;
-        abandonedSshSetups.set(key, setup);
-        // A finished setup's credential may expire before anyone retries.
-        const forget = () => {
-          if (abandonedSshSetups.get(key) === setup) abandonedSshSetups.delete(key);
-        };
-        setup.then(forget, forget);
-      });
-      return setup;
+      const pending = pendingSshSetups.get(key);
+      if (pending?.signal.aborted) {
+        pending.signal = signal;
+        return pending.promise;
+      }
+      const setup = {
+        promise: bridge.ensureSshEnvironment(target, { issuePairingToken: true }),
+        signal,
+      };
+      pendingSshSetups.set(key, setup);
+      const forget = () => {
+        if (pendingSshSetups.get(key) === setup) pendingSshSetups.delete(key);
+      };
+      setup.promise.then(forget, forget);
+      return setup.promise;
     },
     catch: sshPreparationError,
   });
-
-/** Stops later attempts from adopting a setup that a disconnect tears down. */
-export const forgetDesktopSshSetup = (target: DesktopSshEnvironmentTarget) => {
-  const key = sshTargetKey(target);
-  abandonedSshSetups.delete(key);
-  sshDisconnects.set(key, (sshDisconnects.get(key) ?? 0) + 1);
-};
 
 export const provisionDesktopSshEnvironment = Effect.fn(
   "web.connectionPlatform.ssh.provisionDesktop",
@@ -392,7 +378,7 @@ const layerCapabilities = Layer.effectContext(
         if (bridge === undefined) {
           return;
         }
-        forgetDesktopSshSetup(target);
+        pendingSshSetups.delete(sshTargetKey(target));
         yield* Effect.tryPromise({
           try: () => bridge.disconnectSshEnvironment(target),
           catch: (cause) =>
