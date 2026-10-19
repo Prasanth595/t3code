@@ -32,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -3848,6 +3849,32 @@ it.effect.each(["declined", "rejected"] as const)(
     }),
 );
 
+it.effect(
+  "closes the event subscription once when startup is interrupted during the MCP context read",
+  () =>
+    Effect.gen(function* () {
+      const contextReadStarted = yield* Deferred.make<void>();
+      const releaseEvents = yield* Deferred.make<void>();
+      const providerStarts = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const { subscriptionCloses } = yield* captureRootRunTermination({
+          key: "subscription-close:context-read-interrupted",
+          waitForIngestion: false,
+          interruptStartupWhen: contextReadStarted,
+          shouldFinalizeRun: () => Effect.succeed(true),
+          appContext: Deferred.succeed(contextReadStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          events: () =>
+            Stream.fromEffect(Deferred.await(releaseEvents).pipe(Effect.andThen(Effect.interrupt))),
+          startTurn: () => Ref.update(providerStarts, (count) => count + 1),
+        });
+        assert.equal(yield* Ref.get(providerStarts), 0);
+        assert.equal(subscriptionCloses, 1);
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseEvents, undefined)));
+    }),
+);
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
@@ -3895,6 +3922,7 @@ it.effect("keeps completed runs completed when pull request refresh fails", () =
 function captureRootRunTermination(input: {
   readonly key: string;
   readonly waitForIngestion?: boolean;
+  readonly interruptStartupWhen?: Deferred.Deferred<void>;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -3994,7 +4022,7 @@ function captureRootRunTermination(input: {
       ),
     );
 
-    yield* Effect.gen(function* () {
+    const startup = Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:${input.key}`),
@@ -4088,6 +4116,16 @@ function captureRootRunTermination(input: {
         },
       });
     }).pipe(Effect.provide(layerTest));
+
+    if (input.interruptStartupWhen !== undefined) {
+      const caller = yield* startup.pipe(Effect.interruptible, Effect.forkChild);
+      yield* Deferred.await(input.interruptStartupWhen);
+      yield* Fiber.interrupt(caller);
+      const exit = yield* Fiber.await(caller);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+    } else {
+      yield* startup;
+    }
 
     if (input.waitForIngestion !== false) {
       yield* Deferred.await(ingestionDone);
