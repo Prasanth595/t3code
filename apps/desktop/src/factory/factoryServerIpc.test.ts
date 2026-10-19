@@ -8,7 +8,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
-import { EnvironmentAuthInvalidError, EnvironmentInternalError } from "@t3tools/contracts";
+import {
+  EnvironmentAuthInvalidError,
+  EnvironmentInternalError,
+  EnvironmentRequestInvalidError,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { factoryServerBearerToken, pairFactoryServer } from "./factoryServerIpc.ts";
@@ -57,12 +61,6 @@ const accepted = (token: string) => () =>
     headers: { "content-type": "application/json" },
   });
 
-const rejected = () =>
-  new Response(JSON.stringify({ error: "invalid_grant" }), {
-    status: 400,
-    headers: { "content-type": "application/json" },
-  });
-
 const jsonResponse = (status: number, body: unknown) => () =>
   new Response(JSON.stringify(body), {
     status,
@@ -77,6 +75,18 @@ const serverRejected = jsonResponse(
       code: "auth_invalid",
       reason: "invalid_credential",
       traceId: "trace-1",
+    }),
+  ),
+);
+
+/** What the real token endpoint answers for an invalid request, such as an invalid scope. */
+const serverBadRequest = jsonResponse(
+  400,
+  Schema.encodeSync(EnvironmentRequestInvalidError)(
+    new EnvironmentRequestInvalidError({
+      code: "invalid_request",
+      reason: "invalid_scope",
+      traceId: "trace-3",
     }),
   ),
 );
@@ -175,12 +185,23 @@ describe("pairing the factory server", () => {
 
   it.effect("stores nothing and says so when the server rejects the link", () =>
     withLayers(
-      { respond: rejected },
+      { respond: serverRejected },
       Effect.gen(function* () {
         const exit = yield* Effect.exit(
           pairFactoryServer.handler("http://127.0.0.1:3876/pair#token=stale"),
         );
         assert.equal(failureMessage(exit), "The factory server rejected this pairing link.");
+        assert.equal(yield* factoryServerBearerToken, "");
+      }),
+    ),
+  );
+
+  it.effect("does not call a 400 invalid request a rejected link", () =>
+    withLayers(
+      { respond: serverBadRequest },
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
+        assert.equal(failureMessage(exit), COULD_NOT_COMPLETE);
         assert.equal(yield* factoryServerBearerToken, "");
       }),
     ),
