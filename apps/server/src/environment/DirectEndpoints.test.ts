@@ -86,16 +86,21 @@ const vpnInterface = (address: string) => [
   },
 ];
 
-const virtualInterface = (address: string) => [
+const virtualInterface = (address: string, mac = "02:42:ac:11:00:01") => [
   {
     address,
     netmask: "255.255.0.0",
     family: "IPv4" as const,
-    mac: "02:42:ac:11:00:01",
+    mac,
     internal: false,
     cidr: `${address}/16`,
   },
 ];
+
+const WINDOWS_HOST_ADAPTERS = {
+  "VirtualBox-Host-Only-Netzwerk": virtualInterface("192.168.56.1", "0a:00:27:00:01:01"),
+  "Renamed network": virtualInterface("192.168.150.1", "00:50:56:c0:00:08"),
+};
 
 describe("resolveBoundEndpoints", () => {
   it("lists nothing for a loopback-only server", () => {
@@ -131,7 +136,7 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("skips container and VM networks, which only this machine reaches", () => {
+  it("skips container and VM networks but keeps Linux bridges with inherited MACs", () => {
     const interfaces = {
       ...INTERFACES,
       docker0: virtualInterface("172.17.0.1"),
@@ -139,7 +144,8 @@ describe("resolveBoundEndpoints", () => {
       virbr0: virtualInterface("192.168.122.1"),
       "vEthernet (WSL)": virtualInterface("172.24.0.1"),
       bridge100: virtualInterface("192.168.64.1"),
-      vmbr0: virtualInterface("192.168.1.20"),
+      vmbr0: virtualInterface("192.168.1.20", "00:50:56:c0:00:08"),
+      br0: virtualInterface("192.168.1.21", "0a:00:27:00:01:01"),
     };
     expect(
       resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
@@ -147,32 +153,28 @@ describe("resolveBoundEndpoints", () => {
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.21:3773/" },
     ]);
   });
 
-  it("skips VirtualBox and VMware host adapters on Windows by MAC, whatever they are named", () => {
-    const adapter = (address: string, mac: string) => [
-      { ...virtualInterface(address)[0]!, netmask: "255.255.255.0", mac },
-    ];
+  it("omits localized and renamed Windows host adapters while retaining guest NICs", () => {
     const interfaces = {
-      Ethernet: INTERFACES.en0,
-      "VirtualBox Host-Only Network": adapter("192.168.56.1", "0a:00:27:00:00:0c"),
-      // VirtualBox's Windows driver puts the whole interface index in the last three bytes.
-      "VirtualBox-Host-Only-Netzwerk #2": adapter("192.168.57.1", "0a:00:27:00:01:01"),
-      "VMware Network Adapter VMnet1": adapter("192.168.128.1", "00:50:56:c0:00:01"),
-      "VMware Network Adapter VMnet8": adapter("192.168.150.1", "00:50:56:c0:00:08"),
-      // A server inside a VM: its NIC has a default guest MAC.
-      "Ethernet 2": adapter("192.168.1.30", "08:00:27:5e:1a:22"),
-      "Ethernet 3": adapter("192.168.1.31", "00:50:56:2b:8c:01"),
-      "Ethernet 4": adapter("192.168.1.32", "00:0c:29:4f:8e:35"),
+      ...INTERFACES,
+      ...WINDOWS_HOST_ADAPTERS,
+      "Ethernet 2": virtualInterface("192.168.1.30", "08:00:27:5e:1a:22"),
+      "Ethernet 3": virtualInterface("192.168.1.31", "00:50:56:2b:8c:01"),
+      "Ethernet 4": virtualInterface("192.168.1.32", "00:0c:29:4f:8e:35"),
+      "Ethernet 5": virtualInterface("192.168.1.33", "00:50:56:80:8c:01"),
     };
     expect(
       resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
     ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.31:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.32:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.33:3773/" },
     ]);
   });
 
@@ -193,7 +195,7 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("lists only the bound address for a specific bind", () => {
+  it("lists only the explicit bind, including Windows host-only addresses", () => {
     expect(
       resolveBoundEndpoints({
         platform: "linux",
@@ -202,6 +204,16 @@ describe("resolveBoundEndpoints", () => {
         interfaces: INTERFACES,
       }),
     ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
+    for (const host of ["192.168.56.1", "192.168.150.1"]) {
+      expect(
+        resolveBoundEndpoints({
+          platform: "win32",
+          host,
+          port: 3773,
+          interfaces: { ...INTERFACES, ...WINDOWS_HOST_ADAPTERS },
+        }),
+      ).toEqual([{ kind: "lan", httpBaseUrl: `http://${host}:3773/` }]);
+    }
   });
 
   it("never reports a host name, which can resolve to another machine per client", () => {
