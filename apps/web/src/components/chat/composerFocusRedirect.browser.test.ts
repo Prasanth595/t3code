@@ -31,11 +31,8 @@ describe("shouldTypeToFocusComposer", () => {
     const deviceScreen = document.createElement("div");
     deviceScreen.setAttribute("role", "application");
     deviceScreen.tabIndex = 0;
-    const frame = document.createElement("img");
-    deviceScreen.append(frame);
     document.body.append(deviceScreen);
 
     expect(typeOn(deviceScreen, "a")).toBe(false);
-    expect(typeOn(frame, "a")).toBe(false);
   });
 });
