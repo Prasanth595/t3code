@@ -2641,7 +2641,7 @@ function useChatMarkdownState({
   ) => {
     const mediaPath = mediaSource ?? fileLinkMeta.filePath;
     const resolveLink = async () => {
-      const relativePath = fileLinkMeta.workspaceRelativePath;
+      const relativePath = fileLinkMeta.workspaceLookupPath;
       if (
         !cwd ||
         !relativePath ||
@@ -2652,6 +2652,7 @@ function useChatMarkdownState({
         return fileLinkMeta;
       }
       const match = await findWorkspaceFileMatch(relativePath, {
+        cwd,
         literalExists: async () => {
           // A refreshed query still reuses retained metadata, including cached misses.
           const invalidated = await invalidateFileMetadata({

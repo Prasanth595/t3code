@@ -1,3 +1,5 @@
+import { isAbsolutePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
 
 // One counter for every caller: they all open the same panel, so the newest
@@ -73,6 +75,7 @@ function pickWorkspaceSuffixMatch(
 export async function findWorkspaceFileMatch(
   relativePath: string,
   lookup: {
+    readonly cwd?: string;
     /** False only when the literal file is known to be missing. */
     readonly literalExists: () => Promise<boolean>;
     /** Indexed candidates for the query, or null when the search failed. */
@@ -89,10 +92,50 @@ export async function findWorkspaceFileMatch(
     }
     if (!/[\\/]/.test(relativePath) || (await lookup.literalExists()) !== false) return null;
     const query = slashPath(relativePath).replace(/^(?:\.\/)+/, "");
+    const strippedPath = lookup.cwd ? stripRepeatedWorkspacePrefix(query, lookup.cwd) : null;
+    if (strippedPath !== null && lookup.cwd) {
+      const strippedResult = await lookup.searchFiles(strippedPath);
+      const match = strippedResult
+        ? pickStrippedWorkspaceMatch(strippedPath, lookup.cwd, strippedResult.entries)
+        : null;
+      // This exact target does not depend on suffix uniqueness or a complete index.
+      if (match !== null) return match;
+    }
     const result = await lookup.searchFiles(query);
     // Truncation also covers an incomplete index scan, so uniqueness is unknown.
     return result && !result.truncated ? pickWorkspaceSuffixMatch(query, result.entries) : null;
   } catch {
     return null;
   }
+}
+
+// Repository-relative paths can repeat the project's suffix in subfolder projects.
+export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
+  if (isAbsolutePath(relativePath)) return null;
+  const pathSegments = relativePath.split(/[\\/]+/);
+  const cwdSegments = cwd.split(/[\\/]+/).filter(Boolean);
+  const fold = isWindowsAbsolutePath(cwd)
+    ? (segment: string | undefined) => segment?.toLowerCase()
+    : (segment: string | undefined) => segment;
+  for (let count = Math.min(cwdSegments.length, pathSegments.length - 1); count > 0; count--) {
+    const prefix = cwdSegments.slice(-count);
+    if (prefix.every((segment, index) => fold(segment) === fold(pathSegments[index]))) {
+      return pathSegments.slice(count).join("/") || null;
+    }
+  }
+  return null;
+}
+
+export function pickStrippedWorkspaceMatch(
+  strippedPath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const caseInsensitive = isWindowsAbsolutePath(cwd);
+  const key = (path: string) => {
+    const normalized = path.replaceAll("\\", "/");
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  };
+  const files = entries.filter((entry) => entry.kind === "file");
+  return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
 }

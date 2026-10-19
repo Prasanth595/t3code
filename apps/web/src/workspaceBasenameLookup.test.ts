@@ -108,6 +108,43 @@ describe("findWorkspaceFileMatch", () => {
     }
   });
 
+  it("prefers a deterministic project-prefix target to other suffixes, even in truncated results", async () => {
+    for (const { cwd, path, indexedPath } of [
+      {
+        cwd: "/school/courses/physics",
+        path: "courses/physics/notes/a.md",
+        indexedPath: "notes/a.md",
+      },
+      {
+        cwd: "C:/school/courses/Physics",
+        path: "courses/physics/notes/a.md",
+        indexedPath: "Notes/A.md",
+      },
+    ]) {
+      const entries: WorkspaceEntryCandidate[] = [
+        { path: "other/notes/a.md", kind: "file" },
+        { path: indexedPath, kind: "file" },
+      ];
+      for (const truncated of [false, true]) {
+        const deps = { ...lookup(false, entries, truncated), cwd };
+        await expect(findWorkspaceFileMatch(path, deps)).resolves.toBe(indexedPath);
+        expect(deps.searchFiles).toHaveBeenCalledExactlyOnceWith("notes/a.md");
+      }
+      const existing = { ...lookup(true, entries), cwd };
+      await expect(findWorkspaceFileMatch(path, existing)).resolves.toBeNull();
+      expect(existing.searchFiles).not.toHaveBeenCalled();
+
+      const nestedPath = `other/${path}`;
+      const suffixOnly = [{ path: nestedPath, kind: "file" as const }];
+      await expect(
+        findWorkspaceFileMatch(path, { ...lookup(false, suffixOnly), cwd }),
+      ).resolves.toBe(nestedPath);
+      await expect(
+        findWorkspaceFileMatch(path, { ...lookup(false, suffixOnly, true), cwd }),
+      ).resolves.toBeNull();
+    }
+  });
+
   it("prefers exact case, then accepts a unique case-folded suffix across separators", async () => {
     const caseTwin: WorkspaceEntryCandidate = { path: "Other/Docs/Plan.md", kind: "file" };
     await expect(

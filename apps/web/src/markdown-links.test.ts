@@ -274,6 +274,7 @@ describe("withMarkdownFileLinkPath", () => {
     assert(meta);
     expect(withMarkdownFileLinkPath(meta, "/repo/BudgetLens/docs/plan.md", "/repo")).toEqual({
       filePath: "/repo/BudgetLens/docs/plan.md",
+      workspaceLookupPath: null,
       targetPath: "/repo/BudgetLens/docs/plan.md:12:3",
       displayPath: "repo/BudgetLens/docs/plan.md:12:3",
       workspaceRelativePath: "BudgetLens/docs/plan.md",
