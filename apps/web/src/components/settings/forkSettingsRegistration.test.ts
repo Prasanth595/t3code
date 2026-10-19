@@ -63,6 +63,8 @@ const FORK_PAGE_ROWS: Record<
   mobileNewThreadProject: "mobile-new-thread-project",
   mobileComposerCamera: "mobile-composer-camera",
   mobileSidebarGroups: "mobile-sidebar-groups",
+  inkwireWhiteFrame: "inkwire-white-frame",
+  voiceTranscriptionOpenAiApiKey: "voice-input-openai-key",
 };
 
 /** The settings that Restore defaults keeps, with the reason. */
@@ -74,6 +76,7 @@ const KEPT_BY_RESTORE: Partial<Record<ForkSettingKey, string>> = {
   threadCardLayouts: "Content that the user built, like keybindings.",
   machineMap: "A reset leaves the machine map.",
   clientAccess: "A reset changes access.",
+  voiceTranscriptionOpenAiApiKey: "A secret that the user entered, like provider credentials.",
 };
 
 const forkSettingKeys = [
