@@ -180,9 +180,7 @@ import {
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
-// Models outside the catalog (a custom model behind ANTHROPIC_BASE_URL) have no
-// catalog window; the CLI reports the window it compacts against in each
-// result's modelUsage, keyed by the model it called.
+// The CLI reports context windows for uncataloged models in result.modelUsage.
 function claudeContextWindow(
   modelSelection: ModelSelection,
   reportedContextWindows?: ReadonlyMap<string, number>,
@@ -192,17 +190,6 @@ function claudeContextWindow(
     reportedContextWindows?.get(modelSelection.model) ??
     null
   );
-}
-
-function rememberReportedContextWindows(
-  reportedContextWindows: Map<string, number>,
-  modelUsage: Readonly<Record<string, { readonly contextWindow?: number }>> | undefined,
-): void {
-  for (const [model, usage] of Object.entries(modelUsage ?? {})) {
-    if (typeof usage.contextWindow === "number" && usage.contextWindow > 0) {
-      reportedContextWindows.set(model, usage.contextWindow);
-    }
-  }
 }
 
 interface ClaudeCacheCreation {
@@ -3076,8 +3063,7 @@ interface ActiveClaudeTurnContext {
   // Usage of the results that steers ended, oldest first. The final result's
   // usage covers only its own segment, so the turn bills these as well.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
-  // Context usage last emitted for this turn, so a window the result reports
-  // can be applied to it.
+  // Results report context capacity after the latest usage was emitted.
   lastTokenUsage?: OrchestrationV2ProviderTurn["tokenUsage"];
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
@@ -3611,7 +3597,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         const pendingSubagentLaunchesByToolUseId = new Map<string, PendingClaudeSubagentLaunch>();
         const reportedContextWindows = new Map<string, number>();
-
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
         const subagentStopOutcomes = new Map<
           string,
@@ -7160,6 +7145,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ? Math.round(postTokens)
                 : undefined;
             if (afterTokenCount !== undefined) {
+              const tokenUsage = {
+                usedTokens: afterTokenCount,
+                maxTokens: claudeContextWindow(
+                  context.input.modelSelection,
+                  reportedContextWindows,
+                ),
+                updatedAt: DateTime.formatIso(now),
+              };
+              context.lastTokenUsage = tokenUsage;
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -7178,14 +7172,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: "running",
                   startedAt: context.startedAt,
                   completedAt: null,
-                  tokenUsage: {
-                    usedTokens: afterTokenCount,
-                    maxTokens: claudeContextWindow(
-                      context.input.modelSelection,
-                      reportedContextWindows,
-                    ),
-                    updatedAt: DateTime.formatIso(now),
-                  },
+                  tokenUsage,
                 },
               });
             }
@@ -7862,9 +7849,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
-            rememberReportedContextWindows(reportedContextWindows, message.modelUsage);
-            // The first turn of a session emits usage before its result reports
-            // the window; apply it so the turn persists maxTokens.
+            for (const [model, usage] of Object.entries(message.modelUsage ?? {})) {
+              const contextWindow = usage.contextWindow;
+              if (
+                typeof contextWindow === "number" &&
+                Number.isFinite(contextWindow) &&
+                contextWindow > 0
+              ) {
+                reportedContextWindows.set(model, contextWindow);
+              }
+            }
+            // Backfill capacity without replacing the latest context with cumulative billing usage.
             const lastTokenUsage = context.lastTokenUsage;
             const reportedMaxTokens = claudeContextWindow(
               context.input.modelSelection,
