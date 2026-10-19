@@ -382,16 +382,18 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
   return listItemStart + firstLine.indexOf(match[1]);
 }
 
-function orderedListGutterStyle(
+// A marker draws its digits, the period, and a trailing space, which is
+// (digits + 2)ch in a monospace or similarly wide interface font. The 1.25rem
+// floor keeps the default indent wherever that is narrower.
+export function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
-): { "--list-gutter": string } | undefined {
+): { "--list-gutter": string } {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
   const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
-  if (markerWidth <= 1) return undefined;
-  return { "--list-gutter": `${markerWidth + 2}ch` };
+  return { "--list-gutter": `max(1.25rem, ${markerWidth + 2}ch)` };
 }
 
 const GITHUB_ALERT_PRESENTATIONS: Record<
@@ -2787,9 +2789,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const itemCount =
       node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
         .length ?? 0;
-    const gutterStyle = orderedListGutterStyle(itemCount, start);
     return (
-      <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
+      <ol
+        {...props}
+        start={start}
+        style={{ ...style, ...orderedListGutterStyle(itemCount, start) }}
+      />
     );
   },
   li: function MarkdownListItem({ node, children, ...props }) {

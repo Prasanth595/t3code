@@ -1835,10 +1835,10 @@ code {
 }
 
 /* --list-gutter defaults to the same 1.25rem as .chat-markdown ul, but
-   ChatMarkdown's `ol` renderer widens it (via inline style) for lists whose
-   widest marker has multiple characters so it isn't clipped by list-style-position:
-   outside painting the marker past the padding box. Reset it here too so a
-   nested ol without its own widened marker doesn't inherit the outer one. */
+   ChatMarkdown's `ol` renderer widens it (via inline style) to fit its widest
+   marker in `ch`, so list-style-position: outside doesn't paint the marker past
+   the padding box. Reset it here too so a nested ol without its own widened
+   marker doesn't inherit the outer one. */
 :is(.chat-markdown, .composer-tiptap) ol {
   --list-gutter: 1.25rem;
   padding-left: var(--list-gutter, 1.25rem);

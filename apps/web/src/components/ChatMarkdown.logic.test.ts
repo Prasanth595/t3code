@@ -3,8 +3,26 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   canUseMarkdownFileShellActions,
+  orderedListGutterStyle,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+
+describe("orderedListGutterStyle", () => {
+  it("fits a single-digit marker and its space in wide fonts without narrowing the rem gutter", () => {
+    expect(orderedListGutterStyle(3, undefined)).toEqual({
+      "--list-gutter": "max(1.25rem, 3ch)",
+    });
+    expect(orderedListGutterStyle(0, undefined)).toEqual({
+      "--list-gutter": "max(1.25rem, 3ch)",
+    });
+  });
+
+  it("sizes the gutter by the widest marker in the list", () => {
+    expect(orderedListGutterStyle(10, 1)).toEqual({ "--list-gutter": "max(1.25rem, 4ch)" });
+    expect(orderedListGutterStyle(2, "99")).toEqual({ "--list-gutter": "max(1.25rem, 5ch)" });
+    expect(orderedListGutterStyle(1, 100)).toEqual({ "--list-gutter": "max(1.25rem, 5ch)" });
+  });
+});
 
 describe("canUseMarkdownFileShellActions", () => {
   const environmentId = EnvironmentId.make("environment-1");
