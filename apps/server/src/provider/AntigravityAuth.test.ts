@@ -54,6 +54,7 @@ const phase = (auth: AntigravityAuth, value: ProviderAuthState["phase"], session
 const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   options: {
     readonly interactive?: boolean;
+    readonly usesBrowser?: boolean;
     readonly authorizationUrls?: ReadonlyArray<string>;
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
@@ -74,6 +75,7 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
   let catalog = ["previous-account-model"];
   const auth = yield* makeAntigravityAuth({
     instanceId,
+    usesBrowser: options.usesBrowser ?? true,
     makeRuntime: (input) =>
       Effect.gen(function* () {
         receiveAuthorizationUrl = input.onAuthorizationUrl;
@@ -380,53 +382,73 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
-  it.effect("fails a stalled credential refresh early and permits a fresh attempt", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({ interactive: false });
-      const stopping = yield* Deferred.make<void>();
-      const stopped = yield* Deferred.make<void>();
-      const first = yield* harness.auth.controller.start(
-        owner,
-        Deferred.succeed(stopping, undefined).pipe(Effect.andThen(Deferred.await(stopped))),
-      );
-      yield* Deferred.await(stopping);
-      yield* TestClock.adjust("40 seconds");
-      assert.deepEqual(harness.events, []);
-      yield* Deferred.succeed(stopped, undefined);
-      yield* Deferred.await(harness.authenticating);
-      yield* TestClock.adjust("49 seconds");
-      assert.equal((yield* phase(harness.auth, "starting")).flowId, first.flowId);
-      yield* TestClock.adjust("1 second");
-      const failed = yield* harness.auth.controller
-        .subscribe(owner)
-        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-      assert.equal(failed.phase, "failed");
-      assert.include(failed.message ?? "", "starting sign-in");
-      assert.include(failed.message ?? "", "connection to Google");
-      assert.notInclude(failed.message ?? "", "expired");
-      assert.isNull(failed.authorizationUrl);
-      assert.isNull(failed.expiresAt);
-      yield* Deferred.await(harness.closed);
-      assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+  it.effect.each(["shutdown completes after 40 seconds", "shutdown stalls"] as const)(
+    "fails stalled startup at phase entry plus 90 seconds and permits retry: %s",
+    (shutdown) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ interactive: false });
+        const stopping = yield* Deferred.make<void>();
+        const stopped = yield* Deferred.make<void>();
+        const interrupted = yield* Deferred.make<void>();
+        const first = yield* harness.auth.controller.start(
+          owner,
+          Deferred.succeed(stopping, undefined).pipe(
+            Effect.andThen(Deferred.await(stopped)),
+            Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+          ),
+        );
+        yield* Deferred.await(stopping);
+        yield* TestClock.adjust("40 seconds");
+        assert.deepEqual(harness.events, []);
+        if (shutdown === "shutdown completes after 40 seconds") {
+          yield* Deferred.succeed(stopped, undefined);
+          yield* Deferred.await(harness.authenticating);
+        }
+        yield* TestClock.adjust("49 seconds");
+        const starting = yield* harness.auth.controller
+          .subscribe(owner)
+          .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+        assert.equal(starting.phase, "starting");
+        assert.equal(starting.flowId, first.flowId);
+        yield* TestClock.adjust("1 second");
+        const failed = yield* harness.auth.controller
+          .subscribe(owner)
+          .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+        assert.equal(failed.phase, "failed");
+        assert.include(failed.message ?? "", "starting sign-in");
+        assert.include(failed.message ?? "", "connection to Google");
+        assert.notInclude(failed.message ?? "", "expired");
+        assert.isNull(failed.authorizationUrl);
+        assert.isNull(failed.expiresAt);
+        if (shutdown === "shutdown stalls") {
+          assert.isTrue(yield* Deferred.isDone(interrupted));
+          assert.deepEqual(harness.events, []);
+        } else {
+          yield* Deferred.await(harness.closed);
+        }
+        assert.deepEqual(harness.catalog(), ["previous-account-model"]);
 
-      const late = yield* harness.auth.controller
-        .complete(owner, { flowId: first.flowId!, callbackUrl })
-        .pipe(Effect.exit);
-      assert.isTrue(Exit.isFailure(late));
-      yield* Deferred.succeed(harness.authenticated, undefined);
-      yield* Deferred.succeed(harness.discovered, undefined);
-      const retried = yield* harness.auth.controller.start(owner);
-      assert.notEqual(retried.flowId, first.flowId);
-      yield* phase(harness.auth, "succeeded");
-      yield* TestClock.adjust("300 seconds");
-      assert.equal((yield* phase(harness.auth, "succeeded")).flowId, retried.flowId);
-      assert.deepEqual(harness.catalog(), ["gemini-test"]);
-      assert.equal(harness.events.filter((event) => event === "process-close").length, 2);
-    }),
+        const late = yield* harness.auth.controller
+          .complete(owner, { flowId: first.flowId!, callbackUrl })
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(late));
+        yield* Deferred.succeed(harness.authenticated, undefined);
+        yield* Deferred.succeed(harness.discovered, undefined);
+        const retried = yield* harness.auth.controller.start(owner);
+        assert.notEqual(retried.flowId, first.flowId);
+        yield* phase(harness.auth, "succeeded");
+        yield* TestClock.adjust("300 seconds");
+        assert.equal((yield* phase(harness.auth, "succeeded")).flowId, retried.flowId);
+        assert.deepEqual(harness.catalog(), ["gemini-test"]);
+        assert.equal(
+          harness.events.filter((event) => event === "process-close").length,
+          shutdown === "shutdown stalls" ? 1 : 2,
+        );
+      }),
   );
 
   it.effect(
-    "keeps the verification deadline across phase updates and interrupts pending delivery",
+    "keeps the verification deadline across phase updates and late duplicate URLs, interrupting delivery",
     () =>
       Effect.gen(function* () {
         const forwarding = yield* Deferred.make<void>();
@@ -458,13 +480,23 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         yield* Deferred.succeed(harness.authenticated, undefined);
         yield* Deferred.succeed(harness.discovered, undefined);
         yield* Deferred.await(checkingAccess);
+        yield* harness.receiveAuthorizationUrl(authorizationUrl);
+        const verifying = yield* harness.auth.controller
+          .subscribe(owner)
+          .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
         yield* TestClock.adjust("9 seconds");
-        yield* phase(harness.auth, "verifying");
+        const beforeDeadline = yield* harness.auth.controller
+          .subscribe(owner)
+          .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
         yield* TestClock.adjust("1 second");
         const failed = yield* harness.auth.controller
           .subscribe(owner)
           .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
-        assert.equal(failed.phase, "failed");
+        assert.deepEqual(
+          [verifying.phase, beforeDeadline.phase, failed.phase],
+          ["verifying", "verifying", "failed"],
+        );
+        assert.isNull(verifying.authorizationUrl);
         assert.include(failed.message ?? "", "checking account access");
         assert.include(failed.message ?? "", "connection to Google");
         assert.notInclude(failed.message ?? "", "expired");
@@ -473,6 +505,45 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         yield* Deferred.await(interrupted);
         assert.isTrue(Exit.isFailure(yield* Fiber.join(completion)));
         yield* Deferred.await(harness.closed);
+        assert.deepEqual(harness.catalog(), ["previous-account-model"]);
+      }),
+  );
+
+  it.effect.each(["starting", "verifying"] as const)(
+    "describes configured credentials when non-browser auth stalls during %s",
+    (stalledPhase) =>
+      Effect.gen(function* () {
+        const checkingAccess = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          interactive: false,
+          usesBrowser: false,
+          beforePublishCatalog: Deferred.succeed(checkingAccess, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+        });
+        yield* harness.auth.controller.start(owner);
+        yield* Deferred.await(harness.authenticating);
+        if (stalledPhase === "verifying") {
+          yield* TestClock.adjust("40 seconds");
+          yield* Deferred.succeed(harness.authenticated, undefined);
+          yield* Deferred.succeed(harness.discovered, undefined);
+          yield* Deferred.await(checkingAccess);
+        }
+        yield* TestClock.adjust("89 seconds");
+        const pending = yield* harness.auth.controller
+          .subscribe(owner)
+          .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+        assert.equal(pending.phase, stalledPhase);
+        yield* TestClock.adjust("1 second");
+        const failed = yield* harness.auth.controller
+          .subscribe(owner)
+          .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+        assert.equal(failed.phase, "failed");
+        assert.match(failed.message ?? "", /configured credentials/i);
+        assert.notMatch(failed.message ?? "", /Google|browser|sign-in|expired/i);
+        assert.isNull(failed.authorizationUrl);
+        assert.isNull(failed.expiresAt);
+        assert.isTrue(yield* Deferred.isDone(harness.closed));
         assert.deepEqual(harness.catalog(), ["previous-account-model"]);
       }),
   );
