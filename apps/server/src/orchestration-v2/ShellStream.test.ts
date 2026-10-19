@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -418,6 +419,63 @@ describe("shellStreamItemsFromResumeSnapshot", () => {
 });
 
 describe("composeShellStreamWithEnrichment", () => {
+  it.effect("preserves pending repository resolutions while an enrichment ACK is withheld", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        // Match ProjectEnrichmentService's sliding notifications and the WS batching path.
+        const changes = yield* Effect.acquireRelease(
+          PubSub.sliding<{ readonly workspaceRoot: string }>(256),
+          PubSub.shutdown,
+        );
+        const subscription = yield* PubSub.subscribe(changes);
+        const pull = yield* Stream.toPull(
+          composeShellStreamWithEnrichment({
+            initial: Stream.empty,
+            tail: Stream.empty,
+            enrichment: Stream.fromSubscription(subscription).pipe(
+              Stream.groupedWithin(64, Duration.millis(25)),
+              Stream.map((changes) =>
+                shellStreamItemFromEnrichmentRefresh({
+                  snapshot: emptyShellSnapshot,
+                  changes,
+                }),
+              ),
+            ),
+          }),
+        );
+
+        const firstRoots = Array.from({ length: 64 }, (_, index) => `/workspace/first-${index}`);
+        yield* PubSub.publishAll(
+          changes,
+          firstRoots.map((workspaceRoot) => ({ workspaceRoot })),
+        );
+        expect(yield* pull).toMatchObject([{ resolvedRepositoryIdentityRoots: firstRoots }]);
+
+        // The next completion can be batched before the client acknowledges the first.
+        yield* PubSub.publish(changes, { workspaceRoot: "/workspace/pending" });
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(25));
+        const laterRoots = Array.from({ length: 256 }, (_, index) => `/workspace/later-${index}`);
+        yield* PubSub.publishAll(
+          changes,
+          laterRoots.map((workspaceRoot) => ({ workspaceRoot })),
+        );
+
+        const resumed = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+          Stream.takeUntil(
+            (item) =>
+              item.resolvedRepositoryIdentityRoots?.includes("/workspace/later-255") ?? false,
+          ),
+          Stream.runCollect,
+        );
+        expect(resumed.flatMap((item) => item.resolvedRepositoryIdentityRoots ?? [])).toEqual([
+          "/workspace/pending",
+          ...laterRoots,
+        ]);
+      }),
+    ),
+  );
+
   it.effect("keeps a merged shell batch charged while the client withholds its ACK", () =>
     Effect.scoped(
       Effect.gen(function* () {
