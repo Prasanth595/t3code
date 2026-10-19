@@ -1000,7 +1000,7 @@ describe("MuseAdapterV2", () => {
     { when: "after its turn ended", turnEnded: true },
     { when: "while its turn runs", turnEnded: false },
   ] as const)(
-    "approves a workflow child's approval in full access $when without showing it",
+    "hides a workflow child's automatic approval $when and retains completed history",
     ({ turnEnded }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
@@ -1012,45 +1012,68 @@ describe("MuseAdapterV2", () => {
         }
         const acknowledgement = pendingPromise<Record<string, unknown>>();
         fake.queueResponse("approval/decide", acknowledgement.promise);
-        const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
-        yield* fake.emit("approval/requested", childApproval);
+        const child = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+        const before = harness.allEvents.length;
+        yield* fake.emit("approval/requested", child);
         const decision = yield* fake.takeCall("approval/decide");
         assert.strictEqual(decision.params.choiceId, "once");
         const snapshot = yield* harness.runtime.readThreadSnapshot!({
           providerThread: harness.providerThread,
         });
         assert.deepStrictEqual(snapshot.runtimeRequests, []);
-        yield* fake.emit("approval/resolved", childApproval);
+        assert.deepStrictEqual(harness.allEvents.slice(before), []);
+        if (!turnEnded) {
+          const parent = {
+            ...approval(nativeId),
+            approvalId: "parent-approval",
+            currentRequirementId: { approvalId: "parent-approval", sourceIndex: 0 },
+          };
+          yield* fake.emit("approval/requested", parent);
+          const shown = yield* harness.takeEvent("runtime_request.updated");
+          assert.strictEqual(shown.runtimeRequest.status, "pending");
+          yield* harness.takeEvent("provider_session.updated");
+          yield* fake.emit("approval/resolved", parent);
+          // The child remains unacknowledged when the visible request stops blocking the turn.
+          const session = yield* harness.takeEvent("provider_session.updated");
+          assert.strictEqual(session.providerSession.status, "running");
+        }
+        yield* fake.emit("approval/resolved", child);
         const resolved = yield* harness.takeEvent("runtime_request.updated");
         assert.strictEqual(resolved.runtimeRequest.status, "resolved");
         assert.strictEqual(resolved.runtimeRequest.decision, "accept");
         assert.isNull(resolved.runtimeRequest.providerTurnId);
+        const node = yield* harness.takeEvent("node.updated");
+        const item = yield* harness.takeEvent("turn_item.updated");
+        assert.strictEqual(node.node.status, "completed");
+        assert.strictEqual(item.turnItem.status, "completed");
         acknowledgement.resolve({});
-        assert.isFalse(
-          harness.allEvents.some(
-            (event) =>
-              (event.type === "runtime_request.updated" &&
-                event.runtimeRequest.status === "pending") ||
-              (event.type === "provider_session.updated" &&
-                event.providerSession.status === "waiting"),
-          ),
-        );
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("answers a workflow child's updated approval in full access without showing it", () =>
+  it.effect("reveals only the current failed child approval and sends the user's decline", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
       yield* startConversation(harness, fake);
-      const acknowledgement = pendingPromise<Record<string, unknown>>();
-      fake.queueResponse("approval/decide", acknowledgement.promise);
-      const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
-      yield* fake.emit("approval/requested", childApproval);
+      const outdated = pendingPromise<Record<string, unknown>>();
+      const current = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("approval/decide", outdated.promise);
+      fake.queueResponse("approval/decide", current.promise);
+      const child = {
+        ...approval("child-run-1"),
+        subagentOrigin: {
+          subagentId: "a7",
+          childRunId: "child-run-1",
+          childSessionId: "child-session",
+        },
+      };
+      yield* fake.emit("approval/requested", child);
       yield* fake.takeCall("approval/decide");
-      // Muse moves to the next requirement while T3's first answer is in flight.
       yield* fake.emit("approval/updated", {
-        ...childApproval,
+        approvalId: child.approvalId,
+        availableChoices: child.availableChoices,
+        subject: child.subject,
+        subagentOrigin: child.subagentOrigin,
         currentRequirementId: { approvalId: "approval-1", sourceIndex: 1 },
       });
       const second = yield* fake.takeCall("approval/decide");
@@ -1058,140 +1081,106 @@ describe("MuseAdapterV2", () => {
         approvalId: "approval-1",
         sourceIndex: 1,
       });
-      acknowledgement.reject(new Error("approval requirement changed"));
-      yield* fake.emit("approval/resolved", childApproval);
-      const resolved = yield* harness.takeEvent("runtime_request.updated");
-      assert.strictEqual(resolved.runtimeRequest.status, "resolved");
-      assert.strictEqual(resolved.runtimeRequest.decision, "accept");
-      assert.isFalse(
-        harness.allEvents.some(
-          (event) =>
-            event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
-        ),
+      outdated.reject(
+        new MspError({
+          code: -32053,
+          message: "Stale requirement",
+          data: { kind: "approvalRequirementStale" },
+        }),
       );
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect(
-    "stops waiting when a shown approval settles before a workflow child's hidden one",
-    () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakeMuse();
-        const harness = yield* makeHarness(fake);
-        const { nativeId } = yield* startConversation(harness, fake);
-        const acknowledgement = pendingPromise<Record<string, unknown>>();
-        fake.queueResponse("approval/decide", acknowledgement.promise);
-        const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
-        yield* fake.emit("approval/requested", childApproval);
-        yield* fake.takeCall("approval/decide");
-        const turnApproval = {
-          ...approval(nativeId),
-          approvalId: "approval-2",
-          currentRequirementId: { approvalId: "approval-2", sourceIndex: 0 },
-        };
-        yield* fake.emit("approval/requested", turnApproval);
-        yield* harness.takeEvent(
-          "provider_session.updated",
-          (event) => event.providerSession.status === "waiting",
-        );
-        // The shown approval settles while T3's answer to the child is still in flight.
-        yield* fake.emit("approval/resolved", turnApproval);
-        acknowledgement.resolve({});
-        yield* fake.emit("approval/resolved", childApproval);
-        yield* harness.takeEvent(
-          "runtime_request.updated",
-          (event) => event.runtimeRequest.nativeRequestRef?.nativeId === "approval-1",
-        );
-        yield* harness.takeEvent("provider_session.updated");
-        const sequence = harness.allEvents.flatMap((event) =>
-          event.type === "runtime_request.updated"
-            ? [`${event.runtimeRequest.nativeRequestRef?.nativeId} ${event.runtimeRequest.status}`]
-            : event.type === "provider_session.updated"
-              ? [`session ${event.providerSession.status}`]
-              : [],
-        );
-        assert.deepStrictEqual(sequence.slice(sequence.indexOf("approval-2 pending")), [
-          "approval-2 pending",
-          "session waiting",
-          "approval-2 resolved",
-          "session running",
-          "approval-1 resolved",
-          "session running",
-        ]);
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
-  it.effect("shows a workflow child's approval when Muse rejects T3's automatic answer", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      yield* startConversation(harness, fake);
-      fake.queueResponse("approval/decide", new Error("approval requirement changed"));
-      const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
-      yield* fake.emit("approval/requested", childApproval);
+      current.reject(
+        new MspError({
+          code: -32052,
+          message: "Choice rejected",
+          data: { kind: "approvalChoiceInvalid" },
+        }),
+      );
       const asked = yield* harness.takeEvent("runtime_request.updated");
       assert.strictEqual(asked.runtimeRequest.status, "pending");
-      yield* harness.takeEvent(
-        "provider_session.updated",
-        (event) => event.providerSession.status === "waiting",
+      const waiting = yield* harness.takeEvent("provider_session.updated");
+      assert.strictEqual(waiting.providerSession.status, "waiting");
+      const snapshot = yield* harness.runtime.readThreadSnapshot!({
+        providerThread: harness.providerThread,
+      });
+      assert.deepStrictEqual(snapshot.runtimeRequests, [asked.runtimeRequest]);
+      assert.lengthOf(
+        harness.allEvents.filter((event) => event.type === "runtime_request.updated"),
+        1,
       );
       yield* harness.runtime.respondToRuntimeRequest({
         requestId: asked.runtimeRequest.id,
         decision: "decline",
       });
-      assert.deepStrictEqual(
-        fake.calls
-          .filter((call) => call.method === "approval/decide")
-          .map((call) => call.params.choiceId),
-        ["once", "deny"],
-      );
-      yield* fake.emit("approval/resolved", childApproval);
+      const decline = yield* fake.takeCall("approval/decide");
+      assert.strictEqual(decline.params.choiceId, "deny");
+      assert.deepStrictEqual(decline.params.requirementId, second.params.requirementId);
+      yield* fake.emit("approval/resolved", child);
       const resolved = yield* harness.takeEvent("runtime_request.updated");
-      assert.strictEqual(resolved.runtimeRequest.status, "resolved");
       assert.strictEqual(resolved.runtimeRequest.decision, "decline");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect(
-    "does not show a workflow child's approval that Muse settled before T3's answer failed",
-    () =>
-      Effect.gen(function* () {
-        const fake = yield* makeFakeMuse();
-        const harness = yield* makeHarness(fake);
-        yield* startConversation(harness, fake);
-        const acknowledgement = pendingPromise<Record<string, unknown>>();
-        fake.queueResponse("approval/decide", acknowledgement.promise);
-        const childApproval = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
-        yield* fake.emit("approval/requested", childApproval);
-        yield* fake.takeCall("approval/decide");
-        yield* fake.emit("approval/resolved", childApproval);
-        yield* harness.takeEvent(
-          "runtime_request.updated",
-          (event) => event.runtimeRequest.status === "resolved",
-        );
-        acknowledgement.reject(new Error("approval already resolved"));
-        // A later child request whose answer fails is shown, after the first failure was handled.
-        fake.queueResponse("approval/decide", new Error("approval requirement changed"));
-        yield* fake.emit("approval/requested", {
-          ...childApproval,
-          approvalId: "approval-2",
-          currentRequirementId: { approvalId: "approval-2", sourceIndex: 0 },
-        });
-        yield* harness.takeEvent(
-          "runtime_request.updated",
-          (event) => event.runtimeRequest.status === "pending",
-        );
-        assert.deepStrictEqual(
-          harness.allEvents.flatMap((event) =>
-            event.type === "runtime_request.updated"
-              ? [
-                  `${event.runtimeRequest.nativeRequestRef?.nativeId} ${event.runtimeRequest.status}`,
-                ]
-              : [],
-          ),
-          ["approval-1 resolved", "approval-2 pending"],
-        );
-      }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  it.effect("does not resurrect a settled child approval when its automatic answer fails", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      yield* startConversation(harness, fake);
+      const acknowledgement = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("approval/decide", acknowledgement.promise);
+      const child = { ...approval("child-run-1"), subagentOrigin: { subagentId: "a7" } };
+      yield* fake.emit("approval/requested", child);
+      yield* fake.takeCall("approval/decide");
+      yield* fake.emit("approval/resolved", child);
+      const resolved = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(resolved.runtimeRequest.status, "resolved");
+      acknowledgement.reject(
+        new MspError({
+          code: -32051,
+          message: "Already resolved",
+          data: { kind: "approvalAlreadyResolved" },
+        }),
+      );
+      // A later rejected answer provides an observable milestone after the stale rejection.
+      fake.queueResponse("approval/decide", new Error("Choice rejected"));
+      yield* fake.emit("approval/requested", {
+        ...child,
+        approvalId: "approval-2",
+        currentRequirementId: { approvalId: "approval-2", sourceIndex: 0 },
+      });
+      const asked = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(asked.runtimeRequest.nativeRequestRef?.nativeId, "approval-2");
+      assert.deepStrictEqual(
+        harness.allEvents.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest.status] : [],
+        ),
+        ["resolved", "pending"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("does not reveal an automatic approval after the Muse connection closes", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      yield* startConversation(harness, fake);
+      const acknowledgement = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("approval/decide", acknowledgement.promise);
+      yield* fake.emit("approval/requested", {
+        ...approval("child-run-1"),
+        subagentOrigin: { subagentId: "a7" },
+      });
+      yield* fake.takeCall("approval/decide");
+      yield* fake.disconnect();
+      yield* Deferred.await(harness.eventsEnded);
+      acknowledgement.reject(new Error("Connection closed"));
+      yield* Effect.promise(() => fake.host.exited);
+      assert.deepStrictEqual(
+        harness.allEvents.flatMap((event) =>
+          event.type === "runtime_request.updated" ? [event.runtimeRequest.status] : [],
+        ),
+        ["cancelled"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
   it.effect("keeps a workflow child's approval pending for the user past the turn's end", () =>
