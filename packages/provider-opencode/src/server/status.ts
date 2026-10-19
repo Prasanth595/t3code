@@ -599,7 +599,6 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     cause: unknown,
     version: string | null = null,
     phase: "version" | "inventory" = "version",
-    installedVersion?: string | null,
   ) => {
     const failure = formatOpenCodeProbeError({
       cause,
@@ -607,22 +606,19 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       phase,
       serverUrl: openCodeSettings.serverUrl,
     });
-    return {
-      ...buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
-        enabled: openCodeSettings.enabled,
-        checkedAt,
-        models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
-        probe: {
-          installed: failure.installed,
-          version,
-          status: "error",
-          auth: { status: "unknown" },
-          message: failure.message,
-        },
-      }),
-      ...(installedVersion !== undefined ? { installedVersion } : {}),
-    };
+    return buildServerProvider({
+      presentation: OPENCODE_PRESENTATION,
+      enabled: openCodeSettings.enabled,
+      checkedAt,
+      models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE_MODEL_CAPABILITIES),
+      probe: {
+        installed: failure.installed,
+        version,
+        status: "error",
+        auth: { status: "unknown" },
+        message: failure.message,
+      },
+    });
   };
 
   if (!openCodeSettings.enabled) {
@@ -659,7 +655,6 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (probed.generation === "v2") {
     return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
   }
-  let version: string | null = probed.version;
   if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
@@ -676,22 +671,23 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     });
   }
 
-  const loadInventory = (server: {
+  const installedVersion = isExternalServer ? {} : { installedVersion: probed.version };
+  let version = probed.version;
+  const loadInventory = Effect.fnUntraced(function* (server: {
     readonly url: string;
     readonly serverPassword?: string;
     readonly version: string;
-  }) => {
+  }) {
+    // Preserve the helper's version even when its inventory request fails.
     version = server.version;
-    return openCodeRuntime
-      .loadOpenCodeInventory(
-        openCodeRuntime.createOpenCodeSdkClient({
-          baseUrl: server.url,
-          directory: cwd,
-          ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
-        }),
-      )
-      .pipe(Effect.map((inventory) => ({ inventory, version: server.version })));
-  };
+    return yield* openCodeRuntime.loadOpenCodeInventory(
+      openCodeRuntime.createOpenCodeSdkClient({
+        baseUrl: server.url,
+        directory: cwd,
+        ...(server.serverPassword !== undefined ? { serverPassword: server.serverPassword } : {}),
+      }),
+    );
+  });
   const inventoryEffect = isExternalServer
     ? openCodeRuntime
         .connectToOpenCodeServer({
@@ -716,23 +712,19 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     ),
   );
   if (inventoryExit._tag === "Failure") {
-    return fallback(
-      Cause.squash(inventoryExit.cause),
-      version,
-      "inventory",
-      isExternalServer ? undefined : probed.version,
-    );
+    return {
+      ...fallback(Cause.squash(inventoryExit.cause), version, "inventory"),
+      ...installedVersion,
+    };
   }
 
-  version = inventoryExit.value.version;
-
   const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value.inventory),
+    flattenOpenCodeModels(inventoryExit.value),
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
-  const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
+  const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.skills);
+  const connectedCount = inventoryExit.value.providerList.connected.length;
   return {
     ...buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
@@ -740,9 +732,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       checkedAt,
       models,
       skills,
-      slashCommands: openCodeCommandsToServerProviderSlashCommands(
-        inventoryExit.value.inventory.commands,
-      ),
+      slashCommands: openCodeCommandsToServerProviderSlashCommands(inventoryExit.value.commands),
       probe: {
         installed: true,
         version,
@@ -759,6 +749,6 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
               : "OpenCode is available, but it did not report any connected upstream providers.",
       },
     }),
-    ...(!isExternalServer ? { installedVersion: probed.version } : {}),
+    ...installedVersion,
   };
 });
