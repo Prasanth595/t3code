@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { DesktopThreadSwipeNavigation } from "./DesktopThreadSwipeNavigation";
 import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 
 const sensors: SidebarPointerSensor[] = [];
@@ -373,7 +374,7 @@ describe("desktop thread swipe navigation", () => {
     expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
   });
 
-  it("keeps the background thread still while a modal owns the interaction", () => {
+  it("keeps the background thread still while an overlay owns the interaction", () => {
     act(() =>
       root.render(
         <>
@@ -390,6 +391,24 @@ describe("desktop thread swipe navigation", () => {
     expect(dialog).not.toBeNull();
     expect(wheel({ deltaX: 160 }, dialog!).defaultPrevented).toBe(false);
     expect(wheel({ deltaX: 160 }).defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    act(() =>
+      root.render(
+        <>
+          <DesktopThreadSwipeNavigation navigate={navigate} />
+          <Menu open>
+            <MenuTrigger>Thread actions</MenuTrigger>
+            <MenuPopup>
+              <MenuItem>Rename</MenuItem>
+            </MenuPopup>
+          </Menu>
+        </>,
+      ),
+    );
+    const menu = document.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    expect(wheel({ deltaX: 160 }, menu!).defaultPrevented).toBe(false);
     expect(navigate).not.toHaveBeenCalled();
 
     act(() =>

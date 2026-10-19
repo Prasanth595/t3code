@@ -64,7 +64,7 @@ export function DesktopThreadSwipeNavigation(input: {
         isModelPickerOpen() ||
         Array.from(
           document.querySelectorAll(
-            '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]:not([aria-modal="false"]), [aria-modal="true"]',
+            '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]:not([aria-modal="false"]), [aria-modal="true"], [role="menu"], [role="listbox"]',
           ),
         ).some((element) => element.getClientRects().length > 0)
       ) {
