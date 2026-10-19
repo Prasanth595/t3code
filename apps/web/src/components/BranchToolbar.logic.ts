@@ -278,8 +278,6 @@ export function resolveBranchSelectionTarget(input: {
   };
 }
 
-// The server detaches the provider session when a thread's worktree changes, which
-// interrupts the run in progress. Block that while the user could still Stop the run.
 export function isWorktreeChangeBlocked(input: {
   runtime: ThreadRuntimeSummary | null;
   currentWorktreePath: string | null;

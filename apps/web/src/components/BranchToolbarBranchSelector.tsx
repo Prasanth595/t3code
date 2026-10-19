@@ -152,7 +152,6 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
-  // A null server path means the main checkout, even while a draft remains.
   const activeWorktreePath = forceNewWorktree
     ? null
     : serverThread
@@ -171,16 +170,9 @@ export function BranchToolbarBranchSelector({
       draftThreadEnvMode: draftThread?.envMode,
     });
 
-  // Handlers can run after an await, or after another client moved the thread or
-  // started a run, so they decide from the store rather than the last render.
-  const readLatestThreadState = () => {
-    const latestThread = readThreadShell(threadRef);
-    return {
-      runtime: latestThread ? latestThread.runtime : serverSession,
-      worktreePath:
-        latestThread && !forceNewWorktree ? latestThread.worktreePath : activeWorktreePath,
-    };
-  };
+  const readLatestThreadState = () =>
+    readThreadShell(threadRef) ??
+    serverThread ?? { runtime: null, worktreePath: activeWorktreePath };
 
   const setThreadBranch = (
     branch: string | null,
@@ -192,10 +184,21 @@ export function BranchToolbarBranchSelector({
       !activeProject ||
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
     )
-      return;
+      return false;
     const latest = readLatestThreadState();
-    // Defaulting must not retarget a thread another client has already started or moved.
-    if (automatic && (latest.runtime || latest.worktreePath)) return;
+    if (automatic && (latest.runtime || latest.worktreePath)) return false;
+    if (
+      isWorktreeChangeBlocked({
+        runtime: latest.runtime,
+        currentWorktreePath: latest.worktreePath,
+        nextWorktreePath: worktreePath,
+      })
+    ) {
+      toastManager.add(
+        stackedThreadToast({ type: "warning", title: WORKTREE_CHANGE_BLOCKED_MESSAGE }),
+      );
+      return false;
+    }
     if (latest.runtime && worktreePath !== latest.worktreePath) {
       void stopThreadSession({
         environmentId,
@@ -215,7 +218,7 @@ export function BranchToolbarBranchSelector({
     }
     if (hasServerThread) {
       onActiveThreadBranchOverrideChange?.(branch);
-      return;
+      return true;
     }
     const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
       nextWorktreePath: worktreePath,
@@ -229,6 +232,7 @@ export function BranchToolbarBranchSelector({
       environmentSelection: automatic ? (draftThread?.environmentSelection ?? "auto") : "manual",
       projectRef: scopeProjectRef(environmentId, activeProject.id),
     });
+    return true;
   };
 
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
@@ -260,23 +264,18 @@ export function BranchToolbarBranchSelector({
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
-  const isWorktreeChangeBlockedForRef = (
-    refName: VcsRef,
-    thread: ReturnType<typeof readLatestThreadState> = {
-      runtime: serverSession,
-      worktreePath: activeWorktreePath,
-    },
-  ) =>
+  const isWorktreeChangeBlockedForRef = (refName: VcsRef) =>
     activeProjectCwd !== null &&
-    !isSelectingWorktreeBase &&
     isWorktreeChangeBlocked({
-      runtime: thread.runtime,
-      currentWorktreePath: thread.worktreePath,
-      nextWorktreePath: resolveBranchSelectionTarget({
-        activeProjectCwd,
-        activeWorktreePath: thread.worktreePath,
-        refName,
-      }).nextWorktreePath,
+      runtime: serverSession,
+      currentWorktreePath: serverThread ? serverThread.worktreePath : activeWorktreePath,
+      nextWorktreePath: isSelectingWorktreeBase
+        ? null
+        : resolveBranchSelectionTarget({
+            activeProjectCwd,
+            activeWorktreePath,
+            refName,
+          }).nextWorktreePath,
     });
   const checkoutPullRequestItemValue =
     canChangeThreadBranch && prReference && onCheckoutPullRequestRequest
@@ -420,23 +419,28 @@ export function BranchToolbarBranchSelector({
   const selectBranch = (refName: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
-    // Enter selects the highlighted value directly, so disabled rows need this too.
     const latest = readLatestThreadState();
     if (isSelectingWorktreeBase) {
-      // A base pick no longer applies once another client has assigned a worktree.
       if (latest.worktreePath) return;
       setThreadBranch(refName.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
     }
-    if (isWorktreeChangeBlockedForRef(refName, latest)) return;
-
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
       activeWorktreePath: latest.worktreePath,
       refName,
     });
+
+    if (
+      isWorktreeChangeBlocked({
+        runtime: latest.runtime,
+        currentWorktreePath: latest.worktreePath,
+        nextWorktreePath: selectionTarget.nextWorktreePath,
+      })
+    )
+      return;
 
     if (selectionTarget.reuseExistingWorktree) {
       setThreadBranch(refName.name, selectionTarget.nextWorktreePath);
@@ -463,30 +467,14 @@ export function BranchToolbarBranchSelector({
         },
       });
       if (checkoutResult._tag === "Success") {
-        // A run can start while the checkout runs. Leave the thread where it is.
-        const latestAfterCheckout = readLatestThreadState();
-        if (
-          isWorktreeChangeBlocked({
-            runtime: latestAfterCheckout.runtime,
-            currentWorktreePath: latestAfterCheckout.worktreePath,
-            nextWorktreePath: selectionTarget.nextWorktreePath,
-          })
-        ) {
-          setOptimisticBranch(previousBranch);
-          toastManager.add(
-            stackedThreadToast({
-              type: "warning",
-              title: WORKTREE_CHANGE_BLOCKED_MESSAGE,
-              description: `Checked out ${refName.name}, but this thread stayed in its current worktree.`,
-            }),
-          );
-          return;
-        }
         const nextBranchName = refName.isRemote
           ? (checkoutResult.value.refName ?? selectedBranchName)
           : selectedBranchName;
-        setOptimisticBranch(nextBranchName);
-        setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath)
+            ? nextBranchName
+            : previousBranch,
+        );
         return;
       }
       setOptimisticBranch(previousBranch);
@@ -522,28 +510,10 @@ export function BranchToolbarBranchSelector({
         },
       });
       if (createBranchResult._tag === "Success") {
-        // The ref was created in this checkout. If another client moved the thread
-        // and started a run meanwhile, moving it back would stop that run.
-        const latestAfterCreate = readLatestThreadState();
-        if (
-          isWorktreeChangeBlocked({
-            runtime: latestAfterCreate.runtime,
-            currentWorktreePath: latestAfterCreate.worktreePath,
-            nextWorktreePath: activeWorktreePath,
-          })
-        ) {
-          setOptimisticBranch(previousBranch);
-          toastManager.add(
-            stackedThreadToast({
-              type: "warning",
-              title: WORKTREE_CHANGE_BLOCKED_MESSAGE,
-              description: `Created ${createBranchResult.value.refName}, but this thread stayed in its current worktree.`,
-            }),
-          );
-          return;
-        }
-        setOptimisticBranch(createBranchResult.value.refName);
-        setThreadBranch(createBranchResult.value.refName, activeWorktreePath);
+        const nextBranchName = createBranchResult.value.refName;
+        setOptimisticBranch(
+          setThreadBranch(nextBranchName, activeWorktreePath) ? nextBranchName : previousBranch,
+        );
         return;
       }
       setOptimisticBranch(previousBranch);
@@ -744,8 +714,6 @@ export function BranchToolbarBranchSelector({
           ? WORKTREE_CHANGE_BLOCKED_MESSAGE
           : null
       }
-      // Row availability depends on the run, current worktree, and each ref's worktree.
-      extraData={`${serverSession?.status ?? ""}:${serverSession?.activeRunId ?? ""}:${activeWorktreePath ?? ""}:${refs.map((ref) => `${ref.name}:${ref.worktreePath ?? ""}`).join("|")}`}
       renderItem={renderPickerItem}
       getItemType={(item) =>
         item === checkoutPullRequestItemValue

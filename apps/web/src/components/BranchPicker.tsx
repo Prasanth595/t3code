@@ -42,7 +42,6 @@ export function BranchPicker({
   onLoadNext,
   statusText,
   notice,
-  extraData,
   originControl,
   popupProps,
   renderItem,
@@ -63,8 +62,6 @@ export function BranchPicker({
   onLoadNext: () => void;
   statusText: string | null;
   notice?: string | null | undefined;
-  /** Rows re-render only when their item or this value changes. */
-  extraData?: unknown;
   originControl?: { checked: boolean; onCheckedChange: (checked: boolean) => void } | undefined;
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
@@ -203,7 +200,7 @@ export function BranchPicker({
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => renderItem(item, index)}
-                extraData={extraData}
+                extraData={renderItem}
                 estimatedItemSize={28}
                 drawDistance={336}
                 onLayout={() => {
