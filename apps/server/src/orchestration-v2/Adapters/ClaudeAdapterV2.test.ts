@@ -3332,7 +3332,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps a later event-supplied Claude reset over the embedded reset", () =>
+  it.effect("keeps a later future-window event-supplied Claude reset over the embedded reset", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
       yield* harness.runtime.startTurn(
@@ -3350,7 +3350,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           type: "rate_limit_event",
           rate_limit_info: {
             status: "rejected",
-            rateLimitType: "seven_day",
+            rateLimitType: "future_window",
             resetsAt: 1791807600,
           },
           uuid: "00000000-0000-4000-8000-000000000683",
