@@ -3,15 +3,16 @@ import { ANDROID_PLAY_STORE_URL, IOS_APP_STORE_URL } from "./site";
 export type Platform = { os: "android" | "ios" | "mac" | "win" | "linux"; label: string };
 
 export function detectPlatform(userAgent: string, maxTouchPoints: number): Platform | null {
-  const ua = userAgent;
-  if (/Android/i.test(ua)) return { os: "android", label: "Download for Android" };
-  // iPad Safari uses a desktop Mac user agent by default.
-  if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && maxTouchPoints > 1)) {
+  // Android user agents contain "Linux" and iOS ones contain "Mac OS X", so the
+  // mobile checks run before the desktop ones. iPad Safari sends a desktop Mac
+  // user agent by default; the touch points tell it apart from a Mac.
+  if (/Android/i.test(userAgent)) return { os: "android", label: "Download for Android" };
+  if (/iPhone|iPad|iPod/i.test(userAgent) || (/Macintosh/i.test(userAgent) && maxTouchPoints > 1)) {
     return { os: "ios", label: "Download for iOS" };
   }
-  if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
-  if (/Mac/i.test(ua)) return { os: "mac", label: "Download for macOS" };
-  if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
+  if (/Win/i.test(userAgent)) return { os: "win", label: "Download for Windows" };
+  if (/Mac/i.test(userAgent)) return { os: "mac", label: "Download for macOS" };
+  if (/Linux/i.test(userAgent)) return { os: "linux", label: "Download for Linux" };
   return null;
 }
 
