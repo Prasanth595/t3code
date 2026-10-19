@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   pictureInPicture: false,
   showEmptyState: false,
   loading: false,
+  nativeServerTab: false,
   serverEpoch: null as string | null,
   servers: [] as PreviewableServer[],
   recordingTabIds: new Set<string>(),
@@ -115,6 +116,7 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
           "tab-1": {
             threadId: "thread-1",
             tabId: "tab-1",
+            runtime: mocks.nativeServerTab ? "server" : "desktop",
             navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
             canGoBack: false,
             canGoForward: false,
@@ -145,6 +147,11 @@ vi.mock(import("./useDiscoveredLocalServers"), async (original) => ({
 vi.mock(import("./usePreviewSession"), async (original) => ({
   ...(await original()),
   usePreviewSession: () => {},
+}));
+
+vi.mock(import("~/browser/previewRuntime"), async (original) => ({
+  ...(await original()),
+  useRendersServerTabNatively: () => mocks.nativeServerTab,
 }));
 
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
@@ -217,6 +224,7 @@ describe("PreviewView", () => {
     mocks.pictureInPicture = false;
     mocks.showEmptyState = false;
     mocks.loading = false;
+    mocks.nativeServerTab = false;
     mocks.serverEpoch = null;
     mocks.servers = [];
     mocks.recordingTabIds = new Set();
@@ -260,62 +268,66 @@ describe("PreviewView", () => {
     expect(mocks.recordingTabIds.has(TEST_RUNTIME_TAB_ID)).toBe(true);
   });
 
-  it("aligns the cursor and initial responsive viewport after the host zoom changes", async () => {
-    let windowZoom = 1;
-    vi.stubGlobal("desktopBridge", {
-      getWindowZoomFactor: () => windowZoom,
-      getLocalEnvironmentBootstraps: () => [],
-    });
-    const commit = vi.mocked(commitBrowserViewportChange).mockResolvedValueOnce(undefined);
-    try {
-      await render(view());
-      await act(() => {
-        const surfaces = useBrowserSurfaceStore.getState();
-        const slot = document.querySelector<HTMLElement>("[data-browser-surface-slot]")!;
-        slot.style.width = "1020px";
-        slot.style.height = "798px";
-        surfaces.presentContent(TEST_RUNTIME_TAB_ID, {
-          x: 20,
-          y: 40,
-          width: 500,
-          height: 375,
-          scale: 0.5,
-          scrollLeft: 7,
-          scrollTop: 11,
-        });
-        useBrowserPointerStore.setState({
-          byTabId: {
-            [TEST_RUNTIME_TAB_ID]: {
-              tabId: TEST_RUNTIME_TAB_ID,
-              phase: "move",
-              x: 100,
-              y: 200,
-              sequence: 1,
-              createdAt: "2026-07-27T00:00:00Z",
+  it.each([false, true])(
+    "aligns the cursor and responsive viewport after host zoom changes (native server tab: %s)",
+    async (nativeServerTab) => {
+      mocks.nativeServerTab = nativeServerTab;
+      let windowZoom = 1;
+      vi.stubGlobal("desktopBridge", {
+        getWindowZoomFactor: () => windowZoom,
+        getLocalEnvironmentBootstraps: () => [],
+      });
+      const commit = vi.mocked(commitBrowserViewportChange).mockResolvedValueOnce(undefined);
+      try {
+        await render(view());
+        await act(() => {
+          const surfaces = useBrowserSurfaceStore.getState();
+          const slot = document.querySelector<HTMLElement>("[data-browser-surface-slot]")!;
+          slot.style.width = "1020px";
+          slot.style.height = "798px";
+          surfaces.presentContent(TEST_RUNTIME_TAB_ID, {
+            x: 20,
+            y: 40,
+            width: 500,
+            height: 375,
+            scale: 0.5,
+            scrollLeft: 7,
+            scrollTop: 11,
+          });
+          useBrowserPointerStore.setState({
+            byTabId: {
+              [TEST_RUNTIME_TAB_ID]: {
+                tabId: TEST_RUNTIME_TAB_ID,
+                phase: "move",
+                x: 100,
+                y: 200,
+                sequence: 1,
+                createdAt: "2026-07-27T00:00:00Z",
+              },
             },
-          },
+          });
+          windowZoom = 1.25;
+          window.dispatchEvent(new Event("resize"));
         });
-        windowZoom = 1.25;
-        window.dispatchEvent(new Event("resize"));
-      });
-      const cursor = document.querySelector("[data-agent-browser-cursor]");
-      expect(cursor).not.toBeNull();
-      const position = new DOMMatrixReadOnly(getComputedStyle(cursor!).transform);
-      expect(position.e).toBe(53);
-      expect(position.f).toBe(109);
+        const cursor = document.querySelector("[data-agent-browser-cursor]");
+        expect(cursor).not.toBeNull();
+        const position = new DOMMatrixReadOnly(getComputedStyle(cursor!).transform);
+        expect(position.e).toBe(53);
+        expect(position.f).toBe(109);
 
-      await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
-      await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
-      expect(commit).toHaveBeenCalledExactlyOnceWith(TEST_RUNTIME_TAB_ID, {
-        _tag: "freeform",
-        width: 1250,
-        height: 938,
-      });
-    } finally {
-      commit.mockReset();
-      await act(() => useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} }));
-    }
-  });
+        await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+        await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+        expect(commit).toHaveBeenCalledExactlyOnceWith(TEST_RUNTIME_TAB_ID, {
+          _tag: "freeform",
+          width: 1250,
+          height: 938,
+        });
+      } finally {
+        commit.mockReset();
+        await act(() => useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} }));
+      }
+    },
+  );
 
   it("does not rerender while loading time passes", async () => {
     vi.useFakeTimers();

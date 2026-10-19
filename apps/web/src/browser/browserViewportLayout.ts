@@ -38,13 +38,7 @@ export const browserViewportSettingKey = (setting: PreviewViewportSetting): stri
 const normalizeZoomFactor = (zoomFactor: number): number =>
   Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
 
-/**
- * Host CSS pixels per guest CSS pixel. The webview element is laid out in the
- * app's CSS pixels, which the app window's own zoom scales along with the rest
- * of the UI, while the guest keeps the preview zoom the tab was given. Sizing
- * the element by this ratio makes the guest measure the requested viewport
- * whatever the window zoom is.
- */
+// Convert guest CSS pixels to host CSS pixels without changing the guest's page zoom.
 export const resolveBrowserLayoutZoomFactor = (
   previewZoomFactor: number,
   windowZoomFactor: number,

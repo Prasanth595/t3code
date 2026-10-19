@@ -1120,10 +1120,7 @@ export interface DesktopBridge {
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
-  /**
-   * Chromium zoom factor of the app window itself (View > Zoom In/Out).
-   * Optional: older desktop builds lack it, and callers assume 1.
-   */
+  /** App window zoom; older desktop shells omit this method. */
   getWindowZoomFactor?: () => number;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
