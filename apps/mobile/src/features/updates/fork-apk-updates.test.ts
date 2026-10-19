@@ -29,6 +29,19 @@ describe("newestForkApk", () => {
     ).toEqual({ version: "1", url: "https://x/v1.apk" });
   });
 
+  it("picks by semver when GitHub lists a higher run number after a shorter one", () => {
+    expect(
+      newestForkApk([
+        release("v0.1.1-nightly.20261018.90000", false),
+        release("v0.1.1-nightly.20261018.70000", true),
+        release("v0.1.1-nightly.20261018.110000", true),
+      ]),
+    ).toEqual({
+      version: "0.1.1-nightly.20261018.110000",
+      url: "https://x/v0.1.1-nightly.20261018.110000.apk",
+    });
+  });
+
   it("gives null without an APK or for an unexpected answer", () => {
     expect(newestForkApk([release("v1", false)])).toBeNull();
     expect(newestForkApk({ message: "API rate limit exceeded" })).toBeNull();
@@ -53,9 +66,10 @@ describe("createForkApkUpdateClient", () => {
     return client.checkForUpdateAsync();
   };
 
-  it("offers the APK when its version differs from the installed one", async () => {
+  it("offers the APK only when the release is newer than the installed version", async () => {
     expect((await check("1")).isAvailable).toBe(true);
     expect((await check("2")).isAvailable).toBe(false);
+    expect((await check("3")).isAvailable).toBe(false);
   });
 
   it("is off without a repository or the native installer", () => {

@@ -6,6 +6,7 @@
  * APK only when the app changed, so the APK comes from the newest release that has one.
  */
 import { CLI_RELEASE_CHECKSUMS_FILE } from "@t3tools/shared/cliRelease";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -32,9 +33,21 @@ const FALLBACK: ForkRelease = {
   androidUrl: null,
 };
 
-/** Picks the newest complete published release from a GitHub releases list, newest first. */
+function versionFromTag(tag: string): string {
+  return tag.startsWith("v") ? tag.slice(1) : tag;
+}
+
+/**
+ * Picks the newest complete published release from a GitHub releases list. Sort by semver: nightly
+ * run numbers that cross a digit boundary (`.90000` before `.110000`) are not newest-first in the
+ * API response.
+ */
 export function newestRelease(body: unknown): ForkRelease {
-  const published = Option.getOrUndefined(decodeReleases(body))?.filter((r) => !r.draft) ?? [];
+  const published = [
+    ...(Option.getOrUndefined(decodeReleases(body))?.filter((r) => !r.draft) ?? []),
+  ].sort((left, right) =>
+    compareSemverVersions(versionFromTag(right.tag_name), versionFromTag(left.tag_name)),
+  );
   const release = published.find((r) =>
     r.assets.some((asset) => asset.name === CLI_RELEASE_CHECKSUMS_FILE),
   );
@@ -46,7 +59,7 @@ export function newestRelease(body: unknown): ForkRelease {
     release.assets.find((asset) => asset.name.endsWith(suffix))?.browser_download_url ?? null;
   return {
     tag: release.tag_name,
-    version: release.tag_name.startsWith("v") ? release.tag_name.slice(1) : release.tag_name,
+    version: versionFromTag(release.tag_name),
     pageUrl: release.html_url,
     macUrl: assetUrl("-arm64.dmg"),
     macIntelUrl: assetUrl("-x64.dmg"),

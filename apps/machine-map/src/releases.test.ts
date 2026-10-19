@@ -70,6 +70,26 @@ describe("newestRelease", () => {
     expect(result.androidUrl).toBe("https://x/v1.apk");
   });
 
+  it("orders nightly releases by semver when a later run has more digits", () => {
+    const withApk = (tag: string) => ({
+      ...release(tag),
+      assets: [
+        ...release(tag).assets,
+        {
+          name: `t3code-${tag.slice(1)}-android.apk`,
+          browser_download_url: `https://x/${tag}.apk`,
+        },
+      ],
+    });
+    const result = newestRelease([
+      release("v0.1.1-nightly.20261018.90000"),
+      withApk("v0.1.1-nightly.20261018.70000"),
+      withApk("v0.1.1-nightly.20261018.110000"),
+    ]);
+    expect(result.tag).toBe("v0.1.1-nightly.20261018.110000");
+    expect(result.androidUrl).toBe("https://x/v0.1.1-nightly.20261018.110000.apk");
+  });
+
   it("falls back to the releases page for an unexpected answer", () => {
     for (const body of [[], { message: "API rate limit exceeded" }, null, [{ tag_name: 1 }]]) {
       expect(newestRelease(body)).toEqual({
