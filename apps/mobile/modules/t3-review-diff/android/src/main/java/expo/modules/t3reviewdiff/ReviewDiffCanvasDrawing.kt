@@ -212,35 +212,67 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     return codeLayouts.layout(rows, tokens, textPaint, style, theme, availableWidth.toInt())
   }
 
+  private data class WidthEntry(val row: DiffRow, val tokens: List<DiffToken>?, val width: Float)
+  private var widthEntries = emptyMap<String, WidthEntry>()
+  private var widthRows: List<DiffRow>? = null
+  private var widthTokens: Map<String, List<DiffToken>>? = null
+  private var widthStyle: DiffStyle? = null
+  private var measuredContentWidth = 0
+
   fun contentWidth(
     rows: List<DiffRow>,
     tokens: Map<String, List<DiffToken>>,
     style: DiffStyle
   ): Int {
-    if (style.wordWrap) return 0
+    if (style.wordWrap) {
+      widthEntries = emptyMap()
+      widthRows = null
+      widthTokens = null
+      widthStyle = null
+      return 0
+    }
+    // Comment heights and viewport resizing do not change unwrapped text widths.
+    if (widthRows === rows && widthTokens === tokens && widthStyle == style) {
+      return measuredContentWidth
+    }
+    if (widthStyle != style) widthEntries = emptyMap()
+    val next = HashMap<String, WidthEntry>()
     var widest = 0f
     for (row in rows) {
-      when (row.kind) {
-        "line" -> {
-          val rowTokens = tokens[row.id]
-          val runs = if (rowTokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else rowTokens
-          var width = 0f
-          // Match drawCode's run boundaries and fonts, including fallback glyphs and tabs.
-          for (run in runs) {
-            configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-            width += textPaint.measureText(run.content)
-          }
-          widest = max(widest, width)
-        }
-        "hunk" -> {
-          configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
-          widest = max(widest, textPaint.measureText(row.text.ifEmpty { row.content }))
-        }
+      if (row.kind != "line" && row.kind != "hunk") continue
+      val rowTokens = if (row.kind == "line") tokens[row.id] else null
+      val cached = widthEntries[row.id]
+      val entry = if (cached?.row == row && cached.tokens == rowTokens) {
+        cached
+      } else {
+        WidthEntry(row, rowTokens, measureRowWidth(row, rowTokens, style))
       }
+      next[row.id] = entry
+      widest = max(widest, entry.width)
     }
-    return ceil(
+    widthEntries = next
+    widthRows = rows
+    widthTokens = tokens
+    widthStyle = style
+    measuredContentWidth = ceil(
       style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f + widest,
     ).toInt()
+    return measuredContentWidth
+  }
+
+  private fun measureRowWidth(row: DiffRow, tokens: List<DiffToken>?, style: DiffStyle): Float {
+    if (row.kind == "hunk") {
+      configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
+      return textPaint.measureText(row.text.ifEmpty { row.content })
+    }
+    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
+    var width = 0f
+    // Match drawCode's run boundaries and fonts, including fallback glyphs and tabs.
+    for (run in runs) {
+      configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
+      width += textPaint.measureText(run.content)
+    }
+    return width
   }
 
   fun lineNumberColor(change: String): Int = when (change) {
