@@ -720,11 +720,13 @@ const stopEarlierBackgroundWork = ({
           providerThreadId: codexProviderThread.id,
           runningItem: { id: reviewerId, kind: "subagent" },
         });
-        const latestRun = settledRun({ ordinal: 4, providerThreadId: otherProviderThreadId });
+        const laterCodexRun = settledRun({ ordinal: 4, providerThreadId: codexProviderThread.id });
+        const latestRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
         yield* sink.write({
           events: [
             ...watcherRun.events,
             ...reviewerRun.events,
+            ...laterCodexRun.events,
             {
               id: EventId.make("provider-thread:other"),
               type: "provider-thread.updated",
@@ -733,15 +735,15 @@ const stopEarlierBackgroundWork = ({
               payload: {
                 ...codexProviderThread,
                 id: otherProviderThreadId,
-                firstRunOrdinal: 4,
-                lastRunOrdinal: 4,
+                firstRunOrdinal: 5,
+                lastRunOrdinal: 5,
               },
             },
             ...latestRun.events,
           ],
         });
 
-        const failedRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
+        const failedRun = settledRun({ ordinal: 6, providerThreadId: otherProviderThreadId });
         if (failedStart) {
           yield* sink.write({
             events: failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {

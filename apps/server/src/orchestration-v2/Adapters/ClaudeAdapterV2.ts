@@ -26,6 +26,7 @@ import {
   type EffortLevel,
   type ForkSessionOptions,
   type ForkSessionResult,
+  type HookCallback,
   getSubagentMessages,
   query,
   type Options as ClaudeQueryOptions,
@@ -481,7 +482,7 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   {},
 ) {
   override get message(): string {
-    return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
+    return "Claude still has background work, and this model or setting change would end it. Wait for it to finish, or press Stop, then send the message again.";
   }
 }
 
@@ -1111,6 +1112,7 @@ export function makeClaudeQueryOptions(input: {
   readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
+  readonly hooks?: ClaudeQueryOptions["hooks"];
   readonly onUserDialog?: ClaudeQueryOptions["onUserDialog"];
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -1167,6 +1169,7 @@ export function makeClaudeQueryOptions(input: {
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
     ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
+    ...(input.hooks === undefined ? {} : { hooks: input.hooks }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
@@ -3560,6 +3563,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const pendingBackgroundTasksByNativeThread = yield* Ref.make(
           new Map<string, Map<string, OrchestrationV2PendingBackgroundTask>>(),
         );
+        const scheduledCronTaskIdsByNativeThread = new Map<string, Set<string>>();
         // Wake eligibility is separate from the Waiting roster. It survives empty
         // background_tasks_changed levels (SDK: empty level can precede task_notification) and
         // is consumed when the first idle notification is buffered/offered so duplicates cannot
@@ -4059,12 +4063,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           Effect.gen(function* () {
             yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
               const updated = new Map(current);
-              if (tasks.length === 0) {
+              const preserved = [...rosterForNativeThread(current, nativeThreadId).values()].filter(
+                (task) => scheduledCronTaskIdsByNativeThread.get(nativeThreadId)?.has(task.taskId),
+              );
+              if (tasks.length === 0 && preserved.length === 0) {
                 updated.delete(nativeThreadId);
               } else {
                 updated.set(
                   nativeThreadId,
-                  new Map(tasks.map((task) => [task.taskId, task] as const)),
+                  new Map([...tasks, ...preserved].map((task) => [task.taskId, task] as const)),
                 );
               }
               return updated;
@@ -4109,16 +4116,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return [true, updated] as const;
           });
 
-        const clearPendingBackgroundTasksForNativeThread = (nativeThreadId: string) =>
+        const clearPendingBackgroundTasksForNativeThread = (
+          nativeThreadId: string,
+          options?: { readonly preserveScheduledCrons?: boolean },
+        ) =>
           Effect.gen(function* () {
-            yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
-              if (!current.has(nativeThreadId)) {
-                return current;
-              }
-              const updated = new Map(current);
-              updated.delete(nativeThreadId);
-              return updated;
-            });
+            if (options?.preserveScheduledCrons !== true)
+              scheduledCronTaskIdsByNativeThread.delete(nativeThreadId);
+            yield* replacePendingBackgroundTasks(nativeThreadId, []);
             yield* endClaudeMonitorTasks((_taskId, task) => task.nativeThreadId === nativeThreadId);
           });
 
@@ -6227,7 +6232,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
                 if (nativeThreadId !== null) {
                   if (input.status !== "completed") {
-                    yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
+                    yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId, {
+                      // A failed SDK result can leave the process and its timer alive.
+                      preserveScheduledCrons:
+                        input.status === "failed" &&
+                        input.result !== undefined &&
+                        liveQuery?.nativeThreadId === nativeThreadId &&
+                        !liveQuery.stopping,
+                    });
                     yield* clearNativeThreadTaskIdSet(
                       wakeEligibleBackgroundTasksByNativeThread,
                       nativeThreadId,
@@ -8517,6 +8529,67 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          let stopHookContext: ClaudeLiveQueryContext | undefined;
+          const onStop: HookCallback = (hookInput) =>
+            runPromise(
+              Effect.gen(function* () {
+                if (
+                  hookInput.hook_event_name !== "Stop" ||
+                  hookInput.session_id !== nativeThreadId ||
+                  hookInput.agent_id !== undefined ||
+                  hookInput.session_crons === undefined
+                ) {
+                  return {};
+                }
+                const liveQuery = yield* Ref.get(queryContext);
+                if (liveQuery === null || liveQuery !== stopHookContext || liveQuery.stopping) {
+                  return {};
+                }
+                // Stop is a level snapshot; an omitted field leaves the last known level intact.
+                // Install it outside sdkMessageLock: the CLI awaits this callback before result.
+                const tasks = hookInput.session_crons
+                  .filter((cron) => cron.recurring === false)
+                  .map((cron) => ({
+                    taskId: `cron:${cron.id}`,
+                    kind: "background_task" as const,
+                    description: cron.prompt.trim() || "Scheduled wakeup",
+                  }));
+                const previousIds = scheduledCronTaskIdsByNativeThread.get(nativeThreadId);
+                if (
+                  tasks.length === (previousIds?.size ?? 0) &&
+                  tasks.every((task) => previousIds?.has(task.taskId))
+                ) {
+                  return {};
+                }
+                yield* Ref.update(pendingBackgroundTasksByNativeThread, (current) => {
+                  const roster = new Map(
+                    [...rosterForNativeThread(current, nativeThreadId)].filter(
+                      ([taskId]) => !previousIds?.has(taskId),
+                    ),
+                  );
+                  for (const task of tasks) roster.set(task.taskId, task);
+                  if (tasks.length === 0) {
+                    scheduledCronTaskIdsByNativeThread.delete(nativeThreadId);
+                  } else {
+                    scheduledCronTaskIdsByNativeThread.set(
+                      nativeThreadId,
+                      new Set(tasks.map((task) => task.taskId)),
+                    );
+                  }
+                  const updated = new Map(current);
+                  if (roster.size === 0) updated.delete(nativeThreadId);
+                  else updated.set(nativeThreadId, roster);
+                  return updated;
+                });
+                const providerThread = (yield* Ref.get(lastProviderThreadByNativeThread)).get(
+                  nativeThreadId,
+                );
+                if (providerThread !== undefined) {
+                  yield* emitProviderThreadRoster({ nativeThreadId, providerThread });
+                }
+                return {};
+              }),
+            );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -8540,6 +8613,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions,
                 }),
             canUseTool,
+            hooks: { Stop: [{ hooks: [onStop] }] },
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
           });
@@ -8593,6 +8667,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             ),
           };
+          stopHookContext = context;
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>

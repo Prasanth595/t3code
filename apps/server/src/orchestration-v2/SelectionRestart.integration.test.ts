@@ -1,5 +1,8 @@
+import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ClaudeSettings,
   CommandId,
   EventId,
   MessageId,
@@ -16,6 +19,12 @@ import {
   type RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -24,6 +33,9 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
+import * as ClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
@@ -996,4 +1008,278 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
         }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
       }),
     ),
+);
+
+const defaultClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
+
+const scheduledWakeupSessionLifecycle = (stopAfterRefusal: boolean) =>
+  Effect.gen(function* () {
+    const name = "claude-scheduled-wakeup-restart";
+    const cwd = yield* checkpointWorkspace(name);
+    const threadId = ThreadId.make(`thread:${name}`);
+    const selection = {
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      model: "claude-sonnet-4-6",
+    };
+    const replacement = {
+      ...selection,
+      model: "claude-haiku-4-5-20251001",
+      options: [{ id: "thinking", value: false }],
+    };
+    let opened = 0;
+    let closed = 0;
+    let prompts = 0;
+    let sequence = 0;
+    let query:
+      | {
+          options: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions;
+          messages: Queue.Queue<SDKMessage>;
+        }
+      | undefined;
+    const frame = (value: Record<string, unknown>) =>
+      ({
+        ...value,
+        session_id: "00000000-0000-4000-8000-000000000100",
+        uuid: `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`,
+      }) as SDKMessage;
+    const layerRegistry = Layer.unwrap(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: selection.instanceId,
+          settings: defaultClaudeSettings,
+          environment: {},
+          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-wakeup-restart-",
+          }),
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          continuationRequests: { offer: () => Effect.die("no native wake in this test") },
+          queryRunner: {
+            allocateSessionId: Effect.succeed("00000000-0000-4000-8000-000000000100"),
+            open: (input) =>
+              Effect.gen(function* () {
+                opened++;
+                const messages = yield* Queue.unbounded<SDKMessage>();
+                query = { options: input.options, messages };
+                return {
+                  messages: Stream.fromQueue(messages),
+                  offer: () =>
+                    Effect.sync(() => {
+                      prompts++;
+                    }),
+                  setModel: () => Effect.void,
+                  applyFlagSettings: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  backgroundTasks: () => Effect.succeed(false),
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Effect.sync(() => {
+                    closed++;
+                  }).pipe(Effect.andThen(Queue.shutdown(messages))),
+                };
+              }),
+            forkSession: () => Effect.die("unused"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        return ProviderAdapterRegistry.layerSingle(adapter);
+      }),
+    ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, IdAllocator.layer)));
+
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${name}:create`),
+        threadId,
+        projectId: ProjectId.make(`project:${name}`),
+        title: name,
+        modelSelection: selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const dispatch = (
+        step: string,
+        modelSelection: ModelSelection,
+        status: "completed" | "failed",
+      ) =>
+        Effect.gen(function* () {
+          const settled = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) => event.type === "run.updated" && event.payload.status === status,
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${name}:${step}`),
+            threadId,
+            messageId: MessageId.make(`${name}:${step}`),
+            text: step,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          if (status === "completed") {
+            assert.isDefined(query, "the turn must open a Claude query");
+            const current = query!;
+            const callbacks =
+              current.options.hooks?.Stop?.flatMap((matcher) => matcher.hooks) ?? [];
+            assert.isNotEmpty(
+              callbacks,
+              "Cannot report pending timers: query has no Stop callback",
+            );
+            yield* Effect.tryPromise(async () => {
+              for (const callback of callbacks) {
+                await callback(
+                  {
+                    hook_event_name: "Stop",
+                    session_id: current.options.sessionId ?? current.options.resume,
+                    transcript_path: "/tmp/scheduled-wakeup.jsonl",
+                    cwd,
+                    stop_hook_active: false,
+                    session_crons: [
+                      {
+                        id: `timer-${prompts}`,
+                        schedule: "0 9 * * *",
+                        recurring: false,
+                        prompt: "Check tomorrow",
+                      },
+                    ],
+                  },
+                  undefined,
+                  { signal: new AbortController().signal },
+                );
+              }
+            });
+            yield* Queue.offer(
+              current.messages,
+              frame({
+                type: "result",
+                subtype: "success",
+                duration_ms: 10,
+                duration_api_ms: 10,
+                is_error: false,
+                num_turns: 1,
+                result: "Scheduled.",
+                stop_reason: "end_turn",
+                terminal_reason: "completed",
+                total_cost_usd: 0,
+                usage: {
+                  input_tokens: 1,
+                  output_tokens: 1,
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0,
+                },
+                modelUsage: {},
+                permission_denials: [],
+              }),
+            );
+          }
+          yield* Fiber.join(settled);
+          yield* worker.drain();
+          return yield* orchestrator.getThreadProjection(threadId);
+        });
+      const first = yield* dispatch("schedule", selection, "completed");
+      const timerThread = first.providerThreads.find(
+        (thread) => thread.id === first.thread.activeProviderThreadId,
+      )!;
+      const sessionId = timerThread.providerSessionId!;
+      assert.lengthOf(timerThread.pendingBackgroundTasks ?? [], 1);
+      assert.include(timerThread.pendingBackgroundTasks?.[0], {
+        kind: "background_task",
+        description: "Check tomorrow",
+      });
+
+      yield* TestClock.adjust("31 minutes");
+      assert.isTrue(Option.isSome(yield* sessions.get(sessionId)));
+      assert.equal(closed, 0);
+
+      const blocked = yield* dispatch("change-thinking", replacement, "failed");
+      assert.equal(opened, 1);
+      assert.equal(closed, 0);
+      assert.equal(prompts, 1, "replacement must fail before sending a prompt");
+      assert.deepEqual(
+        blocked.providerThreads.find((thread) => thread.id === timerThread.id)
+          ?.pendingBackgroundTasks,
+        timerThread.pendingBackgroundTasks,
+      );
+      assert.isTrue(
+        blocked.turnItems.some(
+          (item) => item.type === "error" && item.failure.message.includes("press Stop"),
+        ),
+      );
+
+      if (!stopAfterRefusal) {
+        const released = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider-session.updated" && event.payload.status === "stopped",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* TestClock.adjust("4 hours");
+        assert.isTrue(yield* sessions.isLive(sessionId));
+        yield* TestClock.adjust("1 hour");
+        yield* Fiber.join(released);
+        yield* worker.drain();
+        assert.isTrue(Option.isNone(yield* sessions.get(sessionId)));
+        assert.equal(closed, 1);
+        const expired = yield* orchestrator.getThreadProjection(threadId);
+        assert.isEmpty(
+          expired.providerThreads.flatMap((thread) => thread.pendingBackgroundTasks ?? []),
+        );
+
+        const resumed = yield* dispatch("retry-after-release", replacement, "completed");
+        assert.equal(opened, 2);
+        assert.equal(prompts, 2);
+        const replacementThread = resumed.providerThreads.find(
+          (thread) => thread.id === resumed.thread.activeProviderThreadId,
+        )!;
+        assert.lengthOf(replacementThread.pendingBackgroundTasks ?? [], 1);
+        assert.notEqual(
+          replacementThread.pendingBackgroundTasks?.[0]?.taskId,
+          timerThread.pendingBackgroundTasks?.[0]?.taskId,
+        );
+        return;
+      }
+
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-timer"),
+        threadId,
+      });
+      yield* worker.drain();
+      assert.equal(closed, 1, "Stop must close the timer query");
+      const stopped = yield* orchestrator.getThreadProjection(threadId);
+      assert.isEmpty(
+        stopped.providerThreads.flatMap((thread) => thread.pendingBackgroundTasks ?? []),
+      );
+    }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
+  }).pipe(Effect.scoped);
+
+it.effect(
+  "Stop snapshot pins the idle session, refuses replacement, and releases at the pin cap",
+  () => scheduledWakeupSessionLifecycle(false),
+);
+
+it.effect("Stop snapshot clears the timer after a refused process replacement", () =>
+  scheduledWakeupSessionLifecycle(true),
 );
