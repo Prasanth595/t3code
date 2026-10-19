@@ -54,10 +54,14 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   const hostDestinations = environments.filter(
     (environment) => !environment.unsupportedSettingKeys.has("deviceHosts"),
   );
-  const writableIds = useEnvironmentsWithScope(hostDestinations, AuthSettingsWriteScope);
+  const connectedHostDestinations = hostDestinations.filter(
+    (environment) =>
+      environment.connection.phase === "connected" && environment.serverConfig !== null,
+  );
+  const writableIds = useEnvironmentsWithScope(connectedHostDestinations, AuthSettingsWriteScope);
   const canConfigure =
-    hostDestinations.length > 0 &&
-    hostDestinations.every((environment) => writableIds.has(environment.environmentId));
+    connectedHostDestinations.length > 0 &&
+    connectedHostDestinations.every((environment) => writableIds.has(environment.environmentId));
   const targets = hostDestinations.map((environment) => ({
     environmentId: environment.environmentId,
     label: settingsScopeEnvironmentLabel(environment, environments),
