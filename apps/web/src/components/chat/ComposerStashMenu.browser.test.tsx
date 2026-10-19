@@ -20,6 +20,7 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
   const [draft, setDraft] = useState("Unsent draft");
   const [open, setOpen] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(dialog);
+  const [answer, setAnswer] = useState<string | null>(null);
   return (
     <>
       <form ref={composerFormRef}>
@@ -28,6 +29,10 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
         />
+        <button type="button" onClick={() => setAnswer("Continue")}>
+          Continue
+        </button>
+        <p role="status">{answer ? `Selected: ${answer}` : "Choose an answer"}</p>
       </form>
       <input aria-label="Search threads" />
       <button onClick={() => setOpen(true)}>Open stash</button>
@@ -41,7 +46,10 @@ function Composer({ dialog = false }: { dialog?: boolean }) {
             setEntries((current) => current.filter(({ id }) => id !== entry.id));
             setOpen(false);
           }}
-          onDelete={(entry) => setEntries((current) => current.filter(({ id }) => id !== entry.id))}
+          onDelete={(entry) => {
+            setEntries((current) => current.filter(({ id }) => id !== entry.id));
+            if (entries.length === 1) setOpen(false);
+          }}
           onClose={() => setOpen(false)}
         />
       )}
@@ -77,7 +85,7 @@ const restore = (prompt: string) =>
 const press = (keys: string) => act(async () => userEvent.keyboard(keys));
 const focus = (element: Element) => act(async () => (element as HTMLElement).focus());
 
-it("leaves dialog and unrelated input shortcuts alone while the stash is open", async () => {
+it("leaves dialog, unrelated input and question button shortcuts alone while the stash is open", async () => {
   await act(async () => root.render(<Composer dialog />));
   const input = page.getByRole("textbox", { name: "Search commands" }).element();
   await focus(input);
@@ -107,6 +115,16 @@ it("leaves dialog and unrelated input shortcuts alone while the stash is open", 
   expect(stash().element().textContent).toContain("first prompt");
   expect(stash().element().textContent).toContain("second prompt");
   await expect.element(editor()).toHaveValue("Unsent draft");
+
+  await focus(page.getByRole("button", { name: "Continue", exact: true }).element());
+  await press("{Enter}");
+  expect(page.getByRole("status").element().textContent).toBe("Selected: Continue");
+  expect(stash().element().textContent).toContain("first prompt");
+  expect(stash().element().textContent).toContain("second prompt");
+  await press("{Control>}{Backspace}{/Control}{Meta>}{Backspace}{/Meta}");
+  expect(stash().element().textContent).toContain("first prompt");
+  expect(stash().element().textContent).toContain("second prompt");
+  await expect.element(editor()).toHaveValue("Unsent draft");
 });
 
 it("navigates, deletes and restores stashed prompts from the composer and drawer", async () => {
@@ -117,19 +135,20 @@ it("navigates, deletes and restores stashed prompts from the composer and drawer
   await press("{ArrowUp}");
   await expect.element(restore("first prompt")).toHaveFocus();
 
-  await focus(editor().element());
-  await press("{ArrowDown}{Enter}");
-  await expect.element(editor()).toHaveValue("second prompt");
+  await press("{Control>}{Backspace}{/Control}");
+  await expect.element(restore("first prompt")).not.toBeInTheDocument();
+  expect(stash().element().textContent).toContain("second prompt");
+  await expect.element(editor()).toHaveValue("Unsent draft");
+  expect(document.activeElement).toBe(document.body);
+
+  await press("{Escape}");
   await expect.element(stash()).not.toBeInTheDocument();
 
   await act(async () => userEvent.click(page.getByRole("button", { name: "Open stash" })));
-  await expect.element(restore("second prompt")).not.toBeInTheDocument();
-  await focus(restore("first prompt").element());
-  await press("{Control>}{Backspace}{/Control}");
-  expect(stash().element().textContent).toContain("Nothing stashed yet.");
-  await expect.element(editor()).toHaveValue("second prompt");
-
+  await expect.element(restore("first prompt")).not.toBeInTheDocument();
+  expect(stash().element().textContent).toContain("second prompt");
   await focus(editor().element());
-  await press("{Escape}");
+  await press("{ArrowDown}{Enter}");
+  await expect.element(editor()).toHaveValue("second prompt");
   await expect.element(stash()).not.toBeInTheDocument();
 });
