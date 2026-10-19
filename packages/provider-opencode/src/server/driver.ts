@@ -28,6 +28,7 @@ import {
   loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
   makePendingOpenCodeProvider,
+  type OpenCode2Model,
   openCode2CommandsToServerProviderSlashCommands,
   openCode2SkillsToServerProviderSkills,
   openCodeSkillsToServerProviderSkills,
@@ -287,10 +288,18 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
         ),
       });
-      const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-        openCode2Server.withConnection(({ client }) =>
-          loadOpenCode2Catalog(client, host.paths.cwd),
-        ),
+      let lastLoadedOpenCode2Models: ReadonlyArray<OpenCode2Model> | undefined;
+      const loadOpenCode2Models = openCode2Server.withConnection(({ client, version, external }) =>
+        Effect.gen(function* () {
+          const catalogVersion = external ? (yield* runtimeProbe.get).version : version;
+          const catalog = yield* makeOpenCode2ModelLoader(
+            loadOpenCode2Catalog(client, host.paths.cwd),
+            catalogVersion,
+            lastLoadedOpenCode2Models,
+          );
+          if (catalog._tag !== "Unsettled") lastLoadedOpenCode2Models = catalog.models;
+          return catalog;
+        }),
       );
       const listOpenCode2Workspace = (cwd: string) =>
         openCode2Server.withConnection(({ client, events }) =>

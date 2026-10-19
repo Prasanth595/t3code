@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as HttpClient from "effect/http/HttpClient";
@@ -22,6 +23,7 @@ import {
   loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
   type OpenCode2Model,
+  type OpenCode2ModelCatalog,
   type OpenCode2Workspace,
   openCode2CommandsToServerProviderSlashCommands,
   openCode2SkillsToServerProviderSkills,
@@ -41,6 +43,10 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 it.effect("reads Go limits with the instance's XDG credentials and preserves reset times", () =>
   Effect.gen(function* () {
     const resetsAt = "2026-09-17T12:00:00.000Z";
+    const authPath = yield* Path.Path.pipe(
+      Effect.map((path) => path.join("/instance/data", "opencode", "auth.json")),
+      Effect.provide(NodeServices.layer),
+    );
     const limits = yield* readOpenCodeGoUsageLimits({
       enabled: true,
       serverUrl: "",
@@ -50,7 +56,7 @@ it.effect("reads Go limits with the instance's XDG credentials and preserves res
         FileSystem.FileSystem,
         FileSystem.makeNoop({
           readFileString: (path) => {
-            NodeAssert.equal(path, "/instance/data/opencode/auth.json");
+            NodeAssert.equal(path, authPath);
             return Effect.succeed(
               JSON.stringify({ "opencode-go": { type: "api", key: "instance-key" } }),
             );
@@ -331,9 +337,9 @@ const checkProvider = Effect.fn("checkProvider")(function* (
   environment?: NodeJS.ProcessEnv,
   server = replayOpenCodeServer(OPENCODE_1_RESPONSES, settings.serverPassword),
   openCode2Models: Effect.Effect<
-    ReadonlyArray<OpenCode2Model>,
+    OpenCode2ModelCatalog,
     OpenCodeRuntime.OpenCodeRuntimeError
-  > = Effect.succeed([]),
+  > = Effect.succeed({ _tag: "Settled", models: [] }),
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -559,15 +565,18 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
         process.cwd(),
         undefined,
         undefined,
-        Effect.succeed([
-          { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
-          {
-            providerID: "opencode",
-            id: "space-bunny-free",
-            name: "Space Bunny Free",
-            variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
-          },
-        ]),
+        Effect.succeed({
+          _tag: "Settled",
+          models: [
+            { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+            {
+              providerID: "opencode",
+              id: "space-bunny-free",
+              name: "Space Bunny Free",
+              variants: [{ id: "low" }, { id: "medium" }, { id: "high" }],
+            },
+          ],
+        }),
       );
 
       NodeAssert.equal(snapshot.status, "ready");
@@ -720,23 +729,26 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
         process.cwd(),
         undefined,
         replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret-password"),
-        Effect.succeed([
-          {
-            providerID: "openai",
-            id: "gpt-5.4",
-            name: "GPT-5.4",
-            providerName: "OpenAI",
-            variants: [],
-          },
-          {
-            providerID: "custom",
-            id: "m1",
-            name: "Custom 1",
-            providerName: "OpenCode",
-            variants: [],
-          },
-          { providerID: "anthropic", id: "claude", name: "Claude", variants: [] },
-        ]),
+        Effect.succeed({
+          _tag: "Settled",
+          models: [
+            {
+              providerID: "openai",
+              id: "gpt-5.4",
+              name: "GPT-5.4",
+              providerName: "OpenAI",
+              variants: [],
+            },
+            {
+              providerID: "custom",
+              id: "m1",
+              name: "Custom 1",
+              providerName: "OpenCode",
+              variants: [],
+            },
+            { providerID: "anthropic", id: "claude", name: "Claude", variants: [] },
+          ],
+        }),
       );
 
       const subProviderFor = (slug: string) =>
@@ -828,25 +840,38 @@ const bigPickle: OpenCode2Model = {
   variants: [],
 };
 
-it.effect("waits for a fresh OpenCode 2 server to list its models", () =>
+it.effect("keeps the settled catalog when a model request never completes", () =>
   Effect.gen(function* () {
-    const replies: Array<ReadonlyArray<OpenCode2Model>> = [[], [], [bigPickle]];
-    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [bigPickle]));
+    const requested = yield* Deferred.make<void>();
+    const load = makeOpenCode2ModelLoader(
+      Deferred.succeed(requested, undefined).pipe(Effect.andThen(Effect.never)),
+      "2.0.28",
+      [bigPickle],
+    );
     const fiber = yield* load.pipe(Effect.forkChild);
-    yield* TestClock.adjust("1 second");
-    NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
+    yield* Deferred.await(requested);
+    yield* TestClock.adjust("31 seconds");
+    NodeAssert.ok(fiber.pollUnsafe(), "The model request must have a deadline");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), { _tag: "Unsettled", models: [bigPickle] });
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("keeps the last OpenCode 2 model list while a fresh server's stays empty", () =>
+it.effect("keeps older OpenCode 2 discovery as a best-effort first-nonempty read", () =>
   Effect.gen(function* () {
-    let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
-    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => listed));
-    NodeAssert.deepEqual(yield* load, [bigPickle]);
-    listed = [];
+    const requested = yield* Deferred.make<void>();
+    const replies: Array<ReadonlyArray<OpenCode2Model>> = [[], [bigPickle]];
+    const load = makeOpenCode2ModelLoader(
+      Deferred.succeed(requested, undefined).pipe(
+        Effect.andThen(Effect.sync(() => replies.shift() ?? [bigPickle])),
+      ),
+      "2.0.26",
+      undefined,
+    );
     const fiber = yield* load.pipe(Effect.forkChild);
-    yield* TestClock.adjust("6 seconds");
-    NodeAssert.deepEqual(yield* Fiber.join(fiber), [bigPickle]);
+    yield* Deferred.await(requested);
+    yield* TestClock.adjust("250 millis");
+    NodeAssert.ok(fiber.pollUnsafe());
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), { _tag: "Legacy", models: [bigPickle] });
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

@@ -396,28 +396,38 @@ function subProviderLabelFor(input: {
     : label;
 }
 
-/**
- * A server loads its catalog lazily and lists nothing for its first few
- * hundred milliseconds, and a local instance starts a fresh server for each
- * status check. So an empty list is read again for a while, and the last
- * non-empty list stands in if the catalog still has not loaded.
- */
+export type OpenCode2ModelCatalog =
+  | { readonly _tag: "Settled"; readonly models: ReadonlyArray<OpenCode2Model> }
+  | { readonly _tag: "Legacy"; readonly models: ReadonlyArray<OpenCode2Model> }
+  | { readonly _tag: "Unsettled"; readonly models: ReadonlyArray<OpenCode2Model> };
+
+export const OPENCODE_2_CATALOG_EMPTY_MESSAGE =
+  "OpenCode 2 is running, but it did not list any models yet.";
+export const OPENCODE_2_CATALOG_LOADING_MESSAGE = "OpenCode 2 is still loading its model catalog.";
+
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
-) =>
-  Effect.sync(() => {
-    let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
-    return list.pipe(
-      Effect.repeat({
-        until: (models) => models.length > 0,
-        schedule: Schedule.spaced("250 millis"),
-      }),
-      Effect.timeoutOption("5 seconds"),
-      Effect.map((loaded) => {
-        if (loaded._tag === "Some" && loaded.value.length > 0) lastLoaded = loaded.value;
-        return lastLoaded;
-      }),
-    );
+  version: string,
+  lastLoaded: ReadonlyArray<OpenCode2Model> | undefined,
+): Effect.Effect<OpenCode2ModelCatalog, E> =>
+  Effect.gen(function* () {
+    // 2.0.27 added awaitPlugins to model.list. Earlier releases can return partial
+    // success; keep their first-nonempty fallback without certifying completeness.
+    const authoritative = compareSemverVersions(version, "2.0.27") >= 0;
+    const loaded = yield* (
+      authoritative
+        ? list
+        : list.pipe(
+            Effect.repeat({
+              until: (models) => models.length > 0,
+              schedule: Schedule.spaced("250 millis"),
+            }),
+          )
+    ).pipe(Effect.timeoutOption(authoritative ? "30 seconds" : "5 seconds"));
+    if (loaded._tag === "None") {
+      return { _tag: "Unsettled", models: lastLoaded ?? [] };
+    }
+    return { _tag: authoritative ? "Settled" : "Legacy", models: loaded.value };
   });
 
 export interface OpenCode2Workspace {
@@ -519,7 +529,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
   settings: OpenCodeSettings,
   version: string,
   checkedAt: string,
-  loadModels: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+  loadModels: Effect.Effect<OpenCode2ModelCatalog, OpenCodeRuntime.OpenCodeRuntimeError>,
 ) {
   const result = yield* Effect.exit(loadModels);
   const probe = (status: "ready" | "warning" | "error", message: string) => ({
@@ -544,8 +554,9 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
       probe: probe("error", "OpenCode could not load its model list."),
     });
   }
+  const { models: listedModels } = result.value;
   const models = providerModelsFromSettings(
-    result.value
+    listedModels
       .map((model) => {
         const subProvider = subProviderLabelFor(model);
         return {
@@ -567,12 +578,19 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     models,
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe:
-      result.value.length > 0
+      result.value._tag === "Unsettled"
         ? probe(
-            "ready",
-            `OpenCode ${version} lists ${result.value.length} model${result.value.length === 1 ? "" : "s"}.`,
+            listedModels.length > 0 ? "ready" : "warning",
+            listedModels.length > 0
+              ? OPENCODE_2_CATALOG_LOADING_MESSAGE
+              : OPENCODE_2_CATALOG_EMPTY_MESSAGE,
           )
-        : probe("warning", "OpenCode 2 is running, but it did not list any models yet."),
+        : listedModels.length > 0
+          ? probe(
+              "ready",
+              `OpenCode ${version} lists ${listedModels.length} model${listedModels.length === 1 ? "" : "s"}.`,
+            )
+          : probe("warning", "OpenCode 2 is ready, but it listed no models."),
   });
 });
 
@@ -580,10 +598,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   openCodeSettings: OpenCodeSettings,
   cwd: string,
   probeRuntime: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>,
-  loadOpenCode2Models: Effect.Effect<
-    ReadonlyArray<OpenCode2Model>,
-    OpenCodeRuntime.OpenCodeRuntimeError
-  >,
+  loadOpenCode2Models: Effect.Effect<OpenCode2ModelCatalog, OpenCodeRuntime.OpenCodeRuntimeError>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
