@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  ForwardCompatibleOptional,
   NonNegativeInt,
   PositiveInt,
   ProjectId,
@@ -344,14 +345,15 @@ export const VcsPullResult = Schema.Struct({
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
 
-// Git's stderr itself stays off the error: it echoes argv and remote URLs,
-// which can hold credentials. The tag names the cause for logs and callers; it
-// does not select a message.
+// Git stderr can echo credentials from argv and remote URLs. Only a fixed
+// reason reaches the error and its diagnostic suffix; reasons from a newer
+// server decode as absent on clients that include this forward-compatible field.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
   "branch_checked_out_in_worktree",
   "host_key_unverified",
+  "identity_unknown",
   "not_a_repository",
   "path_already_exists",
   "remote_unreachable",
@@ -368,7 +370,7 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   stdoutLength: Schema.optional(Schema.Number),
   stderrLength: Schema.optional(Schema.Number),
   outputLength: Schema.optional(Schema.Number),
-  reason: Schema.optional(GitCommandFailureReason),
+  reason: ForwardCompatibleOptional(GitCommandFailureReason),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {

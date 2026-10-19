@@ -471,6 +471,11 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   // Quoted-path forms only: an unquoted `fatal: <thing> already exists` also
   // covers tag and ref collisions, which are not path collisions.
   [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
+  // A commit with no usable user.name/user.email that git could not guess either.
+  [
+    /^fatal: (?:empty ident name|unable to auto-detect (?:name|email address)|no (?:name|email) was given and auto-detection is disabled|name consists only of disallowed characters)/im,
+    "identity_unknown",
+  ],
 ];
 
 // Hooks write to the same stream git does, and nothing distinguishes their text
@@ -2346,9 +2351,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               options.progress?.onOutputLine?.({ stream: "stderr", text: line }) ?? Effect.void,
           };
     yield* executeGit("GitVcsDriver.commit.commit", cwd, args, {
+      // Untranslated diagnostics keep the failure classifiable unless the user
+      // set LC_ALL. Only messages: commit hooks inherit this environment, and
+      // LC_ALL=C would also change their character encoding.
+      env: { LC_MESSAGES: "C" },
       ...(options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(progress ? { progress } : {}),
-    }).pipe(Effect.asVoid);
+    }).pipe(
+      Effect.mapError((error) =>
+        error.reason === "identity_unknown"
+          ? new GitCommandError({
+              ...gitCommandContext({ operation: error.operation, cwd, args }),
+              reason: error.reason,
+              detail:
+                'Git needs a name and email to commit. On the server, run git config --global user.name "Your Name" and git config --global user.email "you@example.com", then commit again.',
+              exitCode: error.exitCode,
+              stdoutLength: error.stdoutLength,
+              stderrLength: error.stderrLength,
+            })
+          : error,
+      ),
+      Effect.asVoid,
+    );
     const commitSha = yield* runGitStdout("GitVcsDriver.commit.revParseHead", cwd, [
       "rev-parse",
       "HEAD",

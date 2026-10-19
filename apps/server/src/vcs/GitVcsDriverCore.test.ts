@@ -132,6 +132,13 @@ const git = (
     return result.stdout.trim();
   });
 
+const AMBIENT_GIT_IDENTITY_KEYS = [
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+] as const;
+
 const initRepoWithCommit = (
   cwd: string,
 ): Effect.Effect<
@@ -1236,6 +1243,31 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           reason: "not_a_repository",
         });
         assert.include(error.message, "(not_a_repository)");
+      }),
+    );
+
+    it.effect.each([
+      "empty ident name (for <test@test.com>) not allowed",
+      "unable to auto-detect name (got nobody@host)",
+      "unable to auto-detect email address (got nobody@host)",
+      "no name was given and auto-detection is disabled",
+      "no email was given and auto-detection is disabled",
+      "name consists only of disallowed characters: .",
+    ])("names a missing identity behind: %s", (diagnostic) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* driver.initRepo({ cwd });
+
+        const error = yield* driver
+          .execute({
+            operation: "GitVcsDriver.test.identityUnknown",
+            cwd,
+            args: ["-c", `alias.fail=!printf 'fatal: ${diagnostic}\\n' >&2; exit 128`, "fail"],
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.reason, "identity_unknown");
       }),
     );
 
@@ -4028,6 +4060,46 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const status = yield* git(cwd, ["status", "--porcelain"]);
         assert.include(status, "?? b.txt");
         assert.notInclude(status, "a.txt");
+      }),
+    );
+
+    it.effect("explains a commit that has no author identity", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["config", "user.name", ""]);
+        yield* writeTextFile(cwd, "a.txt", "a\n");
+        yield* git(cwd, ["add", "a.txt"]);
+        const locales: Array<string | undefined> = [];
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command) || command.args[0] !== "commit") {
+            return delegate.spawn(command);
+          }
+          locales.push(command.options.env?.LC_MESSAGES);
+          // An identity exported by the developer's shell would let the commit succeed.
+          const env = { ...command.options.env };
+          for (const key of AMBIENT_GIT_IDENTITY_KEYS) delete env[key];
+          return delegate.spawn(
+            ChildProcess.make(command.command, command.args, { ...command.options, env }),
+          );
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+
+        const error = yield* driver.commit(cwd, "Add a", "").pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          operation: "GitVcsDriver.commit.commit",
+          reason: "identity_unknown",
+        });
+        assert.include(error.message, "git config --global user.email");
+        assert.notInclude(error.message, "test@test.com");
+        assert.deepEqual(locales, ["C"]);
+        assert.notProperty(error, "stderr");
       }),
     );
 
