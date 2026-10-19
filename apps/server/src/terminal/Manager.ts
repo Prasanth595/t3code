@@ -2707,7 +2707,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
         cwd: input.cwd,
       });
-      return yield* openLocked(resolvedInput);
+      return yield* Effect.uninterruptible(openLocked(resolvedInput));
     }
 
     const session = existing.value;
@@ -2720,7 +2720,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         terminalId,
         cwd: input.cwd,
       });
-      return yield* openLocked(resolvedInput);
+      return yield* Effect.uninterruptible(openLocked(resolvedInput));
     }
 
     if (
