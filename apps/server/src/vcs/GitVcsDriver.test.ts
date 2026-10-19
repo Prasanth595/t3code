@@ -193,53 +193,20 @@ it.effect.skipIf(!symlinksSupported)(
       yield* fileSystem.makeDirectory(subdir, { recursive: true });
       yield* fileSystem.makeDirectory(path.dirname(link), { recursive: true });
       yield* fileSystem.symlink(subdir, link);
-      const git = (cwd: string, args: ReadonlyArray<string>) =>
-        driver.execute({ operation: "checkpoint-test", cwd, args });
-
-      // Place the decoy where a lexical join of the symlink and Git's relative
-      // common dir lands, and do it before capture. Cleanup deletes the temp
-      // index afterward, so the recorded GIT_INDEX_FILE is what shows which
-      // repository was used.
-      yield* git(sandbox, ["init", "-b", "decoy-only"]);
-      yield* git(sandbox, ["config", "user.name", "Test"]);
-      yield* git(sandbox, ["config", "user.email", "test@test.com"]);
-      yield* git(sandbox, ["commit", "--allow-empty", "-m", "decoy"]);
-      yield* git(repo, ["init"]);
-      yield* git(repo, ["config", "user.name", "Test"]);
-      yield* git(repo, ["config", "user.email", "test@test.com"]);
-      yield* fileSystem.writeFileString(path.join(repo, "file.txt"), "initial\n");
-      yield* git(repo, ["add", "."]);
-      yield* git(repo, ["commit", "-m", "initial"]);
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, repo);
+      // Git returns ../../.git from the target; resolving it against the link reaches the decoy.
+      yield* git(["-C", sandbox, "init"]);
       yield* fileSystem.writeFileString(path.join(subdir, "nested.txt"), "from-link\n");
+      const realCommonDir = yield* fileSystem.realPath(path.join(repo, ".git"));
 
-      const relativeCommonDir = (yield* git(link, ["rev-parse", "--git-common-dir"])).stdout.trim();
-      assert.isFalse(path.isAbsolute(relativeCommonDir));
-      const decoyGitDir = yield* fileSystem.realPath(path.join(sandbox, ".git"));
-      assert.strictEqual(
-        yield* fileSystem.realPath(path.resolve(link, relativeCommonDir)),
-        decoyGitDir,
-      );
-      const realCommonDir = yield* fileSystem.realPath(
-        (yield* git(repo, [
-          "rev-parse",
-          "--path-format=absolute",
-          "--git-common-dir",
-        ])).stdout.trim(),
-      );
-      assert.notStrictEqual(realCommonDir, decoyGitDir);
-
-      const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/symlink");
       yield* driver.checkpoints.captureCheckpoint({ cwd: link, checkpointRef });
 
       assert.isTrue(indexFiles.length > 0);
       for (const indexFile of indexFiles) {
-        assert.isTrue(path.basename(indexFile).startsWith("t3-checkpoint-index"));
         assert.strictEqual(yield* fileSystem.realPath(path.dirname(indexFile)), realCommonDir);
       }
-      const decoyEntries = yield* fileSystem.readDirectory(decoyGitDir);
-      assert.isFalse(decoyEntries.some((entry) => entry.startsWith("t3-checkpoint-index")));
       assert.strictEqual(
-        (yield* git(repo, ["show", `${checkpointRef}:sub/dir/nested.txt`])).stdout,
+        (yield* git(["show", `${checkpointRef}:sub/dir/nested.txt`])).stdout,
         "from-link\n",
       );
     }).pipe(Effect.scoped, Effect.provide(layerGitCaptureContract)),

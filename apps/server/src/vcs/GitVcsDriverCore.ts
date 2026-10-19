@@ -1290,15 +1290,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
-    // Same absolute common-dir request as checkpoint capture. A relative
-    // answer joined with `path.resolve` walks `..` out of a symlinked
-    // subdirectory and can cache a missing path or another repository.
-    // `realPath` still runs afterward so Windows 8.3 short names collapse.
-    const gitCommonDirArgs = ["rev-parse", "--path-format=absolute", "--git-common-dir"] as const;
+    // Git reports relative paths from the physical cwd, which can differ from a symlink.
     const commonDirResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.resolveRepositoryPaths.commonDir",
       cwd,
-      gitCommonDirArgs,
+      ["rev-parse", "--git-common-dir"],
       {
         timeoutMs: 5_000,
         allowNonZeroExit: true,
@@ -1313,7 +1309,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...gitCommandContext({
           operation: "GitVcsDriver.resolveRepositoryPaths.commonDir",
           cwd,
-          args: gitCommonDirArgs,
+          args: ["rev-parse", "--git-common-dir"],
         }),
         detail: "Failed to resolve the Git common directory.",
         exitCode: commonDirResult.exitCode,
@@ -1323,9 +1319,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const commonDirOutput = commonDirResult.stdout.trim();
+    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
     const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
       ? path.normalize(commonDirOutput)
-      : path.resolve(cwd, commonDirOutput);
+      : path.resolve(physicalCwd, commonDirOutput);
     const gitCommonDir = yield* fileSystem
       .realPath(resolvedGitCommonDir)
       .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
@@ -1473,7 +1470,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...gitCommandContext({
         operation: "GitVcsDriver.resolveGitCommonDir",
         cwd,
-        args: ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        args: ["rev-parse", "--git-common-dir"],
       }),
       detail: "Cannot resolve a Git common directory outside a repository.",
     });

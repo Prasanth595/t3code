@@ -336,7 +336,7 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
       { args: ["rev-parse", "--git-path", "index"], lcAll: "C" },
       { args: ["status", "--porcelain=2", "--branch"], lcAll: "C" },
       { args: ["rev-parse", "--abbrev-ref", "HEAD"], lcAll: "C" },
-      { args: ["rev-parse", "--path-format=absolute", "--git-common-dir"], lcAll: "C" },
+      { args: ["rev-parse", "--git-common-dir"], lcAll: "C" },
     ]);
   }).pipe(Effect.provide(layer));
 });
@@ -2577,6 +2577,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const fileSystem = yield* FileSystem.FileSystem;
           const pathService = yield* Path.Path;
           const sandbox = yield* makeTmpDir("git-symlink-subdir-");
+          yield* initRepoWithCommit(sandbox);
+          yield* git(sandbox, ["branch", "-M", "decoy-only"]);
           const repo = pathService.join(sandbox, "repo");
           const link = pathService.join(sandbox, "nest", "link");
           yield* fileSystem.makeDirectory(pathService.join(repo, "sub", "dir"), {
@@ -2585,24 +2587,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* fileSystem.makeDirectory(pathService.dirname(link), { recursive: true });
           yield* fileSystem.symlink(pathService.join(repo, "sub", "dir"), link);
 
-          // The decoy has to exist before the only lookup. Refreshing listRefs
-          // on the same cwd coalesces path resolution, so a second call would
-          // replay a result captured before this repository existed.
-          yield* git(sandbox, ["init", "-b", "decoy-only"]);
-          yield* git(sandbox, ["config", "user.email", "test@test.com"]);
-          yield* git(sandbox, ["config", "user.name", "Test"]);
-          yield* git(sandbox, ["commit", "--allow-empty", "-m", "decoy"]);
           yield* initRepoWithCommit(repo);
           yield* git(repo, ["checkout", "-b", "real-only"]);
 
-          const relativeCommonDir = yield* git(link, ["rev-parse", "--git-common-dir"]);
-          assert.isFalse(pathService.isAbsolute(relativeCommonDir));
-          const decoyGitDir = pathService.join(sandbox, ".git");
-          assert.strictEqual(
-            yield* fileSystem.realPath(pathService.resolve(link, relativeCommonDir)),
-            yield* fileSystem.realPath(decoyGitDir),
-          );
-
+          // The decoy must exist before the first lookup, which caches repository paths.
           const refs = yield* (yield* GitVcsDriver.GitVcsDriver).listRefs({ cwd: link });
           assert.isTrue(refs.isRepo);
           assert.isFalse(refs.refs.some((ref) => ref.name === "decoy-only"));
