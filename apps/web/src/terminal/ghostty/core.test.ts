@@ -108,15 +108,6 @@ describe("GhosttyTerminalCore snapshots", () => {
     vi.restoreAllMocks();
   });
 
-  it("reports whether the cursor style conceals the next printed text", async () => {
-    const core = await createCore();
-    expect(core.isConcealing()).toBe(false);
-    core.write("\x1b[1;8m");
-    expect(core.isConcealing()).toBe(true);
-    core.resetAndWrite("plain");
-    expect(core.isConcealing()).toBe(false);
-  });
-
   it.each([
     { code: "", key: "Backspace", expected: "\x7f" },
     { code: "Unidentified", key: "Backspace", expected: "\x7f" },

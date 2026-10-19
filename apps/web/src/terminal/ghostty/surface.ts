@@ -738,12 +738,7 @@ export class GhosttyTerminalSurface {
 
   write(data: string): void {
     if (this.disposed) return;
-    const announce = this.focused && this.visible;
-    // Read before the write: the announcer replays this chunk from the core's prior state.
-    const concealed = announce && this.core.isConcealing();
-    this.core.write(data);
-    if (announce) this.announcer.output(data, concealed);
-    else this.announcer.skip(data);
+    this.announcer.write(data, this.core, this.focused && this.visible);
     this.synchronizeMouseTrackingState();
     this.cursorOn = true;
     this.scrollbarDirty = true;
@@ -1288,7 +1283,10 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) {
+      this.announcer.typed(data);
+      this.options.onData(data);
+    }
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1307,7 +1305,10 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) {
+      this.announcer.typed(data);
+      this.options.onData(data);
+    }
     this.input.value = "";
   };
 
