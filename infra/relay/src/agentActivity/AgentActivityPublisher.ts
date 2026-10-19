@@ -11,6 +11,7 @@ import type {
   RelayDeliveryResult,
   RelayPublishResponse,
 } from "@t3tools/contracts/relay";
+import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -47,7 +48,6 @@ export class AgentActivityPublisher extends Context.Service<
       readonly userId: string;
       readonly deviceId: string;
     }) => Effect.Effect<RelayDeliveryResult | null, AgentActivityPublishError>;
-    /** Ends armed iOS cards whose finished rows have outlived the display window. Run by the cron. */
     readonly endIdleLiveActivities: Effect.Effect<
       void,
       LiveActivities.LiveActivityIdleTargetListPersistenceError
@@ -151,9 +151,7 @@ export const make = Effect.gen(function* () {
         replay: true,
       });
     }),
-    // A card only hears from the relay when an environment publishes or the app
-    // re-registers, so one left showing Done rows would keep them for hours.
-    // Cards with live work again are left to their own publish.
+    // An idle card receives no more publishes to clear its expired finished rows.
     endIdleLiveActivities: Effect.gen(function* () {
       const now = yield* DateTime.now;
       const idleTargets = yield* liveActivities.listIdleArmedTargets({
@@ -163,33 +161,42 @@ export const make = Effect.gen(function* () {
       });
       yield* Effect.annotateCurrentSpan({ "relay.live_activities.idle_count": idleTargets.length });
       yield* Effect.forEach(
-        idleTargets,
-        (idle) =>
+        Object.entries(Arr.groupBy(idleTargets, (target) => target.user_id)),
+        ([userId, candidates]) =>
           Effect.gen(function* () {
-            const { activeStates, targets } = yield* Effect.all(
-              {
-                activeStates: rows.listForUser({ userId: idle.user_id }),
-                targets: liveActivities.listTargets({ userId: idle.user_id }),
-              },
-              { concurrency: 2 },
-            );
-            const target = targets.find((row) => row.device_id === idle.device_id);
+            const activeStates = yield* rows.listForUser({ userId });
             const aggregate = makeAggregateState({
               activeStates,
               terminalState: null,
               nowMs: now.epochMilliseconds,
             });
-            if (target === undefined || aggregate !== null) return;
-            yield* apnsDeliveries.sendForTarget({
-              target,
-              aggregate: null,
-              nowMs: now.epochMilliseconds,
-              replay: true,
-            });
+            if (aggregate !== null) return;
+            const targets = yield* liveActivities.listTargets({ userId });
+            const idleDeviceIds = new Set(candidates.map((target) => target.device_id));
+            yield* Effect.forEach(
+              targets.filter((target) => idleDeviceIds.has(target.device_id)),
+              (target) =>
+                apnsDeliveries
+                  .sendForTarget({
+                    target,
+                    aggregate: null,
+                    nowMs: now.epochMilliseconds,
+                    replay: true,
+                  })
+                  .pipe(
+                    Effect.catch((error) =>
+                      Effect.logWarning("Failed to end idle Live Activity", {
+                        deviceId: target.device_id,
+                        error,
+                      }),
+                    ),
+                  ),
+              { discard: true },
+            );
           }).pipe(
             Effect.catch((error) =>
-              Effect.logWarning("failed to end idle live activity", {
-                deviceId: idle.device_id,
+              Effect.logWarning("Failed to list idle Live Activity content or targets", {
+                userId,
                 error,
               }),
             ),

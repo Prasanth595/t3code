@@ -565,9 +565,6 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Contentless ends are decided when the user's aggregate was empty. Work that
-  // starts after that, even work that already finished, has content to show
-  // again. Fails closed: a database hiccup keeps the card for the next sweep.
   const userHasContentToShow = Effect.fnUntraced(function* (userId: string) {
     const now = yield* DateTime.now;
     return yield* activityRows.listForUser({ userId }).pipe(
@@ -579,8 +576,9 @@ export const make = Effect.gen(function* () {
             nowMs: now.epochMilliseconds,
           }) !== null,
       ),
-      Effect.catchCause((cause) =>
-        Effect.logWarning("content recheck failed; keeping the card", { cause }).pipe(
+      // Keep the card on persistence failures; a later sweep can retry.
+      Effect.catch((error) =>
+        Effect.logWarning("Content recheck failed; keeping the card", { error }).pipe(
           Effect.as(true),
         ),
       ),

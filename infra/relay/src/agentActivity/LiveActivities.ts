@@ -288,9 +288,6 @@ export const make = Effect.gen(function* () {
         );
     }),
 
-    // Armed cards that have heard nothing since `deliveredBefore`. Deliveries
-    // only run when an environment publishes or the app re-registers, so this is
-    // how the cron finds cards still showing Done rows past their display window.
     listIdleArmedTargets: Effect.fn("relay.live_activities.list_idle_armed_targets")(
       function* (input) {
         return yield* db
