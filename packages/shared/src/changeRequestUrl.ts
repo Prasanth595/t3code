@@ -51,7 +51,7 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   // Azure DevOps Server can use any hostname; its `_git` pull request route identifies it.
   const azure = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
   const link = claim(host, azure);
-  return link === null ? null : { ...link, authority: url.host.toLowerCase() };
+  return link === null || url.port === "" ? link : { ...link, authority: url.host.toLowerCase() };
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
