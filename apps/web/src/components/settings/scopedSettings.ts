@@ -337,7 +337,7 @@ export function planScopedSettingsPatch(
                 const effective = resolveProjectSettings(settings, projectId).settings;
                 const next: Record<string, unknown> = { ...current };
                 const environmentPatch = supportedPatch(environment, serverPatch);
-                for (const [key, value] of Object.entries(environmentPatch)) {
+                for (const [key, value] of Object.entries<unknown>(environmentPatch)) {
                   if (
                     key === "worktreeCleanup" &&
                     environmentPatch.worktreeCleanup?.mode === "custom"
@@ -360,7 +360,20 @@ export function planScopedSettingsPatch(
                     delete next[key];
                     continue;
                   }
-                  const base = effective[key as keyof ServerSettings];
+                  const base: unknown = effective[key as keyof ServerSettings];
+                  // A new model must not inherit the previous model's options.
+                  if (
+                    isPlainObject(value) &&
+                    isPlainObject(base) &&
+                    (key === "defaultModelSelection" ||
+                      key === "sourceControlWriterModelSelection" ||
+                      key === "reviewGuideModelSelection" ||
+                      key === "textGenerationModelSelection") &&
+                    (value.instanceId !== undefined || value.model !== undefined)
+                  ) {
+                    next[key] = { instanceId: base.instanceId, model: base.model, ...value };
+                    continue;
+                  }
                   next[key] =
                     isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
                 }
