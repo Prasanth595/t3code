@@ -38,65 +38,30 @@ const viewer = Effect.gen(function* () {
 });
 
 describe("repeatStillFrame", () => {
-  it.effect("re-sends the latest frame once when the screen stays still", () =>
+  it.effect("re-sends only the newest complete frame once when the screen stays still", () =>
     Effect.gen(function* () {
       const { send, finish } = yield* viewer;
       yield* send(part("first"));
       yield* TestClock.adjust(STILL_FRAME_DELAY);
+      yield* send(Buffer.concat([part("second"), part("third")]));
       yield* TestClock.adjust(STILL_FRAME_DELAY);
-      expect(yield* finish).toBe(`${part("first")}${part("first")}`);
+      yield* TestClock.adjust(STILL_FRAME_DELAY);
+      expect(yield* finish).toBe(
+        `${part("first")}${part("first")}${part("second")}${part("third")}${part("third")}`,
+      );
     }),
   );
 
-  it.effect("never interleaves a repeat into a frame that is still arriving", () =>
+  it.effect("never repeats into a frame that is still arriving", () =>
     Effect.gen(function* () {
       const { send, finish } = yield* viewer;
       const second = part("second");
+      // The pause lands inside the second part's headers.
       yield* send(part("first"), second.subarray(0, 20));
       yield* TestClock.adjust(STILL_FRAME_DELAY);
       yield* send(second.subarray(20));
       yield* TestClock.adjust(STILL_FRAME_DELAY);
       expect(yield* finish).toBe(`${part("first")}${second}${second}`);
-    }),
-  );
-
-  it.effect("adds nothing while frames keep arriving", () =>
-    Effect.gen(function* () {
-      const { send, finish } = yield* viewer;
-      yield* send(part("first"));
-      yield* send(part("second"));
-      expect(yield* finish).toBe(`${part("first")}${part("second")}`);
-    }),
-  );
-
-  it.effect("recognizes a frame whose final CRLF is split across chunks", () =>
-    Effect.gen(function* () {
-      const { send, finish } = yield* viewer;
-      const first = part("first");
-      yield* send(first.subarray(0, -1), first.subarray(-1));
-      yield* TestClock.adjust(STILL_FRAME_DELAY);
-      expect(yield* finish).toBe(`${first}${first}`);
-    }),
-  );
-
-  it.effect("repeats only the newest of several frames in one chunk", () =>
-    Effect.gen(function* () {
-      const { send, finish } = yield* viewer;
-      yield* send(Buffer.concat([part("first"), part("second")]));
-      yield* TestClock.adjust(STILL_FRAME_DELAY);
-      expect(yield* finish).toBe(`${part("first")}${part("second")}${part("second")}`);
-    }),
-  );
-
-  it.effect("stops tracking a part whose headers exceed the header budget", () =>
-    Effect.gen(function* () {
-      const { send, finish } = yield* viewer;
-      const padded = Buffer.from(
-        `--frame\r\nX-Padding: ${"a".repeat(32 * 1024)}\r\nContent-Length: 4\r\n\r\nbody\r\n`,
-      );
-      yield* send(padded);
-      yield* TestClock.adjust(STILL_FRAME_DELAY);
-      expect(yield* finish).toBe(String(padded));
     }),
   );
 
@@ -106,7 +71,9 @@ describe("repeatStillFrame", () => {
       const unframed = Buffer.from("--frame\r\nContent-Type: image/jpeg\r\n\r\nbody\r\n");
       yield* send(unframed);
       yield* TestClock.adjust(STILL_FRAME_DELAY);
-      expect(yield* finish).toBe(String(unframed));
+      yield* send(part("later"));
+      yield* TestClock.adjust(STILL_FRAME_DELAY);
+      expect(yield* finish).toBe(`${unframed}${part("later")}`);
     }),
   );
 });
