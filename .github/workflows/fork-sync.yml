@@ -107,13 +107,25 @@ jobs:
         name: Fork tests
         run: |
           set -euo pipefail
-          mapfile -t files < <(git diff --name-only --diff-filter=AMR "$(git merge-base upstream/main HEAD)" HEAD -- '*.test.ts' '*.test.tsx')
-          if (( ${#files[@]} == 0 )); then
+          base="$(git merge-base upstream/main HEAD)"
+          mapfile -t files < <(git diff --name-only --diff-filter=AMR "$base" HEAD -- '*.test.ts' '*.test.tsx' ':!apps/web')
+          # apps/web tests run from apps/web: its config holds the unit and the browser project.
+          mapfile -t web_files < <(git -C apps/web diff --relative --name-only --diff-filter=AMR "$base" HEAD -- '*.test.ts' '*.test.tsx')
+          if (( ${#files[@]} + ${#web_files[@]} == 0 )); then
             echo "No fork test files."
             exit 0
           fi
-          printf '%s\n' "${files[@]}"
-          vp test run "${files[@]}"
+          if (( ${#files[@]} > 0 )); then
+            printf '%s\n' "${files[@]}"
+            vp test run "${files[@]}"
+          fi
+          if (( ${#web_files[@]} > 0 )); then
+            printf 'apps/web/%s\n' "${web_files[@]}"
+            if printf '%s\n' "${web_files[@]}" | grep -q '\.browser\.test\.'; then
+              node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+            fi
+            (cd apps/web && vp test run --project unit --project browser "${web_files[@]}")
+          fi
 
       # A fast-forward push. If main moved during the run, merge the new main
       # into the sync commit and push again. Main is never force-pushed.
