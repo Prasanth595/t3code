@@ -55,6 +55,10 @@ import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import {
+  fromRunner,
+  decodeJsonReply,
+} from "@t3tools/provider-core/server/textGenerationOperations";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -5295,7 +5299,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("create_pr gives the PR writer the thread's checks and skips rolled-back runs", () =>
+  it.effect("create_pr sends bounded checks to the model and omits rolled-back runs", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
@@ -5342,12 +5346,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         updatedAt: createdAt,
       });
       let generatedThreadContext: string | undefined;
+      let generatedPrompt = "";
+      const writer = fromRunner("test", (request) => {
+        generatedPrompt = request.prompt;
+        return decodeJsonReply(request, "test", '{"title":"Thread context","body":"Body"}');
+      });
 
       const { manager } = yield* makeManager({
         textGeneration: {
           generatePrContent: (input) => {
             generatedThreadContext = input.threadContext;
-            return Effect.succeed({ title: "Thread context", body: "Body" });
+            return writer.generatePrContent(input);
           },
         },
         seed: Effect.gen(function* () {
@@ -5373,7 +5382,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               branch: null,
               worktreePath: repoDir,
               activeProviderThreadId: null,
-              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              lineage: {
+                parentThreadId: null,
+                relationshipToParent: null,
+                rootThreadId: threadId,
+              },
               forkedFrom: null,
               createdAt,
               updatedAt: createdAt,
@@ -5413,7 +5426,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               exitCode: 0,
             },
             {
-              ...itemBase(4, abandonedRun.id),
+              ...itemBase(4, completedRun.id),
+              type: "command_execution" as const,
+              input: "vp lint",
+              output: "2 lint errors",
+              exitCode: 1,
+            },
+            {
+              ...itemBase(5, abandonedRun.id),
               type: "command_execution" as const,
               input: "vp run abandoned",
               output: "abandoned output",
@@ -5440,10 +5460,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         threadId,
       });
 
-      expect(generatedThreadContext).toContain("Command: vp test run\nExit code: 0");
-      expect(generatedThreadContext).toContain("Tests 12 passed");
-      expect(generatedThreadContext).toContain("Make the PR writer see the thread");
-      expect(generatedThreadContext).not.toContain("vp run abandoned");
+      expect(generatedPrompt).toContain("Command: vp test run\nExit code: 0");
+      expect(generatedPrompt).toContain("Tests 12 passed");
+      expect(generatedPrompt).toContain("Make the PR writer see the thread");
+      expect(generatedPrompt).toContain("Command: vp lint\nExit code: 1");
+      expect(generatedPrompt).toContain("2 lint errors");
+      expect(generatedPrompt).not.toContain("vp run abandoned");
+      expect(generatedPrompt).not.toContain("abandoned output");
+      expect(Buffer.byteLength(generatedThreadContext ?? "")).toBeLessThanOrEqual(16_000);
     }),
   );
 

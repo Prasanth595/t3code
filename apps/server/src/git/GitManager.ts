@@ -495,8 +495,7 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
-// selectHistory drops oversized items whole, so a verbose test run would lose its
-// command and exit code. Keep the tail, where test runners print their verdict.
+// Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
 function limitCommandOutput(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
   if (item.type !== "command_execution" || item.output === undefined) return item;
   if (item.output.length <= PR_THREAD_COMMAND_OUTPUT_CHARS) return item;
@@ -771,9 +770,10 @@ export const make = Effect.gen(function* () {
     (effect, threadId) =>
       effect.pipe(
         Effect.catch((error) =>
-          Effect.logWarning("GitManager.readThreadContext failed", { threadId, cause: error }).pipe(
-            Effect.as(undefined),
-          ),
+          Effect.logWarning("GitManager.readThreadContext failed", {
+            threadId,
+            errorTag: error._tag,
+          }).pipe(Effect.as(undefined)),
         ),
       ),
   );
