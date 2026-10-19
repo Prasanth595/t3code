@@ -649,7 +649,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showEnvironmentPicker = hasMultipleEnvironments && onEnvironmentChange !== undefined;
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  // Matches ChatView's strip visibility: started threads keep a static label.
+  // Started threads get no handler but still show which machine they run on,
+  // matching the strip visibility ChatView computes from the same inputs.
   const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
     canPickEnvironment: hasMultipleEnvironments,
