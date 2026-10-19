@@ -37,6 +37,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   startup: (
     stateDir: string,
   ) => Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+  runs: Array<ProcessRunner.ProcessRunInput> = [],
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -78,8 +79,12 @@ const agentFixture = Effect.fn("agentFixture")(function* (
       ),
     ),
     Effect.provideService(ProcessRunner.ProcessRunner, {
-      run: (input) =>
-        input.args.includes("devices") ? startup(stateDir) : Effect.succeed(processOutput(0)),
+      run: (input) => {
+        runs.push(input);
+        return input.args.includes("devices")
+          ? startup(stateDir)
+          : Effect.succeed(processOutput(0));
+      },
     }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -89,7 +94,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir };
+  return { host, fs, stateDir, baseDir };
 });
 
 describe("AgentDevice startup", () => {
@@ -370,7 +375,7 @@ describe("Android SDK availability", () => {
           "/sdk/tools/bin/avdmanager",
           "/sdk/cmdline-tools/latest/bin/avdmanager",
         ],
-        { ANDROID_HOME: "/sdk" },
+        { ANDROID_HOME: "/sdk", JAVA_HOME: "/jdk" },
       );
       expect(reason).toBeNull();
     }),
@@ -384,10 +389,60 @@ describe("Android SDK availability", () => {
           `${root}/platform-tools/adb`,
           `${root}/emulator/emulator`,
           `${root}/cmdline-tools/latest/bin/avdmanager`,
+          "/Applications/Android Studio.app/Contents/jbr/bin/java",
         ],
         { HOME: "/test/home" },
       );
       expect(reason).toBeNull();
+    }),
+  );
+
+  it.effect("explains that avdmanager needs Java when no JDK is reachable", () =>
+    Effect.gen(function* () {
+      const root = "/test/home/Android/Sdk";
+      const reason = yield* diagnose(
+        [
+          `${root}/platform-tools/adb`,
+          `${root}/emulator/emulator`,
+          `${root}/cmdline-tools/latest/bin/avdmanager`,
+        ],
+        { HOME: "/test/home", PATH: "" },
+        "linux",
+      );
+      expect(reason).toContain("need Java 17 or later");
+      expect(reason).toContain("JAVA_HOME");
+    }),
+  );
+
+  it.effect("prefers JAVA_HOME and falls back to Android Studio's bundled JDK", () =>
+    Effect.gen(function* () {
+      const javaHome = (
+        files: ReadonlyArray<string>,
+        environment: NodeJS.ProcessEnv,
+        platform: NodeJS.Platform,
+      ) =>
+        LocalDeviceHost.__testing.androidJava.pipe(
+          Effect.provideService(HostProcess.Environment, { PATH: "", ...environment }),
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({ exists: (file) => Effect.succeed(files.includes(file)) }),
+          ),
+          Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
+        );
+      const studio = "/opt/android-studio/jbr";
+      expect(yield* javaHome([`${studio}/bin/java`], { JAVA_HOME: " /jdk " }, "linux")).toBe(
+        "/jdk",
+      );
+      expect(yield* javaHome([`${studio}/bin/java`], { HOME: "/test/home" }, "linux")).toBe(studio);
+      expect(
+        yield* javaHome(
+          ["D:\\Apps\\Android\\Android Studio\\jbr\\bin\\java.exe"],
+          { USERPROFILE: "C:\\Users\\test", ProgramFiles: "D:\\Apps" },
+          "win32",
+        ),
+      ).toBe("D:\\Apps\\Android\\Android Studio\\jbr");
+      expect(yield* javaHome([], { HOME: "/test/home" }, "linux")).toBeNull();
     }),
   );
 
@@ -404,13 +459,38 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
     const environment = LocalDeviceHost.__testing.deviceHostEnvironment(
       { PATH: "/usr/bin", HOME: "/test/home" },
       "/sdk",
+      "/jbr",
       "darwin",
       path,
     );
     expect(environment.PATH).toBe("/sdk/platform-tools:/sdk/emulator:/usr/bin");
     expect(environment.ANDROID_HOME).toBe("/sdk");
+    expect(environment.JAVA_HOME).toBe("/jbr");
     expect(environment.HOME).toBe("/test/home");
   }).pipe(Effect.provide(NodePath.layerPosix)),
+);
+
+it.effect("finds an Android SDK and JDK installed after the server started", () =>
+  Effect.gen(function* () {
+    const runs: Array<ProcessRunner.ProcessRunInput> = [];
+    const { host, fs, baseDir } = yield* agentFixture(() => Effect.succeed(processOutput(0)), runs);
+    const sdk = `${baseDir}/Library/Android/sdk`;
+    const jbr = `${baseDir}/Applications/Android Studio.app/Contents/jbr`;
+    for (const file of [
+      `${sdk}/platform-tools/adb`,
+      `${sdk}/emulator/emulator`,
+      `${jbr}/bin/java`,
+    ]) {
+      yield* fs.makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true });
+      yield* fs.writeFileString(file, "");
+    }
+    const ready = yield* host.current;
+    yield* ready!.run("emulator", ["-list-avds"]);
+    expect(runs.at(-1)).toMatchObject({
+      command: `${sdk}/emulator/emulator`,
+      env: { ANDROID_HOME: sdk, JAVA_HOME: jbr },
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
