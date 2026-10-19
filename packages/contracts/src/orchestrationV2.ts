@@ -3022,7 +3022,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
         id: NodeId,
         stoppedAt: Schema.DateTimeUtc,
         outcome: Schema.Struct({
-          status: Schema.Literals(["completed", "failed", "cancelled"]),
+          status: Schema.Literals(["completed", "failed", "cancelled", "interrupted"]),
           completedAt: Schema.DateTimeUtc,
           result: Schema.NullOr(Schema.String),
         }),
