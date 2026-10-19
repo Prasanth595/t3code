@@ -4,6 +4,7 @@ import {
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
 } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +12,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
+
+const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
@@ -81,7 +84,7 @@ export const hydrateCachedProvider = (input: {
   // Saved ACP snapshots can contain options copied across models by older servers.
   const cachedModels =
     input.cachedProvider.driver === ProviderDriverKind.make("acpRegistry")
-      ? input.cachedProvider.models.map((model) => ({ ...model, capabilities: null }))
+      ? input.cachedProvider.models.map((model) => ({ ...model, capabilities: EMPTY_CAPABILITIES }))
       : input.cachedProvider.models;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,

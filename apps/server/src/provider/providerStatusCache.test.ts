@@ -210,7 +210,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       hydrateCachedProvider({ cachedProvider: cachedAcp, fallbackProvider: fallbackAcp }).models,
       [
         ...fallbackAcp.models,
-        ...cachedAcp.models.map((model) => ({ ...model, capabilities: null })),
+        ...cachedAcp.models.map((model) => ({ ...model, capabilities: emptyCapabilities })),
       ],
     );
   });
