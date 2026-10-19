@@ -3382,6 +3382,7 @@ export default function Sidebar() {
       });
     },
   );
+  const fullPinnedKeys = pinnedThreads.map(threadShellKey);
   // Release the hold during render once the server state catches up, so the
   // canonical order shows in the same frame instead of after an effect pass.
   if (
@@ -3389,7 +3390,7 @@ export default function Sidebar() {
     isOptimisticDropReleased({
       optimisticDrop,
       threads,
-      pinnedKeys,
+      pinnedKeys: fullPinnedKeys,
       activeKeys,
       now: snoozeNow,
     })
@@ -3548,7 +3549,7 @@ export default function Sidebar() {
         : { ...current, targetSection: target?.section ?? null },
     );
   };
-  const collapsedPinnedOrder = pinnedShelfExpanded ? undefined : pinnedThreads.map(threadShellKey);
+  const collapsedPinnedOrder = pinnedShelfExpanded ? undefined : fullPinnedKeys;
   const sortableIds = sidebarListItems.map(sidebarListItemId);
   // Outside a drag the orders are constants, so the strategy, and with it
   // every sortable row, keeps its identity while thread shells stream in.
@@ -3670,6 +3671,22 @@ export default function Sidebar() {
       )
     )
       return;
+    const assignedKeys = new Map(assignments.map(({ id, orderKey }) => [id, orderKey]));
+    let order = plan.kind === "settle" ? null : plan.order;
+    if (plan.kind === "pin" || plan.kind === "reorder-pinned") {
+      // Hold hidden pins in the order their planned keys will produce on expansion.
+      order =
+        target.pinnedKeyOrder ??
+        sortPinnedThreadsForSidebar(
+          [
+            activeThread,
+            ...pinnedThreads.filter((thread) => threadShellKey(thread) !== activeKey),
+          ].map((thread) => ({
+            ...thread,
+            pinOrderKey: assignedKeys.get(threadShellKey(thread)) ?? thread.pinOrderKey,
+          })),
+        ).map(threadShellKey);
+    }
     const drop = {
       key: activeKey,
       sourceSection: activeSection,
@@ -3679,9 +3696,9 @@ export default function Sidebar() {
         plan.kind === "pin" ||
         plan.kind === "settle" ||
         (plan.kind === "move-active" && plan.unsnooze),
-      order: plan.kind === "settle" ? null : plan.order,
+      order,
       keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
-      assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
+      assignedKeys,
     };
     setOptimisticDrop(drop);
     void (async () => {
