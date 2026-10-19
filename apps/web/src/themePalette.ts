@@ -73,7 +73,6 @@ type CustomThemeLibrarySnapshot =
 
 let customThemeLibrarySnapshot: CustomThemeLibrarySnapshot | null = null;
 const themePreviewListeners = new Set<() => void>();
-let themePreviewSidebarArtwork: boolean | null = null;
 let themePreviewAppearance: ThemeAppearance | null = null;
 
 export function getThemePreviewAppearance(): ThemeAppearance | null {
@@ -81,7 +80,7 @@ export function getThemePreviewAppearance(): ThemeAppearance | null {
 }
 
 export function getThemePreviewSidebarArtwork(): boolean | null {
-  return themePreviewSidebarArtwork;
+  return themePreviewAppearance === null ? null : false;
 }
 
 export function subscribeToThemePreview(listener: () => void): () => void {
@@ -89,10 +88,8 @@ export function subscribeToThemePreview(listener: () => void): () => void {
   return () => themePreviewListeners.delete(listener);
 }
 
-function setThemePreview(sidebarArtwork: boolean | null, appearance: ThemeAppearance | null): void {
-  if (themePreviewSidebarArtwork === sidebarArtwork && themePreviewAppearance === appearance)
-    return;
-  themePreviewSidebarArtwork = sidebarArtwork;
+function setThemePreviewAppearance(appearance: ThemeAppearance | null): void {
+  if (themePreviewAppearance === appearance) return;
   themePreviewAppearance = appearance;
   for (const listener of themePreviewListeners) listener();
 }
@@ -1446,7 +1443,7 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
-  setThemePreview(false, appearance);
+  setThemePreviewAppearance(appearance);
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
@@ -1455,7 +1452,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const root = document.documentElement;
   if (!root?.style) return;
 
-  setThemePreview(null, null);
+  setThemePreviewAppearance(null);
   const palette = getThemeDefinition(theme);
 
   if (palette) {

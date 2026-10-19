@@ -120,7 +120,7 @@ describe("ChatMarkdown theme drafts", () => {
         container.querySelector<HTMLElement>(".chat-markdown-shiki .line span")?.style.color;
       await vi.waitFor(() => expect(keywordColor()).toBeTruthy());
       const savedColor = keywordColor();
-      const savedStorage = { ...localStorage };
+      const savedStorage = Object.fromEntries(Object.entries(localStorage));
       const draftAppearance = savedAppearance === "dark" ? "light" : "dark";
 
       await act(async () =>
@@ -136,12 +136,12 @@ describe("ChatMarkdown theme drafts", () => {
         resolvedTheme: savedAppearance,
         appearanceMode: savedAppearance,
       });
-      expect({ ...localStorage }).toEqual(savedStorage);
+      expect(Object.fromEntries(Object.entries(localStorage))).toEqual(savedStorage);
 
       await act(async () => selection.refreshTheme());
       await vi.waitFor(() => expect(keywordColor()).toBe(savedColor));
       expect(document.documentElement.classList.contains("dark")).toBe(savedAppearance === "dark");
-      expect({ ...localStorage }).toEqual(savedStorage);
+      expect(Object.fromEntries(Object.entries(localStorage))).toEqual(savedStorage);
     },
   );
 });
