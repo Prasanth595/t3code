@@ -280,42 +280,42 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
 });
 
 /**
- * ACP 1.3.0 is SIGKILLed at startup when it inherits RLIMIT_RTTIME soft 0 hard 0
- * (PipeWire plus the xdg portal leave Omarchy and Arch sessions that way) and
- * no seccomp filter is installed. A non-root process cannot raise a zero hard
- * limit, but an allow-all filter lets the runtime start under it. This is a
- * workaround for that crash, not a syscall sandbox. os.execv keeps the PID and
- * pipes, so T3 still signals the runtime directly.
+ * ACP 1.3.0 is SIGKILLed with RLIMIT_RTTIME=(0, 0) and no seccomp filter.
+ * An allow-all filter avoids the crash without raising the hard limit.
+ * PR_SET_NO_NEW_PRIVS prevents setuid/file-capability elevation in descendants.
+ * execv preserves the PID and pipes so cancellation still reaches the runtime.
  */
 export const LINUX_ANTIGRAVITY_SECCOMP_LAUNCHER = [
   "import ctypes, os, sys",
-  "try:",
-  "    class F(ctypes.Structure):",
-  '        _fields_ = [("c", ctypes.c_uint16), ("jt", ctypes.c_uint8), ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]',
-  "    class P(ctypes.Structure):",
-  '        _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(F))]',
-  "    libc = ctypes.CDLL(None, use_errno=True)",
-  "    f = (F * 1)(F(6, 0, 0, 0x7fff0000))",
-  "    p = P(1, f)",
-  "    if libc.prctl(38, 1, 0, 0, 0) != 0 or libc.prctl(22, 2, ctypes.byref(p)) != 0:",
-  '        sys.stderr.write("antigravity launcher: seccomp setup failed, errno %d\\n" % ctypes.get_errno())',
-  "        raise SystemExit(1)",
-  "except Exception as error:",
-  '    sys.stderr.write("antigravity launcher: seccomp setup failed: %r\\n" % (error,))',
-  "    raise SystemExit(1)",
+  "class SockFilter(ctypes.Structure):",
+  '    _fields_ = [("code", ctypes.c_uint16), ("jt", ctypes.c_uint8), ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]',
+  "class SockFprog(ctypes.Structure):",
+  '    _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(SockFilter))]',
+  "prctl = ctypes.CDLL(None, use_errno=True).prctl",
+  "prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4",
+  "filters = (SockFilter * 1)(SockFilter(6, 0, 0, 0x7fff0000))",
+  "program = SockFprog(1, filters)",
+  "if prctl(38, 1, 0, 0, 0) != 0 or prctl(22, 2, ctypes.addressof(program), 0, 0) != 0:",
+  '    raise OSError(ctypes.get_errno(), "antigravity launcher: seccomp setup failed")',
   "os.execv(sys.argv[1], sys.argv[1:])",
 ].join("\n");
 
 const resolveLinuxLauncherPython = Effect.fn("resolveLinuxLauncherPython")(function* (
   baseEnv: NodeJS.ProcessEnv,
-): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
+  pythonExecutable?: string,
+) {
+  if (pythonExecutable === "") return undefined;
   const fs = yield* FileSystem.FileSystem;
   const readProc = (file: string) => fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
-  if (!/^Max realtime timeout\s+0\s+0\s+us\s*$/m.test(yield* readProc("/proc/self/limits"))) {
+  if (
+    !/^Max realtime timeout[ \t]+0[ \t]+0[ \t]+us[ \t]*$/m.test(
+      yield* readProc("/proc/self/limits"),
+    )
+  ) {
     return undefined;
   }
-  if (!/^Seccomp:\s*0\s*$/m.test(yield* readProc("/proc/self/status"))) return undefined;
-  return (yield* resolveCommandPath("python3", { env: baseEnv })) ?? undefined;
+  if (!/^Seccomp:[ \t]*0[ \t]*$/m.test(yield* readProc("/proc/self/status"))) return undefined;
+  return pythonExecutable ?? (yield* resolveCommandPath("python3", { env: baseEnv })) ?? undefined;
 });
 
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
@@ -326,7 +326,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   readonly auth?: AntigravityAuthConfig;
   readonly userHome?: string;
   readonly tempDirectory?: string;
-  /** Forces the Linux seccomp launcher; an empty string opts out of detection. */
+  /** Overrides the Linux workaround executable; an empty string disables it. */
   readonly pythonExecutable?: string;
 }) {
   const auth = input.auth ?? ANTIGRAVITY_PERSONAL_AUTH;
@@ -372,11 +372,9 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
   const pythonExecutable =
-    input.pythonExecutable !== undefined
-      ? input.pythonExecutable || undefined
-      : platform === "linux"
-        ? yield* resolveLinuxLauncherPython(input.baseEnv ?? process.env)
-        : undefined;
+    platform === "linux"
+      ? yield* resolveLinuxLauncherPython(input.baseEnv ?? process.env, input.pythonExecutable)
+      : undefined;
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
