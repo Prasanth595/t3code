@@ -40,6 +40,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async contextFor(profileId: string, isolationKey?: string) {
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
       if (contextFailure) throw contextFailure;
+      contextStarted?.resolve();
       await contextGate?.promise;
       const context = makeContext(this.onClose);
       contexts.push(context);
@@ -198,6 +199,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
 const contexts: ReturnType<typeof makeContext>[] = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let contextStarted: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -311,6 +313,7 @@ beforeEach(() => {
   contexts.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  contextStarted = null;
   contextFailure = null;
   pageCopy = "";
   keyCopy = "";
@@ -1383,22 +1386,54 @@ it.live("control updates replace a stalled viewer backlog in the order they happ
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("concurrent agent opens count pending tabs toward the eight-tab limit", () =>
+it.live.each([
+  { budget: "agent", limit: 8 },
+  { budget: "server", limit: 32 },
+])("opens and popups reserve the $budget budget before session creation", ({ budget, limit }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
-      const gate = (contextGate = Promise.withResolvers<void>());
-      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
-      const opens = [];
-      for (let index = 0; index < 12; index++) {
-        opens.push(
-          yield* broker
-            .invoke({ scope, operation: "open", input: { reuseExistingTab: false, show: false } })
-            .pipe(Effect.result, Effect.forkScoped),
-        );
+      const { broker, browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const open = (target = scope) =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope: target,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+      for (let index = 1; index < limit - 3; index++) {
+        yield* open(budget === "agent" ? scope : asSession(`other-${Math.floor(index / 8)}`));
       }
-      // The host receives this after all preceding opens, while their contexts are gated.
-      yield* broker.invoke({ scope, operation: "status", input: {} });
+
+      const sessionGate = Promise.withResolvers<void>();
+      const launchGate = (contextGate = Promise.withResolvers<void>());
+      const sessionStarted = Promise.withResolvers<void>();
+      const realOpen = manager.open;
+      const delayedOpen = vi.spyOn(manager, "open").mockImplementation((input) =>
+        Effect.promise(() => {
+          sessionStarted.resolve();
+          return sessionGate.promise;
+        }).pipe(Effect.andThen(realOpen(input))),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          sessionGate.resolve();
+          launchGate.resolve();
+          delayedOpen.mockRestore();
+        }),
+      );
+      const events = yield* manager.subscribeEvents;
+      const first = yield* open().pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.promise(() => sessionStarted.promise);
+      const popup = makeContext();
+      const newCDPSession = popup.newCDPSession;
+      popup.newCDPSession = async (target) => {
+        await launchGate.promise;
+        return newCDPSession(target);
+      };
+      contexts[0]!.page.emit("popup", popup.page);
+      const last = yield* open().pipe(Effect.result, Effect.forkScoped);
+      const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
+      // The host processes this after the opens, while manager creation is blocked.
       const reused = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
@@ -1406,60 +1441,43 @@ it.live("concurrent agent opens count pending tabs toward the eight-tab limit", 
         input: { show: false },
       });
       expect(reused.tabId).toBe(tabId);
-      gate.resolve();
-      const results = yield* Effect.forEach(opens, Fiber.join);
-      expect(results.filter((result) => result._tag === "Success")).toHaveLength(7);
-      for (const result of results) {
-        if (result._tag === "Failure") {
-          expect(result.failure).toMatchObject({
-            _tag: "PreviewAutomationControlInterruptedError",
-            reason: "tabLimit",
-          });
-        }
-      }
-      const status = yield* broker.invoke<PreviewAutomationStatus>({
-        scope,
-        operation: "status",
-        input: {},
-      });
-      expect(status.tabs).toHaveLength(8);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(
+        limit - 3,
+      );
 
-it.live("concurrent agents count pending tabs toward the 32-tab server limit", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { broker } = yield* ready;
-      const gate = (contextGate = Promise.withResolvers<void>());
-      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
-      const opens = [];
-      for (let agent = 0; agent < 5; agent++) {
-        for (let index = 0; index < 8; index++) {
-          opens.push(
-            yield* broker
-              .invoke({
-                scope: asSession(`concurrent-agent-${agent}`),
-                operation: "open",
-                input: { reuseExistingTab: false, show: false },
-              })
-              .pipe(Effect.result, Effect.forkScoped),
-          );
-        }
+      sessionGate.resolve();
+      for (let count = 0; count < 3; count++) {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "opened") event = yield* PubSub.take(events);
       }
-      yield* broker.invoke({ scope, operation: "status", input: {} });
-      gate.resolve();
-      const results = yield* Effect.forEach(opens, Fiber.join);
-      expect(results.filter((result) => result._tag === "Success")).toHaveLength(31);
-      for (const result of results) {
-        if (result._tag === "Failure") expect(result.failure).toMatchObject({ reason: "tabLimit" });
+      // The same slots must stay reserved after publication, while pages are still opening.
+      const duringLaunch = yield* open().pipe(Effect.result, Effect.forkScoped);
+      const rejectedPopup = makeContext();
+      contexts[0]!.page.emit("popup", rejectedPopup.page);
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      launchGate.resolve();
+
+      expect((yield* Fiber.join(first))._tag).toBe("Success");
+      expect((yield* Fiber.join(last))._tag).toBe("Success");
+      for (const fiber of [overflow, duringLaunch]) {
+        expect(yield* Fiber.join(fiber)).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
+        });
       }
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      for (const session of sessions)
+        yield* browser.attachViewer(viewerInput(session.tabId, false));
+      expect(sessions).toHaveLength(limit);
+      expect(popup.page.isClosed()).toBe(false);
+      expect(rejectedPopup.page.isClosed()).toBe(true);
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
+        tabId,
         operation: "status",
         input: {},
       });
-      expect(status.tabs).toHaveLength(32);
+      expect(status.tabs).toHaveLength(limit);
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1500,7 +1518,7 @@ it.live("failed session and browser launches release capacity, as does closing a
             input: { show: false },
           })
           .pipe(Effect.flip),
-      ).toMatchObject({ reason: "tabLimit" });
+      ).toMatchObject({ _tag: "PreviewAutomationTabNotFoundError" });
       const browser = yield* ServerBrowser.ServerBrowser;
       expect(
         yield* browser.attachViewer(viewerInput(failedSession.tabId, false)).pipe(Effect.flip),
@@ -1517,68 +1535,39 @@ it.live("failed session and browser launches release capacity, as does closing a
   ).pipe(Effect.provide(layer)),
 );
 
-it.live.each(["agent", "server"] as const)(
-  "concurrent agent popups share the %s tab budget with pending opens",
-  (budget) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { broker, browser, tabId } = yield* ready;
-        const manager = yield* Manager.PreviewManager;
-        if (budget === "server") {
-          for (let index = 0; index < 30; index++) {
-            yield* broker.invoke({
-              scope: asSession(`other-agent-${Math.floor(index / 8)}`),
-              operation: "open",
-              input: { reuseExistingTab: false, show: false },
-            });
-          }
-        }
-        const gate = Promise.withResolvers<void>();
-        yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
-        const events = yield* manager.subscribeEvents;
-        const popups = Array.from({ length: 12 }, () => {
-          const popup = makeContext();
-          const newCDPSession = popup.newCDPSession;
-          popup.newCDPSession = async (target) => {
-            await gate.promise;
-            return newCDPSession(target);
-          };
-          return popup;
-        });
-        for (const popup of popups) contexts[0]!.page.emit("popup", popup.page);
-        const admitted = budget === "agent" ? 7 : 1;
-        for (let count = 0; count < admitted; count++) {
-          let event = yield* PubSub.take(events);
-          while (event.type !== "opened") event = yield* PubSub.take(events);
-        }
-        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
-        const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
-        expect(sessions).toHaveLength(budget === "agent" ? 8 : 32);
-        expect(popups.filter((popup) => popup.page.isClosed())).toHaveLength(12 - admitted);
-        // Pending popup pages also block ordinary opens from taking the same capacity.
-        expect(
-          yield* broker
-            .invoke<PreviewAutomationStatus>({
-              scope,
-              operation: "open",
-              input: { reuseExistingTab: false, show: false },
-            })
-            .pipe(Effect.flip),
-        ).toMatchObject({ reason: "tabLimit" });
-        gate.resolve();
-        for (const session of sessions) {
-          yield* browser.attachViewer(viewerInput(session.tabId, false));
-        }
-        const status = yield* broker.invoke<PreviewAutomationStatus>({
-          scope,
-          tabId,
-          operation: "status",
-          input: {},
-        });
-        expect(status.tabs).toHaveLength(sessions.length);
-        expect(contexts[0]!.page.close).not.toHaveBeenCalled();
-      }),
-    ).pipe(Effect.provide(layer)),
+it.live("interrupting an open releases its slot without leaving a relaunchable session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const open = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      for (let count = 1; count < 7; count++) yield* open;
+      const gate = (contextGate = Promise.withResolvers<void>());
+      const started = (contextStarted = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const events = yield* manager.subscribeEvents;
+      const opening = yield* open.pipe(Effect.forkScoped);
+      let pending = yield* PubSub.take(events);
+      while (pending.type !== "opened") pending = yield* PubSub.take(events);
+      yield* Effect.promise(() => started.promise);
+      yield* Fiber.interrupt(opening);
+      gate.resolve();
+      // Attaching must not resurrect the interrupted request's session.
+      const attached = yield* browser
+        .attachViewer(viewerInput(pending.tabId, false))
+        .pipe(Effect.result);
+      expect(attached).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ServerBrowserTabNotFoundError" },
+      });
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(7);
+      expect((yield* open).available).toBe(true);
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.live("an agent's tabs stop at the limit until an unwatched idle tab closes", () =>
