@@ -801,6 +801,15 @@ const make = Effect.gen(function* () {
       tab.loading = false;
       void reportLoaded(tab);
     });
+    // A new document fires DCL; the probe distinguishes it from the chooser's own document.
+    page.on("domcontentloaded", () => {
+      const open = tab.fileChooser;
+      if (open) {
+        void isFileChooserCurrent(open.chooser).then((current) => {
+          if (!current && tab.fileChooser === open) closeFileChooser(tab);
+        });
+      }
+    });
     page.on("framenavigated", (frame) => {
       // Same-document navigations (SPA routes) fire no load event.
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
@@ -998,6 +1007,17 @@ const make = Effect.gen(function* () {
         }
       : null;
 
+  // Not isConnected: upload helpers often click an input never added to the page. The handle's
+  // context is destroyed with its document, so a replaced document rejects.
+  const isFileChooserCurrent = (chooser: FileChooser) =>
+    chooser
+      .element()
+      .evaluate(
+        (element) =>
+          element.ownerDocument === (globalThis as unknown as { document: unknown }).document,
+      )
+      .catch(() => false);
+
   const offerFileChooser = async (tab: ServerTab, chooser: FileChooser) => {
     const previous = tab.fileChooser;
     const accept =
@@ -1005,6 +1025,7 @@ const make = Effect.gen(function* () {
         .element()
         .getAttribute("accept")
         .catch(() => null)) ?? "";
+    if (!(await isFileChooserCurrent(chooser))) return;
     if (previous) closeFileChooser(tab);
     tab.fileChooser = {
       id: NodeCrypto.randomUUID(),
