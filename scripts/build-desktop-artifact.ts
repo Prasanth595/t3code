@@ -2691,14 +2691,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
-  // A developer's own unsigned mac build, as opposed to any CI artifact
-  // (signed or not) or a Linux/Windows build. macOS keys privacy grants
-  // (Documents folder, etc.) on bundle id + code signature, so such a build
-  // needs a real signature to hold a grant at all, and its own bundle id so
-  // it can sit next to the installed release without the two fighting over
-  // one grant and re-prompting on every launch.
+  // Keep local macOS privacy grants separate from installed releases.
   const localMacBuild =
-    platform === "mac" && !signed && Option.isNone(yield* Config.string("CI").pipe(Config.option));
+    platform === "mac" && !signed && Option.isNone(yield* Config.String("CI").pipe(Config.option));
   const buildConfig: Record<string, unknown> = {
     appId: localMacBuild ? `${DESKTOP_APP_ID}.local` : DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
@@ -2784,11 +2779,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
           role: "Viewer",
         },
       ],
-      // Ad-hoc sign local builds so the whole bundle (helpers included) has a
-      // stable code signature; a linker-signed Electron binary alone cannot
-      // hold a grant. Hardened runtime stays off: with an ad-hoc signature
-      // its library validation rejects the native addons.
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // Leave hardened runtime off so ad-hoc signed builds can load native addons.
       ...(localMacBuild ? { identity: "-", hardenedRuntime: false } : {}),
       ...(macPasskeySigning
         ? {
