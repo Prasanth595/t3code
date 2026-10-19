@@ -64,6 +64,7 @@ import {
   editPullRequestThreadComment,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
+import { pullRequestMarkdownPreview } from "./pullRequestMarkdown.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
 it("groups checks needing attention before running and completed checks without losing any", () => {
@@ -2074,4 +2075,52 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+describe("mention display source", () => {
+  it("shows readable timeline text and previews while preserving raw source and fallback", () => {
+    const comment = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      body: "> [!NOTE]\n> @{account-id}  \n> please review\n\n`[!NOTE]`<br>done",
+      displayBody: "> [!NOTE]\n> @Alex\\_Smith \\& Co  \n> please review\n\n`[!NOTE]`<br>done",
+    };
+    const unresolved = { ...comment, id: "unresolved", displayBody: undefined };
+    const events = buildPullRequestTimeline({
+      ...TIMELINE_SOURCE,
+      comments: [comment, unresolved],
+    });
+    expect(events.find((event) => event.id === comment.id)?.body).toBe(comment.displayBody);
+    expect(events.find((event) => event.id === unresolved.id)?.body).toBe(comment.body);
+    expect(pullRequestMarkdownPreview(comment.displayBody)).toBe(
+      "@Alex_Smith & Co please review [!NOTE] done",
+    );
+    expect(comment.body).toBe("> [!NOTE]\n> @{account-id}  \n> please review\n\n`[!NOTE]`<br>done");
+  });
+
+  it("shows an updated raw mention after a local edit instead of stale display text", () => {
+    const comment = {
+      ...TIMELINE_SOURCE.comments[0]!,
+      body: "@{account-id}",
+      displayBody: "@Alex Smith",
+      displayText: "@Alex Smith",
+    };
+    const untouched = { ...comment, id: "other" };
+    const edited = editPullRequestThreadComment(
+      [comment, untouched],
+      comment.id,
+      "@{account-id} updated",
+    );
+    expect(edited[0]?.body).toBe("@{account-id} updated");
+    expect(edited[0]?.displayBody).toBeUndefined();
+    expect(edited[0]?.displayText).toBeUndefined();
+    const events = buildPullRequestTimeline({ ...TIMELINE_SOURCE, comments: edited });
+    expect(events.find((event) => event.id === comment.id)?.body).toBe("@{account-id} updated");
+    expect(events.find((event) => event.id === untouched.id)?.body).toBe("@Alex Smith");
+    expect(edited[1]).toBe(untouched);
+    expect(comment).toMatchObject({
+      body: "@{account-id}",
+      displayBody: "@Alex Smith",
+      displayText: "@Alex Smith",
+    });
+  });
 });

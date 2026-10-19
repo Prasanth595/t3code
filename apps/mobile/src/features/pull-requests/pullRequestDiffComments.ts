@@ -74,11 +74,13 @@ export function annotatePullRequestDiff(
       thread.line === null
         ? firstByPath.get(thread.path)
         : lines.get(JSON.stringify([thread.path, thread.side, thread.line]));
+    if (!anchor) continue;
     const first = thread.comments[0];
+    const preview = first?.displayText ?? first?.body ?? "";
     attach(
       anchor,
       `discussion:${thread.id}`,
-      `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${first?.body ?? ""}\n${thread.commentCount ?? thread.comments.length} comments · Tap to open`,
+      `${first?.author?.login ?? "Discussion"}${thread.isResolved ? " · Resolved" : ""}\n${preview}\n${thread.commentCount ?? thread.comments.length} comments · Tap to open`,
       thread.line === null ? "file" : String(thread.line),
     );
   }
