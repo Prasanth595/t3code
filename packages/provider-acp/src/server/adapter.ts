@@ -6122,6 +6122,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
           failure?: OrchestrationV2ProviderFailure,
+          options?: {
+            // The agent itself reported the turn over (ACP v2 idle state_update),
+            // so its open root tools are finished too. A failed RPC says nothing
+            // about the agent's tools, which may still run as pending background
+            // work the user can stop later.
+            readonly agentSettledOpenTools: boolean;
+          },
         ) {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
@@ -6142,7 +6149,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
-          if (settledStatus === "completed" || settledStatus === "failed") {
+          if (
+            settledStatus === "completed" ||
+            (settledStatus === "failed" && options?.agentSettledOpenTools === true)
+          ) {
             yield* terminalizeOpenForegroundTools(context, settledStatus);
           } else if (settledStatus === "interrupted") {
             yield* terminalizeOpenRunOwnedItems(context, {
@@ -6697,6 +6707,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           message: result.error?.message,
                           code: result.error == null ? null : String(result.error.code),
                         }),
+                        { agentSettledOpenTools: true },
                       );
                       return;
                     }
