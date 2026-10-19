@@ -191,31 +191,6 @@ function claudeAuthStatus(
     : "unauthenticated";
 }
 
-/**
- * The capability probe only reports Claude Code's Anthropic login. A Claude
- * instance pointed at another endpoint through `ANTHROPIC_BASE_URL` (an
- * OpenRouter or router setup) authenticates with an environment token instead,
- * so an empty first-party account payload says nothing about whether the
- * connection works. A custom endpoint therefore outranks the logged-out verdict.
- */
-function usesCustomClaudeApiEndpoint(environment: NodeJS.ProcessEnv): boolean {
-  const baseUrl = environment.ANTHROPIC_BASE_URL?.trim();
-  if (!baseUrl) return false;
-  try {
-    // `hostname` drops an explicit port, so `api.anthropic.com:443` stays first-party.
-    const endpoint = new URL(baseUrl);
-    return (
-      (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
-      !!endpoint.hostname &&
-      endpoint.hostname !== "api.anthropic.com"
-    );
-  } catch {
-    // An unparseable value is not an endpoint we can confirm, so it does not get
-    // to override the logged-out verdict.
-    return false;
-  }
-}
-
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the Bedrock
 // backend and runs the `awsAuthRefresh` credential hook before returning account info.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
@@ -645,7 +620,13 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const customApiEndpoint = usesCustomClaudeApiEndpoint(resolvedEnvironment);
+  // First-party account fields cannot verify custom endpoint credentials.
+  const endpoint = URL.parse(resolvedEnvironment.ANTHROPIC_BASE_URL?.trim() ?? "");
+  const customApiEndpoint =
+    endpoint !== null &&
+    (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
+    endpoint.hostname !== "" &&
+    endpoint.hostname !== "api.anthropic.com";
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
