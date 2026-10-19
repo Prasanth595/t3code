@@ -1511,6 +1511,46 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         cursor = page.nextCursor;
       }
       assert.deepEqual(loaded, allIds);
+
+      const completedPlan = {
+        id: planId,
+        threadId,
+        runId: RunId.make("run:notification-turn-pages:2"),
+        nodeId: NodeId.make("node:notification-turn-pages:2"),
+        kind: "todo_list" as const,
+        status: "completed" as const,
+        explanation: "All tasks complete",
+        steps: [{ id: "unfinished", text: "Finish the task", status: "completed" as const }],
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:notification-turn-pages:plan:completed"),
+        type: "plan.updated",
+        threadId,
+        occurredAt: now,
+        payload: completedPlan,
+      });
+      const afterCompletion = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 77,
+        userTurnLimit: 10,
+      });
+      const completedBounded = buildBoundedThreadProjection({
+        projection: afterCompletion.projection,
+        snapshotSequence: 0,
+      });
+      assert.deepEqual(
+        {
+          plans: completedBounded.projection.plans,
+          oldRunIds: completedBounded.projection.runs
+            .filter((run) => run.ordinal < 261)
+            .map((run) => run.id),
+          providerThreadIds: completedBounded.projection.providerThreads.map((thread) => thread.id),
+        },
+        {
+          plans: [completedPlan, bounded.projection.plans.find((plan) => plan.id === olderPlanId)],
+          oldRunIds: [completedPlan.runId],
+          providerThreadIds: [providerThreadId],
+        },
+      );
     }),
   );
 

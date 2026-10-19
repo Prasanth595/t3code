@@ -3011,6 +3011,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortPlanIds = cohortJson("planId");
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
+        // A newer completion must keep an older active list from resurfacing after paging.
+        const [latestTodoList] =
+          window === undefined ||
+          (fields !== undefined &&
+            !fields.some(
+              (field) => field === "plans" || field === "runs" || field === "providerThreads",
+            ))
+            ? []
+            : yield* sql<{
+                readonly plan_id: string;
+                readonly run_id: string;
+                readonly provider_thread_id: string | null;
+              }>`
+                SELECT plan.plan_id, owner.run_id, owner.provider_thread_id
+                FROM orchestration_v2_projection_plans AS plan
+                INNER JOIN orchestration_v2_projection_runs AS owner
+                  ON owner.thread_id = plan.thread_id AND owner.run_id = plan.run_id
+                WHERE plan.thread_id = ${threadId}
+                  AND plan.kind = 'todo_list' AND plan.status <> 'superseded'
+                ORDER BY owner.ordinal DESC, plan.plan_id DESC
+                LIMIT 1
+              `;
 
         const [
           thread,
@@ -3047,27 +3069,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND (status IN ('queued','preparing','starting','running','waiting')
                 OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
                 OR run_id = ${window.requiredRunId ?? null}
-                -- The newest active task list needs its owner and latest actual
-                -- session even when queued or cancelled turns fill the window.
-                OR run_id = (
-                  SELECT owner.run_id FROM orchestration_v2_projection_plans AS plan
-                  INNER JOIN orchestration_v2_projection_runs AS owner
-                    ON owner.thread_id = plan.thread_id AND owner.run_id = plan.run_id
-                  WHERE plan.thread_id = ${threadId}
-                    AND plan.kind = 'todo_list' AND plan.status = 'active'
-                  ORDER BY owner.ordinal DESC
-                  LIMIT 1
-                )
+                -- Queued or cancelled turns must not hide the latest actual session.
+                OR run_id = ${latestTodoList?.run_id ?? null}
                 OR run_id = (
                   SELECT run_id FROM orchestration_v2_projection_runs
                   WHERE thread_id = ${threadId}
                     AND provider_thread_id IS NOT NULL
                     AND json_extract(payload_json, '$.startedAt') IS NOT NULL
-                    AND EXISTS (
-                      SELECT 1 FROM orchestration_v2_projection_plans
-                      WHERE thread_id = ${threadId}
-                        AND kind = 'todo_list' AND status = 'active'
-                    )
+                    AND ${latestTodoList?.plan_id ?? null} IS NOT NULL
                   ORDER BY ordinal DESC
                   LIMIT 1
                 ))
@@ -3190,15 +3199,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE (thread_id = ${threadId} AND status = 'active')
               OR provider_thread_id IN (SELECT value FROM json_each(${cohortProviderThreadIds}))
               OR owner_node_id IN (SELECT value FROM json_each(${cohortNodeIds}))
-              OR (thread_id = ${threadId} AND provider_thread_id = (
-                SELECT owner.provider_thread_id FROM orchestration_v2_projection_plans AS plan
-                INNER JOIN orchestration_v2_projection_runs AS owner
-                  ON owner.thread_id = plan.thread_id AND owner.run_id = plan.run_id
-                WHERE plan.thread_id = ${threadId}
-                  AND plan.kind = 'todo_list' AND plan.status = 'active'
-                ORDER BY owner.ordinal DESC
-                LIMIT 1
-              ))
+              OR (thread_id = ${threadId}
+                AND provider_thread_id = ${latestTodoList?.provider_thread_id ?? null})
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `,
           fields !== undefined && !fields.includes("providerTurns")
@@ -3275,6 +3277,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 WHERE plan.thread_id = ${threadId}
                   AND (
                     plan.status = 'active'
+                    OR plan.plan_id = ${latestTodoList?.plan_id ?? null}
                     OR plan.plan_id IN (
                       SELECT value FROM json_each(${cohortPlanIds})
                     )
