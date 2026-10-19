@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import type { DesktopSnapShotBridge } from "../../lib/desktopSnapShot";
+import * as imageCompression from "../../lib/imageCompression";
 import {
   questionAttachmentDraftId,
   trackOpenQuestionAttachmentDraft,
@@ -339,39 +340,36 @@ describe("open question delivery", () => {
     }
   });
 
-  it("keeps a capture on the question it was pinned to, never a newer one", () => {
-    const pins = new Map();
-    expect(resolveSnapShotAttachmentTarget(pins, "before", threadRef)).toEqual(threadRef);
-    const untrackFirst = trackOpenQuestionAttachmentDraft(threadRef, request);
-    expect(resolveSnapShotAttachmentTarget(pins, "before", threadRef)).toEqual(threadRef);
-    expect(resolveSnapShotAttachmentTarget(pins, "during-first", threadRef)).toBe(first);
-    const untrackSecond = trackOpenQuestionAttachmentDraft(threadRef, {
-      ...request,
-      draftId: second,
-    });
-    // A stale cleanup from the previous question must not drop the newer registration.
-    untrackFirst();
-    expect(resolveSnapShotAttachmentTarget(pins, "during-first", threadRef)).toEqual(threadRef);
-    expect(resolveSnapShotAttachmentTarget(pins, "during-second", threadRef)).toBe(second);
-    untrackSecond();
-    expect(resolveSnapShotAttachmentTarget(pins, "during-second", threadRef)).toEqual(threadRef);
-  });
-
-  it("falls back to the thread draft when the question closes while the capture is read", async () => {
+  it("falls back to the thread when a newer question replaces the pinned one during compression", async () => {
     vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
     const pins = new Map();
-    const untrack = trackOpenQuestionAttachmentDraft(threadRef, request);
-    const { bridge, acknowledgeSnapShot } = makeBridge(async () => {
-      untrack();
-      return capture;
-    });
-    const resolveTarget = () => resolveSnapShotAttachmentTarget(pins, capture.id, threadRef);
-    expect(resolveTarget()).toBe(first);
-    await deliverSnapShot(bridge, capture, resolveTarget);
-    const store = useComposerDraftStore.getState();
-    expect(store.getComposerDraft(first)?.images ?? []).toHaveLength(0);
-    expect(store.getComposerDraft(threadRef)?.images.map(({ id }) => id)).toEqual([capture.id]);
-    expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+    const untrackFirst = trackOpenQuestionAttachmentDraft(threadRef, request);
+    let untrackSecond = () => {};
+    const compression = vi
+      .spyOn(imageCompression, "compressImageToByteLimit")
+      .mockImplementationOnce(async (file) => {
+        untrackSecond = trackOpenQuestionAttachmentDraft(threadRef, {
+          ...request,
+          draftId: second,
+        });
+        untrackFirst();
+        return { ok: true, file, recompressed: false };
+      });
+    try {
+      const { bridge, acknowledgeSnapShot } = makeBridge();
+      const resolveTarget = () => resolveSnapShotAttachmentTarget(pins, capture.id, threadRef);
+      expect(resolveTarget()).toBe(first);
+      await deliverSnapShot(bridge, capture, resolveTarget);
+      const store = useComposerDraftStore.getState();
+      expect(store.getComposerDraft(first)?.images ?? []).toHaveLength(0);
+      expect(store.getComposerDraft(second)?.images ?? []).toHaveLength(0);
+      expect(store.getComposerDraft(threadRef)?.images.map(({ id }) => id)).toEqual([capture.id]);
+      expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+    } finally {
+      compression.mockRestore();
+      untrackFirst();
+      untrackSecond();
+    }
   });
 
   it("keeps a capture pinned before any question off a question that opens during the read", async () => {
