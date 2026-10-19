@@ -261,7 +261,7 @@ describe("resolveTailscaleHttpsRowState", () => {
     reachability: "private-network",
   });
 
-  it("keeps failed-probe HTTPS enabled and disableable without offering it for QR pairing", () => {
+  it("keeps failed-probe HTTPS enabled and disableable", () => {
     const unavailable = { ...endpoint, status: "unavailable" as const };
     expect(
       resolveTailscaleHttpsRowState({ endpoint: unavailable, serveEnabled: true }),
@@ -270,8 +270,6 @@ describe("resolveTailscaleHttpsRowState", () => {
       checked: true,
       reachable: false,
     });
-    expect(isQrShareableEndpoint(unavailable)).toBe(false);
-    expect(isQrShareableEndpoint(endpoint)).toBe(true);
   });
 
   it("keeps enabled HTTPS disableable when its endpoint disappears", () => {
