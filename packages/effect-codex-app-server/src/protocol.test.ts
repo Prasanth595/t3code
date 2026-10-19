@@ -24,10 +24,6 @@ const encoder = new TextEncoder();
 const encodeJsonl = (value: unknown) => encoder.encode(`${encodeUnknownJsonString(value)}\n`);
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-const requestFailure = {
-  onFailure: (error: CodexError.CodexAppServerError) => error,
-  onSuccess: () => assert.fail("Expected the request to fail"),
-};
 const decodeAccountTokenUsageResponse = Schema.decodeUnknownEffect(
   CodexRpc.CLIENT_REQUEST_RESPONSES["account/usage/read"],
 );
@@ -826,8 +822,6 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       yield* Queue.take(output);
       const unanswered = yield* transport.request("thread/start", {}).pipe(Effect.forkScoped);
       yield* Queue.take(output);
-      yield* TestClock.adjust("1 minute");
-
       // A reply written just before the exit still arrives.
       const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1 });
       yield* Deferred.succeed(exited, exitError);
@@ -838,10 +832,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
 
       yield* TestClock.adjust("1 second");
       assert.strictEqual(yield* Deferred.await(termination), exitError);
-      assert.strictEqual(
-        yield* Fiber.join(unanswered).pipe(Effect.match(requestFailure)),
-        exitError,
-      );
+      assert.strictEqual(yield* Fiber.join(unanswered).pipe(Effect.flip), exitError);
     }),
   );
 
@@ -858,7 +849,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       yield* Scope.close(clientScope, Exit.void);
 
       assert.instanceOf(
-        yield* Fiber.join(response).pipe(Effect.match(requestFailure)),
+        yield* Fiber.join(response).pipe(Effect.flip),
         CodexError.CodexAppServerInputStreamEndedError,
       );
     }),
