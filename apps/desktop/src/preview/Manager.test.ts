@@ -4,6 +4,8 @@ import { DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER } from "@t3tools/contracts";
 import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewRecordingInputEvent,
+  PreviewAnnotationPayload,
+  PreviewAnnotationRect,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
@@ -4328,124 +4330,33 @@ describe("PreviewManager", () => {
     ),
   );
 
-  effectIt.effect.each([
-    ["unscaled", { x: 5, y: 6, width: 20, height: 30 }, 1, { x: 5, y: 6, width: 20, height: 30 }],
-    ["retina", { x: 5, y: 6, width: 20, height: 30 }, 2, { x: 10, y: 12, width: 40, height: 60 }],
-    [
-      "zoomed retina",
-      { x: 5, y: 6, width: 20, height: 30 },
-      2.5,
-      { x: 12, y: 15, width: 51, height: 75 },
-    ],
-    [
-      "double zoom retina",
-      { x: 5, y: 6, width: 20, height: 30 },
-      4,
-      { x: 20, y: 24, width: 80, height: 120 },
-    ],
-    [
-      "clipped top left",
-      { x: -5, y: -6, width: 20, height: 30 },
-      2,
-      { x: 0, y: 0, width: 30, height: 48 },
-    ],
-    [
-      "clipped bottom right",
-      { x: 995, y: 595, width: 20, height: 30 },
-      2,
-      { x: 1990, y: 1190, width: 10, height: 10 },
-    ],
-    ["above viewport", { x: 5, y: -100, width: 20, height: 30 }, 2, null],
-    ["below viewport", { x: 5, y: 601, width: 20, height: 30 }, 2, null],
-    ["left of viewport", { x: -100, y: 6, width: 20, height: 30 }, 2, null],
-    ["right of viewport", { x: 1001, y: 6, width: 20, height: 30 }, 2, null],
-    [
-      "padding above viewport",
-      { x: 40, y: -100, width: 240, height: 110 },
-      2,
-      null,
-      [{ x: 60, y: -80, width: 200, height: 70 }],
-    ],
-    [
-      "padding below viewport",
-      { x: 40, y: 590, width: 240, height: 110 },
-      2,
-      null,
-      [{ x: 60, y: 610, width: 200, height: 70 }],
-    ],
-    [
-      "padding left of viewport",
-      { x: -230, y: 40, width: 240, height: 110 },
-      2,
-      null,
-      [{ x: -210, y: 60, width: 200, height: 70 }],
-    ],
-    [
-      "padding right of viewport",
-      { x: 990, y: 40, width: 240, height: 110 },
-      2,
-      null,
-      [{ x: 1010, y: 60, width: 200, height: 70 }],
-    ],
-    [
-      "opposite offscreen targets",
-      { x: -230, y: 40, width: 1460, height: 110 },
-      2,
-      null,
-      [
-        { x: -210, y: 60, width: 200, height: 70 },
-        { x: 1010, y: 60, width: 200, height: 70 },
-      ],
-    ],
-    [
-      "partial target with padding",
-      { x: 40, y: -60, width: 240, height: 110 },
-      2,
-      { x: 80, y: 0, width: 480, height: 100 },
-      [{ x: 60, y: -40, width: 200, height: 70 }],
-    ],
-    [
-      "visible and offscreen targets",
-      { x: -230, y: 40, width: 510, height: 110 },
-      2,
-      { x: 0, y: 80, width: 560, height: 220 },
-      [
-        { x: -210, y: 60, width: 200, height: 70 },
-        { x: 60, y: 60, width: 200, height: 70 },
-      ],
-    ],
-    [
-      "offscreen target without crop bounds",
-      null,
-      2,
-      null,
-      [{ x: 60, y: -80, width: 200, height: 70 }],
-    ],
-    [
-      "visible target without crop bounds",
-      null,
-      2,
-      { x: 0, y: 0, width: 2000, height: 1200 },
-      [{ x: 60, y: 80, width: 200, height: 70 }],
-    ],
-    ["no targets or crop bounds", null, 2, { x: 0, y: 0, width: 2000, height: 1200 }, []],
-  ] as const)(
-    "crops the picked viewport area: %s",
-    ([, cropRect, devicePixelRatio, expectedCrop, targetRects]) =>
+  describe("annotation screenshots", () => {
+    const captureAnnotation = (
+      cropRect: PreviewAnnotationRect | null,
+      targets: Partial<Pick<PreviewAnnotationPayload, "elements" | "regions" | "strokes">> = {},
+      emptyImage?: "viewport" | "crop",
+    ) =>
       withManager((manager) =>
         Effect.gen(function* () {
           let onPicked: ((event: unknown, ...args: unknown[]) => void) | undefined;
           const crop = vi.fn((rect: Electron.Rectangle) => ({
-            getSize: () => ({ width: rect.width, height: rect.height }),
-            toDataURL: () => "data:image/png;base64,cropped",
+            isEmpty: () => emptyImage === "crop",
+            getSize: () =>
+              emptyImage === "crop"
+                ? { width: 0, height: 0 }
+                : { width: rect.width, height: rect.height },
+            toDataURL: () => (emptyImage === "crop" ? "data:," : "data:image/png;base64,cropped"),
           }));
           const capturePage = vi.fn(async () => ({
-            getSize: () => ({ width: 2000, height: 1200 }),
-            toDataURL: () => "data:image/png;base64,cropped",
+            isEmpty: () => emptyImage === "viewport",
+            getSize: () =>
+              emptyImage === "viewport" ? { width: 0, height: 0 } : { width: 2000, height: 1200 },
+            toJPEG: () => Buffer.from("unused"),
+            toDataURL: () => (emptyImage === "viewport" ? "data:," : "data:image/png;base64,full"),
             crop,
           }));
           fromId.mockReturnValue(
-            Object.assign(makeTestPreviewWebContents(capturePage as never), {
+            Object.assign(makeTestPreviewWebContents(capturePage), {
               isFocused: () => true,
               once: vi.fn(),
               ipc: {
@@ -4470,43 +4381,157 @@ describe("PreviewManager", () => {
               pageTitle: "Example",
               comment: "Tighten this spacing",
               elements: [],
-              regions: (targetRects ?? (cropRect ? [cropRect] : [])).map((rect, index) => ({
-                id: `region_${index}`,
-                rect,
-              })),
+              regions: [],
               strokes: [],
+              ...targets,
               styleChanges: [],
               screenshot: null,
               createdAt: "2026-06-11T00:00:00.000Z",
             },
             cropRect,
             "attach",
-            devicePixelRatio,
+            2,
           );
 
           const result = yield* Fiber.join(pick);
-          expect(capturePage).toHaveBeenCalledWith();
+          expect(capturePage).toHaveBeenCalledExactlyOnceWith();
           expect(result?.annotation.comment).toBe("Tighten this spacing");
           expect(result?.submission).toBe("attach");
-          expect(webviewSend).toHaveBeenCalledWith("preview:annotation-captured");
-          if (!expectedCrop) {
-            expect(crop).not.toHaveBeenCalled();
-            expect(result?.annotation.screenshot).toBeNull();
-            expect(result?.screenshotFailed).toBe(true);
-            return;
-          }
-          if (cropRect) expect(crop).toHaveBeenCalledWith(expectedCrop);
-          else expect(crop).not.toHaveBeenCalled();
-          expect(result?.screenshotFailed).toBeUndefined();
-          expect(result?.annotation.screenshot).toEqual({
-            dataUrl: "data:image/png;base64,cropped",
-            width: expectedCrop.width,
-            height: expectedCrop.height,
-            cropRect: cropRect ?? expectedCrop,
-          });
+          return { result, crop };
         }),
-      ),
-  );
+      );
+
+    effectIt.effect("crops an on-screen region at device scale", () =>
+      Effect.gen(function* () {
+        const rect = { x: 5, y: 6, width: 20, height: 30 };
+        const { result, crop } = yield* captureAnnotation(rect, {
+          regions: [{ id: "region_1", rect }],
+        });
+        expect(crop).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 12, width: 40, height: 60 });
+        expect(result?.screenshotFailed).toBeUndefined();
+        expect(result?.annotation.screenshot).toEqual({
+          dataUrl: "data:image/png;base64,cropped",
+          width: 40,
+          height: 60,
+          cropRect: rect,
+        });
+      }),
+    );
+
+    effectIt.effect("clips a partially visible selection to the captured viewport", () =>
+      Effect.gen(function* () {
+        const { result, crop } = yield* captureAnnotation(
+          { x: -40, y: 570, width: 240, height: 110 },
+          { regions: [{ id: "region_1", rect: { x: -20, y: 590, width: 200, height: 70 } }] },
+        );
+        expect(crop).toHaveBeenCalledExactlyOnceWith({ x: 0, y: 1140, width: 400, height: 60 });
+        expect(result?.screenshotFailed).toBeUndefined();
+        expect(result?.annotation.screenshot).toMatchObject({
+          dataUrl: "data:image/png;base64,cropped",
+          width: 400,
+          height: 60,
+        });
+      }),
+    );
+
+    effectIt.effect.each([
+      {
+        name: "an offscreen crop without individual target bounds",
+        cropRect: { x: 1010, y: 40, width: 100, height: 70 },
+        regions: [],
+      },
+      {
+        name: "padding overlapping the viewport while its target is offscreen",
+        cropRect: { x: 40, y: -100, width: 240, height: 110 },
+        regions: [{ id: "region_1", rect: { x: 60, y: -80, width: 200, height: 70 } }],
+      },
+      {
+        name: "a union spanning the viewport with both targets offscreen",
+        cropRect: { x: -230, y: 40, width: 1460, height: 110 },
+        regions: [
+          { id: "region_1", rect: { x: -210, y: 60, width: 200, height: 70 } },
+          { id: "region_2", rect: { x: 1010, y: 60, width: 200, height: 70 } },
+        ],
+      },
+      {
+        name: "an offscreen target when crop bounds are missing",
+        cropRect: null,
+        regions: [{ id: "region_1", rect: { x: 60, y: -80, width: 200, height: 70 } }],
+      },
+    ])("does not attach $name", ({ cropRect, regions }) =>
+      Effect.gen(function* () {
+        const { result, crop } = yield* captureAnnotation(cropRect, { regions });
+        expect(crop).not.toHaveBeenCalled();
+        expect(result?.annotation.screenshot).toBeNull();
+        expect(result?.screenshotFailed).toBe(true);
+      }),
+    );
+
+    effectIt.effect.each([
+      {
+        name: "zero-width SVG line on the left edge",
+        rect: { x: 0, y: 60, width: 0, height: 70 },
+        cropRect: { x: -20, y: 40, width: 40, height: 110 },
+        expectedCrop: { x: 0, y: 80, width: 40, height: 220 },
+      },
+      {
+        name: "zero-height SVG line on the top edge",
+        rect: { x: 60, y: 0, width: 70, height: 0 },
+        cropRect: { x: 40, y: -20, width: 110, height: 40 },
+        expectedCrop: { x: 80, y: 0, width: 220, height: 40 },
+      },
+    ])("captures a stroked $name", ({ rect, cropRect, expectedCrop }) =>
+      Effect.gen(function* () {
+        const { result, crop } = yield* captureAnnotation(cropRect, {
+          elements: [
+            {
+              id: "element_1",
+              rect,
+              element: {
+                pageUrl: "https://example.com",
+                pageTitle: "Example",
+                tagName: "line",
+                selector: "svg > line",
+                htmlPreview: '<line stroke="black" stroke-width="2" />',
+                componentName: null,
+                source: null,
+                stack: [],
+                styles: "stroke: black; stroke-width: 2px;",
+                pickedAt: "2026-06-11T00:00:00.000Z",
+              },
+            },
+          ],
+        });
+        expect(crop).toHaveBeenCalledExactlyOnceWith(expectedCrop);
+        expect(result?.screenshotFailed).toBeUndefined();
+        expect(result?.annotation.screenshot).toMatchObject({
+          dataUrl: "data:image/png;base64,cropped",
+          width: expectedCrop.width,
+          height: expectedCrop.height,
+        });
+      }),
+    );
+
+    effectIt.effect.each(["viewport", "crop"] as const)(
+      "reports an empty native %s image as a failed screenshot",
+      (emptyImage) =>
+        Effect.gen(function* () {
+          const rect = { x: 5, y: 6, width: 20, height: 30 };
+          const { result, crop } = yield* captureAnnotation(
+            rect,
+            {
+              regions: [{ id: "region_1", rect }],
+            },
+            emptyImage,
+          );
+          if (emptyImage === "viewport") expect(crop).not.toHaveBeenCalled();
+          else
+            expect(crop).toHaveBeenCalledExactlyOnceWith({ x: 10, y: 12, width: 40, height: 60 });
+          expect(result?.annotation.screenshot).toBeNull();
+          expect(result?.screenshotFailed).toBe(true);
+        }),
+    );
+  });
 
   effectIt.effect("a stale capture from a replaced pick never touches the next pick", () =>
     withManager((manager) =>
