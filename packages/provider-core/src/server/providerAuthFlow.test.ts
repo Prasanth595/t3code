@@ -607,4 +607,3 @@ it.effect("profile import claims credential changes before pre-stop validation",
     assert.isTrue(loggedOut);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
-
