@@ -68,6 +68,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
       if (
         !(target instanceof Node) ||
         (target !== document.body &&
+          !(target instanceof Element && target.closest('[data-prompt-stash-badge="true"]')) &&
           !drawerRef.current?.contains(target) &&
           !composerFormRef.current?.querySelector('textarea, [role="textbox"]')?.contains(target))
       ) {
