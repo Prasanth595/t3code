@@ -1158,11 +1158,6 @@ const make = Effect.gen(function* () {
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
-  /**
-   * Provider snapshots only re-probe while a client is in the foreground, so an
-   * unattended agent can see a provider as unavailable after it was fixed.
-   * Re-probe the requested instance once before refusing it.
-   */
   const assertTargetEnabledForProject = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread">,
     commandId: CommandId,
@@ -1176,21 +1171,29 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
+  // Provider health may be stale when no client is refreshing it.
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
-    const instanceId =
+    const requestedDriver = input.target?.driverKind;
+    const requestedInstanceId =
       input.target?.providerInstanceId ??
-      (input.target?.driverKind === undefined
-        ? input.parent.thread.modelSelection.instanceId
-        : undefined);
+      (requestedDriver === undefined ? input.parent.thread.modelSelection.instanceId : undefined);
+    const instanceIds =
+      requestedInstanceId === undefined
+        ? input.providers
+            .filter((provider) => provider.driver === requestedDriver && provider.enabled)
+            .map((provider) => provider.instanceId)
+        : [requestedInstanceId];
     const resolved = resolveTarget(input);
-    if (instanceId === undefined) return resolved;
+    if (instanceIds.length === 0) return resolved;
     return resolved.pipe(
       Effect.catchIf(
         (error) => error.code === "provider_unavailable",
         () =>
-          providerRegistry
-            .refreshInstance(instanceId)
-            .pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
+          Effect.reduce(
+            instanceIds,
+            () => input.providers,
+            (_, instanceId) => providerRegistry.refreshInstance(instanceId),
+          ).pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
       ),
     );
   };
@@ -2330,12 +2333,12 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
-        const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              const providers = yield* loadProviders;
               const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
