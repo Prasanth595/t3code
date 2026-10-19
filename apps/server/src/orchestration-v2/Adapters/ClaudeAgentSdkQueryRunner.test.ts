@@ -7,9 +7,12 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -93,6 +96,66 @@ const realQueryRunner = layerQueryRunner.pipe(
     }),
   ),
   Layer.provide(NodeServices.layer),
+);
+
+it.live("finds a subagent launch in the instance Claude home", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-subagent-home-" });
+      const workspace = yield* fs.realPath(root);
+      const claudeHome = path.join(root, "claude");
+      const sessionId = yield* crypto.randomUUIDv4();
+      const agentId = "a0123456789abcdef";
+      const projectDir = path.join(claudeHome, "projects", workspace.replace(/[^a-zA-Z0-9]/g, "-"));
+      const subagentsDir = path.join(projectDir, sessionId, "subagents");
+      const entry = {
+        type: "user",
+        parentUuid: null,
+        sessionId,
+        cwd: workspace,
+        timestamp: "2026-01-01T00:00:00.000Z",
+      };
+      yield* fs.makeDirectory(subagentsDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectDir, `${sessionId}.jsonl`),
+        JSON.stringify({
+          ...entry,
+          uuid: yield* crypto.randomUUIDv4(),
+          isSidechain: false,
+          message: { role: "user", content: "Start a subagent." },
+        }) + "\n",
+      );
+      yield* fs.writeFileString(
+        path.join(subagentsDir, `agent-${agentId}.jsonl`),
+        JSON.stringify({
+          ...entry,
+          uuid: yield* crypto.randomUUIDv4(),
+          isSidechain: true,
+          agentId,
+          message: { role: "user", content: "Review the change." },
+        }) + "\n",
+      );
+      // Claude stores the launching tool call in the transcript sidecar.
+      yield* fs.writeFileString(
+        path.join(subagentsDir, `agent-${agentId}.meta.json`),
+        JSON.stringify({ agentType: "general-purpose", toolUseId: "toolu_launch" }),
+      );
+      const runner = yield* ClaudeAgentSdkQueryRunner;
+      const input = {
+        sessionId,
+        agentId,
+        dir: workspace,
+        threadId: ThreadId.make("thread-instance-home"),
+        providerSessionId: ProviderSessionId.make("session-instance-home"),
+        environment: { ...(yield* HostProcess.Environment), CLAUDE_CONFIG_DIR: claudeHome },
+      };
+
+      assert.equal(yield* runner.subagentLaunchToolUseId(input), "toolu_launch");
+    }).pipe(Effect.provide(Layer.mergeAll(realQueryRunner, NodeServices.layer))),
+  ),
 );
 
 function fakeClaudeCli(script: string): string {
