@@ -81,7 +81,10 @@ export class SessionControl {
       this.assertOpen();
       if (epoch !== this.epoch || !allowed()) throw new BrowserControlInterrupted();
       if (deadlineMs !== undefined && performance.now() >= deadlineMs) {
-        throw new DOMException("This browser request expired while queued.", "TimeoutError");
+        throw new DOMException(
+          "This browser request expired before it could start.",
+          "TimeoutError",
+        );
       }
       return run();
     });

@@ -899,7 +899,8 @@ const make = Effect.gen(function* () {
           : page.goto(snapshot.navStatus.url, options)
       ).then(constVoid);
 
-      tab.control.track(tab.initialNavigation);
+      if (tab.control.agentId !== null) tab.control.track(tab.initialNavigation);
+      else void tab.initialNavigation.catch(constVoid);
     }
     return tab;
   };

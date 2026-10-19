@@ -152,6 +152,9 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     goto: vi.fn(async (next: string) => {
       url = next;
       events.emit("load");
+      const pending = initialNavigation;
+      initialNavigation = null;
+      await pending?.();
     }),
     goBack: vi.fn(async () => {}),
     goForward: vi.fn(async () => {}),
@@ -206,6 +209,7 @@ let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
 let contextFailure: Error | null = null;
+let initialNavigation: (() => Promise<void>) | null = null;
 let desktopRendersNext = false;
 const desktopDetaches = new NodeEvents.EventEmitter();
 const desktopTabs = new Set<string>();
@@ -316,6 +320,7 @@ beforeEach(() => {
   contextRequests.length = 0;
   contextGate = null;
   contextFailure = null;
+  initialNavigation = null;
   pageCopy = "";
   keyCopy = "";
   focusedFrame = null;
@@ -656,6 +661,41 @@ it.live.each([
       committed.resolve();
       yield* Fiber.join(navigation);
       yield* Fiber.join(correction);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a user-opened tab allows a corrected URL before its initial navigation commits", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const started = Promise.withResolvers<void>();
+      const committed = Promise.withResolvers<void>();
+      yield* Effect.addFinalizer(() => Effect.sync(() => committed.resolve()));
+      initialNavigation = () => {
+        started.resolve();
+        return committed.promise;
+      };
+      const opened = yield* manager.open({
+        threadId: scope.thread.threadId,
+        url: "http://localhost:5173/stalled",
+        runtime: "server",
+      });
+      yield* Effect.promise(() => started.promise);
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      const correction = yield* viewer
+        .input({ type: "navigate", url: "http://localhost:5173/fixed" })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => new Promise<void>((resolve) => setImmediate(resolve)));
+      const lastNavigationBeforeCommit = contexts[1]!.page.goto.mock.calls.at(-1);
+      committed.resolve();
+      yield* Fiber.join(correction);
+      expect(lastNavigationBeforeCommit).toEqual([
+        "http://localhost:5173/fixed",
+        expect.objectContaining({ waitUntil: "commit" }),
+      ]);
     }),
   ).pipe(Effect.provide(layer)),
 );
