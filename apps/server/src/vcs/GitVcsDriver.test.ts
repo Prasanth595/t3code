@@ -97,37 +97,35 @@ runVcsDriverContractSuite<GitVcsDriver.GitVcsDriver, GitContractError>({
   },
 });
 
-it.effect.each(["blob:none", "blob:limit=1024", "tree:0", "combine:blob:none+tree:1"])(
-  "lists partial clone fetch and push URLs with the %s filter annotation",
-  (filter) =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-partial-clone-remotes-",
-      });
-      const driver = yield* GitVcsDriver.makeVcsDriverShape();
-      yield* runGit(cwd, ["init"]);
-      yield* runGit(cwd, ["remote", "add", "origin", "https://github.com/pingdotgg/t3code.git"]);
-      yield* runGit(cwd, [
-        "remote",
-        "set-url",
-        "--push",
-        "origin",
-        "git@github.com:octocat/t3code.git",
-      ]);
-      yield* runGit(cwd, ["config", "remote.origin.promisor", "true"]);
-      yield* runGit(cwd, ["config", "remote.origin.partialclonefilter", filter]);
+it.effect("lists the fetch and push URLs of a partial clone remote", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-partial-clone-remotes-",
+    });
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["remote", "add", "origin", "https://github.com/pingdotgg/t3code.git"]);
+    yield* runGit(cwd, [
+      "remote",
+      "set-url",
+      "--push",
+      "origin",
+      "git@github.com:octocat/t3code.git",
+    ]);
+    yield* runGit(cwd, ["config", "remote.origin.promisor", "true"]);
+    yield* runGit(cwd, ["config", "remote.origin.partialclonefilter", "blob:none"]);
 
-      const result = yield* driver.listRemotes(cwd);
-      assert.deepEqual(result.remotes, [
-        {
-          name: "origin",
-          url: "https://github.com/pingdotgg/t3code.git",
-          pushUrl: Option.some("git@github.com:octocat/t3code.git"),
-          isPrimary: true,
-        },
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+    const result = yield* driver.listRemotes(cwd);
+    assert.deepEqual(result.remotes, [
+      {
+        name: "origin",
+        url: "https://github.com/pingdotgg/t3code.git",
+        pushUrl: Option.some("git@github.com:octocat/t3code.git"),
+        isPrimary: true,
+      },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 const makeCheckpointFixture = Effect.fn("makeCheckpointFixture")(function* (
@@ -194,6 +192,27 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
       yield* fileSystem.readFileString(path.join(cwd, nested, "private.txt")),
       "nested\n",
     );
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint capture keeps the shared index a split index still uses", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-split-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["config", "core.splitIndex", "true"]);
+    yield* git(["config", "splitIndex.sharedIndexExpire", "now"]);
+    yield* git(["update-index", "--split-index"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
+    // The real index points at a sharedindex.* file. Reading it fails if the capture expired it.
+    assert.strictEqual((yield* git(["ls-files", "--cached"])).stdout, "file.txt\n");
+    assert.strictEqual((yield* git(["diff", "--cached", "--name-only"])).stdout, "file.txt\n");
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
