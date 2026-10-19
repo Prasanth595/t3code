@@ -62,6 +62,7 @@ import {
 } from "@t3tools/client-runtime/state/subagent-display";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import { observeResize } from "~/lib/observeResize";
+import { useStableCallback } from "~/hooks/useStableCallback";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
@@ -864,6 +865,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
   const minimapItems = deriveTimelineMinimapItems(rows);
+  const minimapRowIndices = minimapItems.map((item) => item.rowIndex);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
       ? rows.findIndex((row) => row.id === rememberedPosition.rowId)
@@ -1139,16 +1141,29 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return;
     }
 
-    const visibleRange = resolveTimelineMinimapVisibleRange(state);
+    const firstBufferedIndex = state.startBuffered;
+    const firstBufferedRow: HTMLElement | undefined =
+      firstBufferedIndex == null ? undefined : state.elementAtIndex(firstBufferedIndex);
+    const firstBufferedTop =
+      firstBufferedIndex == null ? undefined : state.positionAtIndex(firstBufferedIndex);
+    const viewport: HTMLElement | undefined = listRef.current?.getScrollableNode();
+    // Cached row positions exclude the header and pending scroll adjustments.
+    const scroll =
+      firstBufferedRow && viewport && firstBufferedTop !== undefined
+        ? firstBufferedTop +
+          viewport.getBoundingClientRect().top -
+          firstBufferedRow.getBoundingClientRect().top
+        : state.scroll;
+    const visibleRange = resolveTimelineMinimapVisibleRange({ ...state, scroll });
     for (const item of minimapItems) {
       const strip = minimapStripMap.get(item.id);
-      // Offscreen position caches can lag behind row size changes.
       const inView = isTimelineMinimapRowVisible(
         item.rowIndex,
         visibleRange.start,
         visibleRange.end,
       );
       const next = inView ? "true" : "false";
+      // Avoid dirtying style state on every scroll tick for unchanged strips.
       if (strip && strip.dataset.inView !== next) {
         strip.dataset.inView = next;
       }
@@ -1156,13 +1171,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const nextCurrentIndex = resolveTimelineMinimapCurrentIndex({
       visibleStart: visibleRange.start,
       visibleEnd: visibleRange.end,
-      rowIndices: minimapItems.map((item) => item.rowIndex),
+      rowIndices: minimapRowIndices,
     });
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
   };
 
+  const refreshAfterMeasurement = useStableCallback(handleScroll);
   const itemMeasurementFrameRef = useRef<number | null>(null);
   const handleItemSizeChanged = () => {
     if (disclosurePinsEndRef.current) {
@@ -1174,7 +1190,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // Read after LegendList has applied all row measurements for this frame.
     itemMeasurementFrameRef.current = requestAnimationFrame(() => {
       itemMeasurementFrameRef.current = null;
-      handleScroll();
+      refreshAfterMeasurement();
     });
   };
 
