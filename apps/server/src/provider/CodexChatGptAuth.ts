@@ -995,13 +995,10 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     return track(
       "transfer",
       { flow: "primary_handoff" },
-      validate.pipe(
-        Effect.andThen(
-          controller.adoptCredentials!(
-            lock.withPermit(withSessionLock(saveImported)),
-            stopSessions,
-          ),
-        ),
+      controller.adoptCredentials!(
+        lock.withPermit(withSessionLock(saveImported)),
+        stopSessions,
+        lock.withPermit(validate),
       ),
     );
   };

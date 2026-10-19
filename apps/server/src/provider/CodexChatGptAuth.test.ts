@@ -1789,11 +1789,15 @@ it.effect("transferred profiles reject mismatched identities without overwriting
         { ...profile.credentials, scopes: ["openid"] },
         { ...profile.credentials, expiresAt: 0 },
       ]) {
+        let stopped = false;
         const result = yield* destination.auth.controller.importProfile!(
           { ...profile, credentials },
-          Effect.void,
+          Effect.sync(() => {
+            stopped = true;
+          }),
         ).pipe(Effect.result);
         assert.strictEqual(result._tag, "Failure");
+        assert.isFalse(stopped);
         assert.deepEqual(Option.getOrThrow(yield* destination.auth.read), original);
       }
     }),
