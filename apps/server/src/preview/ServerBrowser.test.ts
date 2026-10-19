@@ -46,7 +46,9 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return context as unknown as BrowserContext;
     }
     async scratchPage() {
-      return makeContext().page as unknown as Page;
+      const page = makeContext().page;
+      scratchPages.push(page);
+      return page as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
       const context = makeContext();
@@ -154,7 +156,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
     reload: vi.fn(async () => {}),
     emulateMedia: vi.fn(async () => {}),
     waitForLoadState: vi.fn(async () => {}),
-    evaluate: vi.fn(async () => ({
+    evaluate: vi.fn(async (): Promise<unknown> => ({
       url,
       title: "test page",
       loading: false,
@@ -196,6 +198,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
 }
 
 const contexts: ReturnType<typeof makeContext>[] = [];
+const scratchPages: ReturnType<typeof makeContext>["page"][] = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
@@ -309,6 +312,7 @@ const viewerInput = (tabId: string, canOperate: boolean) => ({
 
 beforeEach(() => {
   contexts.length = 0;
+  scratchPages.length = 0;
   contextRequests.length = 0;
   contextGate = null;
   contextFailure = null;
@@ -1804,7 +1808,9 @@ it.live.each(["pause", "capture", "resume"] as const)(
     Effect.scoped(
       Effect.gen(function* () {
         const { browser, broker, tabId } = yield* ready;
-        yield* browser.attachViewer(viewerInput(tabId, false));
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+        // Recovery must reach a viewer even when its output queue is full.
+        stallViewer(viewer, { _tag: "viewport", width: 1280, height: 800 });
         const { page, sessions } = contexts[0]!;
         const session = sessions.at(-1)!;
         const blocked = Promise.withResolvers<void>();
@@ -1873,11 +1879,101 @@ it.live.each(["pause", "capture", "resume"] as const)(
         });
         // A failed CDP session may be retired, but cannot remain attached and paused.
         expect.soft(streaming || session.detach.mock.calls.length > 0).toBe(true);
+        let replacement: ReturnType<typeof makeSession> | undefined;
+        if (session.detach.mock.calls.length > 0) {
+          expect(yield* Queue.clear(viewer.output)).toContainEqual({ _tag: "reconnect" });
+          yield* browser.attachViewer(viewerInput(tabId, false));
+          replacement = sessions.at(-1)!;
+          expect(replacement.send).toHaveBeenCalledWith("Page.startScreencast", expect.anything());
+        }
 
         release.resolve();
         yield* Effect.yieldNow;
         yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
         expect(streaming || session.detach.mock.calls.length > 0).toBe(true);
+        if (replacement) expect(replacement.detach).not.toHaveBeenCalled();
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "a snapshot timeout preserves recorded frames and allows a new recording before late pause completes",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        const session = contexts[0]!.sessions.at(-1)!;
+        const encoder = scratchPages.at(-1)!;
+        const blocked = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<void>();
+        const send = session.send.getMockImplementation()!;
+        let stalled = false;
+        session.send.mockImplementation(async (method, input) => {
+          if (method === "Page.stopScreencast" && !stalled) {
+            stalled = true;
+            blocked.resolve();
+            await release.promise;
+          }
+          return send(method, input);
+        });
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            release.resolve();
+            vi.useRealTimers();
+          }),
+        );
+        const snapshot = yield* broker
+          .invoke({ scope, tabId, operation: "snapshot", input: {} })
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Effect.promise(() => blocked.promise);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(15_000));
+        expect(snapshot.pollUnsafe()).toMatchObject({
+          _tag: "Success",
+          value: {
+            _tag: "PreviewAutomationTimeoutError",
+            remoteTag: "PreviewAutomationTimeoutError",
+          },
+        });
+        expect(session.detach).toHaveBeenCalled();
+
+        encoder.evaluate
+          .mockResolvedValueOnce({ mimeType: "video/webm", count: 1, bytes: 5 })
+          .mockResolvedValueOnce("ZnJhbWU=");
+        const stopped = yield* broker.invoke<{ path: string; mimeType: string; sizeBytes: number }>(
+          {
+            scope,
+            tabId,
+            operation: "recordingStop",
+            input: {},
+          },
+        );
+        const fs = yield* FileSystem.FileSystem;
+        expect(stopped).toMatchObject({ mimeType: "video/webm", sizeBytes: 5 });
+        expect(yield* fs.readFileString(stopped.path)).toBe("frame");
+        expect(encoder.close).toHaveBeenCalled();
+        yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+        const replacement = contexts[0]!.sessions.at(-1)!;
+        expect(replacement).not.toBe(session);
+
+        release.resolve();
+        yield* Effect.yieldNow;
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        expect(
+          session.send.mock.calls.filter(([method]) => method === "Page.startScreencast"),
+        ).toHaveLength(1);
+        expect(replacement.detach).not.toHaveBeenCalled();
+        const next = yield* broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        });
+        expect(next.visibleText).toBe("delete");
+        expect(
+          replacement.send.mock.calls.filter(([method]) => method === "Page.startScreencast"),
+        ).toHaveLength(2);
       }),
     ).pipe(Effect.provide(layer)),
 );

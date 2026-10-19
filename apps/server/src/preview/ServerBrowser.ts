@@ -94,6 +94,7 @@ const SCREENCAST_MOTION_QUALITY = 50;
 const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
+const SNAPSHOT_TIMEOUT_MS = 15_000;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -250,6 +251,7 @@ interface ViewerState {
   readonly push: (output: ServerBrowserViewerOutput) => void;
   readonly pause: () => Promise<void>;
   readonly resume: () => Promise<void>;
+  readonly disconnect: () => void;
   scrolledAt: number;
 
   requestedSize: { width: number; height: number; order: number } | null;
@@ -1509,22 +1511,52 @@ const make = Effect.gen(function* () {
     withCaptureLock(tab, async () => {
       tab.capturing += 1;
       const recording = tab.recording;
-      try {
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
-        ]);
-        return await capture();
-      } finally {
+      let expired = false;
+      let capturing = true;
+      const endCapture = () => {
+        if (!capturing) return;
+        capturing = false;
         tab.capturing -= 1;
-
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
-            : undefined,
-        ]);
-      }
+      };
+      const timeout = new ServerBrowserPage.ServerBrowserOperationError(
+        "PreviewAutomationTimeoutError",
+        "The browser did not finish pausing, capturing, and resuming its screencasts in time.",
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const deadline = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          expired = true;
+          endCapture();
+          // Retire the sessions: a late stop must never pause a recovered viewer.
+          for (const viewer of tab.viewers) viewer.disconnect();
+          // Keep the encoder so recordingStop can still return the frames already captured.
+          void recording?.session.detach().catch(constVoid);
+          reject(timeout);
+        }, SNAPSHOT_TIMEOUT_MS);
+      });
+      const captured = (async () => {
+        try {
+          await Promise.all([
+            ...[...tab.viewers].map((viewer) => viewer.pause()),
+            recording?.session.send("Page.stopScreencast").catch(constVoid),
+          ]);
+          if (expired) throw timeout;
+          return await capture();
+        } finally {
+          endCapture();
+          if (!expired) {
+            await Promise.all([
+              ...[...tab.viewers].map((viewer) => viewer.resume()),
+              recording && tab.recording === recording
+                ? recording.session
+                    .send("Page.startScreencast", RECORDING_SCREENCAST)
+                    .catch(constVoid)
+                : undefined,
+            ]);
+          }
+        }
+      })();
+      return Promise.race([captured, deadline]).finally(() => clearTimeout(timer));
     });
 
   const stopRecording = (tab: ServerTab) =>
@@ -2212,14 +2244,7 @@ const make = Effect.gen(function* () {
           try: () => tab.page.context().newCDPSession(tab.page),
           catch: (cause) => new ServerBrowserLaunchError({ cause }),
         }),
-        (session) =>
-          Effect.promise(() =>
-            session
-              .send("Page.stopScreencast")
-              .catch(constVoid)
-              .then(() => session.detach())
-              .catch(constVoid),
-          ),
+        (session) => Effect.promise(() => session.detach().catch(constVoid)),
       );
       const quality = Math.min(100, Math.max(1, Math.round(input.quality)));
       // Chromium may drop the final frame during a burst; send a still when it settles.
@@ -2227,13 +2252,15 @@ const make = Effect.gen(function* () {
       let mayHaveDropped = false;
       let motion = false;
       const recentFrames: Array<number> = [];
+      let disconnected = false;
       let screencastParams = Promise.resolve();
       let screencastScale = 1;
       const startScreencast = (scale: number) => {
         screencastScale = scale;
         screencastParams = screencastParams.then(async () => {
-          if (tab.capturing > 0) return;
+          if (disconnected || tab.capturing > 0) return;
           await session.send("Page.stopScreencast").catch(constVoid);
+          if (disconnected) return;
           await session
             .send("Page.startScreencast", {
               format: "jpeg",
@@ -2256,7 +2283,12 @@ const make = Effect.gen(function* () {
           if (next._tag === "frame") runFork(next.ack);
           // State a stalled viewer cannot miss replaces its backlog. It runs
           // synchronously so an older replacement can never land after a newer one.
-          else if (next._tag === "gone" || next._tag === "control" || next._tag === "fileChooser") {
+          else if (
+            next._tag === "gone" ||
+            next._tag === "reconnect" ||
+            next._tag === "control" ||
+            next._tag === "fileChooser"
+          ) {
             const dropped = Effect.runSyncExit(Queue.clear(output));
             if (dropped._tag === "Failure") return;
             Queue.offerUnsafe(output, next);
@@ -2268,11 +2300,26 @@ const make = Effect.gen(function* () {
         },
         pause: () => {
           screencastParams = screencastParams.then(() =>
-            session.send("Page.stopScreencast").then(constVoid, constVoid),
+            disconnected
+              ? undefined
+              : session.send("Page.stopScreencast").then(constVoid, constVoid),
           );
           return screencastParams;
         },
         resume: () => startScreencast(screencastScale),
+        disconnect: () => {
+          disconnected = true;
+          tab.viewers.delete(viewer);
+          viewer.push({ _tag: "reconnect" });
+          void session.detach().catch(constVoid);
+          runFork(
+            Effect.promise(async () => {
+              await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
+              broadcastControl(tab);
+              reportLiveTabs();
+            }),
+          );
+        },
         scrolledAt: 0,
         requestedSize: null,
       };
@@ -2283,6 +2330,7 @@ const make = Effect.gen(function* () {
         }),
         () =>
           Effect.promise(async () => {
+            disconnected = true;
             await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
             tab.viewers.delete(viewer);
             broadcastControl(tab);
@@ -2296,6 +2344,7 @@ const make = Effect.gen(function* () {
       pushFileChooser(tab);
       // Full scale: a scaled capture would flash in every other viewer.
       const pushStill = async () => {
+        if (disconnected) return;
         const data = await withCaptureLock(tab, () =>
           ServerBrowserPage.captureViewport(tab.page, session, {
             format: "jpeg",
@@ -2303,7 +2352,7 @@ const make = Effect.gen(function* () {
             scale: 1,
           }),
         ).catch(() => null);
-        if (data)
+        if (data && !disconnected)
           viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
       };
       let settleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2314,6 +2363,7 @@ const make = Effect.gen(function* () {
       );
       let screencastStarted = false;
       session.on("Page.screencastFrame", (frame) => {
+        if (disconnected) return;
         screencastStarted = true;
         if (framesInFlight > 0) mayHaveDropped = true;
         framesInFlight += 1;
@@ -2366,7 +2416,7 @@ const make = Effect.gen(function* () {
         output,
         input: (raw: unknown) =>
           Effect.promise(async () => {
-            if (!viewer.canOperate) return;
+            if (disconnected || !viewer.canOperate) return;
             const message = asRecord(raw);
             if (!message) return;
             try {
