@@ -4,19 +4,22 @@ import {
   ProjectId,
   ProviderInstanceId,
   type PullRequestReviewGuideResult,
+  type ResolvedKeybindingsConfig,
   SourceControlProviderKind,
   ThreadId,
   type PullRequestDetailView,
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 import { act, useRef, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useChatShortcuts } from "../chat/useChatShortcuts";
 import { useGuideRunStore } from "./guide/guideRunStore";
 
@@ -79,15 +82,10 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 });
 vi.mock(import("~/state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
-  const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
+  const { DEFAULT_RESOLVED_KEYBINDINGS } = await import("@t3tools/shared/keybindings");
   return {
     ...(await original()),
-    primaryServerKeybindingsAtom: Atom.make(
-      compileResolvedKeybindingsConfig([
-        { key: "j", command: "pullRequest.copyNumber" },
-        { key: "k", command: "script.test.run" },
-      ]),
-    ),
+    primaryServerKeybindingsAtom: Atom.make(DEFAULT_RESOLVED_KEYBINDINGS),
   };
 });
 vi.mock(import("~/state/query"), async (original) => ({
@@ -424,12 +422,13 @@ describe("review guide keyboard ownership beside chat", () => {
   function BesideChat({
     enabled = true,
     focusableHost = false,
+    keybindings = DEFAULT_RESOLVED_KEYBINDINGS,
   }: {
     enabled?: boolean;
     focusableHost?: boolean;
+    keybindings?: ResolvedKeybindingsConfig;
   }) {
     const composer = useRef<HTMLTextAreaElement>(null);
-    const keybindings = useAtomValue(primaryServerKeybindingsAtom);
     useChatShortcuts({
       enabled: true,
       keybindings,
@@ -512,8 +511,7 @@ describe("review guide keyboard ownership beside chat", () => {
     });
   }
 
-  it("keeps J/K with the guide after focus or clicks, ahead of copy and project shortcuts", async () => {
-    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  it("keeps J/K with the guide after focus or clicks while honoring explicit shortcuts", async () => {
     const root = await mountGuide();
     const composer = page.getByRole("textbox", { name: "Test composer" });
     const first = page.getByRole("heading", { name: "First change" });
@@ -540,8 +538,6 @@ describe("review guide keyboard ownership beside chat", () => {
     await press("j");
     await expect.element(second).toBeVisible();
     await expect.element(composer).toHaveValue("");
-    expect(copy).not.toHaveBeenCalled();
-    expect(runProjectAction).not.toHaveBeenCalled();
 
     await page.getByTestId("chat-transcript").click();
     await press("k");
@@ -551,6 +547,20 @@ describe("review guide keyboard ownership beside chat", () => {
     await press("J", true);
     await expect.element(composer).toHaveValue("kJ");
     await expect.element(second).toBeVisible();
+
+    await act(async () =>
+      root.render(
+        <BesideChat
+          focusableHost
+          keybindings={compileResolvedKeybindingsConfig([{ key: "k", command: "script.test.run" }])}
+        />,
+      ),
+    );
+    await second.click();
+    await press("k");
+    expect(runProjectAction).toHaveBeenCalledTimes(1);
+    await expect.element(second).toBeVisible();
+    await expect.element(composer).toHaveValue("kJ");
   });
 
   it("returns J/K to typing when the guide tab is inactive or its panel is closing", async () => {
@@ -568,6 +578,5 @@ describe("review guide keyboard ownership beside chat", () => {
     await press("k");
     await expect.element(composer).toHaveValue("kk");
     await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
-    expect(runProjectAction).not.toHaveBeenCalled();
   });
 });

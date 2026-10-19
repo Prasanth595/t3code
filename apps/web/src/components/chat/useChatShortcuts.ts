@@ -58,12 +58,12 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       if (!current.enabled || isCommandPaletteOpen()) return;
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) return;
-      if (guideTourTakesKey(event)) return;
       const shortcutContext = current.getShortcutContext(event.target);
 
       if (
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
+        !guideTourTakesKey(event) &&
         shouldTypeToFocusComposer(event) &&
         current.typeIntoComposer(event.key)
       ) {
