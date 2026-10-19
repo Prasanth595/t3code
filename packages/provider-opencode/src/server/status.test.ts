@@ -886,13 +886,17 @@ it.effect("waits for OpenCode 2 model names, provider labels, and variants to se
     const renamed = { ...bigPickle, name: "Bigger Pickle" };
     const labeled = { ...renamed, providerName: "OpenCode Zen" };
     const withVariants = { ...labeled, variants: [{ id: "low" }] };
-    const complete = { ...labeled, variants: [{ id: "high" }] };
-    const replies = [[bigPickle], [renamed], [labeled], [withVariants], [complete], [complete]];
+    const complete = { ...labeled, variants: [{ id: "high" }, { id: "medium" }] };
+    const reordered = { ...complete, variants: [{ id: "medium" }, { id: "high" }] };
+    const replies = [[bigPickle], [renamed], [labeled], [withVariants], [complete], [reordered]];
     const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [complete]));
     const fiber = yield* load.pipe(Effect.forkChild);
-    yield* TestClock.adjust("2 seconds");
-    NodeAssert.ok(fiber.pollUnsafe());
-    NodeAssert.deepEqual(yield* Fiber.join(fiber), [complete]);
+    yield* TestClock.adjust("1500 millis");
+    NodeAssert.ok(
+      fiber.pollUnsafe(),
+      "Equivalent variant orders should settle before the deadline",
+    );
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [reordered]);
   }).pipe(Effect.provide(TestClock.layer())),
 );
 

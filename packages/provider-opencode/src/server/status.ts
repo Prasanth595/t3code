@@ -404,7 +404,7 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
         model.id,
         model.name,
         model.providerName,
-        model.variants.map((variant) => variant.id),
+        model.variants.map((variant) => variant.id).toSorted(),
       ]),
     )
     .toSorted()
