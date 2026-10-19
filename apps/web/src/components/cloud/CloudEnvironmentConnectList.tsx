@@ -203,9 +203,11 @@ export function CloudEnvironmentConnectRows({
         if (!isVisibleEnvironment(environment.environmentId)) continue;
         const id = environment.environmentId;
         if (availability === "checking") continue;
+        const savedEnvironment = savedById.get(id);
         if (
-          discoveredCompatibilityError(status) !== null ||
-          savedById.get(id)?.connection.phase === "unsupported"
+          savedEnvironment
+            ? savedEnvironment.connection.phase === "unsupported"
+            : discoveredCompatibilityError(status) !== null
         ) {
           seen.add(id);
           if (selection.selectedIds.has(id)) selection.onChange(id, false);
@@ -308,18 +310,20 @@ export function CloudEnvironmentConnectRows({
   return visibleEnvironments.map(({ environment, availability, error, status }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
     const compatibilityError = discoveredCompatibilityError(status);
-    const unsupported =
-      compatibilityError !== null || savedEnvironment?.connection.phase === "unsupported";
-    const unsupportedDetail =
-      compatibilityError?.message ?? savedEnvironment?.connection.error ?? null;
-    const savedConnection = unsupported
-      ? presentSavedCloudEnvironmentConnection({
-          phase: "unsupported",
-          error: unsupportedDetail,
-          traceId: null,
-        })
-      : savedEnvironment
-        ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
+    const unsupported = savedEnvironment
+      ? savedEnvironment.connection.phase === "unsupported"
+      : compatibilityError !== null;
+    const unsupportedDetail = savedEnvironment
+      ? savedEnvironment.connection.error
+      : (compatibilityError?.message ?? null);
+    const savedConnection = savedEnvironment
+      ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
+      : unsupported
+        ? presentSavedCloudEnvironmentConnection({
+            phase: "unsupported",
+            error: unsupportedDetail,
+            traceId: null,
+          })
         : null;
     const relayStatus = status === undefined ? null : Option.getOrNull(status);
     const descriptor = relayStatus?.descriptor;
