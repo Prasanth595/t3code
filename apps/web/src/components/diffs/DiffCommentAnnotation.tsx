@@ -28,7 +28,6 @@ interface DiffCommentAnnotationProps {
   focusOnMount?: boolean;
 }
 
-/** The shared inline comment treatment for file previews, thread diffs, and pull-request diffs. */
 export function DiffCommentAnnotation({
   kind,
   rangeLabel,
@@ -60,31 +59,34 @@ export function DiffCommentAnnotation({
     return (
       <div
         data-diff-comment-annotation
-        className="group/comment flex min-w-0 items-start gap-2.5 border-s-2 border-primary/55 bg-primary/[0.045] px-3 py-2.5 font-sans text-foreground"
+        className="group/comment flex min-w-0 items-start gap-2.5 border-s-2 border-primary/55 bg-primary/[0.045] px-3 py-2.5 font-sans text-foreground selection:bg-primary selection:text-primary-foreground"
         contentEditable={false}
         onPointerDown={(event) => event.stopPropagation()}
       >
         <MessageCircle className="mt-0.5 size-3.5 shrink-0 text-primary/70" aria-hidden="true" />
-        <p className="min-w-0 flex-1 whitespace-pre-wrap text-[13px] leading-5">{displayedText}</p>
+        <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm leading-5">{displayedText}</p>
         {onDelete ? (
-          <Button
-            className="-my-1 -mr-1 shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-visible:opacity-100 max-sm:opacity-100"
-            variant="ghost-muted"
-            size="icon-xs"
-            aria-label="Delete comment"
-            onClick={onDelete}
-          >
-            <Trash2 className="size-3" />
-          </Button>
+          <span className="-my-1 -mr-1 flex shrink-0 opacity-0 transition-opacity group-hover/comment:opacity-100 focus-within:opacity-100 max-sm:opacity-100">
+            <Button
+              variant="ghost-muted"
+              size="icon-xs"
+              aria-label="Delete comment"
+              onClick={onDelete}
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </span>
         ) : null}
       </div>
     );
   }
 
+  // Editable file annotations inherit Pierre's transparent native caret and selection.
+  // Comments use a native textarea, so they need their own visible text feedback.
   return (
     <div
       data-diff-comment-annotation
-      className="px-3 py-2 font-sans text-foreground"
+      className="px-3 py-2 font-sans text-foreground caret-foreground selection:bg-primary selection:text-primary-foreground"
       contentEditable={false}
       onPointerDown={(event) => event.stopPropagation()}
     >
@@ -112,7 +114,7 @@ export function DiffCommentAnnotation({
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-[10px] text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>
