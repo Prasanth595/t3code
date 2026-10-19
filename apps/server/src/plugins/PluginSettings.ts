@@ -103,11 +103,6 @@ const catalogError = (reason: string, message: string, installationId: PluginIns
 
 const hostError = (message: string) => new PluginHostCallError({ message });
 
-interface SettingsEvent {
-  readonly installationId: PluginInstallationId;
-  readonly removed: boolean;
-}
-
 export class PluginSettings extends Context.Service<
   PluginSettings,
   {
@@ -132,7 +127,8 @@ export const make = Effect.fn("PluginSettings.make")(function* (
 
   // Writes, removal cleanup and secret reads run one at a time, so none sees another half done.
   const lock = yield* Semaphore.make(1);
-  const events = yield* PubSub.sliding<SettingsEvent>(256);
+  // Notifications coalesce; every subscriber re-reads retained catalogue and settings state.
+  const events = yield* PubSub.sliding<void>(1);
 
   const findInstallation = (installationId: PluginInstallationId) =>
     catalog.list.pipe(
@@ -330,7 +326,7 @@ export const make = Effect.fn("PluginSettings.make")(function* (
                 cause,
               }),
             ),
-            Effect.andThen(PubSub.publish(events, { installationId, removed: true })),
+            Effect.andThen(PubSub.publish(events, undefined)),
           ),
         { discard: true },
       ),
@@ -520,11 +516,7 @@ export const make = Effect.fn("PluginSettings.make")(function* (
       known = next;
       return (removed.length === 0 ? Effect.void : purgeRemoved(removed)).pipe(
         Effect.andThen(
-          Effect.forEach(
-            redeclared,
-            (installationId) => PubSub.publish(events, { installationId, removed: false }),
-            { discard: true },
-          ),
+          Effect.forEach(redeclared, () => PubSub.publish(events, undefined), { discard: true }),
         ),
       );
     }),
@@ -540,23 +532,14 @@ export const make = Effect.fn("PluginSettings.make")(function* (
             Stream.concat(
               Stream.fromEffect(current(installationId)),
               Stream.fromSubscription(subscription).pipe(
-                Stream.filter((event) => event.installationId === installationId),
-                Stream.mapEffect((event) =>
-                  event.removed ? Effect.fail(notFound(installationId)) : current(installationId),
-                ),
+                Stream.mapEffect(() => current(installationId)),
               ),
             ).pipe(Stream.changes),
           ),
         ),
       ),
     update: (input) =>
-      lock
-        .withPermit(update(input))
-        .pipe(
-          Effect.ensuring(
-            PubSub.publish(events, { installationId: input.installationId, removed: false }),
-          ),
-        ),
+      lock.withPermit(update(input)).pipe(Effect.ensuring(PubSub.publish(events, undefined))),
   });
 });
 
