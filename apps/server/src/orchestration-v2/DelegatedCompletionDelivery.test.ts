@@ -982,8 +982,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const settled = (yield* orchestrator.getThreadProjection(
               parentThreadId,
             )).subagents.find((task) => task.id === child.taskId)!;
-            // The cancel came before the follow-up started.
-            const cancelRequestedAt = DateTime.subtract(now, { seconds: 1 });
+            // The follow-up starts in the same millisecond the cancel was recorded.
             yield* eventSink.write({
               commandId: reconcileCommandId("followup-original-cancelled"),
               events: [
@@ -993,7 +992,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                   threadId: parentThreadId,
                   nodeId: settled.id,
                   occurredAt: now,
-                  payload: { ...settled, cancelRequestedAt },
+                  payload: { ...settled, cancelRequestedAt: now, cancelledRunId: child.childRunId },
                 },
               ],
             });

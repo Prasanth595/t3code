@@ -436,7 +436,7 @@ const cancelBackgroundOnlyTask = (
                 threadId: parentThreadId,
                 nodeId: task.id,
                 occurredAt: now,
-                payload: { ...unsettled, cancelRequestedAt: now },
+                payload: { ...unsettled, cancelRequestedAt: now, cancelledRunId: child.turn.runId },
               },
             ],
           });
@@ -502,6 +502,7 @@ const cancelBackgroundOnlyTask = (
         const settledTask = yield* parentTask;
         assert.equal(settledTask?.status, "interrupted");
         assert.notEqual(settledTask?.completedAt, null);
+        assert.equal(settledTask?.cancelledRunId, child.turn.runId);
 
         return { scope, taskId: task.id, settled: settledTask };
       }).pipe(Effect.provide(layerTest));

@@ -6998,6 +6998,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       status: run.status === "queued" ? "pending" : "running",
       progress: undefined,
       cancelRequestedAt: undefined,
+      cancelledRunId: undefined,
       result: null,
       startedAt: now,
       completedAt: null,
@@ -10573,17 +10574,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      // The run a cancel stopped ends with its task, and so do its questions; later runs do not.
+      // Only the run the cancel stopped, or a restart continuation of it, ends with the task.
       const originalTaskId = childControls.thread.forkedFrom.nodeId;
-      const cancelledAt = parent.subagents.find(
-        (task) => task.id === originalTaskId,
-      )?.cancelRequestedAt;
+      const stopRunId = parent.subagents.find((task) => task.id === originalTaskId)?.cancelledRunId;
       const stoppedRun = childControls.runs.find((run) => run.id === afterTurn.resultRun?.id);
-      const originalCancelled =
-        cancelledAt !== undefined &&
-        stoppedRun !== undefined &&
-        DateTime.toEpochMillis(stoppedRun.startedAt ?? stoppedRun.requestedAt) <=
-          DateTime.toEpochMillis(cancelledAt);
+      const stoppedChain = new Set<RunId>();
+      for (let run = stoppedRun; run !== undefined && !stoppedChain.has(run.id);) {
+        stoppedChain.add(run.id);
+        const previousRunId = run.restartContinuationOfRunId;
+        run = childControls.runs.find((candidate) => candidate.id === previousRunId);
+      }
+      const originalCancelled = stopRunId !== undefined && stoppedChain.has(stopRunId);
       const resultRun = originalCancelled
         ? stoppedRun
         : childControls.runs.find((run) => run.id === progress.resultRun?.id);
@@ -11630,13 +11631,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly taskId: NodeId;
     readonly stop: Effect.Effect<A, E, R>;
   }) => {
-    const writeTask = (task: OrchestrationV2Subagent, occurredAt: DateTime.Utc) =>
+    const writeTask = (task: OrchestrationV2Subagent) =>
       writeSystemEvents([
         {
           type: "subagent.updated",
           threadId: task.threadId,
           nodeId: task.id,
-          occurredAt,
+          occurredAt: task.updatedAt,
           payload: task,
         },
       ]);
@@ -11673,7 +11674,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             progressAfterTurn(child).state === "result_available"
           )
             return { task, recorded: false };
-          yield* writeTask({ ...task, cancelRequestedAt: now, updatedAt: now }, now);
+          const cancelledRunId = child.runs.findLast((run) => run.status !== "queued")?.id;
+          yield* writeTask({ ...task, cancelRequestedAt: now, cancelledRunId, updatedAt: now });
           return { task, recorded: true };
         }).pipe(
           Effect.tapCause(logFailure),
@@ -11683,7 +11685,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           // A Stop that failed left the task running, so it keeps no cancel.
           Effect.onError(() =>
             recorded && task !== undefined
-              ? writeTask({ ...task, updatedAt: now }, now).pipe(Effect.catchCause(logFailure))
+              ? writeTask({ ...task, updatedAt: now }).pipe(Effect.catchCause(logFailure))
               : Effect.void,
           ),
         );

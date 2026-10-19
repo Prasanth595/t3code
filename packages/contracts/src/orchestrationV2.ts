@@ -698,6 +698,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   // task_cancel reached the task before it settled, so a finished turn settles it as interrupted.
   cancelRequestedAt: Schema.optional(Schema.DateTimeUtc),
+  cancelledRunId: Schema.optional(RunId),
   status: Schema.Literals([
     "idle",
     "pending",
