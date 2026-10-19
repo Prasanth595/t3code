@@ -89,10 +89,12 @@ describe("acpRegistrySnapshotReadiness", () => {
   it.effect("caches probes until invalidated while retaining model observations", () =>
     Effect.gen(function* () {
       const probes = yield* Queue.unbounded<AcpRegistryLiveConfiguration>();
+      const probeStarted = yield* Deferred.make<void>();
       const probe = vi
         .spyOn(AcpRegistryProbe, "probeAcpRegistryConfiguration")
         .mockImplementation(() =>
-          Queue.take(probes).pipe(
+          Deferred.succeed(probeStarted, undefined).pipe(
+            Effect.andThen(Queue.take(probes)),
             Effect.map((configuration) => ({
               probe: {
                 ...configuration,
@@ -157,6 +159,8 @@ describe("acpRegistrySnapshotReadiness", () => {
         yield* Queue.offer(probes, configuration);
         return Option.getOrThrow(yield* Fiber.join(updated));
       });
+      yield* Deferred.await(probeStarted);
+      yield* instance.invalidateCaches!;
       expect(thinkingChoices(yield* receive(observed("opus", ["low", "high"])))).toEqual({
         opus: ["low", "high"],
         glm: [],

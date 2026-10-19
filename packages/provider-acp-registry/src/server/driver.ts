@@ -566,7 +566,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       }));
       const refreshEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
         ...current,
-        generation: current.generation + 1,
         entry: null,
       }));
       const withLiveRuntimeState = (input: ServerProvider) =>
