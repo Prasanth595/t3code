@@ -1,10 +1,10 @@
-import { getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
+import { Editor, getSchemaByResolvedExtensions, Node, resolveExtensions } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
 
 import { collapseExpandedComposerCursor, pastedPathQueryLength } from "./composer-logic";
 
@@ -12,7 +12,6 @@ import {
   buildDocJson,
   buildTiptapContent,
   caretTakesMarksBefore,
-  codePairCaretPlugin,
   ComposerBlockExtensions,
   ComposerCodeBlockExtension,
   ComposerListExtensions,
@@ -1158,62 +1157,84 @@ describe("caret stops at styled edges", () => {
   });
 });
 
-describe("backtick pair at the caret", () => {
-  function withPlugin(text: string, pos: number) {
-    const doc = schema.node("doc", null, [
-      schema.node("paragraph", null, text ? [schema.text(text)] : []),
-    ]);
-    return EditorState.create({
-      doc,
-      selection: TextSelection.create(doc, pos),
-      plugins: [codePairCaretPlugin(schema.marks.code!)],
+describe("inline code entry", () => {
+  function editorFor(block = "paragraph", mark?: string) {
+    const editor = new Editor({
+      element: null,
+      extensions: [
+        StarterKit.configure({ code: false, codeBlock: false, trailingNode: false }),
+        ComposerCodeExtension,
+        ComposerCodeBlockExtension,
+      ],
+      content: { type: "doc", content: [{ type: block }] },
     });
+    // Unmounted editors need the same plugins that Tiptap installs on mount.
+    editor.view.updateState(editor.state.reconfigure({ plugins: editor.extensionManager.plugins }));
+    if (mark) editor.commands.setMark(mark);
+    onTestFinished(() => editor.destroy());
+    return editor;
   }
 
-  it("formats text typed between backticks once the caret leaves the pair", () => {
-    let state = withPlugin("", 1);
-    const type = (ch: string) => {
-      state = state.apply(state.tr.insertText(ch));
-    };
-    type("`");
-    type("`");
-    state = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 2)));
-    for (const ch of "not working") type(ch);
-    expect(state.doc.textContent).toBe("`not working`");
-    state = state.apply(
-      state.tr.setSelection(TextSelection.create(state.doc, 1 + state.doc.textContent.length)),
-    );
-    expect(state.doc.textContent).toBe("not working");
-    expect(serializeEditorDoc(state.doc).value).toBe("`not working`");
-    state = state.apply(state.tr.insertText("x"));
-    expect(serializeEditorDoc(state.doc).value).toBe("`not working`x");
+  function type(editor: Editor, text: string) {
+    for (const ch of text) {
+      const { from, to } = editor.state.selection;
+      const insert = () => editor.state.tr.insertText(ch, from, to);
+      const handled = editor.state.plugins.some((plugin) =>
+        plugin.props.handleTextInput?.call(plugin, editor.view, from, to, ch, insert),
+      );
+      if (!handled) editor.view.dispatch(insert());
+    }
+  }
+
+  it("formats a filled pair on exit, leaves following text plain, and keeps the normal input rule", () => {
+    const editor = editorFor();
+    type(editor, "``");
+    editor.commands.setTextSelection(2);
+    type(editor, "hello world");
+    expect(editor.state.doc.textContent).toBe("`hello world`");
+    expect(editor.state.doc.firstChild?.firstChild?.marks).toEqual([]);
+
+    editor.commands.setTextSelection(14);
+    expect(editor.state.doc.textContent).toBe("hello world");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("`hello world`");
+    type(editor, " next `typed`");
+    expect(editor.state.doc.textContent).toBe("hello world next typed");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("`hello world` next `typed`");
   });
 
-  it("leaves a pasted backtick pair literal", () => {
-    const state = withPlugin("", 1);
-    const pasted = state.apply(state.tr.insertText("`not working`").setMeta("uiEvent", "paste"));
-    expect(pasted.doc.textContent).toBe("`not working`");
-    const before = pasted.apply(pasted.tr.setSelection(TextSelection.create(pasted.doc, 1)));
-    const moved = before.apply(
-      before.tr.setSelection(TextSelection.create(before.doc, 1 + before.doc.textContent.length)),
-    );
-    expect(moved.doc.textContent).toBe("`not working`");
-    expect(moved.doc.child(0).firstChild?.marks).toEqual([]);
+  it.each(["paste", "setContent"])("keeps a %s pair literal after moving through it", (source) => {
+    const editor = editorFor();
+    const literal = "`literal`";
+    if (source === "paste") {
+      editor.view.dispatch(editor.state.tr.insertText(literal).setMeta("uiEvent", "paste"));
+    } else {
+      editor.commands.setContent({
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: literal }] }],
+      });
+    }
+    const before = editor.state.doc.toJSON();
+    editor.commands.setTextSelection(2);
+    editor.commands.setTextSelection(literal.length + 1);
+    expect(editor.state.doc.toJSON()).toEqual(before);
   });
 
-  it("does not format doubled backticks", () => {
-    const text = "``not working``";
-    const state = withPlugin(text, 1);
-    const moved = state.apply(
-      state.tr.setSelection(TextSelection.create(state.doc, 1 + text.length)),
-    );
-    expect(moved.doc.textContent).toBe(text);
-  });
-
-  it("does not code the prefix when the caret sits between two closing backticks", () => {
-    const text = "`a``";
-    const state = withPlugin(text, 1);
-    const moved = state.apply(state.tr.setSelection(TextSelection.create(state.doc, 4)));
-    expect(moved.doc.textContent).toBe(text);
+  it.each([
+    { name: "doubled delimiters", delimiters: "````", caret: 3 },
+    { name: "doubled closing delimiters", delimiters: "```", caret: 2 },
+    { name: "bold text", delimiters: "``", caret: 2, mark: "bold" },
+    { name: "existing inline code", delimiters: "``", caret: 2, mark: "code" },
+    { name: "a code block", delimiters: "``", caret: 2, block: "codeBlock" },
+  ])("leaves $name unchanged on caret movement", ({ delimiters, caret, mark, block }) => {
+    const editor = editorFor(block, mark);
+    type(editor, delimiters);
+    editor.commands.setTextSelection(caret);
+    type(editor, "literal");
+    const before = editor.state.doc.toJSON();
+    // Visit both the gap between closing ticks and the end of the pair.
+    editor.commands.setTextSelection(caret + "literal".length + 1);
+    expect(editor.state.doc.toJSON()).toEqual(before);
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    expect(editor.state.doc.toJSON()).toEqual(before);
   });
 });
