@@ -73,6 +73,7 @@ function baseProps(): Omit<TimelineProps, "timelineEntries"> {
     onAnchorReady: () => {},
     onAnchorSizeChanged: () => {},
     contentInsetEndAdjustment: 0,
+    emptyPlaceholderInset: 0,
     liveFollowEnabled: true,
     onIsAtEndChange: () => {},
     onManualNavigation: () => {},

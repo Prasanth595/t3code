@@ -4681,17 +4681,18 @@ export default function ChatView(props: ChatViewProps) {
     }
     // The terminal drawer and the empty placeholder lay out against the
     // expanded composer. The timeline inset already holds it through the
-    // desktop resting row; holding it through the mobile strip too keeps both
-    // still when focus moves between the composer and the terminal, instead of
-    // re-clamping the drawer against each intermediate composer height. A hero
-    // composer's overlay fills the pane, so only its stack counts there.
+    // desktop resting row; freezing it while the mobile strip is collapsed
+    // keeps both still when focus moves between the composer and the
+    // terminal, instead of re-clamping the drawer against each intermediate
+    // composer height. A hero composer's overlay fills the pane, so only its
+    // stack counts there.
     const stack = composerOverlayElement?.querySelector<HTMLElement>(
       '[data-chat-composer-stack="true"]',
     );
     const expandedComposerHeight =
       isDraftHeroState && stack ? Math.ceil(stack.getBoundingClientRect().height) : nextInset;
     const reservedHeight = stack?.querySelector('[data-chat-composer-mobile-collapsed="true"]')
-      ? Math.max(composerReservedHeightRef.current, expandedComposerHeight)
+      ? composerReservedHeightRef.current || expandedComposerHeight
       : expandedComposerHeight;
     if (composerReservedHeightRef.current !== reservedHeight) {
       composerReservedHeightRef.current = reservedHeight;

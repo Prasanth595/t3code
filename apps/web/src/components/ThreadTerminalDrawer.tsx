@@ -1721,20 +1721,32 @@ export default function ThreadTerminalDrawer({
     setResizeEpoch((value) => value + 1);
   };
 
-  const updateDrawerLayout = useEffectEvent((column: HTMLElement | null) => {
-    const layout = readDrawerLayout(column);
-    const resizeState = resizeStateRef.current;
-    const liveHeight = clampDrawerHeight(
-      drawerHeightRef.current,
-      resolveTerminalDrawerMaxHeight({ ...layout, composerHeight }),
-    );
-    if (resizeState && liveHeight !== drawerHeightRef.current) {
-      drawerHeightRef.current = liveHeight;
-      resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
-    }
-    setDrawerLayout(layout);
-    setResizeEpoch((value) => value + 1);
-  });
+  const drawerLayoutRef = useRef(drawerLayout);
+  const updateDrawerLayout = useEffectEvent(
+    (column: HTMLElement | null, source: "window" | "column") => {
+      const layout = readDrawerLayout(column);
+      const previous = drawerLayoutRef.current;
+      const heightBudgetChanged =
+        layout.viewportHeight !== previous.viewportHeight ||
+        layout.chatColumnHeight !== previous.chatColumnHeight ||
+        layout.headerHeight !== previous.headerHeight;
+      // The column also reports width-only changes, such as every frame of a
+      // right panel drag; the surface refits itself for those.
+      if (!heightBudgetChanged && source === "column") return;
+      drawerLayoutRef.current = layout;
+      const resizeState = resizeStateRef.current;
+      const liveHeight = clampDrawerHeight(
+        drawerHeightRef.current,
+        resolveTerminalDrawerMaxHeight({ ...layout, composerHeight }),
+      );
+      if (resizeState && liveHeight !== drawerHeightRef.current) {
+        drawerHeightRef.current = liveHeight;
+        resizeState.drawer?.style.setProperty("height", `${liveHeight}px`);
+      }
+      if (heightBudgetChanged) setDrawerLayout(layout);
+      setResizeEpoch((value) => value + 1);
+    },
+  );
   useLayoutEffect(() => {
     if (!visible) {
       return;
@@ -1742,16 +1754,18 @@ export default function ThreadTerminalDrawer({
     // The column and window may have resized while the drawer was hidden and
     // not listening, so measure before the first visible paint.
     const column = isPanel ? null : chatColumnOf(drawerRef.current);
-    const onResize = () => updateDrawerLayout(column);
-    onResize();
+    const onWindowResize = () => updateDrawerLayout(column, "window");
+    onWindowResize();
     const header = column?.querySelector<HTMLElement>("[data-chat-header]");
     const stopObserving = column
-      ? observeResize(header ? [column, header] : column, onResize)
+      ? observeResize(header ? [column, header] : column, () =>
+          updateDrawerLayout(column, "column"),
+        )
       : undefined;
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", onWindowResize);
     return () => {
       stopObserving?.();
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("resize", onWindowResize);
     };
   }, [isPanel, visible]);
 
