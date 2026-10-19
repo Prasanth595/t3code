@@ -189,7 +189,6 @@ export function createDraft(
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
     workspace: "worktree",
-    // Empty until chosen; see defaultWorktreeBaseRef.
     baseRef: "",
     checkoutPath: "",
     enabled: true,

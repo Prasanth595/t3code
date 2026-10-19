@@ -115,7 +115,7 @@ export function ScheduledTaskBranchPickerRouteScreen() {
     cwd: project?.workspaceRoot ?? null,
     query: debouncedQuery,
   });
-  const { baseRef } = useScheduledTaskBaseRef({
+  const { baseRef, pending: baseRefPending } = useScheduledTaskBaseRef({
     environmentId: editor?.environmentId ?? null,
     cwd: project?.workspaceRoot ?? null,
     chosen: editor?.draft.baseRef ?? "",
@@ -136,7 +136,9 @@ export function ScheduledTaskBranchPickerRouteScreen() {
       query={query}
       onQueryChange={setQuery}
       loading={
-        query.trim() !== debouncedQuery.trim() || (branches.isPending && branches.data === null)
+        baseRefPending ||
+        query.trim() !== debouncedQuery.trim() ||
+        (branches.isPending && branches.data === null)
       }
       error={project ? branches.error : "This project is no longer available."}
       refreshing={branches.isFetchingNextPage}

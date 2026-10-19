@@ -63,8 +63,7 @@ import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/qu
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
-import { usePaginatedBranches } from "../../state/queries";
-import { defaultWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-base-ref";
+import { scheduledTaskBaseRefAtom } from "../../state/vcs";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -135,7 +134,6 @@ const EMPTY_DRAFT: DraftState = {
   projectId: "",
   threadId: "",
   workspaceMode: "worktree",
-  // Empty until chosen; see defaultWorktreeBaseRef.
   baseRef: "",
   startFromOrigin: true,
   existingWorktreePath: "",
@@ -1006,18 +1004,15 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  // Until a branch is chosen, use `main`, or the repo's default branch without one.
   const autoBaseRefCwd =
     draft.workspaceMode === "worktree" && !draft.baseRef
       ? (selectedProject?.workspaceRoot ?? null)
       : null;
-  // The first page holds the current and default refs; `main` can sit past it.
-  const topRefs = usePaginatedBranches({ environmentId, cwd: autoBaseRefCwd, query: "" });
-  const mainRefs = usePaginatedBranches({ environmentId, cwd: autoBaseRefCwd, query: "main" });
-  const baseRef = draft.baseRef || defaultWorktreeBaseRef([...mainRefs.refs, ...topRefs.refs]);
-  // Wait for both answers so a save cannot pick a branch too early.
-  const baseRefPending =
-    (topRefs.isPending && topRefs.data === null) || (mainRefs.isPending && mainRefs.data === null);
+  const autoBaseRef = useAtomValue(
+    scheduledTaskBaseRefAtom({ environmentId, cwd: autoBaseRefCwd }),
+  );
+  const baseRef = draft.baseRef || autoBaseRef.baseRef;
+  const baseRefPending = autoBaseRef.pending;
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(providers),
