@@ -14,7 +14,6 @@ import { afterEach, vi } from "vite-plus/test";
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
 import {
-  formatServiceChange,
   formatServiceStatus,
   offerServiceDuringOnboarding,
   reconcileService,
@@ -42,24 +41,6 @@ it("reports the installed service version and host paths", () => {
       "  Logs: /home/me/.t3/userdata/logs/boot-service.log",
     ].join("\n"),
   );
-});
-
-it("does not claim a handed-off install has finished", () => {
-  const plan = {
-    program: ["/home/me/.t3/runtime/versions/0.0.30/t3", "__service-launcher"],
-    baseDir: "/home/me/.t3",
-    logPath: status.logPath,
-    unitPath: status.unitPath,
-  };
-  expect(formatServiceChange({ changed: true, previouslyInstalled: true, plan }, "0.0.30")).toBe(
-    `Updated T3 Code service with t3@0.0.30.\nLogs: ${status.logPath}`,
-  );
-  const handedOff = formatServiceChange(
-    { changed: true, previouslyInstalled: true, plan: { ...plan, handedOff: true } },
-    "0.0.30",
-  );
-  expect(handedOff).not.toContain("Updated");
-  expect(handedOff).toContain(`Result: ${status.logPath}`);
 });
 
 it("gives a direct repair command for a stale service", () => {
@@ -199,6 +180,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
       expect(output).not.toContain("Restarted");
       expect(output).toContain("Queued a restart of the T3 Code service on t3@0.0.30");
       expect(output).toContain(`Logs: ${status.logPath}`);
+    }),
+  );
+
+  it.effect("install reports a handed-off switch as pending", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+      const { service } = makeTestService({ ...status, current: false });
+      vi.spyOn(BootService, "layer").mockReturnValue(
+        Layer.succeed(BootService.BootService, {
+          ...service,
+          install: (options) =>
+            service.install(options).pipe(Effect.map((plan) => ({ ...plan, handedOff: true }))),
+        }),
+      );
+      const lines: string[] = [];
+      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+        "install",
+        "--base-dir",
+        baseDir,
+      ]).pipe(
+        Effect.provideService(HostProcess.Environment, {}),
+        Effect.provideService(Console.Console, {
+          ...globalThis.console,
+          log: (...args) => {
+            lines.push(args.map(String).join(" "));
+          },
+        }),
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+      );
+
+      const output = lines.join("\n");
+      expect(output).not.toMatch(/(?:Installed|Updated) T3 Code service/);
+      expect(output).toContain("separate systemd unit");
+      expect(output).toContain(status.logPath);
     }),
   );
 
