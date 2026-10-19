@@ -94,10 +94,12 @@ function poolUsageLimitResetAt(
       }
       const reset = DateTime.make(window.resetsAt ?? "");
       if (Option.isNone(reset)) return null;
-      recovery = Math.max(recovery, DateTime.toEpochMillis(reset.value));
+      const resetMs = DateTime.toEpochMillis(reset.value);
+      if (resetMs <= nowMs) return null;
+      recovery = Math.max(recovery, resetMs);
     }
     // One account with headroom makes the pool's outage unexplained.
-    if (!Number.isFinite(recovery) || recovery <= nowMs) return null;
+    if (!Number.isFinite(recovery)) return null;
     earliest = Math.min(earliest, recovery);
   }
   return Number.isFinite(earliest) ? DateTime.formatIso(DateTime.makeUnsafe(earliest)) : null;

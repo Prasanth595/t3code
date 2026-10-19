@@ -176,6 +176,10 @@ describe("UsageLimitSources.poolResetAt", () => {
             TWO_HOURS,
           );
           expect(test.reads).toEqual(["https://hub.test:8317/"]);
+          accounts[1]!.five_hour.resets_at = "2026-10-09T23:00:00.000Z";
+          expect(
+            yield* sources.poolResetAt("https://hub.test:8317/v1/", "claude-fable-5-1"),
+          ).toBeNull();
         }).pipe(Effect.provide(test.layer)),
       ),
     );
