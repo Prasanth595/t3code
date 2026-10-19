@@ -1146,8 +1146,6 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
       ))
     : baseModel;
-  // A thread saved without options runs at its model's defaults, so the
-  // project default's options apply only before a thread exists.
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
     providerSelectionsFromModelSelection(input.threadModelSelection ?? input.projectModelSelection);
