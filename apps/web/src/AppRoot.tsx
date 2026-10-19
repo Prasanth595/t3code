@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { subscribeComposerDraftModelReconciliation } from "./composerDraftStore";
 import { environmentThreadShells } from "./state/threads";
+import { environmentShell } from "./state/shell";
 
 import { BrowserProfileReporter } from "./browser/BrowserProfileReporter";
 import { ElectronBrowserHost } from "./browser/ElectronBrowserHost";
@@ -22,6 +23,7 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
         registry: appAtomRegistry,
         threadShellAtom: environmentThreadShells.threadShellAtom,
         threadRefsAtom: environmentThreadShells.threadRefsAtom,
+        shellStateAtom: environmentShell.stateAtom,
       }),
     [],
   );

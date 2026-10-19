@@ -1,9 +1,14 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
-import { applyShellStreamEvent } from "@t3tools/client-runtime/state/shell";
+import {
+  applyShellStreamEvent,
+  createEnvironmentSnapshotAtom,
+  type EnvironmentShellState,
+  type EnvironmentShellStatus,
+} from "@t3tools/client-runtime/state/shell";
 import { makeThreadProjectionFixture } from "./test-fixtures";
 import * as Option from "effect/Option";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -1922,7 +1927,11 @@ describe("composerDraftStore project draft thread mapping", () => {
   });
 });
 
-function modelReconciliationHarness(environmentId: EnvironmentId, threadId: ThreadId) {
+function modelReconciliationHarness(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  initialStatus: EnvironmentShellStatus = "live",
+) {
   const tasks: Array<() => void> = [];
   const registry = AtomRegistry.make({
     scheduleTask: (task) => {
@@ -1947,7 +1956,7 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
     itemCount: 0,
     visibleItemCount: 0,
   };
-  const snapshotAtom = Atom.make<OrchestrationV2ShellSnapshot>({
+  const initialSnapshot: OrchestrationV2ShellSnapshot = {
     schemaVersion: 1,
     snapshotSequence: 0,
     projects: [],
@@ -1956,7 +1965,14 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
       { ...thread, id: threadId },
       { ...thread, id: selectedThreadId },
     ],
+  };
+  const shellStateAtom = Atom.make<EnvironmentShellState>({
+    snapshot: Option.some(initialSnapshot),
+    status: initialStatus,
+    error: Option.none(),
   });
+  const shellResultAtom = Atom.map(shellStateAtom, AsyncResult.success);
+  const snapshotAtom = createEnvironmentSnapshotAtom(() => shellResultAtom)(environmentId);
   const catalogValueAtom = Atom.make({
     isReady: true,
     entries: new Map([
@@ -1986,21 +2002,31 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
       registry,
       threadShellAtom: shells.threadShellAtom,
       threadRefsAtom: shells.threadRefsAtom,
+      shellStateAtom: () => shellResultAtom,
     }),
   );
   flush();
   return {
-    update(changes: Partial<OrchestrationV2ThreadShell>) {
-      const snapshot = registry.get(snapshotAtom);
-      registry.set(
-        snapshotAtom,
-        applyShellStreamEvent(snapshot, {
-          kind: "thread.updated",
-          location: "active",
-          sequence: snapshot.snapshotSequence + 1,
-          thread: { ...snapshot.threads[0]!, ...changes },
-        }),
-      );
+    flush,
+    setStatus(status: EnvironmentShellStatus) {
+      registry.set(shellStateAtom, { ...registry.get(shellStateAtom), status });
+      flush();
+    },
+    update(changes: Partial<OrchestrationV2ThreadShell>, status?: EnvironmentShellStatus) {
+      const state = registry.get(shellStateAtom);
+      const snapshot = Option.getOrThrow(state.snapshot);
+      registry.set(shellStateAtom, {
+        ...state,
+        status: status ?? state.status,
+        snapshot: Option.some(
+          applyShellStreamEvent(snapshot, {
+            kind: "thread.updated",
+            location: "active",
+            sequence: snapshot.snapshotSequence + 1,
+            thread: { ...snapshot.threads[0]!, ...changes },
+          }),
+        ),
+      });
       flush();
       expect(registry.get(selectedShell)?.id).toBe(selectedThreadId);
     },
@@ -2034,6 +2060,26 @@ describe("composerDraftStore modelSelection", () => {
         fastMode: true,
       }),
     );
+  });
+
+  it("retains a pick matching cached state until the live shell confirms it", () => {
+    const h = modelReconciliationHarness(TEST_ENVIRONMENT_ID, threadId, "cached");
+    const pick = h.model();
+    useComposerDraftStore.getState().setModelSelection(threadRef, pick, { explicit: true });
+    h.flush();
+    const before = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(before?.modelSelectionByProvider[pick.instanceId]).toEqual(pick);
+
+    for (const status of ["empty", "synchronizing", "cached"] as const) {
+      h.setStatus(status);
+      expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    }
+    h.update({ modelSelection: { ...pick, model: "remote-model" } }, "live");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    h.update({ modelSelection: pick }, "synchronizing");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toEqual(before);
+    h.setStatus("live");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 
   it("releases an inactive thread pick only after its queued model becomes durable", () => {
