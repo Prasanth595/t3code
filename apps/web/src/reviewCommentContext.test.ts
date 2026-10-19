@@ -159,11 +159,29 @@ describe("review comment context parsing", () => {
 
     expect(resolveDiffReviewPosition(fileDiff, 1, "additions")).toBeNull();
     expect(resolveDiffReviewPosition(fileDiff, 25, "additions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 39, "additions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 1, "deletions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 15, "deletions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 29, "deletions")).toBeNull();
     expect(resolveDiffReviewPosition(fileDiff, 33, "additions")).toEqual({
       kind: "context",
       oldLine: 23,
       newLine: 33,
       side: "right",
+    });
+    expect(resolveDiffReviewPosition(fileDiff, 23, "deletions")).toEqual({
+      kind: "context",
+      oldLine: 23,
+      newLine: 33,
+      side: "left",
+    });
+    expect(resolveDiffReviewPosition(fileDiff, 7, "additions")).toEqual({
+      kind: "added",
+      newLine: 7,
+    });
+    expect(resolveDiffReviewPosition(fileDiff, 25, "deletions")).toEqual({
+      kind: "deleted",
+      oldLine: 25,
     });
   });
 });
