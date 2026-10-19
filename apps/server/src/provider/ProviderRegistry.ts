@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
@@ -436,9 +437,22 @@ export const layer = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
+    // Ordering state exists only while scans overlap, independent of the snapshot TTL.
+    type WorkspaceRefresh = {
+      active: number;
+      started: number;
+      committed?: {
+        readonly order: number;
+        readonly snapshot: NonNullable<ServerProvider["workspaceSnapshots"]>[number];
+      };
+    };
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlySet<string>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, WorkspaceRefresh>>
     >(new Map());
+    const workspaceRescans = yield* Queue.unbounded<{
+      readonly instance: ProviderInstance;
+      readonly cwd: string;
+    }>();
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
     >(new Map());
@@ -762,6 +776,11 @@ export const layer = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              Queue.offer(workspaceRescans, { instance, cwd }),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -866,7 +885,9 @@ export const layer = Layer.effect(
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
+      readonly rescan?: ProviderInstance;
     }) {
+      const forced = input.fresh === true || input.rescan !== undefined;
       if (input.fresh) {
         yield* updateProviders((providers) =>
           providers.map((candidate) =>
@@ -885,7 +906,7 @@ export const layer = Layer.effect(
       if (
         !provider ||
         !provider.enabled ||
-        (!input.fresh &&
+        (!forced &&
           scannedFrom &&
           !scannedFrom.slashCommandsPending &&
           isProviderWorkspaceSnapshotCurrent(scannedFrom, DateTime.toEpochMillis(now)))
@@ -896,15 +917,36 @@ export const layer = Layer.effect(
       // health check. The TTL needs the time this scan started reading files.
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
-      if (!instance?.snapshotForCwd) return providers;
-      const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+      if (
+        !instance?.enabled ||
+        !instance.snapshotForCwd ||
+        (input.rescan && input.rescan !== instance)
+      ) {
+        return providers;
+      }
+      // Only requested cwds qualify, including an initial scan in flight.
+      // Read claims before snapshots: scans publish before releasing their claims.
+      if (
+        input.rescan &&
+        !(yield* Ref.get(workspaceRefreshesRef)).get(instance)?.has(input.cwd) &&
+        !workspaceSnapshotOf(
+          (yield* Ref.get(providersRef)).find((c) => c.instanceId === input.instanceId),
+        )
+      ) {
+        return providers;
+      }
+      const claim = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
+        const running = current?.get(input.cwd);
+        if (running && !forced) return [undefined, refreshes] as const;
+        const state: WorkspaceRefresh = running ?? { active: 0, started: 0 };
+        state.active += 1;
+        const order = ++state.started;
         const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
-        return [true, next] as const;
+        next.set(instance, new Map(current).set(input.cwd, state));
+        return [{ state, order }, next] as const;
       });
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      if (!claim) return yield* Ref.get(providersRef);
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
@@ -919,38 +961,58 @@ export const layer = Layer.effect(
             Effect.flatMap((currentInstance) => {
               if (currentInstance !== instance) return Ref.get(providersRef);
               return updateProviders((currentProviders) =>
-                currentProviders.map((candidate) =>
-                  candidate.instanceId === input.instanceId &&
-                  Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
-                    ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                        ...scopedSnapshot,
-                        checkedAt: scannedAt,
-                        // Unless the driver reports its own command discovery,
-                        // commands come from the health check. A failed check
-                        // leaves them unknown, so keep the last ones and retry.
-                        slashCommandsPending:
-                          scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
-                      })
-                    : candidate,
-                ),
+                currentProviders.map((candidate) => {
+                  if (candidate.instanceId !== input.instanceId || !candidate.enabled) {
+                    return candidate;
+                  }
+                  const current = workspaceSnapshotOf(candidate);
+                  const committed = claim.state.committed;
+                  // Only successful scans advance the order; a failed newer scan
+                  // must not discard an older scan's usable inventory.
+                  if (
+                    (committed && committed.order > claim.order) ||
+                    (!Equal.equals(current, scannedFrom) &&
+                      !(committed && Equal.equals(current, committed.snapshot)))
+                  ) {
+                    return candidate;
+                  }
+                  const updated = upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                    ...scopedSnapshot,
+                    checkedAt: scannedAt,
+                    // Unless the driver reports its own command discovery,
+                    // commands come from the health check. A failed check
+                    // leaves them unknown, so keep the last ones and retry.
+                    slashCommandsPending:
+                      scopedSnapshot.slashCommandsPending ?? scopedSnapshot.status === "error",
+                  });
+                  claim.state.committed = {
+                    order: claim.order,
+                    snapshot: workspaceSnapshotOf(updated)!,
+                  };
+                  return updated;
+                }),
               );
             }),
           ),
         ),
         Effect.ensuring(
-          claimed
-            ? Ref.update(workspaceRefreshesRef, (refreshes) => {
-                const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
-                current.delete(input.cwd);
-                if (current.size) next.set(instance, current);
-                else next.delete(instance);
-                return next;
-              })
-            : Effect.void,
+          Ref.update(workspaceRefreshesRef, (refreshes) => {
+            if (--claim.state.active > 0) return refreshes;
+            const next = new Map(refreshes);
+            const current = new Map(next.get(instance));
+            current.delete(input.cwd);
+            if (current.size) next.set(instance, current);
+            else next.delete(instance);
+            return next;
+          }),
         ),
       );
     });
+    yield* Stream.runForEach(Stream.fromQueue(workspaceRescans), ({ instance, cwd }) =>
+      refreshWorkspaceSnapshot({ instanceId: instance.instanceId, cwd, rescan: instance }).pipe(
+        Effect.ignoreCause({ log: true }),
+      ),
+    ).pipe(Effect.forkScoped);
 
     return {
       getProviders: Ref.get(providersRef),
