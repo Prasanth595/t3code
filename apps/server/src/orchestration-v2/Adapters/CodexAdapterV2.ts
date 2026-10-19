@@ -895,6 +895,9 @@ export type CodexGoalCommand =
   | { readonly type: "resume" }
   | { readonly type: "set"; readonly objective: string };
 
+const CodexGoalObjective = Schema.String.check(Schema.isMaxCodePoints(4_000));
+const isCodexGoalObjective = Schema.is(CodexGoalObjective);
+const decodeCodexGoalObjective = Schema.decodeEffect(CodexGoalObjective);
 const encodeCodexGoalPath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 export function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
@@ -6290,18 +6293,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             if (command.type === "set") {
               let nativeObjective = command.objective;
-              // Codex limits persisted objectives to 4,000 Unicode characters,
-              // but turn input can carry the full brief. Keep a durable copy for
-              // continuations and resumed sessions, outside the project checkout.
-              if (Array.from(command.objective).length > 4_000) {
+              // Native goals have a smaller limit than turn input. Retain briefs
+              // in server state, including after clear/replacement, for resume.
+              if (!isCodexGoalObjective(command.objective)) {
                 const directory = path.join(serverConfig.stateDir, "codex-goals");
-                const goalPath = path.join(directory, `${yield* crypto.randomUUIDv4}.md`);
+                const goalPath = path.join(directory, `${yield* crypto.randomUUIDv4()}.md`);
+                nativeObjective = yield* decodeCodexGoalObjective(
+                  `Complete the full objective in ${encodeCodexGoalPath(goalPath)}. Read that file and satisfy all of its requirements before marking the goal complete.`,
+                );
                 yield* fileSystem.makeDirectory(directory, { recursive: true, mode: 0o700 });
                 yield* fileSystem.writeFileString(goalPath, command.objective, {
                   flag: "wx",
                   mode: 0o600,
                 });
-                nativeObjective = `Complete the full objective in ${encodeCodexGoalPath(goalPath)}. Read that file and satisfy all of its requirements before marking the goal complete.`;
               }
               if (current !== null) yield* client.request("thread/goal/clear", { threadId });
               // Paused until our turn runs, so Codex does not start one first.

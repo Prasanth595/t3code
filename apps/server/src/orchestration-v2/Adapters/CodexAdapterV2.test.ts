@@ -8864,49 +8864,69 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
     );
 
-    it.effect("keeps an existing goal when writing the long brief fails", () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const writeError = PlatformError.systemError({
-          _tag: "PermissionDenied",
-          module: "FileSystem",
-          method: "writeFileString",
-        });
-        const transcript = makeCodexReplayTranscript({
-          scenario: "goal-long-objective-write-failure",
-          entries: [
-            ...sessionStart,
-            ...request(
-              3,
-              "thread/goal/get",
-              { threadId: nativeThreadId },
-              { goal: codexGoal("paused", 10) },
-            ),
-          ],
-        });
-        const requests: Array<string> = [];
-        const harness = yield* makeCodexReplayHarness(
-          transcript,
-          () => Effect.void,
-          (method) =>
-            Effect.sync(() => {
-              requests.push(method);
-            }),
-          undefined,
-          { fileSystem: { ...fs, writeFileString: () => Effect.fail(writeError) } },
-        );
-        const error = yield* Effect.flip(
-          harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${"a".repeat(4_001)}`)),
-        );
-        assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
-        assert.deepEqual(requests, ["initialize", "thread/start", "thread/goal/get"]);
-        assert.equal(error.cause, writeError);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+    it.effect.each(["brief write", "reference length"] as const)(
+      "keeps an existing goal when the long objective's %s fails",
+      (failure) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const serverConfig = yield* makeReplayServerConfig("goal-long-objective-failure");
+          const writeError = PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method: "writeFileString",
+          });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "goal-long-objective-write-failure",
+            entries: [
+              ...sessionStart,
+              ...request(
+                3,
+                "thread/goal/get",
+                { threadId: nativeThreadId },
+                { goal: codexGoal("paused", 10) },
+              ),
+            ],
+          });
+          const requests: Array<string> = [];
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+            undefined,
+            {
+              fileSystem: {
+                ...fs,
+                makeDirectory:
+                  failure === "reference length" ? () => Effect.void : fs.makeDirectory,
+                writeFileString: () =>
+                  failure === "brief write" ? Effect.fail(writeError) : Effect.void,
+              },
+              serverConfig: {
+                ...serverConfig,
+                stateDir:
+                  failure === "reference length"
+                    ? path.join(serverConfig.stateDir, ...Array<string>(30).fill("a".repeat(128)))
+                    : serverConfig.stateDir,
+              },
+            },
+          );
+          const error = yield* Effect.flip(
+            harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${"a".repeat(4_001)}`)),
+          );
+          assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+          assert.deepEqual(requests, ["initialize", "thread/start", "thread/goal/get"]);
+          if (failure === "brief write") assert.equal(error.cause, writeError);
+          else assert.propertyVal(error.cause, "_tag", "SchemaError");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
-      ),
     );
 
     it.effect("passes a 4,000-scalar objective unchanged and follows native continuations", () =>
