@@ -110,8 +110,11 @@ export function DiffFileTree({
       const updates = buildDiffFileTreeUpdates(mounted.paths, modelPaths);
       if (updates.length > 0) model.batch(updates);
     } else {
-      // A reset can turn a selected file path into a directory. Carry selection
+      // A reset can turn a file path into a directory. Carry selection and focus
       // through real paths so paging keeps the same file without revealing it again.
+      const focusedPath = model.getFocusedPath();
+      const nextFocusedPath =
+        focusedPath === null ? null : presented.modelPath(mounted.selectionPath(focusedPath));
       const selectedPaths = model
         .getSelectedPaths()
         .map((path) => presented.modelPath(mounted.selectionPath(path)))
@@ -130,6 +133,12 @@ export function DiffFileTree({
       for (const path of collapsedDirectories) {
         const directory = model.getItem(path);
         if (directory !== null && "collapse" in directory) directory.collapse();
+      }
+      if (
+        nextFocusedPath !== null &&
+        (modelPaths.includes(nextFocusedPath) || directoryPaths.includes(nextFocusedPath))
+      ) {
+        model.focusPath(nextFocusedPath);
       }
     }
     model.setGitStatus(gitStatus);
