@@ -760,16 +760,19 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "claude-continuation-" });
       const homes = ["shared", "overlay", "separate", "missing", "dangling"] as const;
-      const configMap: ProviderInstanceConfigMap = {};
       for (const name of homes) {
-        const homePath = path.join(root, name);
-        yield* fs.makeDirectory(homePath);
-        configMap[ProviderInstanceId.make(name)] = {
-          driver: ClaudeDriver.driverKind,
-          enabled: false,
-          config: makeClaudeConfig({ homePath }),
-        };
+        yield* fs.makeDirectory(path.join(root, name));
       }
+      const configMap = Object.fromEntries(
+        homes.map((name) => [
+          ProviderInstanceId.make(name),
+          {
+            driver: ClaudeDriver.driverKind,
+            enabled: false,
+            config: makeClaudeConfig({ homePath: path.join(root, name) }),
+          },
+        ]),
+      );
       yield* fs.makeDirectory(path.join(root, "shared", "projects"));
       yield* fs.makeDirectory(path.join(root, "separate", "projects"));
       yield* Effect.promise(() =>
