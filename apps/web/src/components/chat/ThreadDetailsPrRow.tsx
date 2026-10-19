@@ -82,7 +82,7 @@ export function ThreadDetailsPrRow({
   status,
   project,
   label,
-  referenceLabel = `#${number}`,
+  referenceLabel: providedReferenceLabel,
   openAriaLabel,
   onOpen,
   onActed,
@@ -101,6 +101,8 @@ export function ThreadDetailsPrRow({
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
 }) {
+  const referenceLabel =
+    providedReferenceLabel === undefined ? `#${number}` : providedReferenceLabel;
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
     serverConfigs.get(environmentId)?.environment.capabilities.pullRequests === true;
