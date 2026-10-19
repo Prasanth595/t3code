@@ -207,7 +207,6 @@ interface ActiveTurn {
   before: string | null | undefined;
   compaction: { readonly nativeId: string; readonly startedAt: DateTime.Utc } | undefined;
   compactions: number;
-  /** The provider retry OpenCode waits on, shown until the provider answers or the turn ends. */
   retry:
     | {
         readonly retry: OrchestrationV2ProviderRetry;
@@ -1048,7 +1047,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (status !== "running") turn.compaction = undefined;
     });
 
-    /** The turn's provider retry row; a failed turn's terminal failure item takes its place. */
     const emitRetry = Effect.fnUntraced(function* (
       state: ThreadState,
       turn: ActiveTurn,
@@ -1061,7 +1059,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         type: "turn_item.updated",
         driver,
         turnItem: makeProviderRetryTurnItem({
-          idAllocator,
           driver,
           threadId: turn.input.threadId,
           runId: turn.input.runId,

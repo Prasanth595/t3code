@@ -3435,42 +3435,46 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     code: rateLimited.type,
     retryable: true,
   } satisfies OrchestrationV2ProviderFailure;
-  const errorRows = (collected: ReadonlyArray<ProviderAdapterV2Event>) =>
+  const firstRetry = { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 };
+  const errorRows = (collected: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
     collected.flatMap((event) =>
-      event.type === "turn_item.updated" && event.turnItem.type === "error"
-        ? [
-            {
-              id: event.turnItem.id,
-              ordinal: event.turnItem.ordinal,
-              status: event.turnItem.status,
-              title: event.turnItem.title,
-              failure: event.turnItem.failure,
-              retry: event.turnItem.retry,
-            },
-          ]
-        : [],
+      event.type === "turn_item.updated" && event.turnItem.type === "error" ? [event.turnItem] : [],
     );
-  const runRetryTurn = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+  const runRetryTurn = (entries: ReadonlyArray<ProviderReplayEntry>, gate?: ProviderReplayGate) =>
     Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.started", { sessionID: SESSION }),
-        ...entries,
-      ]);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          ...entries,
+        ],
+        gate === undefined ? undefined : { replayGate: gate },
+      );
+      const retryShown = yield* Deferred.make<void>();
       const collected = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? Deferred.succeed(retryShown, undefined)
+            : Effect.void,
+        ),
         Stream.takeUntil((event) => event.type === "turn.terminal"),
         Stream.runCollect,
         Effect.forkScoped,
       );
       yield* runtime.startTurn(turnInput(thread));
+      if (gate !== undefined) {
+        yield* Deferred.await(retryShown);
+        yield* TestClock.adjust("5 seconds");
+        gate.releaseAll();
+      }
       return yield* Fiber.join(collected);
     });
 
-  it.effect("shows a scheduled provider retry until the provider answers", () =>
-    Effect.gen(function* () {
-      const seen = yield* runRetryTurn([
-        retryScheduled(2, 2_000),
+  it.effect.each([
+    {
+      name: "recovers a provider retry at the provider's first output",
+      after: [
         event("session.text.started", {
           sessionID: SESSION,
           assistantMessageID: ASSISTANT,
@@ -3483,37 +3487,35 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           text: "DONE",
         }),
         event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
-      // Recovered as soon as the retried request answers, before its text lands.
-      assert.deepEqual(turnItems(seen), [
-        "error:running",
-        "error:completed",
-        "assistant_message:completed",
-      ]);
+      ],
+      items: ["error:running", "error:completed", "assistant_message:completed"],
+      ended: "completed" as const,
+      title: "Provider recovered",
+    },
+    {
+      name: "stops a provider retry when the user stops the turn",
+      after: [event("session.execution.interrupted", { sessionID: SESSION, reason: "user" })],
+      items: ["error:running", "error:interrupted"],
+      ended: "interrupted" as const,
+      title: "Provider retry stopped",
+    },
+  ])("$name", ({ after, items, ended, title }) =>
+    Effect.gen(function* () {
+      const seen = yield* runRetryTurn([retryScheduled(2, 2_000), ...after]);
+      assert.deepEqual(turnItems(seen), items);
       const rows = errorRows(seen);
       assert.deepEqual(
-        rows.map(({ status, title, failure, retry }) => ({ status, title, failure, retry })),
+        rows.map(({ id, title, failure, retry }) => ({ id, title, failure, retry })),
         [
-          {
-            status: "running",
-            title: "Provider retry",
-            failure: retrying,
-            retry: { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 },
-          },
-          {
-            status: "completed",
-            title: "Provider recovered",
-            failure: retrying,
-            retry: { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 },
-          },
+          { id: rows[0]!.id, title: "Provider retry", failure: retrying, retry: firstRetry },
+          { id: rows[0]!.id, title, failure: retrying, retry: firstRetry },
         ],
       );
-      assert.equal(new Set(rows.map((row) => row.id)).size, 1);
-      assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: "completed" });
+      assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: ended, failure: null });
     }).pipe(Effect.scoped),
   );
 
-  it.effect("fails a provider retry with the error that ended its execution", () =>
+  it.effect("replaces a provider retry with the error that failed the turn", () =>
     Effect.gen(function* () {
       const step = {
         sessionID: SESSION,
@@ -3522,72 +3524,77 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         model: { providerID: "opencode", id: "big-pickle", variant: "default" },
         started: 1,
       };
+      const gate = makeProviderReplayGate(["second retry"]);
       // OpenCode starts the step of each attempt that fails, so a step start is no recovery.
-      const seen = yield* runRetryTurn([
-        event("session.step.started", step),
-        retryScheduled(2, 2_000),
-        event("session.step.started", step),
-        retryScheduled(3, 4_000),
-        event("session.step.started", step),
-        event("session.step.failed", {
-          sessionID: SESSION,
-          assistantMessageID: ASSISTANT,
-          error: rateLimited,
-        }),
-        event("session.execution.failed", { sessionID: SESSION, error: rateLimited }),
-      ]);
+      const seen = yield* runRetryTurn(
+        [
+          event("session.step.started", step),
+          retryScheduled(2, 2_000),
+          event("session.step.started", step, "second retry"),
+          retryScheduled(3, 4_000),
+          event("session.step.started", step),
+          event("session.step.failed", {
+            sessionID: SESSION,
+            assistantMessageID: ASSISTANT,
+            error: rateLimited,
+          }),
+          event("session.execution.failed", { sessionID: SESSION, error: rateLimited }),
+        ],
+        gate,
+      );
       const failed = { ...retrying, retryable: null };
+      const lastRetry = { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 };
       const rows = errorRows(seen);
       assert.deepEqual(
-        rows.map(({ status, title, failure, retry }) => ({ status, title, failure, retry })),
+        rows.map(({ id, status, title, failure, retry }) => ({
+          id,
+          status,
+          title,
+          failure,
+          retry,
+        })),
         [
           {
+            id: rows[0]!.id,
             status: "running",
             title: "Provider retry",
             failure: retrying,
-            retry: { attempt: 1, maxAttempts: null, retryDelayMs: 2_000 },
+            retry: firstRetry,
           },
           {
+            id: rows[0]!.id,
             status: "running",
             title: "Provider retry",
             failure: retrying,
-            retry: { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 },
+            retry: lastRetry,
           },
           {
+            id: rows[0]!.id,
             status: "failed",
             title: "Provider error",
             failure: failed,
-            retry: { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 },
+            retry: lastRetry,
           },
         ],
       );
-      assert.equal(new Set(rows.map((row) => row.id)).size, 1);
-      // The terminal's failure item takes the row's place, so it keeps the retries.
+      const { startedAt, ordinal } = rows[0]!;
+      assert.ok(startedAt);
+      assert.deepEqual(
+        rows.map((row) => ({ startedAt: row.startedAt, ordinal: row.ordinal })),
+        rows.map(() => ({ startedAt, ordinal })),
+      );
+      assert.isAtLeast(
+        DateTime.toEpochMillis(rows[2]!.updatedAt) - DateTime.toEpochMillis(startedAt),
+        5_000,
+      );
       assert.deepInclude(seen.at(-1), {
         type: "turn.terminal",
         status: "failed",
         failure: failed,
-        failureItemOrdinal: rows[0]!.ordinal,
-        retry: { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 },
-        retryStartedAt: DateTime.makeUnsafe(0),
+        failureItemOrdinal: ordinal,
+        retry: lastRetry,
+        retryStartedAt: startedAt,
       });
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("stops a provider retry when the user stops its execution", () =>
-    Effect.gen(function* () {
-      const seen = yield* runRetryTurn([
-        retryScheduled(2, 2_000),
-        event("session.execution.interrupted", { sessionID: SESSION, reason: "user" }),
-      ]);
-      assert.deepEqual(
-        errorRows(seen).map(({ status, title }) => ({ status, title })),
-        [
-          { status: "running", title: "Provider retry" },
-          { status: "interrupted", title: "Provider retry stopped" },
-        ],
-      );
-      assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: "interrupted" });
     }).pipe(Effect.scoped),
   );
 
