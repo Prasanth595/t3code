@@ -67,40 +67,6 @@ const WINDOW: UsageSummaryInput = {
   untilDay: UsageDay.make("2026-08-02"),
 };
 
-function protoVarint(value: number): number[] {
-  const bytes: number[] = [];
-  do {
-    const byte = value % 128;
-    value = Math.floor(value / 128);
-    bytes.push(byte + (value > 0 ? 128 : 0));
-  } while (value > 0);
-  return bytes;
-}
-
-const protoNumber = (field: number, value: number) => [
-  ...protoVarint(field * 8),
-  ...protoVarint(value),
-];
-
-const protoBytes = (field: number, bytes: readonly number[]) => [
-  ...protoVarint(field * 8 + 2),
-  ...protoVarint(bytes.length),
-  ...bytes,
-];
-
-function seedAntigravityHistory(dir: string, sessionId: string, outputTokens: number) {
-  const usage = [...protoNumber(2, 100), ...protoNumber(3, outputTokens)];
-  const stamp = protoNumber(1, Date.parse("2026-08-01T10:00:00Z") / 1000);
-  const step = [...protoBytes(9, usage), ...protoBytes(8, stamp)];
-  const db = new NodeSqlite.DatabaseSync(NodePath.join(dir, `${sessionId}.db`));
-  try {
-    db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
-    db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, new Uint8Array(step));
-  } finally {
-    db.close();
-  }
-}
-
 const setup = Effect.gen(function* () {
   const home = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "usage-service-test-")),
@@ -1079,10 +1045,31 @@ describe("UsageService", () => {
       const first = NodePath.join(home, "antigravity-first");
       const second = NodePath.join(home, "antigravity-second");
       yield* Effect.promise(async () => {
-        await NodeFSP.mkdir(first);
-        await NodeFSP.mkdir(second);
-        seedAntigravityHistory(first, "first-session", 7);
-        seedAntigravityHistory(second, "second-session", 11);
+        for (const [dir, outputTokens] of [
+          [first, 7],
+          [second, 11],
+        ] as const) {
+          await NodeFSP.mkdir(dir);
+          const db = new NodeSqlite.DatabaseSync(
+            NodePath.join(dir, `${NodePath.basename(dir)}.db`),
+          );
+          try {
+            db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+            // Step protobuf: 100 input tokens, distinct output tokens, and 2026-08-01T10:00Z.
+            const metadata = new Uint8Array([
+              0x4a,
+              4,
+              0x10,
+              100,
+              0x18,
+              outputTokens,
+              ...Buffer.from("420608a087b7d306", "hex"),
+            ]);
+            db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
+          } finally {
+            db.close();
+          }
+        }
       });
       const instance = (dataDir: string) => ({
         driver: ProviderDriverKind.make("antigravity"),
