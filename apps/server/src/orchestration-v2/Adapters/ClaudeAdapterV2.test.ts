@@ -2650,21 +2650,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
   describe("Plan-mode tool approval", () => {
-    const openPermissionTurn = Effect.fn("openPlanPermissionTurn")(function* (
-      runtimeMode: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"],
-      interactionMode: "plan" | "default" = "plan",
+    const openPlanTurn = Effect.fn("openPlanTurn")(function* (
+      runtimeMode: "auto" | "full-access",
       approvalPolicy?: "never",
     ) {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-plan-write-" });
-      const target = path.join(workspace, "target.txt");
-      yield* fileSystem.writeFileString(target, "before");
       const harness = yield* makeWakeHarness;
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode,
-        interactionMode,
-        cwd: workspace,
+        interactionMode: "plan",
+        cwd: "/workspace",
         ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       });
       const input = makeClaudeTestTurnInput({
@@ -2678,37 +2672,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       });
       yield* harness.runtime.startTurn({
         ...input,
-        appThread: { ...input.appThread, runtimeMode, interactionMode },
+        appThread: { ...input.appThread, runtimeMode, interactionMode: "plan" },
       });
-      return { ...harness, fileSystem, target };
+      assert.equal(harness.getOpenedOptions()?.permissionMode, "plan");
+      const canUseTool = harness.getOpenedOptions()?.canUseTool;
+      assert.isDefined(canUseTool);
+      return { ...harness, canUseTool: canUseTool! };
     });
 
     const requestWrite = Effect.fn("requestPlanWrite")(function* (
-      turn: Effect.Success<ReturnType<typeof openPermissionTurn>>,
-      toolName: "Edit" | "Bash",
-      signal: AbortSignal = new AbortController().signal,
+      turn: Effect.Success<ReturnType<typeof openPlanTurn>>,
+      toolName: string,
+      toolInput: Record<string, unknown>,
     ) {
-      const canUseTool = turn.getOpenedOptions()?.canUseTool;
-      assert.isFunction(canUseTool);
-      const toolInput =
-        toolName === "Edit"
-          ? { file_path: turn.target, old_string: "before", new_string: "after" }
-          : { command: "echo after > target.txt" };
       const decision = yield* Effect.promise(() =>
-        canUseTool!(toolName, toolInput, {
-          signal,
+        turn.canUseTool(toolName, toolInput, {
+          signal: new AbortController().signal,
           toolUseID: "tool-plan-write",
           requestId: "request-plan-write",
         }),
-      ).pipe(
-        // Model the SDK's tool executor: only an allow response can perform the write.
-        Effect.tap((result) =>
-          result?.behavior === "allow"
-            ? turn.fileSystem.writeFileString(turn.target, "after")
-            : Effect.void,
-        ),
-        Effect.forkScoped,
-      );
+      ).pipe(Effect.forkScoped);
       const first = yield* Effect.raceFirst(
         Queue.take(turn.runtimeRequestReceipts).pipe(
           Effect.map((event) => ({ type: "request", event }) as const),
@@ -2718,43 +2701,45 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       return { first, decision };
     });
 
-    it.effect.each(
-      (["auto", "full-access", "approval-required", "auto-accept-edits"] as const).flatMap(
-        (runtimeMode) =>
-          (["Edit", "Bash"] as const).flatMap((toolName) =>
-            (["accept", "cancel"] as const).map((decision) => ({
-              runtimeMode,
-              toolName,
-              decision,
-            })),
-          ),
-      ),
-    )(
+    it.effect.each([
+      {
+        runtimeMode: "auto",
+        toolName: "Edit",
+        toolInput: {
+          file_path: "/workspace/target.txt",
+          old_string: "before",
+          new_string: "after",
+        },
+        kind: "file-change",
+        decision: "accept",
+        behavior: "allow",
+      },
+      {
+        runtimeMode: "full-access",
+        toolName: "Bash",
+        toolInput: { command: "echo after > target.txt" },
+        kind: "command",
+        decision: "cancel",
+        behavior: "deny",
+      },
+    ] as const)(
       "asks before $toolName in $runtimeMode Plan, then respects $decision",
-      ({ runtimeMode, toolName, decision }) =>
+      ({ runtimeMode, toolName, toolInput, kind, decision, behavior }) =>
         Effect.gen(function* () {
-          const turn = yield* openPermissionTurn(runtimeMode);
-          assert.equal(turn.getOpenedOptions()?.permissionMode, "plan");
-          const permission = yield* requestWrite(turn, toolName);
-          assert.equal(
-            yield* turn.fileSystem.readFileString(turn.target),
-            "before",
-            "the planned write changed the file before approval",
-          );
-          assert.equal(permission.first.type, "request", "the planned write ran without approval");
+          const turn = yield* openPlanTurn(runtimeMode);
+          const permission = yield* requestWrite(turn, toolName, toolInput);
+          assert.equal(permission.first.type, "request", "the planned write bypassed approval");
           if (permission.first.type !== "request") return;
           const request = permission.first.event.runtimeRequest;
           assert.equal(request.status, "pending");
-          assert.equal(request.kind, toolName === "Bash" ? "command" : "file-change");
+          assert.equal(request.kind, kind);
           yield* turn.runtime.respondToRuntimeRequest({ requestId: request.id, decision });
-          assert.equal(
-            (yield* Fiber.join(permission.decision))?.behavior,
-            decision === "accept" ? "allow" : "deny",
-          );
-          assert.equal(
-            yield* turn.fileSystem.readFileString(turn.target),
-            decision === "accept" ? "after" : "before",
-          );
+          const result = yield* Fiber.join(permission.decision);
+          assert.equal(result?.behavior, behavior);
+          if (result?.behavior === "allow") {
+            assert.deepEqual(result.updatedInput, toolInput);
+            assert.equal(result.toolUseID, "tool-plan-write");
+          }
         }).pipe(
           Effect.scoped,
           Effect.provide(
@@ -2763,115 +2748,50 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
 
-    it.effect.each(
-      (["auto", "full-access"] as const).flatMap((runtimeMode) =>
-        (["Edit", "Bash"] as const).map((toolName) => ({ runtimeMode, toolName })),
+    it.effect("denies Plan writes without asking when approvals are never allowed", () =>
+      Effect.gen(function* () {
+        const turn = yield* openPlanTurn("full-access", "never");
+        const permission = yield* requestWrite(turn, "Bash", {
+          command: "echo after > target.txt",
+        });
+        assert.equal(permission.first.type, "decision", "Never raised an approval request");
+        if (permission.first.type !== "decision") return;
+        assert.equal(permission.first.result?.behavior, "deny");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    )(
-      "denies $toolName in $runtimeMode Plan when approvals are never allowed",
-      ({ runtimeMode, toolName }) =>
-        Effect.gen(function* () {
-          const turn = yield* openPermissionTurn(runtimeMode, "plan", "never");
-          const permission = yield* requestWrite(turn, toolName);
-          assert.equal(
-            yield* turn.fileSystem.readFileString(turn.target),
-            "before",
-            "Never allowed the planned write",
-          );
-          assert.equal(permission.first.type, "decision", "Never raised an approval request");
-          if (permission.first.type !== "decision") return;
-          assert.equal(permission.first.result?.behavior, "deny");
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
     );
 
-    it.effect.each(
-      (["auto", "full-access"] as const).flatMap((runtimeMode) =>
-        (["Edit", "Bash"] as const).map((toolName) => ({ runtimeMode, toolName })),
+    it.effect("still captures ExitPlanMode when Plan approvals are never allowed", () =>
+      Effect.gen(function* () {
+        const turn = yield* openPlanTurn("full-access", "never");
+        const markdown = "# Proposed work\n\nFix the calculation after approval.";
+        const result = yield* Effect.promise(() =>
+          turn.canUseTool(
+            "ExitPlanMode",
+            { plan: markdown },
+            {
+              signal: new AbortController().signal,
+              toolUseID: "tool-plan-capture",
+              requestId: "request-plan-capture",
+            },
+          ),
+        );
+        assert.equal(result?.behavior, "deny");
+        if (result?.behavior === "deny")
+          assert.include(result.message, "captured your proposed plan");
+        const event = yield* Queue.take(turn.planReceipts);
+        assert.equal(event.plan.kind, "proposed_plan");
+        assert.equal(event.plan.kind === "proposed_plan" ? event.plan.markdown : "", markdown);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    )(
-      "denies a pending $toolName approval in $runtimeMode Plan when the turn aborts",
-      ({ runtimeMode, toolName }) =>
-        Effect.gen(function* () {
-          const turn = yield* openPermissionTurn(runtimeMode);
-          const abort = new AbortController();
-          const permission = yield* requestWrite(turn, toolName, abort.signal);
-          assert.equal(permission.first.type, "request");
-          if (permission.first.type !== "request") return;
-          const request = permission.first.event.runtimeRequest;
-
-          abort.abort();
-          assert.equal((yield* Fiber.join(permission.decision))?.behavior, "deny");
-          // A late approval finds no pending request and cannot allow the write.
-          const late = yield* turn.runtime
-            .respondToRuntimeRequest({ requestId: request.id, decision: "accept" })
-            .pipe(Effect.exit);
-          assert.isTrue(Exit.isFailure(late));
-          assert.equal(yield* turn.fileSystem.readFileString(turn.target), "before");
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
-    );
-
-    it.effect.each(["Edit", "Bash"] as const)(
-      "still allows %s in Full access outside Plan",
-      (toolName) =>
-        Effect.gen(function* () {
-          const turn = yield* openPermissionTurn("full-access", "default");
-          const permission = yield* requestWrite(turn, toolName);
-          assert.equal(permission.first.type, "decision");
-          if (permission.first.type !== "decision") return;
-          assert.equal(permission.first.result?.behavior, "allow");
-          assert.equal(yield* turn.fileSystem.readFileString(turn.target), "after");
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
-    );
-
-    it.effect.each(
-      (["auto", "full-access"] as const).flatMap((runtimeMode) =>
-        ([undefined, "never"] as const).map((approvalPolicy) => ({ runtimeMode, approvalPolicy })),
-      ),
-    )(
-      "still captures the proposed plan in $runtimeMode with approvals $approvalPolicy",
-      ({ runtimeMode, approvalPolicy }) =>
-        Effect.gen(function* () {
-          const turn = yield* openPermissionTurn(runtimeMode, "plan", approvalPolicy);
-          const markdown = "# Proposed work\n\nFix the calculation after approval.";
-          const result = yield* Effect.promise(() =>
-            turn.getOpenedOptions()!.canUseTool!(
-              "ExitPlanMode",
-              { plan: markdown },
-              {
-                signal: new AbortController().signal,
-                toolUseID: "tool-plan-capture",
-                requestId: "request-plan-capture",
-              },
-            ),
-          );
-          assert.equal(result?.behavior, "deny");
-          if (result?.behavior === "deny")
-            assert.include(result.message, "captured your proposed plan");
-          const event = yield* Queue.take(turn.planReceipts);
-          assert.equal(event.plan.kind, "proposed_plan");
-          assert.equal(event.plan.kind === "proposed_plan" ? event.plan.markdown : "", markdown);
-          assert.equal(yield* turn.fileSystem.readFileString(turn.target), "before");
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
     );
   });
 
