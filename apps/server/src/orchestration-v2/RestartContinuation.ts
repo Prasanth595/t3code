@@ -30,7 +30,6 @@ import {
 
 const CONTINUE_PROMPT = "Continue where you left off.";
 
-/** Rapid automatic continuations allowed before a person has to step in. */
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
 
@@ -238,7 +237,6 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       run?.restartContinuationOfRunId !== undefined && chainLength < MAX_CONTINUATION_CHAIN;
       run = projection.runs.find((candidate) => candidate.id === run?.restartContinuationOfRunId)
     ) {
-      // Normal work across updates must not accumulate a lifetime restart cap.
       if (DateTime.toEpochMillis(run.requestedAt) < loopWindowStart) break;
       chainLength += 1;
     }
