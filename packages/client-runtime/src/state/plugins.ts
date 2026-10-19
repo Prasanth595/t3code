@@ -70,7 +70,7 @@ export const pluginCatalogStream = Stream.unwrap(
                 session.initialConfig.pipe(
                   Effect.map((config) =>
                     supportsPluginCatalog(config.environment.capabilities)
-                      ? subscribe(WS_METHODS.pluginsSubscribe, {}).pipe(
+                      ? subscribe(WS_METHODS.pluginsSubscribe, {}, { session }).pipe(
                           Stream.map((snapshot) => deliverPluginCatalog(snapshot.installations)),
                         )
                       : Stream.succeed(UNSUPPORTED),
