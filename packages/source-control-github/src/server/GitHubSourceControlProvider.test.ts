@@ -700,7 +700,7 @@ describe("GitHubSourceControlProvider writes", () => {
       api: {
         rest: (input) =>
           Effect.sync(() => {
-            if (input.path === "user") return restResponse({ login: "me" });
+            if (input.path === "user") return restResponse({ id: 123, login: "me" });
             requests.push(input);
             return restResponse({ number: 1 }, 201);
           }),
@@ -740,7 +740,7 @@ describe("GitHubSourceControlProvider writes", () => {
           Effect.sync(() => {
             requests.push(`${input.method ?? "GET"} ${input.path}`);
             return input.path === "user"
-              ? restResponse({ login: "me" })
+              ? restResponse({ id: 123, login: "me" })
               : restResponse({
                   full_name: "acme/new",
                   html_url: "https://github.com/acme/new",
@@ -773,7 +773,7 @@ describe("GitHubSourceControlProvider writes", () => {
           Effect.sync(() => {
             requests.push(`${input.host} ${input.method ?? "GET"} ${input.path}`);
             return input.path === "user"
-              ? restResponse({ login: "me" })
+              ? restResponse({ id: 123, login: "me" })
               : restResponse({
                   full_name: "me/notes",
                   html_url: `https://${input.host}/me/notes`,
@@ -895,6 +895,12 @@ describe("GitHub App repository ownership", () => {
       graphql: (_, call) =>
         new Response(
           encodeJson({
+            ...(options.returnsRepository === false &&
+            call.operationName === "CreateInstallationRepository"
+              ? {
+                  errors: [{ type: "NOT_FOUND", message: "Could not resolve the new repository." }],
+                }
+              : {}),
             data:
               call.operationName === "GitHubViewer"
                 ? { viewer: { login: "example[bot]", databaseId: 123 } }
@@ -1628,7 +1634,7 @@ it.effect.each([
       api: {
         rest: (input) =>
           Effect.sync(() => {
-            if (input.path === "user") return restResponse({ login: "me" });
+            if (input.path === "user") return restResponse({ id: 123, login: "me" });
             targets.push(`${input.host}/${input.path}`);
             return restResponse({
               full_name: expected,

@@ -40,14 +40,16 @@ You can use an installation token through the same Settings, environment, or CLI
 sources above. Discovery shows the App's bot account. The installation must include the
 repositories you use and grant the permissions required for each operation:
 
-| Task                                    | Repository permissions                                                                                                                                           |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Browse PRs and their checks             | Pull requests: read; Contents: read; Checks: read; Commit statuses: read                                                                                         |
-| Create, edit, comment on, or review PRs | Pull requests: write                                                                                                                                             |
-| Push commits, update branches, or merge | Contents: write                                                                                                                                                  |
-| Push changes to workflow files          | Contents: write and Workflows: write                                                                                                                             |
-| Approve workflow runs                   | Actions: write                                                                                                                                                   |
-| Create repositories                     | Repository creation: write, or Administration: write; see [GitHub's requirements](https://docs.github.com/en/rest/repos/repos#create-an-organization-repository) |
+| Task                                    | Repository permissions                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| Browse PRs and their checks             | Pull requests: read; Contents: read; Checks: read; Commit statuses: read |
+| Create, edit, comment on, or review PRs | Pull requests: write                                                     |
+| Push commits, update branches, or merge | Contents: write                                                          |
+| Push changes to workflow files          | Contents: write and Workflows: write                                     |
+| Approve workflow runs                   | Actions: write                                                           |
+| Create repositories                     | Repository creation: write, or Administration: write                     |
+
+See [GitHub's repository creation requirements](https://docs.github.com/en/rest/repos/repos#create-an-organization-repository).
 
 The bot is the acting identity, not a repository owner. For clone or publish destinations,
 use `owner/repo`. A bare name uses the installation's repository owner when it can be determined;
@@ -59,12 +61,15 @@ existing repository IDs can create a repository without being able to return its
 finish publishing. If T3 Code reports missing creation details, check whether the repository
 exists and update the token's access before retrying.
 
-Installation tokens expire, normally after one hour. T3 Code does not mint their replacements:
-replace a saved token, or use a CLI credential source backed by your token-renewal service.
-A token placed in the server environment once will not renew itself. Credentials stay fixed for
-an operation; a refused credential is refreshed from its source on a subsequent request.
-Configure Git's HTTPS credential helper separately for clone, fetch, and push. Git commit author
-name and email are also separate from the API token.
+[Installation tokens expire after one hour](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation).
+Renew them outside T3 Code: replace the saved token, restart the server with a replacement
+environment token, or update the token returned by `gh auth token`. A workflow already in progress
+keeps its captured credential. An authentication refusal clears the cached credential for the
+next request; it does not renew the token.
+
+The API token does not configure Git authentication. Configure Git's HTTPS credential helper
+or SSH key separately for clone, fetch, and push. Installation tokens can authenticate Git over
+HTTPS with Contents permission. Git commit author name and email are also separate from the token.
 
 ### Forgejo and Gitea
 

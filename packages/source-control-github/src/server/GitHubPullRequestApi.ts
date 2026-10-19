@@ -17,8 +17,6 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import {
   resolvePullRequestAuthorFilter,
-  PositiveInt,
-  TrimmedNonEmptyString,
   type PullRequestAction,
   type PullRequestStackHead,
   type PullRequestActor,
@@ -43,8 +41,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubRest from "./GitHubRest.ts";
-import { gitHubActorLogin } from "./gitHubActorLogin.ts";
-import { GitHubViewerResponseError, makeGitHubViewerReader } from "./gitHubViewer.ts";
+import { makeGitHubViewerReader } from "./gitHubViewer.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
@@ -297,7 +294,6 @@ export class GitHubBranchDeletionRefusedError extends Schema.TaggedError<GitHubB
 }
 
 export type GitHubPullRequestApiError =
-  | GitHubViewerResponseError
   | GitHubBranchDeletionRefusedError
   | GitHubStackActionError
   | GitHubRequestPolicy.GitHubApiError
@@ -787,9 +783,8 @@ function matchesFilters(
     (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
     (filters.author === undefined ||
-      (item.author !== null &&
-        gitHubActorLogin(item.author.login, item.author.isBot === true) ===
-          resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase()))
+      item.author?.login.toLowerCase() ===
+        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
   );
 }
 
@@ -807,8 +802,7 @@ function matchesUnsortedListing(
   const matchesInvolvement =
     input.involvement === "all" ||
     (input.involvement === "authored"
-      ? item.author !== null &&
-        gitHubActorLogin(item.author.login, item.author.isBot === true) === viewer
+      ? item.author?.login.toLowerCase() === viewer
       : item.hasTeamReviewRequest ||
         item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer));
   return matchesState && matchesInvolvement && matchesFilters(item, input.filters, input.viewer);
@@ -896,14 +890,6 @@ export const make = Effect.gen(function* () {
     }
   >();
   const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
-  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
-    Schema.fromJsonString(
-      Schema.Struct({
-        id: PositiveInt,
-        login: TrimmedNonEmptyString,
-      }),
-    ),
-  );
   const captureVerifiedCredential = Effect.fn("GitHubPullRequestApi.captureVerifiedCredential")(
     function* (input: { readonly cwd: string; readonly host: string }) {
       const unavailable = () => new GitHubViewerLoginUnavailableError({ cwd: input.cwd });
@@ -925,16 +911,14 @@ export const make = Effect.gen(function* () {
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
               // Pin this read so an auth switch cannot poison its cache entry.
-              const response = yield* readGitHubViewer({
+              const identity = yield* readGitHubViewer({
                 host,
                 operation: "getRoutingIdentity",
                 allowReserve: true,
               }).pipe(
                 Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
                 Effect.provideService(SourceControlRateLimit.CredentialScope, key),
-              );
-              const identity = yield* decodeRoutingIdentity(response).pipe(
-                Effect.mapError(unavailable),
+                Effect.catchTags({ GitHubViewerResponseError: () => Effect.fail(unavailable()) }),
               );
               const value = { accountId: String(identity.id), viewer: identity.login };
               if (routingIdentities.size >= 128)
@@ -2077,7 +2061,6 @@ export const make = Effect.gen(function* () {
             .pipe(graphql(target), Effect.map(toReviewThreadPage), Effect.flatMap(found(target)));
         const entries: GitHubReviewThreadEntry[] = [];
         const avatarsByLogin = new Map<string, string>();
-        const botLogins = new Set<string>();
         const commitStats = new Map<
           string,
           { readonly additions: number; readonly deletions: number }
@@ -2095,7 +2078,6 @@ export const make = Effect.gen(function* () {
         do {
           const read: GitHubReviewThreadPage = yield* threadPage(cursor);
           entries.push(...read.threads);
-          for (const login of read.botLogins) botLogins.add(login);
           for (const [login, avatarUrl] of read.avatarsByLogin)
             avatarsByLogin.set(login, avatarUrl);
           if (page === 0) {
@@ -2160,7 +2142,6 @@ export const make = Effect.gen(function* () {
           editedAtById,
           reviewers,
           avatarsByLogin,
-          botLogins,
           commitStats,
           commits,
           viewer,
