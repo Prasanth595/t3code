@@ -1808,7 +1808,12 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
     Effect.scoped(
       Effect.gen(function* () {
         const { browser, broker, tabId } = yield* ready;
-        const viewer = yield* browser.attachViewer(viewerInput(tabId, false));
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, stage === "wait"));
+        if (stage === "wait") {
+          yield* viewer.input({ type: "takeControl" });
+          yield* viewer.input({ type: "key", action: "down", key: "Shift", code: "ShiftLeft" });
+          yield* viewer.input({ type: "mouse", action: "down", button: "left", x: 10, y: 20 });
+        }
         // Recovery must reach a viewer even when its output queue is full.
         stallViewer(viewer, { _tag: "viewport", width: 1280, height: 800 });
         const { page, sessions } = contexts[0]!;
@@ -1827,13 +1832,24 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
           ) {
             stalled = true;
             blocked.resolve();
-            await release.promise;
+            if (stage !== "wait") await release.promise;
           }
+          if (stalled && stage === "wait") await release.promise;
           const result = await send(method, input);
           if (method === "Page.stopScreencast") streaming = false;
           if (method === "Page.startScreencast") streaming = true;
           return result;
         });
+        const cdp = sessions[0]!;
+        if (stage === "wait") {
+          session.detach.mockImplementation(() => release.promise);
+          const tabSend = cdp.send.getMockImplementation()!;
+          cdp.send.mockImplementation(async (method, input) => {
+            const result = await tabSend(method, input);
+            if (method.startsWith("Input.dispatch")) await release.promise;
+            return result;
+          });
+        }
         if (stage === "capture") {
           page.ariaSnapshot.mockImplementationOnce(async () => {
             blocked.resolve();
@@ -1855,7 +1871,13 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
           yield* Effect.promise(() => blocked.promise);
         }
         const snapshot = yield* broker
-          .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
+          .invoke<PreviewAutomationSnapshot>({
+            // A different agent can observe while the viewer controls the owning agent's tab.
+            scope: stage === "wait" ? asSession("agent-b") : scope,
+            tabId,
+            operation: "snapshot",
+            input: {},
+          })
           .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
         yield* Effect.promise(() => blocked.promise);
         // The host must answer within the action budget, before the broker timeout.
@@ -1875,6 +1897,28 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
             remoteTag: "PreviewAutomationTimeoutError",
           },
         });
+
+        if (stage === "wait") {
+          expect.soft(cdp.send).toHaveBeenCalledWith("Input.dispatchKeyEvent", {
+            type: "keyUp",
+            key: "Shift",
+            code: "ShiftLeft",
+          });
+          expect.soft(cdp.send).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            button: "left",
+            x: 10,
+            y: 20,
+            buttons: 0,
+            clickCount: 1,
+          });
+          // Even the healthy session's release acknowledgements cannot hold the control queue.
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1_000));
+        }
+        const sendsAtTimeout = session.send.mock.calls.length;
+        const releasesAtTimeout = cdp.send.mock.calls.filter(([method]) =>
+          method.startsWith("Input.dispatch"),
+        ).length;
 
         const evaluation = yield* broker
           .invoke({ scope, tabId, operation: "evaluate", input: { expression: "1 + 1" } })
@@ -1898,9 +1942,13 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
         if (stage !== "capture") {
           expect(session.detach).toHaveBeenCalled();
           expect(yield* Queue.clear(viewer.output)).toContainEqual({ _tag: "reconnect" });
-          yield* browser.attachViewer(viewerInput(tabId, false));
+          const reattached = yield* browser.attachViewer(viewerInput(tabId, false));
           replacement = sessions.at(-1)!;
           expect(replacement.send).toHaveBeenCalledWith("Page.startScreencast", expect.anything());
+          if (stage === "wait")
+            expect(yield* Queue.clear(reattached.output)).toContainEqual(
+              expect.objectContaining({ _tag: "control", controller: "agent" }),
+            );
         }
 
         release.resolve();
@@ -1910,6 +1958,10 @@ it.live.each(["wait", "pause", "capture", "resume"] as const)(
         if (replacement) expect(replacement.detach).not.toHaveBeenCalled();
         if (stage === "wait") {
           expect(page.ariaSnapshot).toHaveBeenCalledTimes(1);
+          expect(session.send).toHaveBeenCalledTimes(sendsAtTimeout);
+          expect(
+            cdp.send.mock.calls.filter(([method]) => method.startsWith("Input.dispatch")),
+          ).toHaveLength(releasesAtTimeout);
           expect(yield* Queue.clear(viewer.output)).toEqual([]);
         }
       }),

@@ -95,6 +95,7 @@ const HOST_RECONNECT_DELAY = "1 second";
 const DESKTOP_ATTACH_TIMEOUT = "10 seconds";
 const VIEWER_OUTPUT_LIMIT = 64;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
+const VIEWER_INPUT_RELEASE_TIMEOUT_MS = 1_000;
 const RECORDING_SCREENCAST = { format: "jpeg", quality: 90, everyNthFrame: 1 } as const;
 const decodeViewportSetting = Schema.decodeUnknownSync(PreviewViewportSettingSchema);
 const AGENT_CURSOR_MOVE_MS = 160;
@@ -2091,24 +2092,29 @@ const make = Effect.gen(function* () {
       }
     });
 
-  const releaseViewerInput = async (viewer: ViewerState, session: CDPSession) => {
-    for (const { key, code } of viewer.pressedKeys.values()) {
-      await session.send("Input.dispatchKeyEvent", { type: "keyUp", key, code }).catch(constVoid);
-    }
+  const releaseViewerInput = (viewer: ViewerState, session: CDPSession) => {
+    const keys = [...viewer.pressedKeys.values()];
+    const buttons = [...viewer.pressedButtons];
     viewer.pressedKeys.clear();
-    for (const [button, point] of viewer.pressedButtons) {
-      await session
-        .send("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          button,
-          ...point,
-          buttons: 0,
-          clickCount: 1,
-        })
-        .catch(constVoid);
-    }
     viewer.pressedButtons.clear();
     viewer.requestedSize = null;
+    // Send every release before awaiting: an abandoned cleanup must not send late input.
+    return Promise.all([
+      ...keys.map(({ key, code }) =>
+        session.send("Input.dispatchKeyEvent", { type: "keyUp", key, code }).catch(constVoid),
+      ),
+      ...buttons.map(([button, point]) =>
+        session
+          .send("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            button,
+            ...point,
+            buttons: 0,
+            clickCount: 1,
+          })
+          .catch(constVoid),
+      ),
+    ]).then(constVoid);
   };
 
   const dispatchViewerInput = async (
@@ -2326,9 +2332,19 @@ const make = Effect.gen(function* () {
           void session.detach().catch(constVoid);
           runFork(
             Effect.promise(async () => {
-              await tab.control.disconnect(viewer.id, () => releaseViewerInput(viewer, session));
+              const releasing = tab.control.disconnect(viewer.id, () => {
+                // The viewer session is stalled; release held input through the tab instead.
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                const deadline = new Promise<void>((resolve) => {
+                  timer = setTimeout(resolve, VIEWER_INPUT_RELEASE_TIMEOUT_MS);
+                });
+                return Promise.race([releaseViewerInput(viewer, tab.cdp), deadline]).finally(() =>
+                  clearTimeout(timer),
+                );
+              });
               broadcastControl(tab);
               reportLiveTabs();
+              await releasing;
             }),
           );
         },
