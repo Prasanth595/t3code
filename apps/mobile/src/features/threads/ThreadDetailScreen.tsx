@@ -481,7 +481,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         accessibilityLabel: `Open ${childInput.hasPendingApprovals ? "approval" : "question"} from ${childInput.title}`,
         onPress: () => {
           Keyboard.dismiss();
-          // Push so Back returns to this parent; navigate would reuse its route.
           navigation.dispatch(
             StackActions.push("Thread", {
               environmentId: props.environmentId,
@@ -1295,9 +1294,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                                   environmentId: String(props.environmentId),
                                   threadId: String(props.selectedThread.lineage.parentThreadId),
                                 };
-                                const state = navigation.getState();
-                                navigation.dispatch(
-                                  state && parentThreadIsBelow(state, parent)
+                                navigation.dispatch((state) =>
+                                  parentThreadIsBelow(state, parent)
                                     ? StackActions.pop()
                                     : StackActions.push("Thread", parent),
                                 );

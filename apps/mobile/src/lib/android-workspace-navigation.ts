@@ -16,9 +16,7 @@ interface WorkspaceNavigation {
   readonly getRootState?: () => NavigationState | undefined;
 }
 
-// A thread opened from another thread (a subagent, fork, or linked thread)
-// sits above it; Back returns there instead of collapsing to the list.
-export function androidWorkspaceBackReturnsToThread(state: NavigationState) {
+function androidWorkspaceBackReturnsToThread(state: NavigationState) {
   return (
     state.routes[state.index]?.name === "Thread" && state.routes[state.index - 1]?.name === "Thread"
   );
@@ -75,8 +73,6 @@ export function resetAndroidWorkspace(
   });
 }
 
-// A child opened from its parent sits right above it, so opening the parent pops back there
-// instead of stacking a second copy; `navigate` would rewrite the child route in place.
 export function parentThreadIsBelow(
   state: NavigationState,
   parent: ReactNavigation.RootParamList["Thread"],
@@ -90,7 +86,6 @@ export function parentThreadIsBelow(
   );
 }
 
-/** Workspace Back on Android: a child thread pops to its parent; anything else collapses to the list. */
 export function returnToAndroidWorkspaceList(
   navigation: WorkspaceNavigation & { readonly goBack: () => void },
   selectTab: () => void,
