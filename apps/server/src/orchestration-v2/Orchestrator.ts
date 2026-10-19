@@ -127,6 +127,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
+import { providerUserMessageText } from "./ProviderMessageText.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
@@ -11205,6 +11206,61 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
+    if (
+      command.type === "message.dispatch" ||
+      command.type === "queued-run.edit" ||
+      command.type === "queued-message.promote-to-steer"
+    ) {
+      let message: Pick<OrchestrationV2ConversationMessage, "text" | "context"> | undefined;
+      if (command.type === "message.dispatch") {
+        message = command;
+      } else if (command.type !== "queued-run.edit" || command.text.trim().length > 0) {
+        const projection = yield* loadProjectionForCommand(
+          command,
+          command.type === "queued-run.edit"
+            ? ["runs", "messages"]
+            : ["runs", "messages", "nodes", "attempts"],
+          { messageRoles: ["user"] },
+        );
+        const runId = command.type === "queued-run.edit" ? command.runId : command.queuedRunId;
+        const run = projection.runs.find((candidate) => candidate.id === runId);
+        const storedMessage = projection.messages.find(
+          (candidate) => candidate.id === run?.userMessageId,
+        );
+        // Leave invalid queue targets to the orchestrator's existing command errors.
+        if (
+          run?.status === "queued" &&
+          storedMessage !== undefined &&
+          storedMessage.delegatedCompletion === undefined &&
+          storedMessage.notification === undefined
+        ) {
+          if (command.type === "queued-run.edit") {
+            message = { text: command.text, context: command.context ?? storedMessage.context };
+          } else if (
+            command.type === "queued-message.promote-to-steer" &&
+            projection.thread.archivedAt === null &&
+            projection.thread.deletedAt === null &&
+            projection.nodes.some((candidate) => candidate.id === run.rootNodeId) &&
+            projection.attempts.some((candidate) => candidate.id === run.activeAttemptId)
+          ) {
+            message = storedMessage;
+          }
+        }
+      }
+      if (message !== undefined) {
+        yield* providerUserMessageText(message).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorCommandRejectedError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause: cause.message,
+              }),
+          ),
+        );
+      }
     }
 
     const plan = yield* dispatchOnce(command).pipe(

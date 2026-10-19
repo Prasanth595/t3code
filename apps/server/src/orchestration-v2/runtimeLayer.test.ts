@@ -10,6 +10,10 @@ import {
   CheckpointId,
   CheckpointRef,
   CommandId,
+  ComposerContextId,
+  EnvironmentId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type OrchestrationV2Command,
   ContextTransferId,
   EventId,
   MessageId,
@@ -29,6 +33,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -42,6 +47,9 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import { dispatchFailure } from "../mcp/threadAccess.ts";
+import { providerUserMessageText } from "./ProviderMessageText.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ServerConfig from "../config.ts";
@@ -268,6 +276,7 @@ const layerTest = Layer.mergeAll(
   ProjectStore.layer,
   ProjectionStore.layer,
   EffectOutbox.layer,
+  CommandReceiptStore.layer,
   ThreadCommandExecutor.layer,
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
@@ -4934,6 +4943,339 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         .pipe(Effect.flip);
       assert.equal(cancelAgainError._tag, "OrchestratorDispatchError");
     }),
+  );
+});
+
+it.layer(layerTest)("provider citation validation", (it) => {
+  const citation = serializeAssistantCitation({
+    version: 1,
+    environmentId: EnvironmentId.make("citation-environment"),
+    threadId: ThreadId.make("citation-source-thread"),
+    messageId: MessageId.make("citation-source-message"),
+    text: "Quoted claim",
+    start: 0,
+    end: 12,
+    prefix: "",
+    suffix: "",
+  });
+  const setupQueue = Effect.fnUntraced(function* (key: string) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const threadId = ThreadId.make(`citation-${key}`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${threadId}:create`),
+      threadId,
+      projectId: ProjectId.make(`${threadId}:project`),
+      title: "Citation validation",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: process.cwd(),
+    });
+    for (const [index, text] of ["Active", "Queued"].entries()) {
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:message:${index}`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:message:${index}`),
+        text,
+        attachments: [],
+        dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
+      });
+    }
+    const initial = yield* orchestrator.getThreadProjection(threadId);
+    const active = initial.runs[0]!;
+    const queued = initial.runs[1]!;
+    const providerThread = initial.providerThreads[0]!;
+    const now = yield* DateTime.now;
+    const providerSession = {
+      id: providerThread.providerSessionId!,
+      driver,
+      providerInstanceId: modelSelection.instanceId,
+      status: "running" as const,
+      cwd: process.cwd(),
+      model: modelSelection.model,
+      capabilities: CodexProviderCapabilitiesV2,
+      createdAt: now,
+      updatedAt: now,
+      lastError: null,
+    };
+    yield* eventSink.write({
+      events: [
+        {
+          id: EventId.make(`${threadId}:running`),
+          type: "run.updated",
+          threadId,
+          runId: active.id,
+          occurredAt: now,
+          payload: { ...active, status: "running", startedAt: now },
+        },
+        {
+          id: EventId.make(`${threadId}:session`),
+          type: "provider-session.attached",
+          threadId,
+          occurredAt: now,
+          payload: providerSession,
+        },
+        {
+          id: EventId.make(`${threadId}:turn`),
+          type: "provider-turn.updated",
+          threadId,
+          runId: active.id,
+          occurredAt: now,
+          payload: {
+            id: ProviderTurnId.make(`${threadId}:turn`),
+            providerThreadId: providerThread.id,
+            nodeId: active.rootNodeId!,
+            runAttemptId: active.activeAttemptId,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "running",
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+      ],
+    });
+    const sessionSpy = vi
+      .spyOn(sessions, "get")
+      .mockReturnValue(
+        Effect.succeed(
+          Option.some({ providerSession } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+        ),
+      );
+    yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+    return { orchestrator, eventSink, threadId, active, queued };
+  });
+
+  it.effect("rejects oversized citations before commit and replays accepted receipts", () =>
+    Effect.gen(function* () {
+      const { orchestrator, eventSink, threadId, active, queued } = yield* setupQueue("rejection");
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const text = `${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - citation.length - 1)} ${citation}`;
+      const commands: Array<OrchestrationV2Command> = [
+        {
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:steer`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:steer`),
+          text,
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: active.id },
+        },
+        {
+          type: "queued-run.edit",
+          commandId: CommandId.make(`${threadId}:edit`),
+          threadId,
+          runId: queued.id,
+          text,
+        },
+        {
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make(`${threadId}:promote`),
+          threadId,
+          queuedRunId: queued.id,
+          targetRunId: active.id,
+        },
+      ];
+      for (const command of commands) {
+        if (command.type === "queued-message.promote-to-steer") {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          // Older databases can already contain messages that exceed the expanded limit.
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${threadId}:legacy-message`),
+                type: "message.updated",
+                threadId,
+                runId: queued.id,
+                occurredAt: yield* DateTime.now,
+                payload: {
+                  ...projection.messages.find((row) => row.id === queued.userMessageId)!,
+                  text,
+                },
+              },
+            ],
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const result = yield* Effect.result(orchestrator.dispatch(command));
+        assert.equal(result._tag, "Failure", command.type);
+        if (result._tag !== "Failure") return;
+        assert.instanceOf(result.failure, Orchestrator.OrchestratorCommandRejectedError);
+        const mcpError = dispatchFailure(result.failure);
+        assert.equal(mcpError.code, "orchestration_error");
+        assert.match(
+          mcpError.message,
+          /over the .*character limit.*quotes are expanded.*Shorten it or quote less/,
+        );
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), before);
+        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(command.commandId)));
+        assert.deepEqual(yield* outbox.listByCommandId(command.commandId), []);
+        assert.deepEqual(yield* eventSink.readByCommandId(command).pipe(Stream.runCollect), []);
+
+        if (command.type === "message.dispatch" || command.type === "queued-run.edit") {
+          const accepted = yield* orchestrator.dispatch({ ...command, text: "Shortened message" });
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          const effects = yield* outbox.listByCommandId(command.commandId);
+          assert.deepEqual(yield* orchestrator.dispatch(command), accepted);
+          assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), after);
+          assert.deepEqual(yield* outbox.listByCommandId(command.commandId), effects);
+        }
+      }
+    }),
+  );
+
+  it.effect(
+    "rejects concurrent citation edits using the context committed under the thread lock",
+    () =>
+      Effect.gen(function* () {
+        const { orchestrator, eventSink, threadId, queued } = yield* setupQueue("race");
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const context = (length: number) => ({
+          version: 1 as const,
+          records: [
+            {
+              version: 1 as const,
+              contextId: ComposerContextId.make("ctx_quote"),
+              kind: "terminal" as const,
+              label: "Terminal",
+              terminalId: "term-1",
+              terminalLabel: "Terminal",
+              lineStart: 1,
+              lineEnd: 1,
+              text: "c".repeat(length),
+            },
+          ],
+        });
+        const shortText = "Read [Terminal](t3-context://v1/terminal/ctx_quote)";
+        const oldContext = context(10_000);
+        const newContext = context(26_000);
+        const longText = `${"x".repeat(100_000)} ${citation} ${shortText}`;
+        yield* threads.dispatch({
+          type: "queued-run.edit",
+          commandId: CommandId.make(`${threadId}:initial-context`),
+          threadId,
+          runId: queued.id,
+          text: shortText,
+          context: oldContext,
+        });
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        assert.isBelow(
+          (yield* providerUserMessageText({ text: longText, context: oldContext })).length,
+          PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+        );
+        assert.isBelow(
+          (yield* providerUserMessageText({ text: shortText, context: newContext })).length,
+          PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+        );
+        const combinedError = yield* providerUserMessageText({
+          text: longText,
+          context: newContext,
+        }).pipe(Effect.flip);
+        assert.isAbove(combinedError.inputLength, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+
+        const firstCommandId = CommandId.make(`${threadId}:context-edit`);
+        const secondCommandId = CommandId.make(`${threadId}:text-edit`);
+        const commitReady = yield* Deferred.make<void>();
+        const releaseCommit = yield* Deferred.make<void>();
+        const secondQueued = yield* Deferred.make<void>();
+        const commitCommand = eventSink.commitCommand;
+        const withLock = executor.withLock;
+        const commitSpy = vi
+          .spyOn(eventSink, "commitCommand")
+          .mockImplementation((input) =>
+            input.commandId === firstCommandId
+              ? Deferred.succeed(commitReady, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseCommit)),
+                  Effect.andThen(commitCommand(input)),
+                )
+              : commitCommand(input),
+          );
+        let lockRequests = 0;
+        const observeLock: typeof withLock = (key, effect) =>
+          key === threadId && ++lockRequests === 2
+            ? Deferred.succeed(secondQueued, undefined).pipe(Effect.andThen(withLock(key, effect)))
+            : withLock(key, effect);
+        const lockSpy = vi.spyOn(executor, "withLock").mockImplementation(observeLock);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            commitSpy.mockRestore();
+            lockSpy.mockRestore();
+          }),
+        );
+        const first = yield* threads
+          .dispatch({
+            type: "queued-run.edit",
+            commandId: firstCommandId,
+            threadId,
+            runId: queued.id,
+            text: shortText,
+            context: newContext,
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(commitReady),
+          Fiber.join(first).pipe(
+            Effect.andThen(Effect.die("Context edit bypassed the commit barrier.")),
+          ),
+        );
+        const second = yield* threads
+          .dispatch({
+            type: "queued-run.edit",
+            commandId: secondCommandId,
+            threadId,
+            runId: queued.id,
+            text: longText,
+          })
+          .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+        yield* Effect.raceFirst(
+          Deferred.await(secondQueued),
+          Fiber.join(second).pipe(
+            Effect.andThen(Effect.die("Text edit completed before reaching the occupied lock.")),
+          ),
+        );
+        yield* Deferred.succeed(releaseCommit, undefined);
+        yield* Fiber.join(first);
+        const result = yield* Fiber.join(second);
+        assert.equal(
+          result._tag,
+          "Failure",
+          "the second edit must validate the newly committed context",
+        );
+        if (result._tag !== "Failure") return;
+        assert.instanceOf(result.failure, Orchestrator.OrchestratorCommandRejectedError);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(after.runs, before.runs);
+        assert.deepEqual(after.nodes, before.nodes);
+        assert.deepEqual(after.attempts, before.attempts);
+        assert.deepEqual(
+          after.messages.find((row) => row.id === queued.userMessageId),
+          {
+            ...before.messages.find((row) => row.id === queued.userMessageId)!,
+            context: newContext,
+          },
+        );
+        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(secondCommandId)));
+        assert.deepEqual(yield* outbox.listByCommandId(secondCommandId), []);
+        assert.deepEqual(
+          yield* eventSink.readByCommandId({ commandId: secondCommandId }).pipe(Stream.runCollect),
+          [],
+        );
+      }),
   );
 });
 

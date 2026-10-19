@@ -51,7 +51,6 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { providerUserMessageText } from "./ProviderMessageText.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
@@ -674,62 +673,6 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* ensureCommandTranscripts(command);
       yield* assertDispatchTargetEnabled(command);
-      // Receipts replay the original outcome regardless of the retry's text.
-      if (
-        (command.type === "message.dispatch" ||
-          command.type === "queued-run.edit" ||
-          command.type === "queued-message.promote-to-steer") &&
-        !(yield* hasReceipt(command.commandId))
-      ) {
-        let message: Pick<OrchestrationV2ConversationMessage, "text" | "context"> | undefined;
-        if (command.type === "message.dispatch") {
-          message = command;
-        } else if (command.type !== "queued-run.edit" || command.text.trim().length > 0) {
-          const projection = yield* orchestrator.getThreadRecords(
-            command.threadId,
-            command.type === "queued-run.edit"
-              ? ["runs", "messages"]
-              : ["runs", "messages", "nodes", "attempts"],
-            { messageRoles: ["user"] },
-          );
-          const runId = command.type === "queued-run.edit" ? command.runId : command.queuedRunId;
-          const run = projection.runs.find((candidate) => candidate.id === runId);
-          const storedMessage = projection.messages.find(
-            (candidate) => candidate.id === run?.userMessageId,
-          );
-          // Leave invalid queue targets to the orchestrator's existing command errors.
-          if (
-            run?.status === "queued" &&
-            storedMessage !== undefined &&
-            storedMessage.delegatedCompletion === undefined &&
-            storedMessage.notification === undefined
-          ) {
-            if (command.type === "queued-run.edit") {
-              message = { text: command.text, context: command.context ?? storedMessage.context };
-            } else if (
-              command.type === "queued-message.promote-to-steer" &&
-              projection.thread.archivedAt === null &&
-              projection.thread.deletedAt === null &&
-              projection.nodes.some((candidate) => candidate.id === run.rootNodeId) &&
-              projection.attempts.some((candidate) => candidate.id === run.activeAttemptId)
-            ) {
-              message = storedMessage;
-            }
-          }
-        }
-        if (message !== undefined) {
-          yield* providerUserMessageText(message).pipe(
-            Effect.mapError(
-              (cause) =>
-                new Orchestrator.OrchestratorCommandRejectedError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                  cause: cause.message,
-                }),
-            ),
-          );
-        }
-      }
       return yield* orchestrator.dispatch(command);
     });
 
