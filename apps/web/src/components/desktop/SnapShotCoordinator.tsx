@@ -37,6 +37,7 @@ import { readFileAsDataUrl } from "../ChatView.logic";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 type CaptureTarget = DraftId | ScopedThreadRef;
+type CaptureFailure = "missing-project" | "delivery";
 
 function isSameCaptureTarget(a: CaptureTarget, b: CaptureTarget): boolean {
   if (typeof a === "string" || typeof b === "string") return a === b;
@@ -219,7 +220,7 @@ export function SnapShotCoordinator() {
   const drainingRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
   const soundedCaptureIdsRef = useRef(new Set<string>());
-  const reportedCaptureFailuresRef = useRef(new Map<string, unknown>());
+  const reportedCaptureFailuresRef = useRef(new Map<string, Set<CaptureFailure>>());
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
   // Captures go to the last thread or draft on screen, even from routes that show neither.
@@ -282,9 +283,16 @@ export function SnapShotCoordinator() {
     } catch {}
   };
 
-  const reportOnce = (id: string, toast: Parameters<typeof toastManager.add>[0]) => {
-    if (reportedCaptureFailuresRef.current.get(id) === toast.title) return;
-    reportedCaptureFailuresRef.current.set(id, toast.title);
+  const reportOnce = (
+    id: string,
+    failure: CaptureFailure,
+    toast: Parameters<typeof toastManager.add>[0],
+  ) => {
+    if (!getClientSettings().snapShotEnabled) return;
+    const failures = reportedCaptureFailuresRef.current.get(id) ?? new Set<CaptureFailure>();
+    if (failures.has(failure)) return;
+    failures.add(failure);
+    reportedCaptureFailuresRef.current.set(id, failures);
     toastManager.add(toast);
   };
 
@@ -317,6 +325,7 @@ export function SnapShotCoordinator() {
             await dismissSnapShotAnimation(item.id);
             reportOnce(
               item.id,
+              "missing-project",
               stackedThreadToast({
                 type: "error",
                 title: "Snapshot taken, but no project is available",
@@ -335,6 +344,7 @@ export function SnapShotCoordinator() {
             await dismissSnapShotAnimation(item.id);
             reportOnce(
               item.id,
+              "delivery",
               stackedThreadToast({
                 type: "error",
                 title: "Snapshot failed",
@@ -345,10 +355,11 @@ export function SnapShotCoordinator() {
             );
           }
         }
-      } while (rerunRequestedRef.current);
+      } while (rerunRequestedRef.current && getClientSettings().snapShotEnabled);
     })()
       .catch((error: unknown) => {
         dismissAllSnapShotAnimations();
+        if (!getClientSettings().snapShotEnabled) return;
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -369,6 +380,7 @@ export function SnapShotCoordinator() {
   const drainPending = useEffectEvent(() => drain());
   const handleSnapShotEvent = useEffectEvent(
     (bridge: DesktopSnapShotBridge, event: DesktopSnapShotEvent) => {
+      if (!getClientSettings().snapShotEnabled) return;
       switch (event.type) {
         case "requested": {
           const current = readSettledTarget(readLastRouteTarget());
@@ -407,6 +419,7 @@ export function SnapShotCoordinator() {
             pendingAnimationStartsRef.current,
           );
           void bridge.getSnapShotState().then((state) => {
+            if (!getClientSettings().snapShotEnabled) return;
             toastManager.add(
               stackedThreadToast({
                 type: "error",
