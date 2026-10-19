@@ -47,7 +47,13 @@ describe("usage pricing", () => {
     });
 
     for (const reportedCostUsd of [null, 99]) {
-      expect(priceUsage(table, record("example-model", reportedCostUsd), overrides)).toMatchObject({
+      expect(
+        priceUsage(
+          table,
+          { ...record("example-model", reportedCostUsd, "fast"), cacheCreation1hTokens: 750_000 },
+          overrides,
+        ),
+      ).toMatchObject({
         costUsd: 13.5,
         costSource: "modelPriced",
       });
@@ -137,41 +143,7 @@ describe("usage pricing", () => {
     );
   });
 
-  it("splits cost by category and prices the speed premium", () => {
-    const table = parseRateTable({
-      "claude-opus-5-5": {
-        ...rate(4e-6, 4e-7),
-        cache_creation_input_token_cost: 5e-6,
-        provider_specific_entry: { fast: 2 },
-      },
-    });
-    const split = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({
-      input: expect.closeTo(input),
-      cacheRead: expect.closeTo(cacheRead),
-      cacheWrite: expect.closeTo(cacheWrite),
-      output: expect.closeTo(output),
-    });
-
-    expect(priceUsage(table, record("claude-opus-5-5", null, "fast"))).toEqual({
-      costUsd: expect.closeTo(58.8),
-      costSource: "modelPriced",
-      categoryCostUsd: split(8, 0.8, 10, 40),
-      speedPremiumUsd: expect.closeTo(29.4),
-    });
-    expect(priceUsage(table, record("claude-opus-5-5", 29.4, "fast"))).toEqual({
-      costUsd: 29.4,
-      costSource: "providerReported",
-      categoryCostUsd: split(4, 0.4, 5, 20),
-      speedPremiumUsd: expect.closeTo(14.7),
-    });
-    expect(priceUsage(table, record("unknown-model", 29.4, "fast"))).toMatchObject({
-      costUsd: 29.4,
-      categoryCostUsd: null,
-      speedPremiumUsd: 0,
-    });
-  });
-
-  it("prices 1-hour cache writes at their own rate", () => {
+  it("splits mixed-TTL cache costs and speed premiums while preserving reported totals", () => {
     const table = parseRateTable({
       "claude-opus-5-5": {
         ...rate(4e-6, 4e-7),
@@ -179,23 +151,45 @@ describe("usage pricing", () => {
         cache_creation_input_token_cost_above_1hr: 8e-6,
         provider_specific_entry: { fast: 2 },
       },
-      // No published 1-hour rate: those writes bill at the 5-minute rate.
-      "claude-sonnet-5-5": { ...rate(2e-6, 2e-7), cache_creation_input_token_cost: 2.5e-6 },
+      "claude-sonnet-5-5": { ...rate(2e-6), cache_creation_input_token_cost: 2.5e-6 },
     });
-    const cacheWrite = (model: string, cacheCreation1hTokens: number, speed: UsageSpeed) =>
-      priceUsage(table, { ...record(model, null, speed), cacheCreation1hTokens }).categoryCostUsd
-        ?.cacheWrite;
+    const mixed = { ...record("claude-opus-5-5", null, "fast"), cacheCreation1hTokens: 750_000 };
+    const split = (input: number, cacheRead: number, cacheWrite: number, output: number) => ({
+      input: expect.closeTo(input),
+      cacheRead: expect.closeTo(cacheRead),
+      cacheWrite: expect.closeTo(cacheWrite),
+      output: expect.closeTo(output),
+    });
 
-    // 250k tokens at 5 per million plus 750k at 8.
-    expect(cacheWrite("claude-opus-5-5", 750_000, "standard")).toBeCloseTo(7.25);
-    expect(cacheWrite("claude-opus-5-5", 750_000, "fast")).toBeCloseTo(14.5);
-    expect(cacheWrite("claude-sonnet-5-5", 750_000, "standard")).toBeCloseTo(2.5);
+    expect(priceUsage(table, mixed)).toEqual({
+      costUsd: expect.closeTo(63.3),
+      costSource: "modelPriced",
+      categoryCostUsd: split(8, 0.8, 14.5, 40),
+      speedPremiumUsd: expect.closeTo(31.65),
+    });
+    expect(priceUsage(table, { ...mixed, reportedCostUsd: 31.65 })).toEqual({
+      costUsd: 31.65,
+      costSource: "providerReported",
+      categoryCostUsd: split(4, 0.4, 7.25, 20),
+      speedPremiumUsd: expect.closeTo(15.825),
+    });
+    expect(
+      priceUsage(table, { ...mixed, model: "claude-sonnet-5-5", speed: "standard" }).categoryCostUsd
+        ?.cacheWrite,
+    ).toBeCloseTo(2.5);
+    expect(priceUsage(table, record("unknown-model", 29.4, "fast"))).toMatchObject({
+      costUsd: 29.4,
+      categoryCostUsd: null,
+      speedPremiumUsd: 0,
+    });
   });
 
   it("prices Codex priority and ultrafast requests at their published tier rates", () => {
     const table = parseRateTable({
       "gpt-6-astra": {
         ...rate(1e-5, 1e-6),
+        cache_creation_input_token_cost: 5e-6,
+        cache_creation_input_token_cost_above_1hr: 8e-6,
         input_cost_per_token_priority: 2e-5,
         output_cost_per_token_priority: 1e-4,
         cache_read_input_token_cost_priority: 2e-6,
@@ -205,7 +199,11 @@ describe("usage pricing", () => {
       "gpt-6-sol": rate(2e-6, 2e-7),
     });
     const cost = (model: string, speed: UsageSpeed) =>
-      priceUsage(table, record(model, null, speed)).costUsd;
+      priceUsage(table, { ...record(model, null, speed), cacheCreation1hTokens: 750_000 }).costUsd;
+    expect(
+      priceUsage(table, { ...record("gpt-6-astra", null, "fast"), cacheCreation1hTokens: 750_000 })
+        .categoryCostUsd?.cacheWrite,
+    ).toBeCloseTo(14.5);
     const standard = cost("gpt-6-astra", "standard");
 
     expect(cost("gpt-6-astra", "fast")).toBeCloseTo(2 * standard);

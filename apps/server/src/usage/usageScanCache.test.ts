@@ -68,7 +68,8 @@ describe("scan cache round trip", () => {
           record(),
           record({
             dedupeKey: "msg_2:",
-            model: "claude-opus-5-5",
+            model: "anthropic/claude-opus-5-5",
+            rateModel: "claude-opus-5-5",
             speed: "fast",
             cacheCreation1hTokens: 8,
           }),

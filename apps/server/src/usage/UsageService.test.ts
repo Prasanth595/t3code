@@ -1591,84 +1591,95 @@ describe("UsageService", () => {
       }).pipe(Effect.scoped),
   );
 
-  it.live(
-    "upgrades a v5 cache: reprices live Claude 1-hour cache writes, keeps deleted transcripts",
-    () =>
-      Effect.gen(function* () {
-        const { home, transcript, settings } = yield* setup;
-        const cacheWriteLine = (id: number) =>
-          `${JSON.stringify({
-            type: "assistant",
-            timestamp: "2026-08-01T10:00:00Z",
-            requestId: `req_${id}`,
-            sessionId: "session-1",
-            message: {
-              id: `msg_${id}`,
-              model: "claude-opus-5-5",
-              usage: {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: 10,
-                cache_creation: { ephemeral_1h_input_tokens: 10, ephemeral_5m_input_tokens: 0 },
+  it.live("migrates v5 Claude costs and retains deleted history through a v6 restart", () =>
+    Effect.gen(function* () {
+      const { home, transcript, settings } = yield* setup;
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          transcript,
+          claudeLine(1, 0, "claude-opus-5-5").replace(
+            '"input_tokens":10',
+            '"input_tokens":0,"cache_creation_input_tokens":10,"cache_creation":{"ephemeral_1h_input_tokens":6,"ephemeral_5m_input_tokens":4}',
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const legacyPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        const legacy = yield* Effect.promise(async () => {
+          const stat = await NodeFSP.stat(transcript);
+          const file = {
+            s: stat.size,
+            m: stat.mtimeMs,
+            p: "claude",
+            o: stat.size,
+            gl: 0,
+            gh: 0,
+            cs: null,
+            t: [],
+          };
+          // v5 ends with rateModelIndex at column 11; it has no TTL subset.
+          const timestamp = Date.parse("2026-08-01T10:00:00Z");
+          const row = [timestamp, 0, 0, 0, 0, 10, 0, 0, "msg_1:req_1", null, 0, null];
+          const text = encodeUnknownJsonString({
+            version: 5,
+            models: ["claude-opus-5-5", "old-model-alias"],
+            sessions: ["session-1"],
+            files: {
+              [transcript]: { ...file, r: [row] },
+              [NodePath.join(NodePath.dirname(transcript), "deleted.jsonl")]: {
+                ...file,
+                r: [[timestamp, 1, 0, 0, 0, 10, 0, 0, "deleted", null, 0, 0]],
               },
             },
-          })}\n`;
-        const deleted = NodePath.join(NodePath.dirname(transcript), "deleted.jsonl");
-        yield* Effect.promise(async () => {
-          await NodeFSP.writeFile(transcript, cacheWriteLine(1));
-          await NodeFSP.writeFile(deleted, cacheWriteLine(2));
-        });
-
-        yield* Effect.gen(function* () {
-          const { stateDir } = yield* ServerConfig.ServerConfig;
-          const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
-          const legacyPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
-          yield* (yield* UsageService.make).readSummary(WINDOW);
-
-          // Rewrite the cache as a v5 server left it: rows without 1-hour writes.
-          const legacy = yield* Effect.promise(async () => {
-            const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
-              files: Record<string, { r: unknown[][] }>;
-            };
-            for (const file of Object.values(document.files)) {
-              file.r = file.r.map((row) => row.slice(0, 11));
-            }
-            const text = encodeUnknownJsonString({ ...document, version: 5 });
-            await NodeFSP.writeFile(legacyPath, text);
-            await NodeFSP.rm(cachePath);
-            await NodeFSP.rm(deleted);
-            return text;
           });
-
-          const summary = yield* (yield* UsageService.make).readSummary(WINDOW);
-          // The live transcript re-parses at the 1-hour rate (10 x 2); the
-          // deleted one keeps its saved v5 usage at the 5-minute rate (10 x 1).
-          assert.strictEqual(
-            summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
-            30,
-          );
-          assert.strictEqual(
-            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
-            legacy,
-          );
-        }).pipe(
-          Effect.provide(
-            layerService({
-              prefix: "usage-service-v5-upgrade-test",
-              home,
-              settings,
-              ratesDocument: {
-                "claude-opus-5-5": {
-                  input_cost_per_token: 0,
-                  output_cost_per_token: 0,
-                  cache_creation_input_token_cost: 1,
-                  cache_creation_input_token_cost_above_1hr: 2,
-                },
-              },
-            }),
+          await NodeFSP.mkdir(stateDir, { recursive: true });
+          await NodeFSP.writeFile(legacyPath, text);
+          return text;
+        });
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(summary.buckets.length, 2);
+        assert.strictEqual(
+          summary.buckets.reduce((sum, bucket) => sum + bucket.costUsd, 0),
+          26,
+        );
+        assert.strictEqual(
+          summary.buckets.reduce((sum, bucket) => sum + bucket.totals.cacheCreationTokens, 0),
+          20,
+        );
+        yield* service.awaitPersisted;
+        yield* Effect.promise(() => NodeFSP.rm(transcript));
+        const restarted = yield* UsageService.make;
+        assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, summary.buckets);
+        yield* restarted.awaitPersisted;
+        assert.strictEqual(
+          yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
+          legacy,
+        );
+        assert.isTrue(
+          yield* (yield* FileSystem.FileSystem).exists(
+            NodePath.join(stateDir, "usage-scan-cache-v6.json"),
           ),
         );
-      }).pipe(Effect.scoped),
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-v5-upgrade-test",
+            home,
+            settings,
+            ratesDocument: {
+              "claude-opus-5-5": {
+                input_cost_per_token: 1,
+                output_cost_per_token: 1,
+                cache_creation_input_token_cost: 1,
+                cache_creation_input_token_cost_above_1hr: 2,
+              },
+            },
+          }),
+        ),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live("preserves saved tokens, costs and sessions after transcript cleanup and restart", () =>
