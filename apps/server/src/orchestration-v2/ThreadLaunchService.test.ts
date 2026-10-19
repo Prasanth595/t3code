@@ -1218,11 +1218,14 @@ it.effect.each([
           workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
-      assert.equal(
-        harness.runSetup.mock.calls[0]?.[0]?.worktreePath,
-        Option.getOrElse(testCase.scratchFolder, () => "/repo"),
-      );
+      // The project folder case runs in the main checkout, where upstream skips the setup action.
+      if (Option.isSome(testCase.scratchFolder)) {
+        yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+        assert.equal(
+          harness.runSetup.mock.calls[0]?.[0]?.worktreePath,
+          testCase.scratchFolder.value,
+        );
+      }
       assert.equal(harness.createWorktree.mock.calls.length, 0);
       assert.equal(
         (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
@@ -1238,6 +1241,7 @@ it.effect.each([
         "turnItems",
       ])).turnItems.filter((item) => item.type === "system_notice");
       assert.equal(notices.length, Option.isSome(testCase.scratchFolder) ? 0 : 1);
+      assert.equal(harness.runSetup.mock.calls.length, Option.isSome(testCase.scratchFolder) ? 1 : 0);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

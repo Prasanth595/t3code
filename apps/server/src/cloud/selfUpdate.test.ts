@@ -465,7 +465,7 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       yield* Deferred.succeed(releaseDownload, undefined);
       // `installing` is offered only after the stream queue has shut down.
       yield* Deferred.await(accepted);
-      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+      expect(order).toEqual(["index", "download", "extract", "preflight", "accept"]);
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
         "A server update is already in progress.",
       );
