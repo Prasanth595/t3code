@@ -372,27 +372,19 @@ const decodePnpmList = Schema.decodeUnknownOption(
   ),
 );
 
-/**
- * The version `pnpm add -g <package>@latest` would install. pnpm 11+ holds
- * back releases newer than `minimumReleaseAge` (24 hours by default) and still
- * exits 0, so the npm `latest` tag would advertise an update pnpm skips.
- * `pnpm outdated` applies the same policy, including its excludes, and
- * reports nothing while the only newer release is still waiting; the
- * installed version is then the latest. Null falls back to the registry.
- */
+// Unlike npm's latest tag, pnpm outdated respects minimumReleaseAge and its excludes.
 const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion")(function* (
   packageName: string,
 ) {
-  // The updater runs `pnpm` with the server's environment, so ask that same
-  // pnpm: another one could hold a different global directory or cooldown.
-  const env = {};
+  // Match the updater's pnpm and server environment, rather than the instance's.
   const pnpmPath = yield* resolveCommandPath("pnpm");
   if (!pnpmPath) return null;
-  // `pnpm outdated` exits 1 when it found something outdated.
+  // Silent reporting keeps project package-manager warnings out of the JSON.
   const outdated = yield* runProbe(
     pnpmPath,
-    ["outdated", "-g", "--format", "json", packageName],
-    env,
+    ["outdated", "-g", "--reporter=silent", "--format", "json", packageName],
+    {},
+    // pnpm outdated exits 1 when updates are available.
     [0, 1],
   );
   const outdatedEntries = outdated
@@ -401,10 +393,11 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   if (!outdatedEntries) return null;
   const latest = nonEmptyString(outdatedEntries[packageName]?.latest);
   if (latest) return latest;
+  // An empty result means the installed version is still the eligible release.
   const listed = yield* runProbe(
     pnpmPath,
-    ["ls", "-g", "--depth", "0", "--json", packageName],
-    env,
+    ["ls", "-g", "--reporter=silent", "--depth", "0", "--json", packageName],
+    {},
   );
   const listedEntries = listed ? Option.getOrUndefined(decodePnpmList(listed)) : undefined;
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
@@ -831,7 +824,6 @@ function installerLatestVersionKey(capabilities: ProviderMaintenanceCapabilities
     : null;
 }
 
-/** Every ProviderLatestVersions entry `resolveLatestProviderVersion` may read. */
 export function latestProviderVersionCacheKeys(
   capabilities: ProviderMaintenanceCapabilities,
 ): ReadonlyArray<string> {
