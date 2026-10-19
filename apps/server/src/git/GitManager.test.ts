@@ -5412,6 +5412,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["add", "."]);
       yield* runGit(repoDir, ["commit", "-m", "Upstream release commit"]);
       yield* runGit(repoDir, ["push", "-u", "upstream", "stable:release"]);
+      yield* runGit(repoDir, ["branch", "upstream/release", "fork-release"]);
 
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const fetched = yield* driver.fetchWorktreeBaseCommit({ cwd: repoDir, refName: "stable" });
@@ -5460,6 +5461,102 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       ).toBe(true);
     }),
+  );
+
+  it.effect(
+    "preserves a local worktree PR base that shadows a remote ref, including legacy bases",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const originDir = yield* createBareRemote();
+        const upstreamDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+        yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "release"]);
+        NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+        NodeFS.writeFileSync(NodePath.join(repoDir, "remote.txt"), "remote-only work\n");
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".github/pull_request_template.md"),
+          "Remote release template",
+        );
+        yield* runGit(repoDir, ["add", "."]);
+        yield* runGit(repoDir, ["commit", "-m", "Remote release commit"]);
+        yield* runGit(repoDir, ["push", "upstream", "release"]);
+
+        yield* runGit(repoDir, ["checkout", "-b", "upstream/release", "main"]);
+        NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+        NodeFS.writeFileSync(NodePath.join(repoDir, "local.txt"), "local-base work\n");
+        NodeFS.writeFileSync(
+          NodePath.join(repoDir, ".github/pull_request_template.md"),
+          "Local branch template",
+        );
+        yield* runGit(repoDir, ["add", "."]);
+        yield* runGit(repoDir, ["commit", "-m", "Local base commit"]);
+        yield* runGit(repoDir, ["push", "upstream", "refs/heads/upstream/release"]);
+        yield* runGit(repoDir, ["push", "origin", "refs/heads/upstream/release"]);
+
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreePath = NodePath.join(yield* makeTempDir("t3code-git-worktrees-"), "feature");
+        yield* driver.createWorktree({
+          cwd: repoDir,
+          path: worktreePath,
+          refName: "refs/heads/upstream/release",
+          newRefName: "feature/from-local",
+          baseRefName: "refs/heads/upstream/release",
+        });
+        NodeFS.writeFileSync(NodePath.join(worktreePath, "feature.txt"), "feature work\n");
+        yield* runGit(worktreePath, ["add", "feature.txt"]);
+        yield* runGit(worktreePath, ["commit", "-m", "Feature commit"]);
+        yield* runGit(worktreePath, ["push", "-u", "origin", "feature/from-local"]);
+
+        const generatedInputs: TextGeneration.PrContentGenerationInput[] = [];
+        const { manager, ghCalls } = yield* makeManager({
+          ghScenario: { prListSequence: ["[]", "[]", "[]", "[]"] },
+          textGeneration: {
+            generatePrContent: (input) => {
+              generatedInputs.push(input);
+              return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+            },
+          },
+        });
+        const result = yield* runStackedAction(manager, { cwd: worktreePath, action: "create_pr" });
+        expect(result.pr.status).toBe("created");
+
+        // A branch created outside T3 has only gh's legacy short base setting.
+        yield* runGit(worktreePath, ["checkout", "-b", "feature/legacy-local-base"]);
+        yield* runGit(worktreePath, [
+          "config",
+          "branch.feature/legacy-local-base.gh-merge-base",
+          "upstream/release",
+        ]);
+        yield* runGit(worktreePath, ["push", "-u", "origin", "feature/legacy-local-base"]);
+        const legacyResult = yield* runStackedAction(manager, {
+          cwd: worktreePath,
+          action: "create_pr",
+        });
+        expect(legacyResult.pr.status).toBe("created");
+        expect(generatedInputs).toHaveLength(2);
+        for (const generated of generatedInputs) {
+          expect.soft(generated.baseBranch).toBe("upstream/release");
+          expect.soft(generated.commitSummary).toMatch(/^[a-f0-9]+ Feature commit$/);
+          expect.soft(generated.diffSummary).toContain("feature.txt");
+          expect.soft(generated.diffSummary).toContain("1 file changed, 1 insertion(+)");
+          expect.soft(generated.diffPatch).toContain("+feature work");
+          expect.soft(generated.diffPatch).not.toContain("local-base work");
+          expect.soft(generated.diffPatch).not.toContain("remote-only work");
+          expect.soft(generated.diffPatch).not.toContain("pull_request_template.md");
+          expect.soft(generated.changeRequestTemplate).toBe("Local branch template");
+        }
+        expect
+          .soft(ghCalls.filter((call) => call.startsWith("pr create ")))
+          .toEqual([
+            expect.stringContaining("pr create --base upstream/release --head feature/from-local"),
+            expect.stringContaining(
+              "pr create --base upstream/release --head feature/legacy-local-base",
+            ),
+          ]);
+      }),
   );
 
   it.effect("generates PR content from branch changes when the remote base advances", () =>

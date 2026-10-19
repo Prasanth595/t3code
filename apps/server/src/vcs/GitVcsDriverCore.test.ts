@@ -4376,6 +4376,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.strictEqual(status.aheadCount, 1);
         assert.strictEqual(status.branchChanges?.insertions, 1);
         assert.strictEqual(status.branchChanges?.deletions, 0);
+        // gh pr create consumes this setting verbatim as the hosted target branch.
+        assert.equal(
+          yield* driver.readConfigValue(worktreePath, "branch.feature/from-upstream.gh-merge-base"),
+          "release",
+        );
       }),
     );
 
