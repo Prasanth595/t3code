@@ -342,6 +342,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const observedChildren = new Map<string, ActiveTurn>();
       // Other running tasks from Muse's task list (a `monitor` has no item), by task id.
       const registryTasks = new Map<string, string>();
+      let taskInventoryUncertain = false;
       const childrenByItemId = new Map<string, ChildContext>();
       const agentTitles = new Map<string, string>();
       const finishedBackground: Array<BackgroundWorkReport> = [];
@@ -702,29 +703,39 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           ],
         });
       });
-      /**
-       * Muse sends no event when a registry task such as a `monitor` ends, so its task list is
-       * read when a turn completes and when idle release asks. Callers hold the event permit, so
-       * item events apply in order around the read. A failed read keeps the last rows.
-       */
-      const refreshTasks = Effect.tryPromise(() =>
-        host.connection.request("task/list", { sessionId: nativeSessionId }),
-      ).pipe(
-        Effect.timeout(options.requestTimeoutMs ?? 30_000),
-        Effect.flatMap((value) => decode(MuseTaskList, value)),
-        Effect.flatMap(({ tasks }) => {
+      // Registry tasks have no terminal event. Read at turn completion and idle release,
+      // under the event permit, without request()'s host-closing timeout handling.
+      const refreshTasks = Effect.fnUntraced(function* () {
+        const wasUncertain = taskInventoryUncertain;
+        const result = yield* Effect.tryPromise(() =>
+          host.connection.request("task/list", { sessionId: nativeSessionId }),
+        ).pipe(
+          Effect.timeout(options.requestTimeoutMs ?? 30_000),
+          Effect.flatMap((value) => decode(MuseTaskList, value)),
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not read Muse's background tasks", cause).pipe(
+              Effect.as(undefined),
+            ),
+          ),
+        );
+        taskInventoryUncertain = result === undefined;
+        if (result) {
           registryTasks.clear();
-          for (const task of tasks)
+          for (const task of result.tasks)
             if (!observedChildren.has(task.taskId))
               registryTasks.set(task.taskId, task.tool ?? task.kind);
-          // Compares with the thread's rows, not the last list: a turn starts from the
-          // orchestrator's copy of the thread, which can predate the rows published since.
-          const listed = (thread?.pendingBackgroundTasks ?? []).map((task) => task.taskId);
-          const running = [...observedChildren.keys(), ...registryTasks.keys()];
-          return listed.join("\n") === running.join("\n") ? Effect.void : syncBackground();
-        }),
-        Effect.catch((cause) => Effect.logWarning("Could not read Muse's background tasks", cause)),
-      );
+        }
+        // A new turn's snapshot can predate rows already published by this host.
+        const listed = thread?.pendingBackgroundTasks ?? [];
+        const running = [...observedChildren.keys(), ...registryTasks.keys()];
+        if (
+          wasUncertain !== taskInventoryUncertain ||
+          listed.length !== running.length ||
+          listed.some((task, index) => task.taskId !== running[index])
+        )
+          // Publish even an empty recovery so waiting run ingestion can finish.
+          yield* syncBackground();
+      });
       const publishItem = Effect.fnUntraced(function* (
         turn: ActiveTurn,
         item: MuseItem,
@@ -937,6 +948,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         observedChildren.clear();
         registryTasks.clear();
+        taskInventoryUncertain = false;
         if (thread?.pendingBackgroundTasks?.length) yield* syncBackground();
         for (const entry of pending.values()) yield* resolvePending(entry, "cancelled");
       });
@@ -1482,7 +1494,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "interrupted"
                     : "cancelled"
                   : "failed";
-            if (status === "completed") yield* refreshTasks;
+            if (status === "completed") yield* refreshTasks();
             yield* finish(
               turn,
               status,
@@ -2132,9 +2144,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         backgroundTasksEndWithProcess: true,
         // Running background work or a held Muse turn keeps the host: idle release must wait.
         hasPendingBackgroundWork: Effect.gen(function* () {
-          if (registryTasks.size > 0) yield* eventPermit.withPermits(1)(refreshTasks);
-          return observedChildren.size > 0 || wake !== undefined || registryTasks.size > 0;
-        }),
+          if (closed || broken) return false;
+          if (registryTasks.size > 0 || taskInventoryUncertain) yield* refreshTasks();
+          return (
+            observedChildren.size > 0 ||
+            wake !== undefined ||
+            registryTasks.size > 0 ||
+            taskInventoryUncertain
+          );
+        }).pipe(eventPermit.withPermits(1)),
         // Holds the run's event stream open until the run has read the update that clears the
         // rows, even when the adapter cleared them first.
         hasPendingBackgroundWorkForThread: (providerThread) =>
@@ -2143,6 +2161,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               validateThread(providerThread) &&
               (observedChildren.size > 0 ||
                 registryTasks.size > 0 ||
+                taskInventoryUncertain ||
                 (providerThread.pendingBackgroundTasks?.length ?? 0) > 0),
           ),
         ensureThread: (args) =>
