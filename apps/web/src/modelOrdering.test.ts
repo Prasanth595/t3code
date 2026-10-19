@@ -28,7 +28,7 @@ describe("model ordering", () => {
     ).toEqual(["gpt-5.4-mini", "gpt-5.5", "crest-alpha", "gpt-5.3-codex"]);
   });
 
-  it("sorts the favorites view by provider order, then provider model order", () => {
+  it("uses provider order, then provider model order when no favorite order is supplied", () => {
     const items = [
       { instanceId: CODEX_WORK_ID, slug: "gpt-5.4-mini" },
       { instanceId: CODEX_WORK_ID, slug: "gpt-5.5" },
@@ -48,5 +48,45 @@ describe("model ordering", () => {
         instanceOrder: [CODEX_WORK_ID, CLAUDE_ID],
       }).map((item) => item.slug),
     ).toEqual(["gpt-5.4-mini", "gpt-5.5", "crest-alpha", "claude-opus-4-6"]);
+  });
+
+  it("renders favorites in saved order across providers, ignoring unavailable favorites", () => {
+    const items = [
+      { instanceId: CODEX_WORK_ID, slug: "direct-max" },
+      { instanceId: CODEX_WORK_ID, slug: "pooled-model" },
+      { instanceId: CLAUDE_ID, slug: "pooled-model" },
+    ];
+    const favoriteModelOrder = [
+      providerModelKey(CLAUDE_ID, "pooled-model"),
+      providerModelKey(CLAUDE_ID, "unavailable-model"),
+      providerModelKey(CODEX_WORK_ID, "pooled-model"),
+      providerModelKey(CODEX_WORK_ID, "direct-max"),
+    ];
+
+    expect(
+      sortProviderModelItems(items, {
+        favoriteModelOrder,
+        instanceOrder: [CODEX_WORK_ID, CLAUDE_ID],
+      }),
+    ).toEqual([items[2], items[1], items[0]]);
+    expect(items.map((item) => item.slug)).toEqual(["direct-max", "pooled-model", "pooled-model"]);
+  });
+
+  it("groups favorites in provider tabs without changing their catalog order", () => {
+    const items = [
+      { instanceId: CODEX_WORK_ID, slug: "first" },
+      { instanceId: CODEX_WORK_ID, slug: "second" },
+      { instanceId: CODEX_WORK_ID, slug: "third" },
+    ];
+
+    expect(
+      sortProviderModelItems(items, {
+        favoriteModelKeys: [
+          providerModelKey(CODEX_WORK_ID, "third"),
+          providerModelKey(CODEX_WORK_ID, "first"),
+        ],
+        groupFavorites: true,
+      }),
+    ).toEqual([items[0], items[2], items[1]]);
   });
 });
