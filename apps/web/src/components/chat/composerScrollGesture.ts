@@ -162,11 +162,13 @@ export function listenForComposerScrollGestures({
 
   let activeInput: "scrollbar" | "touch" | "middle-click" | null = null;
   let hasScrolled = false;
+  let middleButtonReleased = false;
   let touchScrollUntil = 0;
   let lastScrollTop = getTimelineScrollableNode()?.scrollTop ?? null;
   const beginPointerScroll = (input: NonNullable<typeof activeInput>, scrollNode: HTMLElement) => {
     activeInput = input;
     hasScrolled = false;
+    middleButtonReleased = false;
     touchScrollUntil = 0;
     lastScrollTop = scrollNode.scrollTop;
   };
@@ -174,8 +176,11 @@ export function listenForComposerScrollGestures({
     activeInput = null;
     touchScrollUntil = 0;
     hasScrolled = false;
+    middleButtonReleased = false;
   };
   const releasePointerScroll = (event: Event) => {
+    // Native touch panning takes over the pointer stream, but keeps touch events.
+    if (event.type === "pointercancel" && activeInput === "touch") return;
     if (event.type === "pointercancel" || event.type === "touchcancel" || event.type === "blur") {
       cancelPointerScroll();
       return;
@@ -185,9 +190,11 @@ export function listenForComposerScrollGestures({
       if (
         event.type === "pointerup" &&
         event instanceof MouseEvent &&
-        (hasScrolled || event.button !== 1)
+        (hasScrolled || middleButtonReleased || event.button !== 1)
       ) {
         cancelPointerScroll();
+      } else if (event.type === "pointerup") {
+        middleButtonReleased = true;
       }
       return;
     }

@@ -325,12 +325,18 @@ describe("composer timeline scroll input", () => {
     expect(collapsed).toBe(false);
   });
 
-  it("starts a scrollbar gesture after a stationary middle-click toggle", () => {
+  it("ends a stationary middle-click toggle on its second release", () => {
     pointerDown(content, 1);
     pointerUp(1);
+    pointerUp(1);
+    scrollTo(450);
+    expect(collapsed).toBe(false);
+  });
 
-    pointerDown(timeline);
-    scrollTo(470);
+  it("keeps tracking when native touch panning cancels the pointer stream", () => {
+    content.dispatchEvent(new Event("touchmove", { bubbles: true }));
+    window.dispatchEvent(new Event("pointercancel"));
+    scrollTo(450);
     expect(collapsed).toBe(true);
   });
 
