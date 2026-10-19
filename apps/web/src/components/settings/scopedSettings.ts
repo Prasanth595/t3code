@@ -102,35 +102,7 @@ function supportedServerPatch(
   patch: ServerSettingsPatch,
 ): ServerSettingsPatch {
   return Object.fromEntries(
-    Object.entries(patch).flatMap(([key, value]) => {
-      if (!supportsSettingKey(environment, key)) return [];
-      if (key !== "projectSettingsOverrides") return [[key, value]];
-      const entries = Object.entries(patch.projectSettingsOverrides ?? {}).flatMap(
-        ([projectId, entry]) => {
-          const current =
-            environment.serverConfig?.settings.projectSettingsOverrides[projectId as ProjectId] ??
-            {};
-          if (
-            !Object.keys({ ...current, ...entry }).some((field) =>
-              supportsProjectSettingKey(environment, field),
-            )
-          )
-            return [];
-          const supported = Object.entries(entry ?? {}).filter(([field]) =>
-            supportsProjectSettingKey(environment, field),
-          );
-          // Entries replace whole, so retain fields this environment cannot change.
-          const retained = Object.fromEntries(
-            Object.entries(current).filter(
-              ([field]) => !supportsProjectSettingKey(environment, field),
-            ),
-          );
-          const next = { ...retained, ...Object.fromEntries(supported) };
-          return [[projectId, Object.keys(next).length > 0 ? next : null]];
-        },
-      );
-      return entries.length > 0 ? [[key, Object.fromEntries(entries)]] : [];
-    }),
+    Object.entries(patch).filter(([key]) => supportsSettingKey(environment, key)),
   ) as ServerSettingsPatch;
 }
 

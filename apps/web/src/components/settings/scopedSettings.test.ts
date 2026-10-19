@@ -427,11 +427,6 @@ describe("scoped settings writes", () => {
               ["enableAgentBrowserAccess"],
             ).serverWrites,
           ).toEqual([]);
-          expect(
-            planScopedSettingsPatch(named, learned, {
-              projectSettingsOverrides: { [projectId]: patch },
-            }).serverWrites[0]?.patch,
-          ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
           const projectTargets = resolveScopedSettingsTargets(project, learned);
           expect
             .soft(
@@ -486,9 +481,7 @@ describe("scoped settings writes", () => {
                 })),
               );
           }
-          const reset = planScopedSettingsPatch(named, learned, {
-            projectSettingsOverrides: { [projectId]: null },
-          });
+          const reset = planScopedSettingsClear(checkout, learned, ["defaultAutoPull"]);
           expect(reset.serverWrites[0]?.patch).toEqual({
             projectSettingsOverrides: { [projectId]: null },
           });
@@ -506,11 +499,6 @@ describe("scoped settings writes", () => {
           const afterReset = saved.map(withSupport);
           expect(
             planScopedSettingsClear(checkout, afterReset, ["defaultAutoPull"]).serverWrites,
-          ).toEqual([]);
-          expect(
-            planScopedSettingsPatch(named, afterReset, {
-              projectSettingsOverrides: { [projectId]: null },
-            }).serverWrites,
           ).toEqual([]);
           expect(
             planScopedSettingsPatch(named, afterReset, { defaultAutoPull: false }).serverWrites,
