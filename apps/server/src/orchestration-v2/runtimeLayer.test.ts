@@ -3199,8 +3199,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each(["with fingerprint", "without fingerprint", "fingerprint becomes unavailable"])(
-    "refreshes edited cached review replies: %s",
+  it.effect.each(["deadline", "fingerprint lost", "fingerprint changed"])(
+    "delivers edited cached review replies: %s",
     (mode) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -3254,9 +3254,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ...reply,
           id: `reply-${index}`,
         }));
-        let fingerprintAvailable = mode !== "without fingerprint";
+        let fingerprint: string | null = "before";
+        let failPage = false;
         let activityReads = 0;
-        let pagesRead = 0;
+        const cursors: Array<string> = [];
         const reactor = yield* PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -3272,7 +3273,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               Layer.mock(PullRequestService.PullRequestService)({
                 watchFingerprint: () =>
                   Effect.succeed(
-                    fingerprintAvailable ? { status: "OPEN pending", remarks: "unchanged" } : null,
+                    fingerprint === null ? null : { status: "OPEN pending", remarks: fingerprint },
                   ),
                 invalidate: () => Effect.void,
                 detail: () =>
@@ -3304,53 +3305,65 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                       commits: [],
                     };
                   }),
-                threadComments: () =>
-                  Effect.sync(() => {
-                    pagesRead += 1;
-                    return { comments: [reply], nextCursor: null };
+                threadComments: (input) =>
+                  Effect.suspend(() => {
+                    assert.equal(input.threadId, "review-thread");
+                    cursors.push(input.cursor);
+                    return failPage
+                      ? Effect.fail(
+                          new PullRequestOperationError({
+                            operation: "threadComments",
+                            detail: "Page unavailable",
+                          }),
+                        )
+                      : Effect.succeed({ comments: [reply], nextCursor: null });
                   }),
               }),
             ),
           ),
         );
+        const messages = orchestrator
+          .getThreadRecords(threadId, ["messages"])
+          .pipe(Effect.map((records) => records.messages));
+        const watch = orchestrator
+          .getThreadShell(threadId)
+          .pipe(Effect.map((thread) => thread?.pullRequests?.[0]?.watch));
         yield* reactor.sweep;
-        yield* reactor.sweep;
-        assert.equal(pagesRead, 1);
-        assert.deepEqual(
-          (yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages,
-          [],
-        );
-
-        const readsBeforeEdit = activityReads;
+        const baseline = yield* watch;
         reply = { ...reply, body: "Edited feedback.", editedAt: "2026-10-02T12:00:01.000Z" };
-        // The edit keeps the reply count, so only the tail's reread deadline can surface it.
-        if (mode === "fingerprint becomes unavailable") fingerprintAvailable = false;
-        if (fingerprintAvailable) {
-          yield* TestClock.adjust("30 minutes");
-        } else {
-          // Frequent activity reads must not postpone the tail's own refresh deadline.
-          yield* TestClock.adjust("5 minutes");
+
+        if (mode === "fingerprint changed") {
+          yield* TestClock.adjust("1 minute");
+          fingerprint = "after";
+          failPage = true;
           yield* reactor.sweep;
-          assert.equal(pagesRead, 1);
-          yield* TestClock.adjust("5 minutes");
+          assert.deepEqual(yield* messages, []);
+          assert.deepEqual(yield* watch, baseline);
+          failPage = false;
+        } else {
+          if (mode === "fingerprint lost") fingerprint = null;
+          yield* TestClock.adjust(mode === "deadline" ? "29 minutes" : "5 minutes");
+          yield* reactor.sweep;
+          assert.deepEqual(cursors, ["after-10"]);
+          assert.deepEqual(yield* messages, []);
+          // An activity read at five minutes must not move the tail's ten-minute deadline.
+          assert.equal(activityReads, mode === "deadline" ? 1 : 2);
+          yield* TestClock.adjust(mode === "deadline" ? "1 minute" : "5 minutes");
         }
         yield* reactor.sweep;
-        assert.equal(activityReads, readsBeforeEdit + (fingerprintAvailable ? 1 : 2));
-        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        const wakes = yield* messages;
         assert.deepEqual(
-          messages.map((message) => message.notification?.summary),
+          wakes.map((message) => message.notification?.summary),
           ["#12: new comments"],
         );
-        assert.include(messages[0]?.text ?? "", "Edited feedback.");
-        assert.notInclude(messages[0]?.text ?? "", "Original feedback.");
-        assert.equal(pagesRead, 2);
-        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
-        assert.equal(watch?.remarksThrough, reply.editedAt);
-        assert.deepEqual(watch?.remarkIds, [reply.id]);
-
+        assert.include(wakes[0]?.text ?? "", "Edited feedback.");
+        assert.notInclude(wakes[0]?.text ?? "", "Original feedback.");
+        assert.deepEqual(cursors, Array(mode === "fingerprint changed" ? 3 : 2).fill("after-10"));
+        assert.equal((yield* watch)?.remarksThrough, reply.editedAt);
+        assert.deepEqual((yield* watch)?.remarkIds, [reply.id]);
         yield* reactor.sweep;
-        assert.equal(pagesRead, 2);
-        assert.lengthOf((yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages, 1);
+        assert.lengthOf(yield* messages, 1);
+        assert.lengthOf(cursors, mode === "fingerprint changed" ? 3 : 2);
       }),
   );
 
