@@ -1,3 +1,4 @@
+import { restartingWatch } from "./restartingWatch.ts";
 import {
   DEFAULT_SERVER_SETTINGS,
   ModelSelection,
@@ -562,6 +563,11 @@ function foldLegacyProjectSettings(
   };
 }
 
+class SettingsWatchEnded extends Schema.TaggedError<SettingsWatchEnded>()(
+  "SettingsWatchEnded",
+  {},
+) {}
+
 const make = Effect.gen(function* () {
   const { settingsPath } = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
@@ -1052,20 +1058,19 @@ const make = Effect.gen(function* () {
     }),
   );
 
-  const watchFileChanges = (filePath: string) => {
+  const watchFileChanges = (filePath: string, onReady?: () => void) => {
     const directory = pathService.dirname(filePath);
     const fileName = pathService.basename(filePath);
     const resolvedFilePath = pathService.resolve(filePath);
-    return fs
-      .watch(directory)
-      .pipe(
-        Stream.filter(
-          (event) =>
-            event.path === fileName ||
-            event.path === filePath ||
-            pathService.resolve(directory, event.path) === resolvedFilePath,
-        ),
-      );
+    return fs.watch(directory, { onReady }).pipe(
+      Stream.filter(
+        (event) =>
+          event.path === fileName ||
+          event.path === filePath ||
+          pathService.resolve(directory, event.path) === resolvedFilePath,
+      ),
+      Stream.concat(Stream.fail(new SettingsWatchEnded({}))),
+    );
   };
 
   const startWatcher = Effect.gen(function* () {
@@ -1082,6 +1087,10 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    const attached = yield* Deferred.make<void>();
+    const onStarted = () => {
+      Deferred.doneUnsafe(attached, Effect.void);
+    };
     const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
 
     // A symlinked settings file is rewritten in its destination's directory,
@@ -1101,31 +1110,57 @@ const make = Effect.gen(function* () {
       return Option.some(linkTargetPath);
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
-    const initialLinkTarget = yield* watchLinkTarget;
-    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
-      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
-      Stream.changes,
-      Stream.switchMap(
-        Option.match({
-          onNone: () => Stream.empty,
-          onSome: (linkTargetPath) =>
-            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+    const settingsEvents = (onReady: () => void) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          const initialLinkTarget = yield* watchLinkTarget;
+          const rootReady = yield* Deferred.make<void>();
+          const linkReady = yield* Deferred.make<void>();
+          const targetReady = yield* Deferred.make<void>();
+          const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
+            Stream.concat(
+              watchFileChanges(settingsPath, () => {
+                Deferred.doneUnsafe(linkReady, Effect.void);
+              }).pipe(Stream.mapEffect(() => watchLinkTarget)),
+            ),
+            Stream.changes,
+            Stream.switchMap(
+              Option.match({
+                onNone: () => Stream.empty,
+                onSome: (target) =>
+                  watchFileChanges(target, () => {
+                    Deferred.doneUnsafe(targetReady, Effect.void);
+                  }),
+              }),
+            ),
+          );
+          const topologyReady = Stream.fromEffect(
+            Effect.gen(function* () {
+              yield* Deferred.await(rootReady);
+              yield* Deferred.await(linkReady);
+              if (Option.isSome(initialLinkTarget)) yield* Deferred.await(targetReady);
+              // A repoint before link-watch attachment must rebuild the target watch too.
+              if (!Equal.equals(initialLinkTarget, yield* watchLinkTarget))
+                return yield* new SettingsWatchEnded({});
+              onReady();
+            }),
+          ).pipe(Stream.drain);
+          return Stream.merge(
+            watchFileChanges(settingsPath, () => {
+              Deferred.doneUnsafe(rootReady, Effect.void);
+            }),
+            Stream.merge(linkTargetEvents, topologyReady),
+          ).pipe(Stream.debounce(Duration.millis(100)));
         }),
-      ),
-    );
+      );
 
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = Stream.merge(
-      watchFileChanges(settingsPath),
-      linkTargetEvents,
-    ).pipe(Stream.debounce(Duration.millis(100)));
-
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+    yield* restartingWatch(
+      settingsEvents,
+      revalidateAndEmit,
+      revalidateAndEmitSafely,
+      onStarted,
+    ).pipe(Effect.forkIn(watcherScope), Effect.asVoid);
+    yield* Deferred.await(attached);
   });
 
   const start = Effect.gen(function* () {
