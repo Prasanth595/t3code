@@ -18,7 +18,9 @@ const branch = { name: "feature/a", current: false, isDefault: false, worktreePa
 const environmentId = EnvironmentId.make("branch-test-environment");
 
 beforeEach(async () => {
-  directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-branch-selection-"));
+  directory = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-branch-selection-")),
+  );
   cwd = NodePath.join(directory, "project");
   await exec("git", ["init", "-b", "main", cwd]);
   await git("config", "user.name", "Branch test");
@@ -44,25 +46,33 @@ const readRefs: CheckoutInput["readRefs"] = (request) =>
   settlePromise(async () => {
     expect(request.environmentId).toBe(environmentId);
     const input = decodeListRefsInput(request.input);
+    const { stdout: head } = await exec("git", [
+      "-C",
+      input.cwd,
+      "rev-parse",
+      "--symbolic-full-name",
+      "HEAD",
+    ]);
     const { stdout } = await exec("git", [
       "-C",
       input.cwd,
       "for-each-ref",
       "--sort=refname",
-      "--format=%(refname:short)%09%(worktreepath)",
+      "--format=%(refname:short)%09%(worktreepath)%09%(upstream)",
       "refs/heads",
     ]);
     const refs = stdout
       .trimEnd()
       .split("\n")
       .map((line) => {
-        const [name = "", path] = line.split("\t");
+        const [name = "", path, upstreamRef] = line.split("\t");
         return {
           name,
-          current: path === input.cwd,
+          current: head.trim() === `refs/heads/${name}`,
           isDefault: name === "main",
           isRemote: false,
           worktreePath: path || null,
+          ...(upstreamRef ? { upstreamRef } : {}),
         };
       })
       .filter((ref) => ref.name.includes(input.query ?? ""));
@@ -95,8 +105,27 @@ const switchRef: CheckoutInput["switchRef"] = (request) =>
     expect(request.environmentId).toBe(environmentId);
     await exec("git", ["-C", request.input.cwd, "checkout", request.input.refName]);
     const { stdout } = await exec("git", ["-C", request.input.cwd, "branch", "--show-current"]);
-    return { refName: stdout.trim() };
+    return { refName: stdout.trim() || null };
   });
+
+async function addRemote(remoteName: string, sourceRef = branch.name) {
+  const remotePath = NodePath.join(directory, `${remoteName.replaceAll("/", "-")}.git`);
+  await exec("git", ["init", "--bare", remotePath]);
+  await git("remote", "add", remoteName, remotePath);
+  await git("push", remoteName, `${sourceRef}:refs/heads/${branch.name}`);
+  const { stdout } = await git(
+    "rev-parse",
+    "--verify",
+    "--symbolic-full-name",
+    `refs/remotes/${remoteName}/${branch.name}`,
+  );
+  return {
+    ...branch,
+    name: stdout.trim().replace("refs/remotes/", ""),
+    isRemote: true,
+    remoteName,
+  };
+}
 
 describe("new-task branch checkout", () => {
   it("switches main to the older thread's feature branch before returning a selection", async () => {
@@ -199,25 +228,22 @@ describe("new-task branch checkout", () => {
     if (result._tag !== "Success") throw new Error("Historical branch selection failed");
     expect(result.value).toMatchObject({
       name,
-      worktreePath: await NodeFSP.realpath(worktreePath),
+      worktreePath,
     });
     expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
     expect(await NodeFSP.readFile(NodePath.join(cwd, "file.txt"), "utf8")).toBe("main\n");
   });
 
   it("resolves a non-origin remote to the right worktree when the remote name contains slashes", async () => {
+    const remoteBranch = await addRemote("team/upstream");
+    await git("branch", "--set-upstream-to", remoteBranch.name, branch.name);
     await git("branch", "upstream/feature/a");
     await git("worktree", "add", NodePath.join(directory, "decoy"), "upstream/feature/a");
     const worktreePath = NodePath.join(directory, "worktree");
     await git("worktree", "add", worktreePath, branch.name);
 
     const result = await checkoutNewTaskBranch({
-      branch: {
-        ...branch,
-        name: "team/upstream/feature/a",
-        isRemote: true,
-        remoteName: "team/upstream",
-      },
+      branch: remoteBranch,
       project: { environmentId, workspaceRoot: cwd },
       workspaceMode: "local",
       readRefs,
@@ -229,19 +255,59 @@ describe("new-task branch checkout", () => {
     expect(result.value).toMatchObject({
       name: branch.name,
       isRemote: false,
-      worktreePath: await NodeFSP.realpath(worktreePath),
+      worktreePath,
     });
     expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
   });
 
-  it("skips checkout when historical metadata names the already-current branch", async () => {
+  it("switches to the selected remote instead of reusing a worktree tracking another remote", async () => {
+    const originBranch = await addRemote("origin");
+    await git("branch", "--set-upstream-to", originBranch.name, branch.name);
+    const worktreePath = NodePath.join(directory, "worktree");
+    await git("worktree", "add", worktreePath, branch.name);
+    await git("checkout", "-b", "upstream-source");
+    await NodeFSP.writeFile(NodePath.join(cwd, "file.txt"), "upstream feature\n");
+    await git("commit", "-am", "divergent upstream feature");
+    const remoteBranch = await addRemote("team/upstream", "HEAD");
+    const selectedCommit = (await git("rev-parse", remoteBranch.name)).stdout.trim();
+    expect((await git("rev-parse", originBranch.name)).stdout.trim()).not.toBe(selectedCommit);
+    await git("checkout", "main");
+
+    const result = await checkoutNewTaskBranch({
+      branch: remoteBranch,
+      project: { environmentId, workspaceRoot: cwd },
+      workspaceMode: "local",
+      readRefs,
+      switchRef,
+    });
+
+    expect(result._tag).toBe("Success");
+    if (result._tag !== "Success") throw new Error("Remote checkout failed");
+    expect(result.value.worktreePath).toBeNull();
+    expect(result.value.name).toBe(remoteBranch.name);
+    expect((await git("rev-parse", "HEAD")).stdout.trim()).toBe(selectedCommit);
+    expect(await NodeFSP.readFile(NodePath.join(cwd, "file.txt"), "utf8")).toBe(
+      "upstream feature\n",
+    );
+    expect(await NodeFSP.readFile(NodePath.join(worktreePath, "file.txt"), "utf8")).toBe(
+      "feature\n",
+    );
+  });
+
+  it("keeps a nested project's cwd when historical metadata names the already-current branch", async () => {
     await git("checkout", branch.name);
+    cwd = NodePath.join(cwd, "packages", "app");
+    await NodeFSP.mkdir(cwd, { recursive: true });
 
     const result = await selectBranch(refuseSwitch);
 
     expect(result._tag).toBe("Success");
     if (result._tag !== "Success") throw new Error("Current branch selection failed");
-    expect(result.value).toMatchObject({ name: branch.name, current: true });
+    expect(result.value).toMatchObject({
+      name: branch.name,
+      current: true,
+      worktreePath: null,
+    });
     expect((await git("branch", "--show-current")).stdout.trim()).toBe(branch.name);
   });
 });
