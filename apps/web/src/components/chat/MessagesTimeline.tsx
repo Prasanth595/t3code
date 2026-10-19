@@ -801,18 +801,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }, [latestRun, listIdentityKey]);
 
   // Imported turns fold under synthetic keys rather than the entries' own run ids.
-  const turnFoldRunIds =
-    findActive || citationRequest !== null
-      ? timelineTurnFoldRunIdsByEntryId({
-          timelineEntries,
-          latestRun,
-          runningRunId,
-          isWorking,
-          runlessWorkActive,
-        })
-      : null;
+  const findFoldRunIds = findActive
+    ? timelineTurnFoldRunIdsByEntryId({
+        timelineEntries,
+        latestRun,
+        runningRunId,
+        isWorking,
+        runlessWorkActive,
+      })
+    : null;
   const activeFindRunId =
-    findActive && activeFindMatch ? turnFoldRunIds?.get(activeFindMatch.entryId) : undefined;
+    findActive && activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
   const [expandedFindRunId, setExpandedFindRunId] = useState<RunId | undefined>();
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
@@ -1002,7 +1001,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
     loadEarlier,
-    turnFoldRunIds,
+    getTurnFoldRunId: (entryId) =>
+      (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      ).get(entryId),
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
@@ -1312,7 +1321,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (!findPositionReaderRef || !timelineViewportElement) return;
     const read: ThreadFindPositionReader = (query) => {
       const foldRunIds =
-        turnFoldRunIds ??
+        findFoldRunIds ??
         timelineTurnFoldRunIdsByEntryId({
           timelineEntries,
           latestRun,
@@ -1362,7 +1371,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, [
     contentInsetEndAdjustment,
-    turnFoldRunIds,
+    findFoldRunIds,
     findPositionReaderRef,
     isWorking,
     latestRun,
