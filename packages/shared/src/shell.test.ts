@@ -151,7 +151,7 @@ describe("readEnvironmentFromLoginShell", () => {
         NodeFS.writeFileSync(
           config,
           [
-            `$env.PATH = [${JSON.stringify(toolPath)}, ${JSON.stringify(extraToolPath)}]`,
+            `$env.PATH = [${JSON.stringify(toolPath)}, "~/extra-tools/bin", "rel/dir", ""]`,
             '$env.CUSTOM_VAR = "  first\\nsecond  "',
             '$env.EMPTY_VAR = ""',
             'print "startup noise"',
@@ -172,7 +172,10 @@ describe("readEnvironmentFromLoginShell", () => {
                 },
               ),
           ),
-        ).toEqual({ PATH: `${toolPath}:${extraToolPath}`, CUSTOM_VAR: "  first\nsecond  " });
+        ).toEqual({
+          PATH: `${toolPath}:${extraToolPath}:rel/dir:`,
+          CUSTOM_VAR: "  first\nsecond  ",
+        });
       } finally {
         NodeFS.rmSync(home, { recursive: true, force: true });
       }
