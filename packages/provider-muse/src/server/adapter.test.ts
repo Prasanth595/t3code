@@ -18,8 +18,8 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
-import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -807,28 +807,22 @@ describe("MuseAdapterV2", () => {
   it.effect("closes its SDK host exactly once when its session scope ends", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      yield* makeHarness(fake).pipe(Effect.scoped);
-      assert.strictEqual(fake.closeCount(), 1);
-    }).pipe(Effect.provide(testLayer)),
-  );
-
-  // A daemon a tool detached with setsid leaves Muse's process group but stays
-  // in its systemd scope.
-  it.effect("stops the host's scope after closing the host", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const stopped: Array<{ readonly unit: string; readonly hostCloses: number }> = [];
+      let hostExited = false;
+      void fake.host.exited.then(() => {
+        hostExited = true;
+      });
+      const stopped: Array<{ unit: string; hostExited: boolean }> = [];
       yield* makeHarness(fake).pipe(
         Effect.scoped,
         Effect.provideService(AgentScope, {
           ...AgentScope.defaultValue(),
           wrap: ({ command, args }) =>
             Effect.succeed({ command, args, unit: "t3code-muse-test.scope" }),
-          stop: (unit) =>
-            Effect.sync(() => void stopped.push({ unit, hostCloses: fake.closeCount() })),
+          stop: (unit) => Effect.sync(() => void stopped.push({ unit, hostExited })),
         }),
       );
-      assert.deepStrictEqual(stopped, [{ unit: "t3code-muse-test.scope", hostCloses: 1 }]);
+      assert.strictEqual(fake.closeCount(), 1);
+      assert.deepStrictEqual(stopped, [{ unit: "t3code-muse-test.scope", hostExited: true }]);
     }).pipe(Effect.provide(testLayer)),
   );
 

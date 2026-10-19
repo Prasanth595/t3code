@@ -95,28 +95,6 @@ describe("AcpSessionRuntime", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // A daemon a tool detached with setsid leaves the agent's process group but
-  // stays in its systemd scope.
-  it.effect("stops the agent's scope once the runtime has ended the agent", () =>
-    Effect.gen(function* () {
-      const stopped: Array<string> = [];
-      yield* Effect.gen(function* () {
-        const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
-        yield* runtime.start();
-        expect(stopped).toEqual([]);
-      }).pipe(
-        Effect.scoped,
-        Effect.provideService(AgentScope, {
-          ...AgentScope.defaultValue(),
-          wrap: ({ command, args }) =>
-            Effect.succeed({ command, args, unit: "t3code-acp-test.scope" }),
-          stop: (unit) => Effect.sync(() => void stopped.push(unit)),
-        }),
-      );
-      expect(stopped).toEqual(["t3code-acp-test.scope"]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("publishes model changes returned by a config request and live notifications", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
@@ -309,10 +287,20 @@ describe("AcpSessionRuntime", () => {
 
   it.effect("reports an idle child exit and rejects later prompts", () =>
     Effect.gen(function* () {
-      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+      const stopped = yield* Deferred.make<string>();
+      const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions).pipe(
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) =>
+            Effect.succeed({ command, args, unit: "t3code-acp-test.scope" }),
+          stop: (unit) => Deferred.succeed(stopped, unit).pipe(Effect.asVoid),
+        }),
+      );
       yield* runtime.start();
+      expect(yield* Deferred.isDone(stopped)).toBe(false);
       yield* runtime.notify("_test/exit", {});
       const events = yield* runtime.getEvents().pipe(Stream.take(1), Stream.runCollect);
+      expect(yield* Deferred.await(stopped)).toBe("t3code-acp-test.scope");
       const event = events[0];
       expect(event).toMatchObject({ _tag: "ConnectionTerminated", error: { code: 19 } });
       if (event?._tag !== "ConnectionTerminated") return;

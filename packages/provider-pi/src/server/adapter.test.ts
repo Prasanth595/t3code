@@ -38,8 +38,8 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
-import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import {
   makePiAdapterV2,
@@ -1341,14 +1341,22 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  // A daemon a tool detached with setsid leaves pi's process group but stays
-  // in its systemd scope.
-  it.effect("stops pi's scope once the session closes", () =>
+  it.effect("cleans up detached work after releasing the Pi process", () =>
     Effect.gen(function* () {
-      const stopped: Array<string> = [];
       const fake = yield* makeFakePi;
+      let processReleased = false;
+      const stopped: Array<{ unit: string; processReleased: boolean }> = [];
       yield* Effect.gen(function* () {
-        yield* openRuntime(fake);
+        yield* openRuntime({
+          ...fake,
+          spawner: ChildProcessSpawner.make((command) =>
+            Effect.acquireRelease(fake.spawner.spawn(command), () =>
+              Effect.sync(() => {
+                processReleased = true;
+              }),
+            ),
+          ),
+        });
         assert.deepStrictEqual(stopped, []);
       }).pipe(
         Effect.scoped,
@@ -1356,10 +1364,10 @@ describe("PiAdapterV2", () => {
           ...AgentScope.defaultValue(),
           wrap: ({ command, args }) =>
             Effect.succeed({ command, args, unit: "t3code-pi-test.scope" }),
-          stop: (unit) => Effect.sync(() => void stopped.push(unit)),
+          stop: (unit) => Effect.sync(() => void stopped.push({ unit, processReleased })),
         }),
       );
-      assert.deepStrictEqual(stopped, ["t3code-pi-test.scope"]);
+      assert.deepStrictEqual(stopped, [{ unit: "t3code-pi-test.scope", processReleased: true }]);
     }).pipe(Effect.provide(layerTest)),
   );
 
