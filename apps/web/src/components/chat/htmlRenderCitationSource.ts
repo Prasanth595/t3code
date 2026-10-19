@@ -5,6 +5,7 @@ import {
   htmlSelectionParams,
   readHtmlSelectionRect,
 } from "~/lib/htmlRenderSelection";
+import { observeResize } from "~/lib/observeResize";
 import type { AssistantCitationTarget } from "./AssistantCitationSource";
 import { toastManager } from "../ui/toast";
 
@@ -136,8 +137,7 @@ export function observeHtmlRenderCitationSource({
   };
   const observer = new MutationObserver(resolve);
   observer.observe(root, { childList: true, subtree: true });
-  const resize = new ResizeObserver(resolve);
-  resize.observe(root);
+  const stopResize = observeResize(root, resolve);
   const stopPosition = list.getState().listenToPosition(itemKey, resolve);
   const cancelScroll = () => {
     if (scrolling) {
@@ -160,7 +160,7 @@ export function observeHtmlRenderCitationSource({
     clearTimeout(expiry);
     clearTimeout(responseTimeout);
     observer.disconnect();
-    resize.disconnect();
+    stopResize();
     stopPosition();
     root.removeEventListener("t3-html-selection-ready", resolve);
     window.removeEventListener("message", receive);

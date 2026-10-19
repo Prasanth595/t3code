@@ -304,7 +304,9 @@ export function HtmlRenderDocument(props: {
           props.onLoad?.();
           if (props.selectionBridge) {
             frameRef.current?.setAttribute("data-html-selection-ready", "true");
-            frameRef.current?.dispatchEvent(new Event("t3-html-selection-ready", { bubbles: true }));
+            frameRef.current?.dispatchEvent(
+              new Event("t3-html-selection-ready", { bubbles: true }),
+            );
           }
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
