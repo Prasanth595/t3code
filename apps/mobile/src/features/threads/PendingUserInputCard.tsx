@@ -256,15 +256,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           const draft = props.drafts[question.id];
           const customAnswerActive = (draft?.customAnswer?.trim().length ?? 0) > 0;
           const selectedOptionValue = draft?.selectedOptionValues?.at(-1);
-          const previewOptionIndex = customAnswerActive
-            ? -1
+          const savedOptionMatches = question.options.filter(
+            (option) => (option.value ?? option.label.trim()) === selectedOptionValue,
+          );
+          const previewOption = customAnswerActive
+            ? undefined
             : focusedOption?.requestId === props.pendingUserInput.requestId &&
                 focusedOption.questionId === question.id
-              ? focusedOption.optionIndex
-              : question.options.findIndex(
-                  (option) => (option.value ?? option.label.trim()) === selectedOptionValue,
-                );
-          const previewOption = question.options[previewOptionIndex];
+              ? question.options[focusedOption.optionIndex]
+              : savedOptionMatches.length === 1
+                ? savedOptionMatches[0]
+                : undefined;
           return (
             <View key={question.id} className="gap-2 pt-1">
               <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
@@ -326,9 +328,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   <Text className="font-t3-bold text-xs text-foreground-muted">
                     Preview · {previewOption.label}
                   </Text>
-                  <Text selectable className="font-sans text-sm leading-5 text-foreground">
-                    {previewOption.preview}
-                  </Text>
+                  <QuestionText markdown={previewOption.preview} />
                 </View>
               ) : null}
               {question.allowCustomAnswer !== false ? (

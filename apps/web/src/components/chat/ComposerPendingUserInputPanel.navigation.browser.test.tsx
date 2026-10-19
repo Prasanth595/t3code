@@ -48,7 +48,7 @@ const previewPrompt = {
     ...question,
     options: ["First", "Second"].map((label) => ({
       label,
-      value: "same-answer",
+      value: index === 1 ? label : "same-answer",
       description: "",
       preview: `Preview body: ${label}, question ${index + 1}`,
     })),
@@ -342,7 +342,7 @@ async function typeCustomAnswer(value: string) {
   });
 }
 
-it("previews duplicate-valued options by focus, click, and shortcut index", async () => {
+it("previews options by focus, click, and shortcut index but only restores unambiguous saved selections", async () => {
   await act(async () => root.render(<Questions pendingPrompt={previewPrompt} />));
   expectPreview("First, question 1");
 
@@ -372,6 +372,26 @@ it("previews duplicate-valued options by focus, click, and shortcut index", asyn
     ),
   );
   expectPreview("First, question 2");
+
+  await act(async () => buttonWithText("Second").click());
+  expectPreview("Second, question 2");
+  await navigate("Next");
+  expectPreview("First, question 3");
+  await navigate("Previous");
+  expectPreview("Second, question 2");
+
+  await navigate("Previous");
+  expectPreview(null);
+  await act(async () =>
+    root.render(
+      <Questions
+        pendingPrompt={{ ...previewPrompt, requestId: RuntimeRequestId.make("remounted") }}
+      />,
+    ),
+  );
+  expectPreview(null);
+  await act(async () => buttonWithText("Second").click());
+  expectPreview("Second, question 1");
 });
 
 it("hides and clears hovered or focused previews while a custom answer is active", async () => {

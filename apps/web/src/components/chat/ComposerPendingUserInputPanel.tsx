@@ -107,16 +107,18 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
   const selectedOptionValue = progress.selectedOptionValues.at(-1);
-  const previewOptionIndex = customAnswerActive
-    ? -1
+  const savedOptionMatches = activeQuestion?.options.filter(
+    (option) => (option.value ?? option.label) === selectedOptionValue,
+  );
+  const previewOption = customAnswerActive
+    ? undefined
     : focusedOption && focusedOption.questionId === activeQuestion?.id
-      ? focusedOption.optionIndex
+      ? activeQuestion?.options[focusedOption.optionIndex]
       : selectedOptionValue === undefined
-        ? 0
-        : (activeQuestion?.options.findIndex(
-            (option) => (option.value ?? option.label) === selectedOptionValue,
-          ) ?? -1);
-  const previewOption = activeQuestion?.options[previewOptionIndex];
+        ? activeQuestion?.options[0]
+        : savedOptionMatches?.length === 1
+          ? savedOptionMatches[0]
+          : undefined;
 
   if (focusedOption && (focusedOption.questionId !== activeQuestion?.id || customAnswerActive)) {
     setFocusedOption(null);
@@ -333,7 +335,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   Preview · {previewOption.label}
                 </p>
                 <ChatMarkdown
-                  key={`${activeQuestion.id}:${previewOptionIndex}`}
+                  key={`${activeQuestion.id}:${activeQuestion.options.indexOf(previewOption)}`}
                   text={previewOption.preview}
                   cwd={cwd}
                   threadRef={threadRef}
