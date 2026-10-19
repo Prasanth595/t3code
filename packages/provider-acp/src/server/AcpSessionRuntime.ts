@@ -31,6 +31,7 @@ import { AgentScope, AgentScopeThreadId, RAISE_OOM_SCORE_LINE } from "@t3tools/s
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { appendAcpStderrTail, sanitizeAcpStderrExcerpt } from "./stderr.ts";
 import {
   collectSessionConfigOptionValues,
@@ -1394,12 +1395,16 @@ export const make = (
         ),
       );
 
+    // Supplied provider environments are complete; re-inheriting restores scrubbed runtime keys.
+    const environment =
+      options.spawn.env === undefined || options.spawn.extendEnv === true
+        ? { ...(yield* mergeProviderInstanceEnvironment(undefined)), ...options.spawn.env }
+        : options.spawn.env;
     const spawnCommand =
       options.spawn.shell === false
         ? { command: options.spawn.command, args: options.spawn.args, shell: false }
         : yield* resolveSpawnCommand(options.spawn.command, options.spawn.args, {
-            ...(options.spawn.env ? { env: options.spawn.env } : {}),
-            extendEnv: options.spawn.extendEnv ?? true,
+            env: environment,
           });
     const linuxCgroupLease =
       options.ownDescendantProcessGroups === true && options.processGroupPlatform === "linux"
@@ -1429,7 +1434,7 @@ export const make = (
             const resolved = resolveLinuxCgroupTargetCommand(
               spawnCommand.command,
               options.spawn.cwd ?? options.cwd,
-              { ...process.env, ...options.spawn.env },
+              environment,
             );
             if (resolved !== undefined) return resolved;
             return yield* new EffectAcpErrors.AcpSpawnError({
@@ -1446,7 +1451,7 @@ export const make = (
               args: spawnCommand.args,
               name: "acp",
               threadId: yield* AgentScopeThreadId,
-              env: { ...process.env, ...options.spawn.env },
+              env: environment,
             })),
             shell: false,
           };
@@ -1463,9 +1468,9 @@ export const make = (
           };
     const spawnEnvironment =
       linuxCgroupLease === undefined
-        ? options.spawn.env
+        ? environment
         : {
-            ...options.spawn.env,
+            ...environment,
             ELECTRON_RUN_AS_NODE: "1",
             T3_ACP_CGROUP_WRAPPER: "1",
           };
@@ -1473,8 +1478,8 @@ export const make = (
       .spawn(
         ChildProcess.make(containedSpawnCommand.command, containedSpawnCommand.args, {
           ...(options.spawn.cwd ? { cwd: options.spawn.cwd } : {}),
-          ...(spawnEnvironment ? { env: spawnEnvironment } : {}),
-          extendEnv: options.spawn.extendEnv ?? true,
+          env: spawnEnvironment,
+          extendEnv: false,
           ...(options.ownDetachedProcessGroup === undefined
             ? {}
             : { detached: options.ownDetachedProcessGroup }),

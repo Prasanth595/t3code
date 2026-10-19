@@ -330,11 +330,10 @@ const runProbe = Effect.fn("runProbe")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const collect = Effect.gen(function* () {
     // Windows package managers are `.cmd` shims that need the shell.
-    const resolved = yield* resolveSpawnCommand(command, args, { env, extendEnv: true });
+    const resolved = yield* resolveSpawnCommand(command, args, { env });
     const child = yield* spawner.spawn(
       ChildProcess.make(resolved.command, resolved.args, {
         env,
-        extendEnv: true,
         shell: resolved.shell,
       }),
     );

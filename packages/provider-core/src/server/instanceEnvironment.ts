@@ -9,10 +9,7 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
-  // Agents and the shells they start get the user's environment, not the
-  // AppImage runtime's. The packaged server runs as Electron-as-Node; an agent
-  // that inherits that flag starts Node when it re-executes the app binary.
-  // Spawns that need it set it explicitly.
+  // The server uses Electron as Node; only T3-owned launchers should inherit that mode.
   const next: NodeJS.ProcessEnv = { ...stripAppImageRuntimeEnv(baseEnv) };
   delete next.ELECTRON_RUN_AS_NODE;
   if (!environment || environment.length === 0) return next;
