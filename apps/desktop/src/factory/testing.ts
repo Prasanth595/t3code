@@ -1,6 +1,7 @@
 // Test layers shared by the factory server tests.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Scope from "effect/Scope";
@@ -8,7 +9,11 @@ import * as Scope from "effect/Scope";
 import * as DesktopAppActivation from "../app/DesktopAppActivation.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopIpc from "../ipc/DesktopIpc.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const textDecoder = new TextDecoder();
@@ -103,3 +108,37 @@ export const layerAppActivation = (starts: { count: number }) =>
     setRendererReady: () => Effect.void,
     complete: () => Effect.void,
   } satisfies DesktopAppActivation.DesktopAppActivation["Service"]);
+
+/** An IPC registry that records the channel of every invoke and sync handler installed. */
+export const layerRecordingIpc = (channels: Array<string>) =>
+  Layer.succeed(DesktopIpc.DesktopIpc, {
+    handle: ({ channel }) =>
+      Effect.sync(() => {
+        channels.push(channel);
+      }),
+    handleSync: ({ channel }) =>
+      Effect.sync(() => {
+        channels.push(channel);
+      }),
+  } satisfies DesktopIpc.DesktopIpc["Service"]);
+
+/**
+ * What `installDesktopIpcHandlers` reads while it installs: the app, the platform, the window
+ * list and the preview manager's subscriptions. The window and preview services are stubs
+ * with only what install touches; their real shapes are too large to rebuild here. The test
+ * file must `vi.mock("electron")` so the real ElectronApp and the badge cleanup have an API.
+ */
+export const layerIpcInstallDependencies = Layer.mergeAll(
+  ElectronApp.layer,
+  Layer.succeed(HostProcess.Platform, "linux"),
+  Layer.succeed(ElectronWindow.ElectronWindow, {
+    sendAll: () => Effect.void,
+  } as unknown as ElectronWindow.ElectronWindow["Service"]),
+  Layer.succeed(PreviewManager.PreviewManager, {
+    subscribeStateChanges: () => Effect.void,
+    subscribeRecordingFrames: () => Effect.void,
+    subscribeRecordingInputs: () => Effect.void,
+    subscribePointerEvents: () => Effect.void,
+    subscribeOpenLinks: () => Effect.void,
+  } as unknown as PreviewManager.PreviewManager["Service"]),
+);
