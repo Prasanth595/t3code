@@ -341,9 +341,7 @@ export function DraftHeroHeadline({
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
-      {/* No aria-label on the h1: NVDA's browse mode renders a heading's
-          explicit label in place of its children, which would hide the inline
-          project picker. */}
+      {/* An explicit heading label hides the inline project picker in NVDA browse mode. */}
       <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
         {isScratchDraft ? (
           <>What should we work on?</>
