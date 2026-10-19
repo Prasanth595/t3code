@@ -284,7 +284,7 @@ vi.mock(import("~/state/environments"), async (original) => ({
 }));
 vi.mock(import("~/remoteOpen"), async (original) => ({
   ...(await original()),
-  useRemoteOpenState: () => ({ mode: "local-exec" as const }),
+  useRemoteOpenState: () => ({ mode: remoteMode }),
 }));
 vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   ...(await original()),
@@ -306,6 +306,7 @@ const readResult = Atom.make<AsyncResult.AsyncResult<ProjectReadFileResult, Proj
 );
 const serverConfig = Atom.make<ServerConfig | null>(null);
 const hostPermission = Atom.make(true);
+let remoteMode: "local-exec" | "remote-unavailable" = "local-exec";
 const openInEditor = vi.fn();
 const config = {
   availableEditors: ["file-manager"],
@@ -321,6 +322,7 @@ describe("file preview binary fallback", () => {
   const path = "/workspace/slides.PPTX";
 
   beforeEach(() => {
+    remoteMode = "local-exec";
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     registry = AtomRegistry.make();
     registry.mount(readResult);
@@ -500,6 +502,17 @@ describe("file preview binary fallback", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledExactlyOnceWith(path);
     expect(button("Open in default app")).toBeUndefined();
     expect(button("Reveal in Finder")).toBeUndefined();
+    expect(openInEditor).not.toHaveBeenCalled();
+  });
+
+  it("keeps copy available without host actions on a remote connection", async () => {
+    remoteMode = "remote-unavailable";
+    fail();
+    await render();
+    expect(button("Open in default app")).toBeUndefined();
+    expect(button("Reveal in Finder")).toBeUndefined();
+    await click("Copy path");
+    expect(navigator.clipboard.writeText).toHaveBeenCalledExactlyOnceWith(path);
     expect(openInEditor).not.toHaveBeenCalled();
   });
 });

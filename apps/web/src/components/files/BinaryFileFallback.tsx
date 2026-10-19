@@ -7,6 +7,7 @@ import { toastManager } from "~/components/ui/toast";
 import { useFileContextMenu } from "~/fileContextMenu";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
+import { useRemoteOpenState } from "~/remoteOpen";
 
 import { binaryFileInfo, fileMenuTarget } from "./binaryFileInfo";
 
@@ -14,6 +15,7 @@ export function BinaryFileFallback(props: { environmentId: EnvironmentId; path: 
   const info = binaryFileInfo(props.path);
   const { resolvedTheme } = useTheme();
   const menu = useFileContextMenu(props.environmentId);
+  const canOpenOnHost = useRemoteOpenState(props.environmentId).mode === "local-exec";
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: "file path",
     onError: (error) =>
@@ -39,13 +41,13 @@ export function BinaryFileFallback(props: { environmentId: EnvironmentId; path: 
           <dd className="break-all text-end">{info.kind}</dd>
         </dl>
         <div className="flex w-full flex-col gap-2">
-          {info.canOpenDefault && menu.capabilities.canOpenDefault ? (
+          {canOpenOnHost && info.canOpenDefault && menu.capabilities.canOpenDefault ? (
             <Button onClick={() => void menu.activate("open", target)}>
               <ExternalLink aria-hidden="true" />
               Open in default app
             </Button>
           ) : null}
-          {menu.capabilities.revealLabel ? (
+          {canOpenOnHost && menu.capabilities.revealLabel ? (
             <Button
               variant="outline"
               onClick={() => void menu.activate("reveal-in-folder", target)}
