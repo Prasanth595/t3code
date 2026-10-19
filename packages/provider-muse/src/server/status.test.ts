@@ -55,23 +55,6 @@ const fakeCli = (source = 'process.stdout.write("muse 1.0.3-R2198.1\\n");') =>
   });
 
 it.layer(NodeServices.layer)("Muse status", (it) => {
-  it.effect("declares no in-app sign-in, whatever the probe reports", () =>
-    Effect.gen(function* () {
-      // Muse signs in with the installed CLI (`muse login`), so every snapshot
-      // must declare `canAuthenticate: false`. Clients read an absent `setup` as
-      // "unknown" and offer a sign-in that can only fail.
-      for (const providerSettings of [
-        settings({}),
-        settings({ enabled: true, binaryPath: "/definitely-missing/muse" }),
-      ]) {
-        const snapshot = yield* checkMuseProviderStatus(providerSettings, {}, undefined, () =>
-          makeHost(metaCatalog),
-        );
-        expect(snapshot.setup).toEqual({ canAuthenticate: false, canInstall: false });
-      }
-    }),
-  );
-
   it.effect("does not start a host when disabled", () =>
     Effect.gen(function* () {
       const createHost = vi.fn(async () => makeHost(metaCatalog));

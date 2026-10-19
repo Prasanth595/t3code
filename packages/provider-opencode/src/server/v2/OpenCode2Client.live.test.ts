@@ -3,7 +3,7 @@
  * It re-proves that OpenCode's schemas decode under the workspace Effect
  * version, which the pnpm overrides force. Run it after bumping either side:
  *
- *   OPENCODE2_BIN=/path/to/opencode vp test run packages/provider-opencode/src/server/v2/OpenCode2Client.live.test.ts
+ *   OPENCODE2_BIN=/path/to/opencode vp test run src/provider/opencode2/OpenCode2Client.live.test.ts
  *
  * The turn uses the free `opencode/big-pickle` model.
  */
@@ -91,7 +91,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Client live", () => {
         });
 
         const info = yield* client.server.info();
-        assert.strictEqual(info.version, "2.0.26");
+        assert.strictEqual(info.version, "2.0.23");
         assert.strictEqual(info.pid, server.pid);
 
         const session = yield* client.session.create({

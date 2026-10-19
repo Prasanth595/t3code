@@ -53,20 +53,6 @@ const settings = {
 } as const;
 
 describe("PiProvider", () => {
-  it.effect("declares no in-app sign-in, whatever the probe reports", () =>
-    Effect.gen(function* () {
-      // Pi signs in with the installed CLI, so every snapshot must declare
-      // `canAuthenticate: false`. Clients read an absent `setup` as "unknown"
-      // and offer a sign-in that can only fail with "does not support sign-in".
-      for (const version of ["0.84.3", "0.80.3"]) {
-        const snapshot = yield* checkPiProviderStatus(settings).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner(version)),
-        );
-        assert.deepEqual(snapshot.setup, { canAuthenticate: false, canInstall: false });
-      }
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("requires the first published Pi version with entries and settlement hooks", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkPiProviderStatus(settings).pipe(

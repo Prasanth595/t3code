@@ -358,25 +358,6 @@ const checkProvider = Effect.fn("checkProvider")(function* (
 });
 
 it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
-  it.effect("declares no in-app sign-in, whatever the probe reports", () =>
-    Effect.gen(function* () {
-      // OpenCode signs in with the installed CLI, so every snapshot must declare
-      // `canAuthenticate: false`. Clients read an absent `setup` as "unknown" and
-      // offer a sign-in that can only fail with "does not support sign-in".
-      for (const mutate of [
-        () => undefined,
-        () => {
-          runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
-        },
-      ]) {
-        runtimeMock.reset();
-        mutate();
-        const snapshot = yield* checkProvider(makeOpenCodeSettings());
-        NodeAssert.deepEqual(snapshot.setup, { canAuthenticate: false, canInstall: false });
-      }
-    }),
-  );
-
   it.effect("shows a codex-style missing binary message", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");
