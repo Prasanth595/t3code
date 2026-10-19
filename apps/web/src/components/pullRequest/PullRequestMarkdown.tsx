@@ -47,7 +47,11 @@ function PullRequestAssetVideo({
       label="Pull request video"
       className="w-full"
       videoClassName="rounded-lg border border-border/60"
-      onRetry={refreshAssetUrl}
+      onRetry={
+        resource._tag === "bitbucket-media" && assetUrl._tag === "Failure"
+          ? undefined
+          : refreshAssetUrl
+      }
     />
   );
 }

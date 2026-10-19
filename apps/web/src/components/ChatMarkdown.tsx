@@ -1677,7 +1677,11 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
-        onRetry={refreshAssetUrl}
+        onRetry={
+          resource._tag === "bitbucket-media" && fallbackSrc !== undefined
+            ? undefined
+            : refreshAssetUrl
+        }
         actionsSource={actionsSource}
       />
     );
