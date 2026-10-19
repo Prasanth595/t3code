@@ -21,7 +21,8 @@ env_file="$HOME/.config/t3fac/env"
 logs="$HOME/Library/Logs/t3fac"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
-lock="$root/deploy.lock"
+tick_lock="$root/autodeploy.lock"
+deploy_lock="$root/deploy.lock"
 job=io.github.rawphp.t3fac.autodeploy
 # T3FAC_PORT exists only so tests can point at a stub API; the server listens on 3876.
 port=${T3FAC_PORT:-3876}
@@ -41,20 +42,37 @@ token=${T3FAC_AUTODEPLOY_TOKEN:-}
 [[ -n $clone ]] || exit 0
 
 mkdir -p "$root" "$logs"
-# The deploy lock install.sh and rollback.sh take too (lib/t3fac.sh's take_deploy_lock, copied
-# here because this copy runs without the lib): a symlink to the holder's pid, taken over when
-# that process has gone. Exported, so the install.sh this runs knows it already holds it.
-if ! ln -s "$$" "$lock" 2> /dev/null; then
-  holder=$(readlink "$lock" 2> /dev/null || true)
-  if [[ -n $holder ]] && kill -0 "$holder" 2> /dev/null; then
-    say "another deploy is running (pid $holder)"
-    exit 0
+# Takes lock $1, a symlink to this process's pid, taking over one whose holder has gone; prints
+# a line naming the holder and returns 1 when another live process has it. The same scheme as
+# lib/t3fac.sh's take_deploy_lock, copied because this copy runs without the lib.
+take_lock() {
+  local holder
+  if ! ln -s "$$" "$1" 2> /dev/null; then
+    holder=$(readlink "$1" 2> /dev/null || true)
+    if [[ -n $holder ]] && kill -0 "$holder" 2> /dev/null; then
+      say "another ${2} is running (pid $holder)"
+      return 1
+    fi
+    rm -f "$1"
+    if ! ln -s "$$" "$1" 2> /dev/null; then
+      say "another ${2} is running"
+      return 1
+    fi
   fi
-  rm -f "$lock"
-  ln -s "$$" "$lock" 2> /dev/null || exit 0
-fi
-export T3FAC_DEPLOY_LOCK=$$
-trap 'if [[ $(readlink "$lock" 2> /dev/null || true) == "$$" ]]; then rm -f "$lock"; fi' EXIT
+}
+
+release_locks() {
+  local lock
+  for lock in "$tick_lock" "$deploy_lock"; do
+    if [[ $(readlink "$lock" 2> /dev/null || true) == "$$" ]]; then rm -f "$lock"; fi
+  done
+}
+
+# autodeploy.lock covers the whole tick, the clone and the build. deploy.lock, which install.sh
+# and rollback.sh take too, is held only for the install, so a long build never locks a person
+# out of rolling back.
+take_lock "$tick_lock" autodeploy || exit 0
+trap release_locks EXIT
 
 # launchd starts no tick while this one runs, so a fetch that hangs would stop autodeploy for
 # good: give up on a connection that stalls, and never wait on a prompt.
@@ -115,8 +133,11 @@ export T3FAC_SKIP_RELOAD=$job
     (cd "$clone" && factory/scripts/deploy.sh --build-only)
 } >> "$build_log" 2>&1 || failed
 
-# A run may have started during the build.
+# A run may have started during the build, or a person may be deploying by hand.
 factory_idle || exit 0
+take_lock "$deploy_lock" deploy || exit 0
+# The install.sh this runs sees it already holds the lock.
+export T3FAC_DEPLOY_LOCK=$$
 
 (cd "$clone" && factory/scripts/deploy.sh) >> "$build_log" 2>&1 || failed
 say "deployed $short"
