@@ -9087,55 +9087,183 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }).pipe(Effect.scoped, provideServices),
       );
 
-      it.effect("does not claim a native turn when resume settings fail", () =>
+      it.effect("cleans up resume failures without success or orphaned native work", () =>
         Effect.gen(function* () {
-          const requests: Array<string> = [];
-          const resume = resumeRequests("paused", "active");
-          const harness = yield* makeCodexReplayHarness(
-            makeCodexReplayTranscript({
-              scenario: "goal-resume-settings-failed",
-              entries: [
-                ...sessionStart,
-                ...resume.slice(0, 3),
-                goalUpdated("active", "settings-turn"),
-                turnStarted("settings-turn"),
-                {
+          for (const { stage, ownership, cleanup } of [
+            { stage: "settings", ownership: "unclaimed", cleanup: "ok" },
+            { stage: "read", ownership: "unclaimed", cleanup: "pause-error" },
+            { stage: "prepare", ownership: "unclaimed", cleanup: "ok" },
+            { stage: "activation", ownership: "held", cleanup: "ok" },
+            { stage: "activation", ownership: "adopted", cleanup: "interrupt-error" },
+            { stage: "activation", ownership: "continued", cleanup: "completes-during-pause" },
+            { stage: "post-stop-pause", ownership: "held", cleanup: "ok" },
+            { stage: "stopped", ownership: "held", cleanup: "ok" },
+          ]) {
+            yield* Effect.gen(function* () {
+              const requests: Array<string> = [];
+              const activationPending = yield* Deferred.make<void>();
+              const stopping = stage === "post-stop-pause" || stage === "stopped";
+              const rejected = (id: number, message = "Resume rejected") =>
+                ({
                   type: "emit_inbound",
-                  label: "settings rejected",
-                  frame: { id: 4, error: { code: -32603, message: "Settings rejected" } },
-                },
-                ...request(
-                  5,
-                  "thread/goal/set",
-                  { threadId: nativeThreadId, status: "paused" },
-                  { goal: codexGoal("paused", 10) },
-                ),
-                ...request(
-                  6,
-                  "turn/interrupt",
-                  { threadId: nativeThreadId, turnId: "settings-turn" },
-                  {},
-                ),
-                turnCompleted("settings-turn"),
-              ],
-            }),
-            () => Effect.void,
-            (method) =>
-              Effect.sync(() => {
-                requests.push(method);
-              }),
-          );
-          const error = yield* Effect.flip(
-            harness.runtime.startTurn(yield* goalTurnInput(harness, "/goal resume")),
-          );
-          assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
-          assert.include(errorCauseChainText(error), "Settings rejected");
-          yield* TestClock.adjust("6 seconds");
-          assert.deepEqual(runningTurns(harness.events), []);
-          assert.deepEqual(harness.terminalEvents(), []);
-          assert.include(requests, "turn/interrupt");
-          assert.notInclude(requests, "turn/start");
-        }).pipe(Effect.scoped, provideServices),
+                  label: message,
+                  frame: { id, error: { code: -32603, message } },
+                }) satisfies CodexReplay.CodexAppServerReplayEntry;
+              const resume = resumeRequests("paused", "active");
+              const failureId = stage === "read" ? 3 : stage === "settings" ? 4 : 5;
+              const pauseId = stage === "prepare" ? 4 : failureId + 1;
+              const nativeId = "failed-resume-turn";
+              const nativeRunning = ownership !== "held";
+              const pause = request(
+                pauseId,
+                "thread/goal/set",
+                { threadId: nativeThreadId, status: "paused" },
+                { goal: codexGoal("paused", 10) },
+              );
+              const harness = yield* makeCodexReplayHarness(
+                makeCodexReplayTranscript({
+                  scenario: `goal-resume-failed-${stage}-${ownership}`,
+                  entries: [
+                    ...sessionStart,
+                    ...(ownership === "unclaimed" || ownership === "adopted"
+                      ? [goalUpdated("active", nativeId), turnStarted(nativeId)]
+                      : []),
+                    ...resume.slice(0, stage === "prepare" ? 2 : (failureId - 3) * 2 + 1),
+                    ...(ownership === "continued"
+                      ? [goalUpdated("active", nativeId), turnStarted(nativeId)]
+                      : []),
+                    ...(stopping
+                      ? [
+                          goalUpdated("active", null),
+                          ...pause,
+                          ...resume.slice(5),
+                          ...request(
+                            7,
+                            "thread/goal/set",
+                            { threadId: nativeThreadId, status: "paused" },
+                            {},
+                          ).slice(0, 1),
+                          ...(stage === "stopped"
+                            ? withReplayRequestId(pause.slice(1), 7)
+                            : [rejected(7)]),
+                        ]
+                      : stage === "prepare"
+                        ? []
+                        : [rejected(failureId)]),
+                    ...(stopping
+                      ? stage === "stopped"
+                        ? []
+                        : withReplayRequestId(pause, 8)
+                      : [
+                          ...pause.slice(0, 1),
+                          ...(cleanup === "completes-during-pause"
+                            ? [goalUpdated("paused", nativeId), turnCompleted(nativeId)]
+                            : []),
+                          ...(cleanup === "pause-error"
+                            ? [rejected(pauseId, "Pause rejected")]
+                            : pause.slice(1)),
+                        ]),
+                    ...(nativeRunning && cleanup !== "completes-during-pause"
+                      ? [
+                          ...request(
+                            pauseId + 1,
+                            "turn/interrupt",
+                            { threadId: nativeThreadId, turnId: nativeId },
+                            {},
+                          ).slice(0, 1),
+                          ...(cleanup === "interrupt-error"
+                            ? [rejected(pauseId + 1, "Interrupt rejected")]
+                            : [
+                                ...request(pauseId + 1, "turn/interrupt", {}, {}).slice(1),
+                                turnCompleted(nativeId),
+                              ]),
+                        ]
+                      : []),
+                  ],
+                }),
+                (event) =>
+                  stopping &&
+                  event.type === "provider_thread.updated" &&
+                  event.providerThread.goal?.status === "active"
+                    ? Deferred.succeed(activationPending, undefined)
+                    : Effect.void,
+                (method) =>
+                  Effect.sync(() => {
+                    requests.push(method);
+                  }),
+              );
+              const turnInput = yield* goalTurnInput(harness, "/goal resume");
+              const start = yield* harness.runtime
+                .startTurn({
+                  ...turnInput,
+                  ...(stage === "prepare"
+                    ? {
+                        modelSelection: {
+                          ...turnInput.modelSelection,
+                          options: [{ id: "reasoningEffort", value: "invalid-resume-effort" }],
+                        },
+                      }
+                    : {}),
+                })
+                .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+              if (stopping) {
+                yield* Deferred.await(activationPending);
+                yield* harness.runtime.interruptTurn({
+                  providerThread: harness.providerThread,
+                  providerTurnId:
+                    stage === "stopped"
+                      ? ProviderTurnId.make("earlier-goal-turn")
+                      : (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+                          driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                          nativeTurnId: `goal-command:${turnInput.attemptId}`,
+                        }),
+                  requestRuntimeRestart: true,
+                });
+              }
+              const result = yield* Fiber.join(start);
+              assert.equal(result._tag, stage === "stopped" ? "Success" : "Failure", stage);
+              if (result._tag === "Failure") {
+                const error = result.failure;
+                assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError, stage);
+                assert.include(
+                  errorCauseChainText(error),
+                  stage === "prepare" ? "invalid-resume-effort" : "Resume rejected",
+                  stage,
+                );
+              }
+              yield* TestClock.adjust("6 seconds");
+              assert.deepEqual(
+                harness.terminalEvents().map((event) => event.status),
+                ownership === "unclaimed" ? [] : ["interrupted"],
+                stage,
+              );
+              if (ownership === "unclaimed") {
+                assert.deepEqual(runningTurns(harness.events), [], stage);
+              } else {
+                for (const event of harness.events) {
+                  if (
+                    event.type !== "provider_turn.updated" ||
+                    event.providerTurn.status !== "running"
+                  )
+                    continue;
+                  assert.isTrue(
+                    harness.events.some(
+                      (candidate) =>
+                        candidate.type === "provider_turn.updated" &&
+                        candidate.providerTurn.id === event.providerTurn.id &&
+                        candidate.providerTurn.status !== "running",
+                    ),
+                    stage,
+                  );
+                }
+              }
+              if (nativeRunning && cleanup !== "completes-during-pause") {
+                assert.include(requests, "turn/interrupt", stage);
+              }
+              assert.notInclude(requests, "turn/start", stage);
+            }).pipe(Effect.scoped);
+          }
+        }).pipe(provideServices),
       );
 
       it.effect("settles the run when Codex leaves the goal inactive", () =>

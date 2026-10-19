@@ -1919,7 +1919,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // Stops in progress by native thread. Until a Stop resolves its target,
         // a held run must not settle as completed.
         const goalStops = new Map<string, number>();
-        const stopGoalTurnWithoutRun = (threadId: string, turnId: string) =>
+        const pauseGoal = (threadId: string) =>
           client.request("thread/goal/set", { threadId, status: "paused" }).pipe(
             Effect.tap(({ goal }) =>
               Effect.sync(() => goalsByNativeThread.set(threadId, providerGoalFromCodex(goal))),
@@ -1927,6 +1927,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.catch((cause) =>
               Effect.logWarning("orchestration-v2.codex-goal-pause-failed", { cause }),
             ),
+          );
+        const stopGoalTurnWithoutRun = (threadId: string, turnId: string) =>
+          pauseGoal(threadId).pipe(
             Effect.andThen(client.request("turn/interrupt", { threadId, turnId })),
             Effect.catch((cause) =>
               Effect.logWarning("orchestration-v2.codex-goal-turn-stop-failed", { cause }),
@@ -5823,12 +5826,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const nativeThreadId = input.context.providerThread.nativeThreadRef?.nativeId;
               const activation =
                 nativeThreadId == null ? undefined : goalActivations.get(nativeThreadId);
+              // A pause can arrive before Stop selects the completed turn.
               const holdsForGoal =
                 input.context.subagent === null &&
                 input.status === "completed" &&
                 nativeThreadId != null &&
                 (goalsByNativeThread.get(nativeThreadId)?.status === "active" ||
-                  (activation !== undefined && !activation.stopped));
+                  activation !== undefined ||
+                  goalStops.has(nativeThreadId));
               const completedTurn: OrchestrationV2ProviderTurn = {
                 id: input.context.providerTurnId,
                 providerThreadId: input.context.providerThread.id,
@@ -6193,21 +6198,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(heldBefore?.providerTurnId === requestedTurnId ? [heldBefore] : []),
             ];
             if (
-              pendingResume !== undefined ||
+              activation !== undefined ||
               goalsByNativeThread.get(goalThreadId)?.status === "active"
             ) {
-              yield* client
-                .request("thread/goal/set", { threadId: goalThreadId, status: "paused" })
-                .pipe(
-                  Effect.tap(({ goal }) =>
-                    Effect.sync(() =>
-                      goalsByNativeThread.set(goalThreadId, providerGoalFromCodex(goal)),
-                    ),
-                  ),
-                  Effect.catch((cause) =>
-                    Effect.logWarning("orchestration-v2.codex-goal-pause-failed", { cause }),
-                  ),
-                );
+              yield* pauseGoal(goalThreadId);
             }
             return yield* turnTerminalizationPermit.withPermits(1)(
               Effect.gen(function* () {
@@ -6316,8 +6310,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (started === undefined) {
                 return yield* completeGoalCommandTurn(turnInput, "Resuming goal.", true);
               }
+              const context = yield* registerRootTurn({ turnInput, ...started });
               unownedRootTurns.delete(threadId);
-              return (yield* registerRootTurn({ turnInput, ...started })).providerTurnId;
+              return context.providerTurnId;
             }),
           );
 
@@ -6424,14 +6419,37 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }).pipe(
               Effect.onError(() =>
                 Effect.gen(function* () {
-                  if (activation.pendingResume === undefined) return;
+                  if (command.type !== "resume") return;
                   activation.stopped = true;
+                  activation.pendingResume = undefined;
                   const started = unownedRootTurns.get(threadId);
                   unownedRootTurns.delete(threadId);
-                  if (started !== undefined) {
+                  const context = yield* turnTerminalizationPermit.withPermits(1)(
+                    Effect.gen(function* () {
+                      const owned = [
+                        goalHolds.get(threadId)?.context,
+                        ...(yield* Ref.get(activeTurns)).values(),
+                      ];
+                      return owned.find((turn) => turn?.input.runId === turnInput.runId);
+                    }),
+                  );
+                  if (context !== undefined) {
+                    yield* runtime.interruptTurn({
+                      providerThread: turnInput.providerThread,
+                      providerTurnId: context.providerTurnId,
+                    });
+                  } else if (started !== undefined) {
                     yield* stopGoalTurnWithoutRun(threadId, started.nativeTurnId);
+                  } else {
+                    yield* pauseGoal(threadId);
                   }
-                }),
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.codex-goal-resume-cleanup-failed", {
+                      cause,
+                    }),
+                  ),
+                ),
               ),
               Effect.ensuring(
                 turnTerminalizationPermit.withPermits(1)(
@@ -6439,7 +6457,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     if (goalActivations.get(threadId) === activation) {
                       goalActivations.delete(threadId);
                     }
-                    if (activation.stopped) return;
+                    if (activation.stopped) {
+                      const hold = goalHolds.get(threadId);
+                      if (command.type === "resume" && hold?.context.input === turnInput) {
+                        goalHolds.delete(threadId);
+                        yield* settleGoalHold(hold, "interrupted");
+                      }
+                      return;
+                    }
                     if (goalsByNativeThread.get(threadId)?.status !== "active") {
                       yield* releaseGoalHold(threadId);
                     } else if (!goalActivations.has(threadId)) {
