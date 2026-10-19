@@ -737,6 +737,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
     const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
       Queue.offer(events, event).pipe(Effect.asVoid);
+    const ownerOf = (sessionId: string) => childOwners.get(sessionId) ?? threads.get(sessionId);
     const markUnsettled = (state: ThreadState) => {
       state.unsettled = true;
       state.unsettledStarted = busy.has(state.sessionId);
@@ -775,12 +776,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       let current = state;
       while (current.subagent !== undefined) current = current.subagent.call.state;
       return current;
-    };
-
-    const ownerOf = (sessionId: string) => {
-      // A surviving child's descendants follow its root when the parent unloads.
-      const state = childOwners.get(sessionId) ?? threads.get(sessionId);
-      return state === undefined ? undefined : rootOf(state);
     };
 
     const sessionsOf = (thread: ThreadState): ReadonlyArray<ThreadState> => [
@@ -1312,7 +1307,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       child.agent = info?.agent ?? call.agent ?? child.agent;
       child.rules = info?.permissions ?? child.rules;
       threads.set(childId, child);
-      childOwners.set(childId, child);
+      childOwners.set(childId, rootOf(call.state));
       call.child = child;
       yield* emit({ type: "app_thread.created", driver, appThread });
       yield* emit({
@@ -2237,7 +2232,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           strays.set(event.data.sessionID, strayCaller);
           return;
         }
-        const owner = threads.get(event.data.parentID) ?? childOwners.get(event.data.parentID);
+        const owner = ownerOf(event.data.parentID);
         if (owner !== undefined) {
           childOwners.set(event.data.sessionID, owner);
           announced.set(event.data.sessionID, event.data);
@@ -3693,15 +3688,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return;
           }
           threads.delete(nativeId);
-          childOwners.delete(nativeId);
-          // The manager unloads unattached mirrors separately. Surviving children
-          // become roots, including for requests from their native descendants.
-          for (const child of threads.values()) {
-            if (child.subagent?.call.state === state) child.subagent = undefined;
-          }
           for (const [child, owner] of childOwners) {
             if (owner !== state) continue;
             childOwners.delete(child);
+            threads.delete(child);
           }
           if (state.mcp !== undefined) yield* removeMcp(state.mcp);
         }),
