@@ -3388,7 +3388,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  const createWatchedThread = Effect.fnUntraced(function* (name: string) {
+  const createWatchedThread = Effect.fnUntraced(function* (name: string, reopened = false) {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const threadId = ThreadId.make(`pr-wake-${name}`);
     yield* orchestrator.dispatch({
@@ -3414,9 +3414,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       watching: true,
       link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
     });
-    const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+    let watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
     assert.isDefined(watch);
-    return { threadId, key, watch };
+    const snapshotSyncedAt = reopened
+      ? DateTime.formatIso(yield* DateTime.now)
+      : "2026-10-02T12:00:00.000Z";
+    if (reopened) {
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make(`${threadId}-end-watch`),
+        threadId,
+        ...key,
+        startedAt: watch.startedAt,
+        watch: null,
+      });
+      yield* TestClock.adjust("1 millis");
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make(`${threadId}-rewatch`),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(watch);
+    }
+    return { threadId, key, watch, snapshotSyncedAt };
   });
 
   it.effect.each([
@@ -3428,12 +3451,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     "newer head",
     "still watching",
     "closed notice",
+    "closed notice unlinked and relinked",
+    "reopened",
   ] as const)("revalidates a queued pull-request wake before promotion: %s", (mode) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
-      const { threadId, key, watch } = yield* createWatchedThread(`queued-${mode}`);
-      const deliverable = mode === "still watching" || mode === "closed notice";
+      const { threadId, key, watch, snapshotSyncedAt } = yield* createWatchedThread(
+        `queued-${mode}`,
+        mode === "reopened",
+      );
+      const finalNotice =
+        mode === "closed notice" || mode === "closed notice unlinked and relinked";
+      const deliverable =
+        mode === "still watching" || mode === "closed notice" || mode === "reopened";
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         createdBy: "user",
@@ -3454,15 +3485,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         threadId,
         ...key,
         startedAt: watch.startedAt,
-        watch: mode === "closed notice" ? null : recordedWatch,
+        watch: finalNotice ? null : recordedWatch,
         wake: {
           messageId: wakeMessageId,
-          text: mode === "closed notice" ? "Closed, stopped watching" : "Checks failed",
+          text: finalNotice ? "Closed, stopped watching" : "Checks failed",
           notification: {
             source: { kind: "monitor" },
             outcome: "updated",
-            summary:
-              mode === "closed notice" ? "#7: closed, stopped watching" : "#7: checks failed",
+            summary: finalNotice ? "#7: closed, stopped watching" : "#7: checks failed",
           },
         },
       });
@@ -3519,14 +3549,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             watch: { ...restarted, headSha: recordedWatch.headSha },
           });
         }
-      } else if (mode === "unlink") {
+      } else if (mode === "unlink" || mode === "closed notice unlinked and relinked") {
         yield* orchestrator.dispatch({
           type: "thread.pull-request.unlink",
           commandId: CommandId.make(`${threadId}-unlink`),
           threadId,
           ...key,
         });
-      } else if (mode === "merged" || mode === "closed" || mode === "closed notice") {
+        if (mode === "closed notice unlinked and relinked") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`${threadId}-relink`),
+            threadId,
+            ...key,
+            url: "https://github.com/pingdotgg/t3code/pull/7",
+            source: "manual",
+          });
+        }
+      } else if (
+        mode === "merged" ||
+        mode === "closed" ||
+        mode === "closed notice" ||
+        mode === "reopened"
+      ) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`${threadId}-snapshot`),
@@ -3539,7 +3584,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             baseBranch: "main",
             isDraft: false,
             updatedAt: null,
-            syncedAt: "2026-10-02T12:00:00.000Z",
+            // A delayed sync can still report the closure from before this watch restarted.
+            syncedAt: snapshotSyncedAt,
           },
           stack: null,
         });
@@ -3602,30 +3648,33 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         after.messages
           .filter((message) => message.id === wakeMessageId)
           .map((message) => message.notification?.summary),
-        [mode === "closed notice" ? "#7: closed, stopped watching" : "#7: checks failed"],
+        [finalNotice ? "#7: closed, stopped watching" : "#7: checks failed"],
       );
     }),
   );
 
-  it.effect.each(["open", "merged", "closed", "closed notice"] as const)(
+  it.effect.each(["open", "merged", "closed", "closed notice", "reopened"] as const)(
     "revalidates a pull-request wake before idle dispatch: %s",
     (mode) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const { threadId, key, watch } = yield* createWatchedThread(`idle-${mode}`);
+        const { threadId, key, watch, snapshotSyncedAt } = yield* createWatchedThread(
+          `idle-${mode}`,
+          mode === "reopened",
+        );
         yield* orchestrator.dispatch({
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`${threadId}-snapshot`),
           threadId,
           ...key,
           snapshot: {
-            state: mode === "closed notice" ? "closed" : mode,
+            state: mode === "closed notice" || mode === "reopened" ? "closed" : mode,
             title: "Watched pull request",
             headBranch: "feature",
             baseBranch: "main",
             isDraft: false,
             updatedAt: null,
-            syncedAt: "2026-10-02T12:00:00.000Z",
+            syncedAt: snapshotSyncedAt,
           },
           stack: null,
         });
@@ -3649,7 +3698,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           },
         });
         const after = yield* orchestrator.getThreadProjection(threadId);
-        const deliverable = mode === "open" || mode === "closed notice";
+        const deliverable = mode === "open" || mode === "closed notice" || mode === "reopened";
         assert.deepEqual(
           after.runs.map((run) => [run.userMessageId, run.status]),
           deliverable ? [[wakeMessageId, "starting"]] : [],
