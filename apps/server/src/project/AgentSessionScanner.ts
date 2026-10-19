@@ -1,4 +1,6 @@
+import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as NodeOS from "node:os";
+import * as NodeZlib from "node:zlib";
 
 import {
   AgentSessionScanError,
@@ -13,6 +15,7 @@ import {
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -20,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Pull from "effect/Pull";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -117,6 +121,9 @@ const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
 const decodeCodexTurnMetadata = Schema.decodeUnknownOption(CodexTurnMetadata);
 
 type DecodedTranscriptRecord = typeof TranscriptRecord.Type;
+
+const TRANSCRIPT_EXTENSION = /\.jsonl(?:\.zst)?$/;
+const isZstdTranscript = (filePath: string) => filePath.endsWith(".jsonl.zst");
 
 interface AgentSessionTranscriptMetadata {
   readonly source: AgentSessionSource;
@@ -731,6 +738,50 @@ export const make = Effect.gen(function* () {
     } as const;
   });
 
+  /**
+   * Codex can store rollouts as `.jsonl.zst`. A compressed file is decompressed from the same
+   * descriptor that the identity checks stat, so a replaced file is still detected, and
+   * `readAlloc` keeps its plain-file contract over the decompressed bytes.
+   */
+  const openTranscript = Effect.fn("AgentSessionScanner.openTranscript")(function* (
+    filePath: string,
+  ) {
+    const file = yield* fileSystem.open(filePath, { flag: "r" });
+    if (!isZstdTranscript(filePath)) return file;
+
+    const compressed = Stream.fromPull(
+      Effect.succeed(
+        file.readAlloc(TRANSCRIPT_PREFIX_BYTES).pipe(
+          Effect.flatMap(
+            Option.match({
+              onNone: () => Cause.done(),
+              onSome: (chunk) => Effect.succeed([chunk] as const),
+            }),
+          ),
+        ),
+      ),
+    );
+    const pull = yield* Stream.toPull(
+      NodeStream.pipeThroughSimple(compressed, () => NodeZlib.createZstdDecompress()),
+    );
+    const queued: Array<Uint8Array> = [];
+    return {
+      stat: file.stat,
+      readAlloc: (size: number) =>
+        Effect.gen(function* () {
+          let head = queued.shift();
+          while (head === undefined) {
+            const chunks = yield* pull.pipe(Pull.catchDone(() => Effect.succeed(null)));
+            if (chunks === null) return Option.none<Uint8Array>();
+            queued.push(...chunks);
+            head = queued.shift();
+          }
+          if (head.byteLength > size) queued.unshift(head.subarray(size));
+          return Option.some(head.subarray(0, size));
+        }),
+    };
+  });
+
   const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
     source: AgentSessionSource,
     transcript: TranscriptCandidate,
@@ -746,15 +797,19 @@ export const make = Effect.gen(function* () {
       return null;
     }
     budget.operationsRemaining -= 1;
+    // The size on disk of a compressed file says nothing about its decompressed length.
+    const transcriptSize = isZstdTranscript(transcript.filePath)
+      ? Number.POSITIVE_INFINITY
+      : transcript.size;
     return yield* Effect.scoped(
-      fileSystem.open(transcript.filePath, { flag: "r" }).pipe(
+      openTranscript(transcript.filePath).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
             const decoder = new TextDecoder();
             let remaining = "";
             let bytesRead = 0;
             let recordsRead = 0;
-            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, transcript.size);
+            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, transcriptSize);
             const reserveRecord = () => {
               if (
                 recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT ||
@@ -803,7 +858,7 @@ export const make = Effect.gen(function* () {
               }
             }
 
-            if (bytesRead < transcript.size) {
+            if (bytesRead < transcriptSize) {
               budget.truncated = true;
               return null;
             }
@@ -822,8 +877,12 @@ export const make = Effect.gen(function* () {
   ) {
     if (expected.size > MAX_IMPORTED_TRANSCRIPT_BYTES) return null;
 
+    const compressed = isZstdTranscript(filePath);
+    // A compressed file is read to its end under the same ceiling as a plain one.
+    const readLimit = compressed ? MAX_IMPORTED_TRANSCRIPT_BYTES : expected.size;
+
     return yield* Effect.scoped(
-      fileSystem.open(filePath, { flag: "r" }).pipe(
+      openTranscript(filePath).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
             if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
@@ -870,12 +929,15 @@ export const make = Effect.gen(function* () {
               return true;
             };
 
-            while (bytesRead < expected.size) {
+            let reachedEnd = false;
+            while (bytesRead < readLimit) {
               const next = yield* file.readAlloc(
-                Math.min(TRANSCRIPT_PREFIX_BYTES, expected.size - bytesRead),
+                Math.min(TRANSCRIPT_PREFIX_BYTES, readLimit - bytesRead),
               );
               if (Option.isNone(next)) {
-                return null;
+                if (!compressed) return null;
+                reachedEnd = true;
+                break;
               }
 
               bytesRead += next.value.byteLength;
@@ -895,6 +957,7 @@ export const make = Effect.gen(function* () {
               if (!withinBudget) return null;
             }
 
+            if (compressed && !reachedEnd) return null;
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
             return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
               ? { records, recordCount, cwd, claudeFields }
@@ -1011,7 +1074,7 @@ export const make = Effect.gen(function* () {
             }
             const directory = path.join(sessionsDir, year, month, day);
             for (const entry of (yield* readDirectory(directory)).toSorted().toReversed()) {
-              if (!entry.startsWith("rollout-") || !entry.endsWith(".jsonl")) continue;
+              if (!entry.startsWith("rollout-") || !TRANSCRIPT_EXTENSION.test(entry)) continue;
               if (operationsRemaining <= 0) {
                 truncated = true;
                 break;
@@ -1433,7 +1496,9 @@ export const make = Effect.gen(function* () {
             {
               source: candidate.source,
               providerInstanceId: candidate.providerInstanceId,
-              fallbackSessionId: path.basename(transcript.filePath, ".jsonl"),
+              fallbackSessionId: path
+                .basename(transcript.filePath)
+                .replace(TRANSCRIPT_EXTENSION, ""),
               lastActiveAtMs: transcript.mtimeMs,
             },
             snapshot.records,

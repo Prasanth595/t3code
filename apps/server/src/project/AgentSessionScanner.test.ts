@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import * as NodeZlib from "node:zlib";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AgentSessionImportSource,
@@ -106,13 +107,15 @@ const makeTempDir = Effect.fn("AgentSessionScanner.test.makeTempDir")(function* 
 
 const writeTranscript = Effect.fn("AgentSessionScanner.test.writeTranscript")(function* (input: {
   readonly filePath: string;
-  readonly contents: string;
+  readonly contents: string | Uint8Array;
   readonly mtimeMs: number;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fileSystem.makeDirectory(path.dirname(input.filePath), { recursive: true });
-  yield* fileSystem.writeFileString(input.filePath, input.contents);
+  yield* typeof input.contents === "string"
+    ? fileSystem.writeFileString(input.filePath, input.contents)
+    : fileSystem.writeFile(input.filePath, input.contents);
   const seconds = input.mtimeMs / 1000;
   yield* fileSystem.utimes(input.filePath, seconds, seconds);
 });
@@ -277,6 +280,64 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
             sources: ["claudeAgent"],
             threadCount: 2,
             lastActiveAt: "2026-01-02T00:00:00.000Z",
+            alreadyImported: false,
+            git: null,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("finds the cwd of zstd-compressed Codex rollouts beside plain ones", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const otherWorkspace = yield* makeTempDir("t3code-workspace-other-");
+
+        const rollout = (name: string) =>
+          path.join(codexHomePath, "sessions", "2026", "02", "09", name);
+
+        // The leading record is larger than one metadata read, so the cwd only
+        // appears after several decompressed chunks.
+        yield* writeTranscript({
+          filePath: rollout("rollout-2026-02-09T10-00-00-aaa.jsonl.zst"),
+          contents: NodeZlib.zstdCompressSync(
+            encodeTranscriptRecord({ type: "turn_context", payload: { pad: "x".repeat(40_000) } }) +
+              "\n" +
+              codexRolloutLine(workspace),
+          ),
+          mtimeMs: Date.parse("2026-02-09T10:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: rollout("rollout-2026-02-09T11-00-00-bbb.jsonl"),
+          contents: codexRolloutLine(otherWorkspace),
+          mtimeMs: Date.parse("2026-02-09T11:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: rollout("rollout-2026-02-09T12-00-00-corrupt.jsonl.zst"),
+          contents: new TextEncoder().encode("not a zstd frame"),
+          mtimeMs: Date.parse("2026-02-09T12:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(result.candidates).toEqual([
+          {
+            path: otherWorkspace,
+            title: path.basename(otherWorkspace),
+            sources: ["codex"],
+            threadCount: 1,
+            lastActiveAt: "2026-02-09T11:00:00.000Z",
+            alreadyImported: false,
+            git: null,
+          },
+          {
+            path: workspace,
+            title: path.basename(workspace),
+            sources: ["codex"],
+            threadCount: 1,
+            lastActiveAt: "2026-02-09T10:00:00.000Z",
             alreadyImported: false,
             git: null,
           },
@@ -1064,6 +1125,68 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
           ["Review this code", "Looks good"],
           ["Fix the project", "Done"],
+        ]);
+      }),
+    );
+
+    it.effect("imports zstd-compressed and plain Codex rollouts together", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+
+        const rollout = (sessionId: string, prompt: string) =>
+          [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspace },
+            }),
+            // Compresses to a few bytes but decompresses past several read chunks.
+            encodeTranscriptRecord({ type: "turn_context", payload: { pad: "x".repeat(100_000) } }),
+            encodeTranscriptRecord({
+              type: "event_msg",
+              timestamp: "2026-08-24T10:00:00.000Z",
+              payload: { type: "user_message", message: prompt },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              timestamp: "2026-08-24T10:01:00.000Z",
+              payload: {
+                type: "message",
+                role: "assistant",
+                content: [{ type: "output_text", text: `Answer to ${prompt}` }],
+              },
+            }),
+          ].join("\n");
+        const sessionsDir = path.join(codexHomePath, "sessions", "2026", "08", "24");
+
+        yield* writeTranscript({
+          filePath: path.join(sessionsDir, "rollout-compressed.jsonl.zst"),
+          contents: NodeZlib.zstdCompressSync(rollout("codex-compressed", "Compressed prompt")),
+          mtimeMs: nowMs - 60 * 60 * 1000,
+        });
+        yield* writeTranscript({
+          filePath: path.join(sessionsDir, "rollout-plain.jsonl"),
+          contents: rollout("codex-plain", "Plain prompt"),
+          mtimeMs: nowMs - 2 * 60 * 60 * 1000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        expect(threads.map((thread) => thread.providerSessionId)).toEqual([
+          "codex-compressed",
+          "codex-plain",
+        ]);
+        expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
+          ["Compressed prompt", "Answer to Compressed prompt"],
+          ["Plain prompt", "Answer to Plain prompt"],
         ]);
       }),
     );
