@@ -12,6 +12,7 @@ describe("pickWorkspaceBasenameMatch", () => {
     expect(
       pickWorkspaceBasenameMatch("ChatView.tsx", [
         ...entries,
+        { path: "ChatView.tsx", kind: "file" },
         { path: "apps/desktop/src/ChatView.tsx", kind: "file" },
       ]),
     ).toBe("apps/web/src/components/ChatView.tsx");

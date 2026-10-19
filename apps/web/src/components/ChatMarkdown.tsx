@@ -2,6 +2,7 @@ import { MarkdownFindContext, findRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
   fileLinkLabel,
+  formatFilePathPosition,
   resolvePathLinkTarget,
 } from "@t3tools/shared/fileLinks";
 import {
@@ -13,11 +14,7 @@ import {
 } from "@t3tools/shared/markdownLinks";
 import { isAbsolutePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import {
-  AuthFilesystemReadScope,
-  AuthOrchestrationOperateScope,
-  ProjectReadFileError,
-} from "@t3tools/contracts";
+import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -82,7 +79,6 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   Children,
@@ -200,9 +196,9 @@ import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
+import { filesystemMetadata } from "../state/filesystem";
 import {
-  claimWorkspaceBasenameLookup,
-  needsLiteralWorkspaceFileCheck,
+  runWorkspaceFileAction,
   normalizeWorkspaceLookupPath,
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
@@ -294,7 +290,6 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
-const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -2355,7 +2350,7 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
-  const readWorkspaceFile = useAtomQueryRunner(projectEnvironment.readFile, {
+  const getFilesystemMetadata = useAtomQueryRunner(filesystemMetadata, {
     reportFailure: false,
     refresh: true,
   });
@@ -2560,9 +2555,13 @@ function useChatMarkdownState({
       return result;
     });
   };
-  const openMarkdownFileInPreview = (path: string) => {
+  const openMarkdownFileInPreview = (path: string, isCurrent: () => boolean) => {
     const preparedConnection = threadRef ? readPreparedConnection(threadRef.environmentId) : null;
-    if (!threadRef || !canOperatePreview || preparedConnection === null) {
+    if (
+      !threadRef ||
+      !readEnvironmentScope(threadRef.environmentId, AuthPreviewOperateScope) ||
+      preparedConnection === null
+    ) {
       return Promise.resolve(
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
@@ -2579,26 +2578,12 @@ function useChatMarkdownState({
       workspaceRoot: cwd,
       httpBaseUrl: preparedConnection.httpBaseUrl,
       createAssetUrl,
-      openPreview,
+      openPreview: async (input) => {
+        if (!isCurrent()) return AsyncResult.failure(Cause.interrupt());
+        const result = await openPreview(input);
+        return isCurrent() ? result : AsyncResult.failure(Cause.interrupt());
+      },
     });
-  };
-  const literalWorkspaceFileExists = async (workspaceRelativePath: string) => {
-    if (!cwd || environmentId === null) {
-      return false;
-    }
-    const result = await readWorkspaceFile({
-      environmentId,
-      input: { cwd, relativePath: workspaceRelativePath },
-    });
-    if (result._tag === "Success") return true;
-    const cause = squashAtomCommandFailure(result);
-    return (
-      isProjectReadFileError(cause) &&
-      (cause.failure === "binary_file" ||
-        // The server only reads or closes after confirming a regular file.
-        (cause.failure === "operation_failed" &&
-          (cause.operation === "read" || cause.operation === "close")))
-    );
   };
   const findWorkspaceBasenameMatch = async (workspaceRelativePath: string) => {
     const lookupPath = normalizeWorkspaceLookupPath(workspaceRelativePath);
@@ -2621,70 +2606,63 @@ function useChatMarkdownState({
     });
     if (result._tag !== "Success") return null;
     const match = pickWorkspaceBasenameMatch(lookupPath, result.value.entries);
-    if (
-      needsLiteralWorkspaceFileCheck(lookupPath, match) &&
-      (await literalWorkspaceFileExists(lookupPath))
-    ) {
-      // Keep an existing literal path ahead of a different indexed hit.
-      return null;
+    if (lookupPath.includes("/") && result.value.truncated && match !== lookupPath) return null;
+    if (match && match.replaceAll("\\", "/") !== lookupPath && lookupPath.includes("/")) {
+      if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return null;
+      // Gitignored literal files need a metadata check before an indexed hit can replace them.
+      const literal = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolvePathLinkTarget(lookupPath, cwd)] },
+      });
+      if (literal._tag !== "Success" || literal.value.entries[0]?.kind === "file") return null;
     }
     return match;
   };
-  // Chip paths are relative to the agent's cwd, so workspace opens use the index.
+  const fileActionScope = threadRef ? scopedThreadKey(threadRef) : undefined;
   const openFileInPanel = (panelPath: string, line: number | undefined) => {
     if (!threadRef) return;
-    // Claimed on every open so a synchronous one supersedes a lookup already
-    // in flight.
-    const isLatestLookup = claimWorkspaceBasenameLookup(scopedThreadKey(threadRef));
-    const openAt = (path: string) => useRightPanelStore.getState().openFile(threadRef, path, line);
-    if (!cwd || environmentId === null || isAbsolutePath(panelPath)) {
-      openAt(panelPath);
-      return;
-    }
-    void (async () => {
+    void runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
       const match = await findWorkspaceBasenameMatch(panelPath);
-      if (!isLatestLookup()) return;
-      openAt(match ?? panelPath);
-    })();
+      if (isCurrent()) useRightPanelStore.getState().openFile(threadRef, match ?? panelPath, line);
+    });
   };
-  const revealMarkdownFileInFileManager = async (fileLinkMeta: MarkdownFileLinkMeta) => {
-    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-    const match = workspaceRelativePath
-      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-      : null;
-    const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
-    return revealFileInFileManager(filePath);
-  };
-  const openMarkdownFileInEditor = async (fileLinkMeta: MarkdownFileLinkMeta) => {
-    const isLatestLookup = threadRef
-      ? claimWorkspaceBasenameLookup(scopedThreadKey(threadRef))
-      : () => true;
-    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-    const match = workspaceRelativePath
-      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-      : null;
-    if (!isLatestLookup()) return AsyncResult.success(undefined);
-    if (!match || !cwd) {
-      return openInPreferredEditor(fileLinkMeta.targetPath);
-    }
-    const withPosition = fileLinkMeta.line
-      ? `${match}:${fileLinkMeta.line}${fileLinkMeta.column ? `:${fileLinkMeta.column}` : ""}`
-      : match;
-    return openInPreferredEditor(resolvePathLinkTarget(withPosition, cwd));
-  };
-  const openMarkdownFileInBrowser = async (fileLinkMeta: MarkdownFileLinkMeta) => {
-    const isLatestLookup = threadRef
-      ? claimWorkspaceBasenameLookup(scopedThreadKey(threadRef))
-      : () => true;
-    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
-    const match = workspaceRelativePath
-      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
-      : null;
-    if (!isLatestLookup()) return AsyncResult.success(undefined);
-    return openMarkdownFileInPreview(
-      match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
-    );
-  };
+  const revealMarkdownFileInFileManager = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
+      const match = fileLinkMeta.workspaceRelativePath
+        ? await findWorkspaceBasenameMatch(fileLinkMeta.workspaceRelativePath)
+        : null;
+      if (!isCurrent()) return AsyncResult.success(undefined);
+      return revealFileInFileManager(
+        match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
+      );
+    });
+  const openMarkdownFileInEditor = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
+      const relativePath = fileLinkMeta.workspaceRelativePath;
+      const match =
+        relativePath && normalizeWorkspaceLookupPath(relativePath).includes("/")
+          ? await findWorkspaceBasenameMatch(relativePath)
+          : null;
+      if (!isCurrent()) return AsyncResult.success(undefined);
+      return openInPreferredEditor(
+        match && cwd
+          ? formatFilePathPosition({ ...fileLinkMeta, path: resolvePathLinkTarget(match, cwd) })
+          : fileLinkMeta.targetPath,
+      );
+    });
+  const openMarkdownFileInBrowser = (fileLinkMeta: MarkdownFileLinkMeta) =>
+    runWorkspaceFileAction(fileActionScope, async (isCurrent) => {
+      const relativePath = fileLinkMeta.workspaceRelativePath;
+      const match =
+        relativePath && normalizeWorkspaceLookupPath(relativePath).includes("/")
+          ? await findWorkspaceBasenameMatch(relativePath)
+          : null;
+      if (!isCurrent()) return AsyncResult.success(undefined);
+      return openMarkdownFileInPreview(
+        match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
+        isCurrent,
+      );
+    });
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
     copyMarkdown: string,

@@ -1,12 +1,23 @@
+import { isAbsolutePath } from "@t3tools/shared/path";
+
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
 
-// Newest click wins within a thread. Other threads keep their own lookups.
-const latestLookupSequenceByScope = new Map<string, number>();
+// Claims span markdown messages in a thread and expire when the action settles.
+const pendingActions = new Map<string, symbol>();
 
-export function claimWorkspaceBasenameLookup(scope: string): () => boolean {
-  const next = (latestLookupSequenceByScope.get(scope) ?? 0) + 1;
-  latestLookupSequenceByScope.set(scope, next);
-  return () => latestLookupSequenceByScope.get(scope) === next;
+export async function runWorkspaceFileAction<A>(
+  scope: string | undefined,
+  action: (isCurrent: () => boolean) => A | Promise<A>,
+): Promise<A> {
+  if (scope === undefined) return action(() => true);
+  const token = Symbol();
+  pendingActions.set(scope, token);
+  const isCurrent = () => pendingActions.get(scope) === token;
+  try {
+    return await action(isCurrent);
+  } finally {
+    if (isCurrent()) pendingActions.delete(scope);
+  }
 }
 
 export interface WorkspaceEntryCandidate {
@@ -14,58 +25,41 @@ export interface WorkspaceEntryCandidate {
   readonly kind: "file" | "directory";
 }
 
-function posixPath(path: string): string {
-  return path.replaceAll("\\", "/");
-}
-
 export function normalizeWorkspaceLookupPath(relativePath: string): string {
   const normalized = relativePath
     .trim()
     .replaceAll("\\", "/")
     .replace(/^(?:\.\/)+/, "");
-  // Workspace-root links (`.` / `..`, from #12449) never resolve to a file.
-  // Return empty so callers skip the index lookup, matching the old
-  // `needsWorkspaceBasenameLookup` guard.
-  if (normalized === "." || normalized === "..") return "";
+  if (
+    isAbsolutePath(normalized) ||
+    /^(?:[a-z]:|~\/)/i.test(normalized) ||
+    normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    return "";
+  }
   return normalized;
 }
 
-/** `a/b/c` matches `c` and `b/c` at a segment boundary, but not `abc`. */
-function hasSegmentSuffix(path: string, suffix: string): boolean {
-  const posix = posixPath(path);
-  return posix === suffix || posix.endsWith(`/${suffix}`);
-}
-
-/**
- * Whether a divergent index hit may override the literal chip path only after
- * a disk check. The search index skips gitignored files, so its absence there
- * is not proof a file does not exist: for slashed paths an index hit that
- * names a different file must not hijack a real file at the literal path.
- * Bare names keep the ranked-first hit with no disk check.
- */
-export function needsLiteralWorkspaceFileCheck(lookupPath: string, match: string | null): boolean {
-  return match !== null && match !== lookupPath && lookupPath.includes("/");
-}
-
 export function pickWorkspaceBasenameMatch(
-  basename: string,
+  relativePath: string,
   entries: ReadonlyArray<WorkspaceEntryCandidate>,
 ): string | null {
-  const target = normalizeWorkspaceLookupPath(basename);
+  const target = normalizeWorkspaceLookupPath(relativePath);
   if (!target) return null;
   const files = entries.filter((entry) => entry.kind === "file");
-  const exactPath = files.find((entry) => posixPath(entry.path) === target);
+  const pathOf = (entry: WorkspaceEntryCandidate) => entry.path.replaceAll("\\", "/");
+  const hasSuffix = (path: string, suffix: string) =>
+    path === suffix || path.endsWith(`/${suffix}`);
+  const slashed = target.includes("/");
+  const exactPath = slashed ? files.find((entry) => pathOf(entry) === target) : undefined;
   if (exactPath) return exactPath.path;
-  // Chip paths are relative to the agent's cwd, so match the suffix wherever it lives.
-  const suffixMatches = files.filter((entry) => hasSegmentSuffix(entry.path, target));
-  if (suffixMatches.length === 1) return suffixMatches[0]?.path ?? null;
-  if (suffixMatches.length > 1) {
-    return target.includes("/") ? null : (suffixMatches[0]?.path ?? null);
+  const matches = files.filter((entry) => hasSuffix(pathOf(entry), target));
+  if (matches.length > 0) {
+    return !slashed || matches.length === 1 ? (matches[0]?.path ?? null) : null;
   }
   const foldedTarget = target.toLowerCase();
-  const foldedSuffixMatches = files.filter((entry) =>
-    hasSegmentSuffix(posixPath(entry.path).toLowerCase(), foldedTarget),
+  const foldedMatches = files.filter((entry) =>
+    hasSuffix(pathOf(entry).toLowerCase(), foldedTarget),
   );
-  if (foldedSuffixMatches.length === 1) return foldedSuffixMatches[0]?.path ?? null;
-  return null;
+  return foldedMatches.length === 1 ? (foldedMatches[0]?.path ?? null) : null;
 }

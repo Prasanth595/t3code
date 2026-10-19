@@ -1,20 +1,21 @@
 import {
   AuthOrchestrationOperateScope,
+  AuthPreviewOperateScope,
+  DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
   ProjectId,
-  ProjectReadFileError,
   ThreadId,
   type AuthEnvironmentScope,
   type EditorId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { useRightPanelStore } from "../rightPanelStore";
+import { __setClientSettingsForTests } from "../hooks/useSettings";
 
 const state = vi.hoisted(() => ({
   allowed: true,
@@ -23,7 +24,9 @@ const state = vi.hoisted(() => ({
   openEditor: vi.fn(),
   updateMetadata: vi.fn(),
   search: vi.fn(),
-  readFile: vi.fn(),
+  metadata: vi.fn(),
+  asset: vi.fn(),
+  openPreview: vi.fn(),
   openBrowser: vi.fn(),
   choose: vi.fn(),
   openFile: vi.fn(),
@@ -33,11 +36,16 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock(import("../state/use-atom-query-runner"), async (original) => {
-  const { projectEnvironment } = await import("../state/projects");
+  const { filesystemMetadata } = await import("../state/filesystem");
+  const { assetEnvironment } = await import("../state/assets");
   return {
     ...(await original()),
     useAtomQueryRunner: ((query: unknown) =>
-      query === projectEnvironment.readFile ? state.readFile : state.search) as never,
+      query === filesystemMetadata
+        ? state.metadata
+        : query === assetEnvironment.createUrl
+          ? state.asset
+          : state.search) as never,
   };
 });
 vi.mock(import("../browser/previewRuntime"), async (original) => ({
@@ -50,19 +58,24 @@ vi.mock(import("../browser/openFileInPreview"), async (original) => ({
 }));
 vi.mock(import("../state/use-atom-command"), async (original) => {
   const { threadEnvironment } = await import("../state/threads");
+  const { previewEnvironment } = await import("../state/preview");
   return {
     ...(await original()),
     useAtomCommand: ((command: unknown) =>
       command === threadEnvironment.updateMetadata
         ? state.updateMetadata
-        : state.openEditor) as never,
+        : command === previewEnvironment.open
+          ? state.openPreview
+          : state.openEditor) as never,
   };
 });
 vi.mock(import("../state/session"), async (original) => {
   const { useSyncExternalStore } = await import("react");
   const readEnvironmentScope = (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
     id !== null &&
-    (scope !== AuthOrchestrationOperateScope || id !== threadRef.environmentId || state.allowed);
+    ((scope !== AuthOrchestrationOperateScope && scope !== AuthPreviewOperateScope) ||
+      id !== threadRef.environmentId ||
+      state.allowed);
   return {
     ...(await original()),
     readEnvironmentScope,
@@ -159,19 +172,9 @@ beforeEach(() => {
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
-  state.readFile.mockReset().mockResolvedValue(
-    AsyncResult.failure(
-      Cause.fail(
-        new ProjectReadFileError({
-          cwd: "/work",
-          relativePath: "docs/GROUPS_PLAN.html",
-          failure: "operation_failed",
-          operation: "open",
-          cause: "ENOENT",
-        }),
-      ),
-    ),
-  );
+  state.metadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
+  state.asset.mockReset();
+  state.openPreview.mockReset();
   state.openBrowser.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.choose.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
@@ -328,8 +331,11 @@ it.each(["link-to-thread", "unlink-from-thread"])(
 const indexedPath = "BudgetLens/docs/GROUPS_PLAN.html";
 const fileChip = "`docs/GROUPS_PLAN.html:12:3`";
 
-function searchResult(paths: string[]) {
-  return AsyncResult.success({ entries: paths.map((path) => ({ path, kind: "file" as const })) });
+function searchResult(paths: string[], truncated = false) {
+  return AsyncResult.success({
+    entries: paths.map((path) => ({ path, kind: "file" as const })),
+    truncated,
+  });
 }
 
 function deferSearch() {
@@ -387,14 +393,7 @@ it.each(["panel", "open", "open-in-browser", "reveal"])(
 
 it("keeps a real literal file when the workspace index only returns a nested twin", async () => {
   state.search.mockResolvedValue(searchResult([indexedPath]));
-  state.readFile.mockResolvedValue(
-    AsyncResult.success({
-      relativePath: "docs/GROUPS_PLAN.html",
-      contents: "ignored local file",
-      byteLength: 18,
-      truncated: false,
-    }),
-  );
+  state.metadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind: "file" }] }));
   await renderMarkdown(fileChip);
   await activateFile("panel");
   expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.html", 12);
@@ -406,14 +405,15 @@ it("keeps a real literal file when the workspace index only returns a nested twi
 });
 
 it.each([
-  { name: "no match", paths: [] },
+  { name: "no match", paths: [], truncated: false },
+  { name: "incomplete search results", paths: [indexedPath], truncated: true },
   {
     name: "basename and partial segment matches",
     paths: ["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html"],
   },
   { name: "ambiguous suffixes", paths: [indexedPath, "Other/docs/GROUPS_PLAN.html"] },
-])("keeps the authored path and position for $name", async ({ paths }) => {
-  state.search.mockResolvedValue(searchResult(paths));
+])("keeps the authored path and position for $name", async ({ paths, truncated }) => {
+  state.search.mockResolvedValue(searchResult(paths, truncated));
   await renderMarkdown(fileChip);
   await activateFile("panel");
   expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.html", 12);
@@ -461,4 +461,41 @@ it.each([
   await finishLookup([indexedPath]);
   expect(state.openFile).toHaveBeenNthCalledWith(2, threadRef, indexedPath, 12);
   expect(state.openFile).toHaveBeenCalledTimes(2);
+});
+
+it("rechecks browser permission after the file lookup", async () => {
+  state.previewAvailable = true;
+  const finishLookup = deferSearch();
+  await renderMarkdown(fileChip);
+  await activateFile("open-in-browser");
+  await setAllowed(false);
+  await finishLookup([indexedPath]);
+  expect(state.openBrowser).not.toHaveBeenCalled();
+});
+
+it("does not open the browser after a newer panel action while the file URL is loading", async () => {
+  const { openFileInPreview } = await vi.importActual<
+    typeof import("../browser/openFileInPreview")
+  >("../browser/openFileInPreview");
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  state.openBrowser.mockImplementationOnce(openFileInPreview);
+  state.previewAvailable = true;
+  state.search.mockResolvedValue(searchResult([indexedPath]));
+  let finishAsset: (value: ReturnType<typeof AsyncResult.success>) => void = () => {
+    throw new Error("Asset not requested");
+  };
+  state.asset.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finishAsset = resolve;
+    }),
+  );
+  await renderMarkdown(fileChip);
+  await activateFile("open-in-browser");
+  expect(state.asset).toHaveBeenCalledOnce();
+
+  await renderMarkdown("`/outside/newer.ts:8`");
+  await activateFile("panel");
+  await act(async () => finishAsset(AsyncResult.success({ relativeUrl: "/api/assets/file" })));
+  expect(state.openPreview).not.toHaveBeenCalled();
+  expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/outside/newer.ts", 8);
 });
