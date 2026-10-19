@@ -1401,7 +1401,6 @@ export default function ChatView(props: ChatViewProps) {
   const storeSplitTerminal = useTerminalUiStateStore((s) => s.splitTerminal);
   const storeSplitTerminalVertical = useTerminalUiStateStore((s) => s.splitTerminalVertical);
   const storeNewTerminal = useTerminalUiStateStore((s) => s.newTerminal);
-  const storeSetActiveTerminal = useTerminalUiStateStore((s) => s.setActiveTerminal);
   const storeCloseTerminal = useTerminalUiStateStore((s) => s.closeTerminal);
   const serverThreadRefs = useThreadRefs();
   const serverThreadKeys = serverThreadRefs.map(scopedThreadKey);
@@ -3471,16 +3470,12 @@ export default function ChatView(props: ChatViewProps) {
     setTerminalFocusRequestId((value) => value + 1);
 
     const launched = terminalActions.launchTerminal({
-      // Apply the target before opening: opening an empty drawer would otherwise claim
+      // The drawer opens with the target already placed: opening it empty would claim
       // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
-      place: (terminalId) => {
-        if (reusableTerminalId === null) {
-          storeNewTerminal(activeThreadRef, terminalId);
-          return;
-        }
-        storeSetActiveTerminal(activeThreadRef, terminalId);
-        setTerminalOpen(true);
-      },
+      place: (terminalId) =>
+        reusableTerminalId === null
+          ? storeNewTerminal(activeThreadRef, terminalId)
+          : storeEnsureTerminal(activeThreadRef, terminalId, { open: true }),
       ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
         : { terminalId: reusableTerminalId }),

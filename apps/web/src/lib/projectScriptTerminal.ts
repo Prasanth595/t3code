@@ -1,7 +1,7 @@
 /**
- * Picks the drawer terminal a project action can reuse: the active idle drawer terminal, else the
- * first idle one, else null. Right-panel terminals are never reused, so one PTY never renders in
- * both the drawer and the panel.
+ * Project actions reuse only an idle drawer terminal (the active one first). Right-panel ids
+ * are excluded even when drawer state lists them: reusing one renders a single PTY in both
+ * surfaces, and closing the drawer copy kills the panel shell.
  */
 export function findReusableProjectScriptTerminal(input: {
   readonly drawerTerminalIds: ReadonlyArray<string>;

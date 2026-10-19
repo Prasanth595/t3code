@@ -2,60 +2,43 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { findReusableProjectScriptTerminal } from "./projectScriptTerminal";
 
-const base = {
-  drawerTerminalIds: [],
-  activeTerminalId: "",
-  panelTerminalIds: new Set<string>(),
-  runningTerminalIds: [],
-};
-
 describe("findReusableProjectScriptTerminal", () => {
-  it("does not reuse an idle right-panel terminal", () => {
+  it.each([
+    {
+      name: "never reuses a right-panel terminal, even when stale in drawer state",
+      drawerTerminalIds: ["term-1"],
+      activeTerminalId: "term-1",
+      panelTerminalIds: ["term-1"],
+      runningTerminalIds: [],
+      expected: null,
+    },
+    {
+      name: "reuses the active idle drawer terminal",
+      drawerTerminalIds: ["term-1", "term-2"],
+      activeTerminalId: "term-2",
+      panelTerminalIds: [],
+      runningTerminalIds: [],
+      expected: "term-2",
+    },
+    {
+      name: "falls back to another idle drawer terminal when the active one is busy",
+      drawerTerminalIds: ["term-1", "term-2"],
+      activeTerminalId: "term-1",
+      panelTerminalIds: [],
+      runningTerminalIds: ["term-1"],
+      expected: "term-2",
+    },
+    {
+      name: "finds nothing when every drawer terminal is busy",
+      drawerTerminalIds: ["term-1"],
+      activeTerminalId: "term-1",
+      panelTerminalIds: [],
+      runningTerminalIds: ["term-1"],
+      expected: null,
+    },
+  ])("$name", ({ panelTerminalIds, expected, ...input }) => {
     expect(
-      findReusableProjectScriptTerminal({ ...base, panelTerminalIds: new Set(["term-1"]) }),
-    ).toBeNull();
-  });
-
-  it("never reuses a panel terminal left in stale drawer state", () => {
-    expect(
-      findReusableProjectScriptTerminal({
-        ...base,
-        drawerTerminalIds: ["term-1"],
-        activeTerminalId: "term-1",
-        panelTerminalIds: new Set(["term-1"]),
-      }),
-    ).toBeNull();
-  });
-
-  it("reuses the active idle drawer terminal", () => {
-    expect(
-      findReusableProjectScriptTerminal({
-        ...base,
-        drawerTerminalIds: ["term-1", "term-2"],
-        activeTerminalId: "term-2",
-      }),
-    ).toBe("term-2");
-  });
-
-  it("reuses another idle drawer terminal when the active one is busy", () => {
-    expect(
-      findReusableProjectScriptTerminal({
-        ...base,
-        drawerTerminalIds: ["term-1", "term-2"],
-        activeTerminalId: "term-1",
-        runningTerminalIds: ["term-1"],
-      }),
-    ).toBe("term-2");
-  });
-
-  it("finds nothing when every drawer terminal is busy", () => {
-    expect(
-      findReusableProjectScriptTerminal({
-        ...base,
-        drawerTerminalIds: ["term-1"],
-        activeTerminalId: "term-1",
-        runningTerminalIds: ["term-1"],
-      }),
-    ).toBeNull();
+      findReusableProjectScriptTerminal({ ...input, panelTerminalIds: new Set(panelTerminalIds) }),
+    ).toBe(expected);
   });
 });
