@@ -1394,6 +1394,10 @@ export const layer = Layer.effect(
                 )}`
             : `delivery:relay:${request.relayDeliveryId}`,
         );
+        // Claimed in its own table, kept longer than the relay holds a request,
+        // because the delivery log is trimmed. A rate-limited delivery stays
+        // held on the relay, so it must give up its claim or the next pass
+        // would treat it as already delivered.
         let claimAcquired = false;
         const releaseClaim = <A>(result: A) =>
           !claimAcquired || request.relayDeliveryId === undefined
