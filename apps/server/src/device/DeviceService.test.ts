@@ -85,7 +85,9 @@ const fixture = Effect.fn("fixture")(function* (
     | DeviceHost.AgentDeviceStartError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
-  onClose: Effect.Effect<"ok" | "reject" | "http_error" | "malformed"> = Effect.succeed("ok"),
+  onClose: Effect.Effect<"ok" | "missing" | "reject" | "http_error" | "malformed"> = Effect.succeed(
+    "ok",
+  ),
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -95,6 +97,7 @@ const fixture = Effect.fn("fixture")(function* (
   const closedSessions: unknown[] = [];
   let booted = false;
   let shutDown = false;
+  const connection = { online: true, kind: "local" as "local" | "ssh", failShutdown: false };
   const ready: DeviceHost.DeviceHostReady = {
     nodePath: process.execPath,
     hub: { origin: "http://device.test" },
@@ -114,14 +117,14 @@ const fixture = Effect.fn("fixture")(function* (
         }
       : {}),
     id: LOCAL_DEVICE_HOST_ID,
-    summary: Effect.succeed({
+    summary: Effect.sync(() => ({
       id: LOCAL_DEVICE_HOST_ID,
-      kind: "local",
+      kind: connection.kind,
       label: "Test server",
       platforms: [{ platform: "android", available: true }],
       hubInstalled: true,
       agentDeviceInstalled: false,
-    }),
+    })),
     platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
     ensureReady: (onPhase) =>
       Effect.gen(function* () {
@@ -141,12 +144,18 @@ const fixture = Effect.fn("fixture")(function* (
           agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
         };
       }),
-    current: Effect.sync(() => ({
-      ...ready,
-      ...(agentStarts.length > agentStops.length
-        ? { agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" } }
-        : {}),
-    })),
+    current: Effect.sync(() =>
+      connection.online
+        ? {
+            ...ready,
+            ...(agentStarts.length > agentStops.length
+              ? {
+                  agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
+                }
+              : {}),
+          }
+        : null,
+    ),
     stopAgent: Effect.sync(() => {
       agentStops.push("stop");
     }),
@@ -157,7 +166,7 @@ const fixture = Effect.fn("fixture")(function* (
   const service = yield* DeviceService.makeWithHosts(
     new Map([[host.id, host]]),
     undefined,
-    undefined,
+    () => Effect.succeed("/host.json"),
     installTool,
   ).pipe(
     Effect.provide(NodeCrypto.layer),
@@ -196,15 +205,26 @@ const fixture = Effect.fn("fixture")(function* (
             const outcome = yield* onClose;
             return HttpClientResponse.fromWeb(
               request,
-              outcome === "http_error"
-                ? new Response("Offline", { status: 503 })
-                : outcome === "malformed"
-                  ? new Response("not JSON")
-                  : Response.json(
-                      outcome === "ok"
-                        ? { result: { ok: true } }
-                        : { error: { code: -32000, message: "offline" } },
-                    ),
+              outcome === "missing"
+                ? Response.json(
+                    {
+                      error: {
+                        code: -32000,
+                        message: "No active session",
+                        data: { code: "SESSION_NOT_FOUND" },
+                      },
+                    },
+                    { status: 404 },
+                  )
+                : outcome === "http_error"
+                  ? new Response("Offline", { status: 503 })
+                  : outcome === "malformed"
+                    ? new Response("not JSON")
+                    : Response.json(
+                        outcome === "ok"
+                          ? { result: { ok: true } }
+                          : { error: { code: -32000, message: "offline" } },
+                      ),
             );
           }
           if (request.url.includes("/api/screenshot")) {
@@ -214,6 +234,8 @@ const fixture = Effect.fn("fixture")(function* (
             );
           }
           if (request.url.endsWith("/shutdown")) {
+            if (connection.failShutdown)
+              return HttpClientResponse.fromWeb(request, Response.json({ ok: false }));
             shutDown = true;
             booted = false;
             return HttpClientResponse.fromWeb(request, Response.json({ ok: true }));
@@ -256,7 +278,16 @@ const fixture = Effect.fn("fixture")(function* (
       ),
     ),
   );
-  return { service, starts, agentStarts, agentStops, requests, settings, closedSessions };
+  return {
+    service,
+    starts,
+    agentStarts,
+    agentStops,
+    requests,
+    settings,
+    closedSessions,
+    connection,
+  };
 });
 
 describe("device setup consent", () => {
@@ -1118,6 +1149,100 @@ describe("agent session release on close", () => {
       }),
   );
 
+  it.effect.each([false, true])("accepts a missing agent session, shutdown=%s", (shutdown) =>
+    Effect.gen(function* () {
+      const { service, requests } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        Effect.succeed("missing"),
+      );
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("no-claim");
+      yield* openClaim(service, threadId);
+      yield* service.close({ threadId, shutdown });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(shutdown);
+    }),
+  );
+
+  it.effect("retries shutdown after the first attempt already released the agent session", () =>
+    Effect.gen(function* () {
+      let released = false;
+      const { service, connection } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        Effect.sync(() => {
+          const result = released ? "missing" : "ok";
+          released = true;
+          return result;
+        }),
+      );
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("retry-shutdown");
+      yield* openClaim(service, threadId);
+      connection.failShutdown = true;
+      expect(Exit.isFailure(yield* Effect.exit(service.close({ threadId, shutdown: true })))).toBe(
+        true,
+      );
+      expect((yield* service.state).sessions).toHaveLength(1);
+      connection.failShutdown = false;
+      yield* service.close({ threadId, shutdown: true });
+      expect((yield* service.state).sessions).toHaveLength(0);
+    }),
+  );
+
+  it.effect("releases the post-boot agentTarget session for a cold Android AVD", () =>
+    Effect.gen(function* () {
+      const { service, closedSessions } = yield* fixture();
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("cold-avd");
+      const before = yield* service.agentTarget({
+        threadId,
+        hostId: "local",
+        deviceId: "Pixel_API_35",
+      });
+      const session = yield* openClaim(service, threadId);
+      const after = yield* service.agentTarget({
+        threadId,
+        hostId: session.hostId,
+        deviceId: session.deviceId,
+      });
+      expect(session.deviceId).toBe("emulator-5554");
+      expect(after[3]).not.toBe(before[3]);
+      yield* service.close({ threadId });
+      expect(closedSessions).toEqual([
+        expect.objectContaining({ params: expect.objectContaining({ session: after[3] }) }),
+      ]);
+    }),
+  );
+
+  it.effect("retains an SSH record during reconnect and releases it on retry", () =>
+    Effect.gen(function* () {
+      const { service, connection, closedSessions, agentStarts } = yield* fixture();
+      connection.kind = "ssh";
+      yield* service.configure({ enabled: true, agentAccessEnabled: true });
+      const threadId = ThreadId.make("ssh-reconnect");
+      yield* openClaim(service, threadId);
+      const starts = agentStarts.length;
+      connection.online = false;
+      expect(Exit.isFailure(yield* Effect.exit(service.close({ threadId })))).toBe(true);
+      expect((yield* service.state).sessions).toHaveLength(1);
+      expect(closedSessions).toHaveLength(0);
+      expect(agentStarts).toHaveLength(starts);
+      connection.online = true;
+      yield* service.close({ threadId });
+      expect((yield* service.state).sessions).toHaveLength(0);
+      expect(closedSessions).toHaveLength(1);
+    }),
+  );
   it.effect("does not let reopen publish while the old claim is being released", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();

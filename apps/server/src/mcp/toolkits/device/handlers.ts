@@ -153,7 +153,7 @@ const handlers = {
       }
       const target = yield* pickDevice(state.devices, input);
       // Resolve consent and agent connectivity before booting or registering a session.
-      const agentArgs = yield* devices.agentTarget({
+      let agentArgs = yield* devices.agentTarget({
         threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
@@ -164,6 +164,13 @@ const handlers = {
         deviceId: target.id,
         platform: target.platform,
       });
+      // Booting an Android AVD can replace its name with the emulator serial.
+      if (session.deviceId !== target.id)
+        agentArgs = yield* devices.agentTarget({
+          threadId: scope.thread.threadId,
+          hostId: session.hostId,
+          deviceId: session.deviceId,
+        });
       const after = yield* devices.state;
       const device =
         after.devices.find(

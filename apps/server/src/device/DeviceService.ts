@@ -832,6 +832,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           for (const session of closing) {
             const host = yield* resolveHost(session.hostId);
             const ready = yield* host.current;
+            // A lost SSH tunnel does not establish that the remote daemon stopped.
+            if (!ready && (yield* host.summary).kind === "ssh")
+              return yield* new DeviceHostUnavailableError({
+                hostId: session.hostId,
+                reason: "Device host is reconnecting. Retry close after it reconnects.",
+              });
             if (ready?.agentDevice) {
               const name = yield* agentDeviceSession(
                 session.threadId,
@@ -846,13 +852,27 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   method: "agent_device.command",
                   params: { command: "close", session: name, positionals: [], flags: {} },
                 }),
-                Effect.flatMap((request) =>
-                  hubJson(
-                    request,
-                    Schema.Struct({ result: Schema.Struct({ ok: Schema.Literal(true) }) }),
-                    "close agent session",
+                Effect.flatMap((request) => httpClient.execute(request)),
+                // agent-device reports an already-released session as HTTP 404.
+                Effect.flatMap((response) =>
+                  response.status === 404
+                    ? Effect.succeed(response)
+                    : HttpClientResponse.filterStatusOk(response),
+                ),
+                Effect.flatMap(
+                  HttpClientResponse.schemaBodyJson(
+                    Schema.Union([
+                      Schema.Struct({ result: Schema.Struct({ ok: Schema.Literal(true) }) }),
+                      Schema.Struct({
+                        error: Schema.Struct({
+                          data: Schema.Struct({ code: Schema.Literal("SESSION_NOT_FOUND") }),
+                        }),
+                      }),
+                    ]),
                   ),
                 ),
+                Effect.scoped,
+                Effect.timeout(Duration.seconds(15)),
                 Effect.mapError(
                   (cause) =>
                     new DeviceOperationError({
