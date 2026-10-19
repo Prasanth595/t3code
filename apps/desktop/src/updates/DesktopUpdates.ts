@@ -273,15 +273,14 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 
 function createBaseUpdateState(
   channel: DesktopUpdateChannel,
-  enabled: boolean,
+  disabledReason: string | null,
   environment: DesktopEnvironment.DesktopEnvironment["Service"],
-  disabledReason?: string | null,
 ): DesktopUpdateState {
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
-    enabled,
-    status: enabled ? "idle" : "disabled",
-    message: enabled ? null : (disabledReason ?? null),
+    enabled: disabledReason === null,
+    status: disabledReason === null ? "idle" : "disabled",
+    message: disabledReason,
   };
 }
 
@@ -631,14 +630,10 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  const baseUpdateState = (
-    channel: DesktopUpdateChannel,
-    enabled: boolean,
-    disabledReason?: string | null,
-  ) =>
+  const baseUpdateState = (channel: DesktopUpdateChannel, disabledReason: string | null) =>
     Ref.get(notAppliedVersionRef).pipe(
       Effect.map((notAppliedVersion) => ({
-        ...createBaseUpdateState(channel, enabled, environment, disabledReason),
+        ...createBaseUpdateState(channel, disabledReason, environment),
         ...Option.match(notAppliedVersion, {
           onNone: () => ({}),
           onSome: (version) => ({ notAppliedVersion: version }),
@@ -1060,11 +1055,9 @@ export const make = Effect.gen(function* () {
       }
 
       const settings = yield* desktopSettings.get;
-      const disabledReasonOption = yield* resolveDisabledReason;
-      const enabled = Option.isNone(disabledReasonOption);
-      const disabledReason = Option.getOrNull(disabledReasonOption);
-      yield* setState(yield* baseUpdateState(settings.updateChannel, enabled, disabledReason));
-      if (!enabled) {
+      const disabledReason = Option.getOrNull(yield* resolveDisabledReason);
+      yield* setState(yield* baseUpdateState(settings.updateChannel, disabledReason));
+      if (disabledReason !== null) {
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
@@ -1133,12 +1126,10 @@ export const make = Effect.gen(function* () {
             ),
           );
 
-        const disabledReasonOption = yield* resolveDisabledReason;
-        const enabled = Option.isNone(disabledReasonOption);
-        const disabledReason = Option.getOrNull(disabledReasonOption);
-        yield* setState(yield* baseUpdateState(nextChannel, enabled, disabledReason));
+        const disabledReason = Option.getOrNull(yield* resolveDisabledReason);
+        yield* setState(yield* baseUpdateState(nextChannel, disabledReason));
 
-        if (!enabled || !(yield* Ref.get(updaterConfiguredRef))) {
+        if (disabledReason !== null || !(yield* Ref.get(updaterConfiguredRef))) {
           return yield* Ref.get(updateStateRef);
         }
 

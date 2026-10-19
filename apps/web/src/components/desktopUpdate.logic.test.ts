@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
-  canChangeDesktopUpdateChannel,
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
@@ -10,7 +9,6 @@ import {
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
-  getDesktopUpdateTrackDescription,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -329,13 +327,26 @@ describe("desktop update UI helpers", () => {
   });
 });
 
-describe("canCheckForUpdate", () => {
-  it("returns false for null state", () => {
+describe("desktop update availability", () => {
+  it("keeps update controls unavailable until the state arrives", () => {
     expect(canCheckForUpdate(null)).toBe(false);
   });
 
-  it("returns false when updates are disabled", () => {
-    expect(canCheckForUpdate({ ...baseState, enabled: false, status: "disabled" })).toBe(false);
+  it("keeps disabled update controls unavailable and explains why", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      enabled: false,
+      status: "disabled",
+      message: "Automatic updates on Linux require the AppImage or the .deb package.",
+    };
+
+    expect(canCheckForUpdate(state)).toBe(false);
+    expect(getDesktopUpdateButtonTooltip(state)).toBe(state.message);
+
+    const withoutReason = { ...state, message: null };
+    expect(getDesktopUpdateButtonTooltip(withoutReason)).toBe(
+      "Automatic updates are unavailable on this build.",
+    );
   });
 
   it("returns false while checking", () => {
@@ -359,8 +370,8 @@ describe("canCheckForUpdate", () => {
     ).toBe(true);
   });
 
-  it("returns true when idle", () => {
-    expect(canCheckForUpdate({ ...baseState, status: "idle" })).toBe(true);
+  it("enables update controls when updates are available for this install", () => {
+    expect(canCheckForUpdate(baseState)).toBe(true);
   });
 
   it("returns true when up-to-date", () => {
@@ -391,76 +402,5 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
-  });
-
-  it("returns the disabled message when updates are disabled", () => {
-    expect(
-      getDesktopUpdateButtonTooltip({
-        ...baseState,
-        enabled: false,
-        status: "disabled",
-        message: "Automatic updates on Linux require the AppImage or the .deb package.",
-      }),
-    ).toBe("Automatic updates on Linux require the AppImage or the .deb package.");
-  });
-
-  it("falls back to generic copy when updates are disabled without a specific message", () => {
-    expect(
-      getDesktopUpdateButtonTooltip({
-        ...baseState,
-        enabled: false,
-        status: "disabled",
-        message: null,
-      }),
-    ).toBe("Automatic updates are unavailable on this build.");
-  });
-});
-
-describe("canChangeDesktopUpdateChannel", () => {
-  it("returns false for null state", () => {
-    expect(canChangeDesktopUpdateChannel(null)).toBe(false);
-  });
-
-  it("returns false when updates are disabled", () => {
-    expect(
-      canChangeDesktopUpdateChannel({ ...baseState, enabled: false, status: "disabled" }),
-    ).toBe(false);
-  });
-
-  it("returns true when updates are enabled", () => {
-    expect(canChangeDesktopUpdateChannel(baseState)).toBe(true);
-  });
-});
-
-describe("getDesktopUpdateTrackDescription", () => {
-  it("returns the standard copy when updates are enabled or state is null", () => {
-    expect(getDesktopUpdateTrackDescription(null)).toBe(
-      "Use stable releases or nightly builds. Switch back anytime.",
-    );
-    expect(getDesktopUpdateTrackDescription(baseState)).toBe(
-      "Use stable releases or nightly builds. Switch back anytime.",
-    );
-  });
-
-  it("returns the disabled message when updates are disabled", () => {
-    expect(
-      getDesktopUpdateTrackDescription({
-        ...baseState,
-        enabled: false,
-        status: "disabled",
-        message: "Automatic updates on Linux require the AppImage or the .deb package.",
-      }),
-    ).toBe("Automatic updates on Linux require the AppImage or the .deb package.");
-  });
-
-  it("falls back to generic copy when updates are disabled without a message", () => {
-    expect(
-      getDesktopUpdateTrackDescription({
-        ...baseState,
-        enabled: false,
-        status: "disabled",
-        message: null,
-      }),
-    ).toBe("Automatic updates are unavailable on this build.");
   });
 });

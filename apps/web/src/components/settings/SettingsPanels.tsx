@@ -58,11 +58,9 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
-  canChangeDesktopUpdateChannel,
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
-  getDesktopUpdateTrackDescription,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -297,7 +295,7 @@ function AboutVersionSection() {
       !bridge ||
       typeof bridge.setUpdateChannel !== "function" ||
       channel === selectedUpdateChannel ||
-      !canChangeDesktopUpdateChannel(updateState)
+      !updateState?.enabled
     ) {
       return;
     }
@@ -451,7 +449,11 @@ function AboutVersionSection() {
       {hasDesktopBridge ? (
         <SettingsRow
           {...searchableSetting("update-track")}
-          description={getDesktopUpdateTrackDescription(updateState)}
+          description={
+            updateState && !updateState.enabled
+              ? getDesktopUpdateButtonTooltip(updateState)
+              : "Use stable releases or nightly builds. Switch back anytime."
+          }
           control={
             <Select
               value={selectedUpdateChannel}
@@ -463,7 +465,7 @@ function AboutVersionSection() {
                 size="sm"
                 className="w-full sm:w-40"
                 aria-label="Update track"
-                disabled={isChangingUpdateChannel || !canChangeDesktopUpdateChannel(updateState)}
+                disabled={isChangingUpdateChannel || !updateState?.enabled}
               >
                 <SelectValue>
                   {selectedUpdateChannel === "nightly" ? "Nightly" : "Stable"}
