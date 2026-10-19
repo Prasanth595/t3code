@@ -154,23 +154,35 @@ const ANDROID_PERMISSIONS: Record<string, ReadonlyArray<string>> = {
   motion: ["android.permission.ACTIVITY_RECOGNITION"],
 };
 
-// Android numbers rotations from the display's natural orientation. On a landscape-native tablet
-// ROTATION_0 is landscape and portrait is ROTATION_270, so the requested orientation is shifted by
-// a quarter turn before it becomes a rotation or a gravity vector.
-const ANDROID_ROTATION_STEPS: Record<DeviceOrientation, number> = {
-  portrait: 0,
-  landscape_left: 1,
-  portrait_upside_down: 2,
-  landscape_right: 3,
+// Android numbers rotations from the display's natural orientation and the emulator's accelerometer
+// reports gravity in that same frame, so both tables are keyed by the orientation a portrait-native
+// device shows at each rotation.
+const ANDROID_GRAVITY: Record<DeviceOrientation, string> = {
+  portrait: "0:9.81:0",
+  landscape_left: "9.81:0:0",
+  portrait_upside_down: "0:-9.81:0",
+  landscape_right: "-9.81:0:0",
 };
-const ANDROID_GRAVITY = ["0:9.81:0", "9.81:0:0", "0:-9.81:0", "-9.81:0:0"] as const;
+const ANDROID_ROTATION: Record<DeviceOrientation, string> = {
+  portrait: "0",
+  landscape_left: "1",
+  portrait_upside_down: "2",
+  landscape_right: "3",
+};
+// A landscape-native tablet sits a quarter turn further along that sequence: its portrait is
+// rotation 3 and its landscape is rotation 0.
+const ANDROID_LANDSCAPE_NATIVE_ROTATION: Record<DeviceOrientation, DeviceOrientation> = {
+  portrait: "landscape_right",
+  landscape_left: "portrait",
+  portrait_upside_down: "landscape_left",
+  landscape_right: "portrait_upside_down",
+};
 
-// `wm size` prints the physical size and, when one is set, an override size, both in the natural
-// orientation. The override is what the window manager uses, and it is printed last.
-const isLandscapeNative = (wmSize: string) => {
-  const sizes = [...wmSize.matchAll(/size: (\d+)x(\d+)/g)];
-  const size = sizes.at(-1);
-  return size ? Number(size[1]) > Number(size[2]) : false;
+// `wm size` reports the natural-orientation size; an `Override size:` line is what the window
+// manager uses and is printed after `Physical size:`.
+const isLandscapeNative = (wmSize: string | undefined) => {
+  const size = wmSize ? [...wmSize.matchAll(/size: (\d+)x(\d+)/g)].at(-1) : undefined;
+  return size !== undefined && Number(size[1]) > Number(size[2]);
 };
 
 export const runDeviceAction = Effect.fn("DeviceActions.run")(function* (
@@ -377,8 +389,9 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
       });
     case "setOrientation": {
       const wmSize = yield* quiet(shell(["wm", "size"], "orientation"));
-      const rotation =
-        (ANDROID_ROTATION_STEPS[input.value] + (isLandscapeNative(wmSize ?? "") ? 3 : 0)) % 4;
+      const rotation = isLandscapeNative(wmSize)
+        ? ANDROID_LANDSCAPE_NATIVE_ROTATION[input.value]
+        : input.value;
       // `user-rotation lock` only rotates window content on recent images; the display the
       // encoder captures stays put. Tilting the emulator's accelerometer rotates it for real, so
       // that is used whenever the target is an emulator.
@@ -388,12 +401,15 @@ const runAndroid = Effect.fn("DeviceActions.runAndroid")(function* (
         yield* adb(
           run,
           serial,
-          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[rotation]!],
+          ["emu", "sensor", "set", "acceleration", ANDROID_GRAVITY[rotation]],
           "orientation",
         );
         return;
       }
-      yield* shell(["cmd", "window", "user-rotation", "lock", String(rotation)], "orientation");
+      yield* shell(
+        ["cmd", "window", "user-rotation", "lock", ANDROID_ROTATION[rotation]],
+        "orientation",
+      );
       return;
     }
     case "setLocation":
