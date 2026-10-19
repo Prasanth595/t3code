@@ -2518,7 +2518,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         turn.retry !== undefined &&
         assistant !== undefined &&
         assistant.error === undefined &&
-        (assistant.content.length > 0 || assistant.time.streamed !== undefined)
+        assistant.content.length > 0
       ) {
         yield* emitRetry(state, turn, "completed");
         turn.retry = undefined;

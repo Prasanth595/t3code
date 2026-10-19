@@ -3521,9 +3521,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   it.effect.each([
-    { name: "restores retry pending at reconnect", pending: true },
-    { name: "settles retry recovered during drop", pending: false },
-  ])("$name", ({ pending }) =>
+    { name: "restores retry pending at reconnect", pending: true, streamed: false },
+    { name: "settles retry recovered during drop", pending: false, streamed: false },
+    { name: "keeps retry pending when only streamed at reconnect", pending: true, streamed: true },
+  ])("$name", ({ pending, streamed }) =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["finish"]);
       const { runtime, thread } = yield* resumed(
@@ -3531,12 +3532,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
           promptAccepted,
           event("session.execution.started", { sessionID: SESSION }),
-          ...(pending ? [] : [retryScheduled(2, 2_000)]),
+          ...(pending && !streamed ? [] : [retryScheduled(2, 2_000)]),
           ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
             id: ASSISTANT,
             finish: undefined,
             content: pending ? [] : [{ type: "text", text: "Recovered during the drop." }],
-            ...(pending ? { retry: { attempt: 2, at: 2_001, error: rateLimited } } : {}),
+            ...(pending && !streamed
+              ? { retry: { attempt: 2, at: 2_001, error: rateLimited } }
+              : {}),
+            ...(streamed ? { time: { created: 2, streamed: 3 } } : {}),
           }),
           ...openRequests([shellAsk.data]),
           event("session.execution.succeeded", { sessionID: SESSION }, "finish"),
