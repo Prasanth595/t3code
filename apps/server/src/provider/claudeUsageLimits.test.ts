@@ -120,37 +120,43 @@ describe("claudeUsageResponseToLimits", () => {
 });
 
 describe("claudeRateLimitEventToUpdate", () => {
-  it("updates all windows carried by a stream-json rate-limit event", () => {
-    // Synthetic values using the Claude Code 2.1.281 stream-json serializer shape.
-    const event = {
-      type: "rate_limit_event",
-      rate_limit_info: {
-        status: "allowed" as const,
-        unifiedWindows: {
-          five_hour: { utilization: 0.25, resetsAt: 1_900_000_000 },
-          seven_day: { utilization: 0.5, resetsAt: 1_900_000_001 },
-          seven_day_overage_included: { utilization: 0.2, resetsAt: 1_900_000_002 },
-        },
+  it("updates supported unified windows, omitting unnamed and malformed buckets", () => {
+    const info = {
+      status: "allowed" as const,
+      unifiedWindows: {
+        five_hour: { utilization: 0.25, resetsAt: 1_900_000_000 },
+        seven_day: { utilization: 0.5, resetsAt: 1_900_000_001 },
+        seven_day_overage_included: { utilization: 0.2, resetsAt: 1_900_000_002 },
+        unknown: { utilization: 1 },
+        constructor: { utilization: 1 },
+        toString: { utilization: 1 },
       },
-      uuid: "00000000-0000-4000-8000-000000000001",
-      session_id: "00000000-0000-4000-8000-000000000002",
     };
-    const update = claudeRateLimitEventToUpdate(event.rate_limit_info, {
-      overageIncluded: "Example",
-    });
     expect(
-      update?.windows.map(({ id, usedPercent, resetsAt }) => ({ id, usedPercent, resetsAt })),
+      claudeRateLimitEventToUpdate(info, { overageIncluded: "Fable" })?.windows.map(
+        ({ id, usedPercent, resetsAt }) => ({ id, usedPercent, resetsAt }),
+      ),
     ).toEqual([
       { id: "five_hour", usedPercent: 25, resetsAt: "2030-03-17T17:46:40.000Z" },
       { id: "seven_day", usedPercent: 50, resetsAt: "2030-03-17T17:46:41.000Z" },
-      { id: "seven_day_example", usedPercent: 20, resetsAt: "2030-03-17T17:46:42.000Z" },
+      { id: "seven_day_fable", usedPercent: 20, resetsAt: "2030-03-17T17:46:42.000Z" },
     ]);
-    expect(
-      claudeRateLimitEventToUpdate(event.rate_limit_info, noNames)?.windows.map(({ id }) => id),
-    ).toEqual(["five_hour", "seven_day"]);
+    expect(claudeRateLimitEventToUpdate(info, noNames)?.windows.map(({ id }) => id)).toEqual([
+      "five_hour",
+      "seven_day",
+    ]);
+    const malformed = {
+      status: "allowed" as const,
+      unifiedWindows: {
+        five_hour: { utilization: NaN },
+        seven_day: { utilization: -1 },
+        seven_day_overage_included: null,
+      },
+    };
+    expect(claudeRateLimitEventToUpdate(malformed, { overageIncluded: "Fable" })).toBeUndefined();
   });
 
-  it("lets the top-level update override the same unified window", () => {
+  it("keeps other unified windows when the legacy window takes precedence", () => {
     const info = {
       status: "allowed" as const,
       rateLimitType: "five_hour" as const,
@@ -162,32 +168,15 @@ describe("claudeRateLimitEventToUpdate", () => {
       },
     };
     expect(
-      claudeRateLimitEventToUpdate(info, noNames)?.windows.map(({ id, usedPercent }) => [
+      claudeRateLimitEventToUpdate(info, noNames)?.windows.map(({ id, usedPercent, resetsAt }) => ({
         id,
         usedPercent,
-      ]),
+        resetsAt,
+      })),
     ).toEqual([
-      ["five_hour", 75],
-      ["seven_day", 50],
+      { id: "five_hour", usedPercent: 75, resetsAt: "2030-03-17T17:46:50.000Z" },
+      { id: "seven_day", usedPercent: 50, resetsAt: "2030-03-17T17:46:41.000Z" },
     ]);
-    expect(claudeRateLimitEventToUpdate(info, noNames)?.windows[0]?.resetsAt).toBe(
-      "2030-03-17T17:46:50.000Z",
-    );
-  });
-
-  it("ignores malformed and unknown unified windows", () => {
-    const info = {
-      status: "allowed" as const,
-      unifiedWindows: {
-        five_hour: { utilization: NaN },
-        seven_day: { utilization: -1 },
-        unknown: { utilization: 1 },
-        constructor: { utilization: 1 },
-        toString: { utilization: 1 },
-        seven_day_overage_included: null,
-      },
-    };
-    expect(claudeRateLimitEventToUpdate(info, noNames)).toBeUndefined();
   });
 
   it("scales the 0–1 utilization and epoch-second reset onto the probe's window id", () => {
