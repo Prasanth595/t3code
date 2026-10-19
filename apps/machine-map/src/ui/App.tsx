@@ -39,6 +39,7 @@ import {
 } from "./route.ts";
 import { HealthView } from "./resources.tsx";
 import { usePortal, type Connection } from "./store.ts";
+import { readPendingInvite } from "./pendingInvite.ts";
 import {
   ClientsView,
   HistoryView,
@@ -126,6 +127,10 @@ function useAppBadge(count: number) {
 /** MM-1806: an app shortcut opens a dialog with `?open=`, for example the big red button. */
 function takeLaunchDialog(): Dialog | null {
   const params = new URLSearchParams(location.search);
+  if (params.get("resume") === "invite") {
+    const saved = readPendingInvite();
+    if (saved) return { _tag: "resumeInvite", request: saved.request, phone: saved.phone };
+  }
   if (params.get("open") !== "emergency") return null;
   history.replaceState(null, "", `${location.pathname}${location.hash}`);
   return { _tag: "emergency" };

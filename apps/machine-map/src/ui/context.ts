@@ -14,6 +14,7 @@ import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import type {
   ClientInvite,
+  InviteRequest,
   PauseView,
   PendingClient,
   PendingRotation,
@@ -40,6 +41,7 @@ export type Dialog =
   /** MM-1110: `position` is the place picked on the map. Without it the portal picks a free spot. */
   | { readonly _tag: "addMachine"; readonly position?: MapPosition }
   | { readonly _tag: "addPhone"; readonly position?: MapPosition }
+  | { readonly _tag: "resumeInvite"; readonly request: InviteRequest; readonly phone: boolean }
   | {
       readonly _tag: "joinCode";
       readonly machineId: MachineId;
