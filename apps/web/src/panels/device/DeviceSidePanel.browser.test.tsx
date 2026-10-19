@@ -219,6 +219,9 @@ describe("registered Device panel", () => {
     await startPhone();
     await act(async () => root.render(render(next)));
     await act(async () => root.render(render(picking)));
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled).toBe(
+      false,
+    );
     await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
 
     expect(errors()).toHaveLength(0);
