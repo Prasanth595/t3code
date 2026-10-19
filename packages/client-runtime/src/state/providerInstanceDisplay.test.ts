@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   normalizeProviderAccentColor,
   providerInstanceInitials,
+  resolveProviderInstanceAccentColor,
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "./providerInstanceDisplay.ts";
@@ -132,5 +133,56 @@ describe("shouldShowInstanceBadge", () => {
     const entry = { driverKind: codex, accentColor: undefined };
     const other = { driverKind: claude, accentColor: undefined };
     expect(shouldShowInstanceBadge(entry, [entry, other])).toBe(false);
+  });
+});
+
+describe("resolveProviderInstanceAccentColor", () => {
+  const defaultCodex = { instanceId: ProviderInstanceId.make("codex"), driver: codex };
+  const personal = { instanceId: ProviderInstanceId.make("codex_personal"), driver: codex };
+
+  it("prefers an explicit color and restores automatic color when cleared or invalid", () => {
+    const siblings = [defaultCodex, personal];
+    const automaticColor = resolveProviderInstanceAccentColor(personal, siblings);
+    expect(automaticColor).toMatch(/^#[0-9a-f]{6}$/);
+    expect(
+      resolveProviderInstanceAccentColor({ ...personal, accentColor: "#ff8800" }, siblings),
+    ).toBe("#ff8800");
+    expect(
+      resolveProviderInstanceAccentColor({ ...defaultCodex, accentColor: "#112233" }, siblings),
+    ).toBe("#112233");
+    expect(
+      resolveProviderInstanceAccentColor({ ...personal, accentColor: "orange" }, siblings),
+    ).toBe(automaticColor);
+    expect(resolveProviderInstanceAccentColor({ ...personal, accentColor: "" }, siblings)).toBe(
+      automaticColor,
+    );
+    expect(
+      resolveProviderInstanceAccentColor({ ...defaultCodex, accentColor: "orange" }, siblings),
+    ).toBeUndefined();
+  });
+
+  it("leaves the default instance uncolored even with a custom sibling", () => {
+    expect(
+      resolveProviderInstanceAccentColor(defaultCodex, [defaultCodex, personal]),
+    ).toBeUndefined();
+  });
+
+  it("gives a custom instance a stable color only when it shares its driver", () => {
+    const color = resolveProviderInstanceAccentColor(personal, [defaultCodex, personal]);
+    expect(color).toMatch(/^#[0-9a-f]{6}$/);
+    expect(resolveProviderInstanceAccentColor(personal, [personal, defaultCodex])).toBe(color);
+    expect(resolveProviderInstanceAccentColor(personal, [personal])).toBeUndefined();
+    expect(
+      resolveProviderInstanceAccentColor(personal, [
+        personal,
+        { instanceId: ProviderInstanceId.make("claudeAgent"), driver: claude },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("never auto-colors registry agents", () => {
+    const first = { instanceId: ProviderInstanceId.make("mistral_vibe"), driver: acpRegistry };
+    const second = { instanceId: ProviderInstanceId.make("devin"), driver: acpRegistry };
+    expect(resolveProviderInstanceAccentColor(first, [first, second])).toBeUndefined();
   });
 });

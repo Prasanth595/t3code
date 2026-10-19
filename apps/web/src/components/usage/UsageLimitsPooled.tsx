@@ -19,6 +19,7 @@ import { Fragment, type ReactNode, useState } from "react";
 import { ensureLocalApi } from "../../localApi";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
+import { resolveProviderInstanceAccentColor } from "../../providerInstances";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -79,7 +80,7 @@ function AccountAvatar({
           String(account.driver)
         }
         accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
+        showBadge={Boolean(account.displayName || account.accentColor)}
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
         iconClassName="size-4 text-foreground/80"
@@ -538,7 +539,27 @@ export function UsageLimitsPooled({
   readonly now: number;
   readonly cursorPrompt?: ReactNode;
 }) {
-  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const coloredPresentations = new Map(
+    [...presentations].map(([environmentId, presentation]) => {
+      const config = presentation.serverConfig;
+      return [
+        environmentId,
+        {
+          ...presentation,
+          serverConfig: config
+            ? {
+                ...config,
+                providers: config.providers.map((provider) => ({
+                  ...provider,
+                  accentColor: resolveProviderInstanceAccentColor(provider, config.providers),
+                })),
+              }
+            : null,
+        },
+      ] as const;
+    }),
+  );
+  const pools = collectLimitPools(collectLimitAccounts(coloredPresentations), now);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
   const cursorPromptAt =

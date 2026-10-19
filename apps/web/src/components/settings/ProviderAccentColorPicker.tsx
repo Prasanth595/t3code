@@ -64,10 +64,12 @@ function ProviderCustomColorPanel(props: {
 function ProviderCustomColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
+  readonly placeholderColor: string | undefined;
   readonly onCommit: (value: string) => void;
   readonly onClear: () => void;
 }) {
   const normalized = normalizeProviderAccentColor(props.value);
+  const shownColor = normalized ?? props.placeholderColor;
 
   return (
     <Popover>
@@ -77,10 +79,10 @@ function ProviderCustomColorPicker(props: {
             type="button"
             size="icon-sm"
             variant="ghost-muted"
-            style={normalized ? { backgroundColor: normalized } : undefined}
-            aria-label={`${normalized ? "Change" : "Add"} accent color for ${props.displayName}`}
+            style={shownColor ? { backgroundColor: shownColor } : undefined}
+            aria-label={`${shownColor ? "Change" : "Add"} accent color for ${props.displayName}`}
           >
-            {normalized ? (
+            {shownColor ? (
               <span className="sr-only">Change accent color</span>
             ) : (
               <PlusIcon aria-hidden />
@@ -90,7 +92,7 @@ function ProviderCustomColorPicker(props: {
       />
       <PopoverPopup side="bottom" align="start" sideOffset={6} padding="none">
         <ProviderCustomColorPanel
-          value={normalized ?? FALLBACK_ACCENT_COLOR}
+          value={shownColor ?? FALLBACK_ACCENT_COLOR}
           onCommit={props.onCommit}
         />
         {normalized ? (
@@ -105,7 +107,7 @@ function ProviderCustomColorPicker(props: {
                   onClick={props.onClear}
                 >
                   <XIcon className="size-3.5" aria-hidden />
-                  Clear color
+                  {props.placeholderColor ? "Use automatic color" : "Clear color"}
                 </Button>
               }
             />
@@ -119,6 +121,7 @@ function ProviderCustomColorPicker(props: {
 export function ProviderAccentColorPicker(props: {
   readonly displayName: string;
   readonly value: string | undefined;
+  readonly placeholderColor?: string | undefined;
   readonly onCommit: (value: string) => void;
   readonly description?: string;
   readonly commitDelayMs?: number;
@@ -130,6 +133,7 @@ export function ProviderAccentColorPicker(props: {
     displayName,
     layout = "stacked",
     onCommit,
+    placeholderColor,
     value,
   } = props;
   const [optimisticValue, setOptimisticValue] = useState(() => value ?? "");
@@ -191,6 +195,7 @@ export function ProviderAccentColorPicker(props: {
     <ProviderCustomColorPicker
       displayName={displayName}
       value={normalized}
+      placeholderColor={placeholderColor}
       onCommit={commitAccentColor}
       onClear={() => commitAccentColor("")}
     />
