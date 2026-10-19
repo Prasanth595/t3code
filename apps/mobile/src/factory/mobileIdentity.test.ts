@@ -62,39 +62,37 @@ afterEach(() => {
 });
 
 describe("fork mobile identity", () => {
-  for (const expected of VARIANTS) {
-    it(`gives the ${expected.variant} build the fork's identity`, async () => {
-      const config = await resolveConfig({ APP_VARIANT: expected.variant });
+  it.each(VARIANTS)("gives the $variant build the fork's identity", async (expected) => {
+    const config = await resolveConfig({ APP_VARIANT: expected.variant });
 
-      expect(config.name).toBe(expected.name);
-      expect(config.scheme).toBe(expected.scheme);
-      expect(config.ios?.bundleIdentifier).toBe(expected.id);
-      expect(config.android?.package).toBe(expected.id);
-      expect(config.ios?.appleTeamId).toBe("3TB6CJ6ZHV");
-      expect(config.ios?.associatedDomains).toEqual([
-        "applinks:originalsolutions.com.au",
-        "webcredentials:originalsolutions.com.au",
-      ]);
-      expect(config.ios?.entitlements?.["keychain-access-groups"]).toEqual([
-        `$(AppIdentifierPrefix)${expected.id}`,
-      ]);
+    expect(config.name).toBe(expected.name);
+    expect(config.scheme).toBe(expected.scheme);
+    expect(config.ios?.bundleIdentifier).toBe(expected.id);
+    expect(config.android?.package).toBe(expected.id);
+    expect(config.ios?.appleTeamId).toBe("3TB6CJ6ZHV");
+    expect(config.ios?.associatedDomains).toEqual([
+      "applinks:originalsolutions.com.au",
+      "webcredentials:originalsolutions.com.au",
+    ]);
+    expect(config.ios?.entitlements?.["keychain-access-groups"]).toEqual([
+      `$(AppIdentifierPrefix)${expected.id}`,
+    ]);
 
-      const widgets = pluginOptions(config, "expo-widgets");
-      expect(widgets.bundleIdentifier).toBe(`${expected.id}.widgets`);
-      expect(widgets.groupIdentifier).toBe(`group.${expected.id}`);
-      const sharing = pluginOptions(config, "expo-sharing").ios as Record<string, unknown>;
-      expect(sharing.extensionBundleIdentifier).toBe(`${expected.id}.sharing`);
-      expect(sharing.appGroupId).toBe(`group.${expected.id}`);
+    const widgets = pluginOptions(config, "expo-widgets");
+    expect(widgets.bundleIdentifier).toBe(`${expected.id}.widgets`);
+    expect(widgets.groupIdentifier).toBe(`group.${expected.id}`);
+    const sharing = pluginOptions(config, "expo-sharing").ios as Record<string, unknown>;
+    expect(sharing.extensionBundleIdentifier).toBe(`${expected.id}.sharing`);
+    expect(sharing.appGroupId).toBe(`group.${expected.id}`);
 
-      expect(config.updates?.enabled).toBe(false);
-      expect(config.updates?.url).toBeUndefined();
-      expect(config.owner).toBeUndefined();
-      expect(config.extra?.eas?.projectId).toBeUndefined();
+    expect(config.updates?.enabled).toBe(false);
+    expect(config.updates?.url).toBeUndefined();
+    expect(config.owner).toBeUndefined();
+    expect(config.extra?.eas?.projectId).toBeUndefined();
 
-      const serialized = JSON.stringify(config);
-      for (const upstream of UPSTREAM_VALUES) expect(serialized).not.toContain(upstream);
-    });
-  }
+    const serialized = JSON.stringify(config);
+    for (const upstream of UPSTREAM_VALUES) expect(serialized).not.toContain(upstream);
+  });
 
   it("lets the personal-team bundle id win over the fork id", async () => {
     const config = await resolveConfig({
