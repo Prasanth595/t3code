@@ -3,6 +3,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { resolveForkSourcePoint } from "./forkNativeSource.ts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -3546,14 +3547,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
     const sourceProjection = yield* projectionStore
-      .getThreadRecords(command.sourceThreadId, [
-        "runs",
-        "checkpoints",
-        "providerThreads",
-        "providerTurns",
-        "attempts",
-        "contextTransfers",
-      ])
+      .getThreadRecords(
+        command.sourceThreadId,
+        [
+          "runs",
+          "checkpoints",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "contextTransfers",
+          "turnItems",
+        ],
+        { turnItemTypes: ["compaction"] },
+      )
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -3584,6 +3590,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     const sourceProviderThread = providerThreadForRun(sourceProjection, sourceRun);
+    const sourcePoint = yield* resolveForkSourcePoint(
+      sourceProjection,
+      sourceRun,
+      contextSourcePointForRun(sourceProjection, sourceRun),
+    ).pipe(
+      Effect.provideService(ProviderAdapterRegistryV2, providerAdapters),
+      Effect.mapError((cause) => (cause._tag === "ForkSourceError" ? cause.message : cause)),
+      mapDispatchError(command),
+    );
     const now = command.createdAt ?? (yield* DateTime.now);
     const emitEvent = emit(events, command);
     const transferId = yield* mapDispatchError(command)(
@@ -3598,7 +3613,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         sourceProjection,
         sourceRun,
         sourceProviderThread,
-        canonicalSourcePoint: contextSourcePointForRun(sourceProjection, sourceRun),
+        canonicalSourcePoint: sourcePoint,
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
