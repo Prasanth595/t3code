@@ -36,6 +36,7 @@ import {
   updateCustomTheme,
   updateThemeColorFamily,
   CUSTOM_THEMES_STORAGE_KEY,
+  ENVIRONMENT_THEMES_STORAGE_KEY,
   createVividThemeColors,
   getDefaultThemeColors,
   themeColorToHex,
@@ -80,6 +81,77 @@ function contrastRatio(first: string, second: string): number {
   const darker = Math.min(luminance(first), luminance(second));
   return (lighter + 0.05) / (darker + 0.05);
 }
+
+describe("published theme cache", () => {
+  it("ignores malformed storage and rejects invalid or reserved cached entries", async () => {
+    const theme = {
+      id: "nightfall",
+      label: "Nightfall",
+      appearance: "dark",
+      colors: { canvas: "#1a1b26" },
+    };
+    try {
+      for (const raw of [
+        "{",
+        "{}",
+        JSON.stringify([
+          null,
+          { ...theme, id: "dark" },
+          { ...theme, id: "ocean" },
+          { ...theme, variants: { light: null } },
+          theme,
+          { ...theme, label: "Duplicate" },
+        ]),
+      ]) {
+        vi.resetModules();
+        vi.stubGlobal("window", {
+          localStorage: {
+            getItem: (key: string) => (key === ENVIRONMENT_THEMES_STORAGE_KEY ? raw : null),
+          },
+        });
+        const palette = await import("./themePalette");
+        const themes = palette.getEnvironmentThemes();
+        expect(themes.map((entry) => entry.id)).toEqual(raw.startsWith("[") ? [theme.id] : []);
+        if (themes.length > 0) {
+          expect(palette.getThemeDefinition(theme.id)).toMatchObject({
+            label: theme.label,
+            colors: { canvas: canonical(theme.colors.canvas) },
+          });
+          expect(palette.getThemeDefinition("ocean")).toEqual(OCEAN_THEME);
+        }
+      }
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
+  it("keeps published themes usable when cache reads and writes are blocked", async () => {
+    vi.resetModules();
+    vi.stubGlobal("window", {
+      get localStorage() {
+        throw new Error("storage blocked");
+      },
+    });
+    try {
+      const palette = await import("./themePalette");
+      expect(palette.getEnvironmentThemes()).toEqual([]);
+      const theme = {
+        id: "nightfall",
+        label: "Nightfall",
+        appearance: "dark" as const,
+        colors: palette.getDefaultThemeColors("dark"),
+      };
+      expect(palette.setEnvironmentThemes([theme])).toBe(true);
+      expect(palette.getThemeDefinition(theme.id)).toBe(theme);
+      expect(palette.setEnvironmentThemes([])).toBe(true);
+      expect(palette.isKnownThemePreference(theme.id)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+});
 
 describe("theme files", () => {
   it("keeps every built-in palette value in canonical OKLCH form", () => {

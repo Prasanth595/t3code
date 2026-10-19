@@ -15,8 +15,11 @@ const LIGHT_THEME = {
   canvas: "#eff1f5",
 } as const satisfies EnvironmentTheme;
 
-async function setupThemeSync(mode: "dark" | "system" = "dark") {
-  const storage = new Map<string, string>([["t3code:theme", NIGHTFALL_THEME.id]]);
+async function setupThemeSync(
+  mode: "dark" | "system" = "dark",
+  storage = new Map<string, string>([["t3code:theme", NIGHTFALL_THEME.id]]),
+  initialPublished: ReadonlyArray<EnvironmentTheme> | null = [NIGHTFALL_THEME],
+) {
   const styles = new Map<string, string>();
   const classes = new Set<string>();
   const root = {
@@ -50,7 +53,7 @@ async function setupThemeSync(mode: "dark" | "system" = "dark") {
   });
   vi.stubGlobal("requestAnimationFrame", vi.fn());
 
-  let published: ReadonlyArray<EnvironmentTheme> = [NIGHTFALL_THEME];
+  let published = initialPublished;
   let readSnapshot: (() => unknown) | undefined;
   const effects: Array<() => void> = [];
   const lastPublished: { current: ReadonlyArray<EnvironmentTheme> | null } = { current: null };
@@ -73,7 +76,7 @@ async function setupThemeSync(mode: "dark" | "system" = "dark") {
   const flushEffects = () => {
     for (const effect of effects.splice(0)) effect();
   };
-  const publish = (themes: ReadonlyArray<EnvironmentTheme>) => {
+  const publish = (themes: ReadonlyArray<EnvironmentTheme> | null) => {
     published = themes;
     useEnvironmentThemeSync();
     flushEffects();
@@ -81,9 +84,9 @@ async function setupThemeSync(mode: "dark" | "system" = "dark") {
     flushEffects();
     return theme;
   };
-  publish(published);
+  const theme = publish(published);
 
-  return { publish, palette, root, styles, readSnapshot: () => readSnapshot?.() };
+  return { publish, palette, root, styles, storage, theme, readSnapshot: () => readSnapshot?.() };
 }
 
 afterEach(() => {
@@ -96,6 +99,65 @@ afterEach(() => {
 });
 
 describe("published theme refresh", () => {
+  it.each([
+    { name: "updated palettes", themes: [LIGHT_THEME], selection: NIGHTFALL_THEME.id },
+    { name: "no palettes", themes: [], selection: "system" },
+  ])(
+    "keeps the reload cache until the first config publishes $name",
+    async ({ themes, selection }) => {
+      const previous = await setupThemeSync();
+      const previousCanvas = previous.styles.get(previous.palette.getThemeColorVariable("canvas"));
+
+      vi.resetModules();
+      const reloaded = await setupThemeSync("dark", previous.storage, null);
+      expect(reloaded.theme.theme).toBe(NIGHTFALL_THEME.id);
+      expect(reloaded.root.dataset.themeId).toBe(NIGHTFALL_THEME.id);
+      expect(reloaded.styles.get(reloaded.palette.getThemeColorVariable("canvas"))).toBe(
+        previousCanvas,
+      );
+      expect(reloaded.publish(null).theme).toBe(NIGHTFALL_THEME.id);
+
+      expect(reloaded.publish(themes).theme).toBe(selection);
+      expect(reloaded.palette.getEnvironmentThemes().map((theme) => theme.id)).toEqual(
+        themes.map((theme) => theme.id),
+      );
+      if (themes.length > 0) {
+        expect(reloaded.root.classList.contains("dark")).toBe(false);
+        expect(reloaded.styles.get(reloaded.palette.getThemeColorVariable("canvas"))).not.toBe(
+          previousCanvas,
+        );
+      } else {
+        expect(reloaded.root.dataset.themeId).toBeUndefined();
+      }
+
+      vi.resetModules();
+      const nextReload = await setupThemeSync("dark", previous.storage, null);
+      expect(nextReload.theme.theme).toBe(selection);
+      expect(nextReload.palette.getEnvironmentThemes()).toEqual(
+        reloaded.palette.getEnvironmentThemes(),
+      );
+    },
+  );
+
+  it("does not rewrite storage or repaint for an unchanged first config or reconnect", async () => {
+    const previous = await setupThemeSync();
+    vi.resetModules();
+    const reloaded = await setupThemeSync("dark", previous.storage, null);
+    const writeStorage = vi.spyOn(window.localStorage, "setItem");
+    const paint = vi.spyOn(reloaded.root.style, "setProperty");
+    const cached = reloaded.palette.getEnvironmentThemes();
+    const snapshot = reloaded.readSnapshot();
+
+    reloaded.publish([{ ...NIGHTFALL_THEME }]);
+    reloaded.publish(null);
+    reloaded.publish([{ ...NIGHTFALL_THEME }]);
+
+    expect(reloaded.palette.getEnvironmentThemes()).toBe(cached);
+    expect(reloaded.readSnapshot()).toBe(snapshot);
+    expect(writeStorage).not.toHaveBeenCalled();
+    expect(paint).not.toHaveBeenCalled();
+  });
+
   it.each(["dark", "system"] as const)(
     "updates the React snapshot when appearance changes in %s mode",
     async (mode) => {

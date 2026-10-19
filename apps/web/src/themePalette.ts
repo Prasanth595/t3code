@@ -56,13 +56,9 @@ export type ThemeFile = Readonly<{
   managed?: boolean;
 }>;
 
-/**
- * The environment's palettes are republished by the server on every change.
- * The last set is cached only so a reload paints the selected theme before the
- * server reconnects; the first config snapshot replaces it. They ride the
- * custom-theme listeners so every theme consumer already re-reads when they
- * change. Null until first read, since the cache is parsed lazily.
- */
+// Cache complete palettes so boot and runtime can resolve the selection before
+// server config arrives. The first snapshot replaces them, including an empty
+// set. Reuse custom-theme listeners so existing consumers observe that change.
 let environmentThemeDefinitions: ReadonlyArray<ThemeDefinition> | null = null;
 
 const customThemeListeners = new Set<() => void>();
