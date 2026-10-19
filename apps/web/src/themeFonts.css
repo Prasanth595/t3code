@@ -1,0 +1,55 @@
+@font-face {
+  font-family: "Absolutely Sans";
+  font-feature-settings: "dlig" 0;
+  src: url("../../../packages/shared/assets/fonts/absolutely/web/AbsolutelySans-Roman.woff2")
+    format("woff2");
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Absolutely Sans";
+  font-feature-settings: "dlig" 0;
+  src: url("../../../packages/shared/assets/fonts/absolutely/web/AbsolutelySans-Italic.woff2")
+    format("woff2");
+  font-style: italic;
+  font-weight: 300 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Absolutely Serif";
+  src: url("../../../packages/shared/assets/fonts/absolutely/web/AbsolutelySerif-Roman.woff2")
+    format("woff2");
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Absolutely Serif";
+  src: url("../../../packages/shared/assets/fonts/absolutely/web/AbsolutelySerif-Italic.woff2")
+    format("woff2");
+  font-style: italic;
+  font-weight: 300 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Absolutely Mono";
+  src: url("../../../packages/shared/assets/fonts/absolutely/web/AbsolutelyMono-Roman.woff2")
+    format("woff2");
+  font-style: normal;
+  font-weight: 300 800;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Absolutely Mono";
+  src: url("../../../packages/shared/assets/fonts/absolutely/web/AbsolutelyMono-Italic.woff2")
+    format("woff2");
+  font-style: italic;
+  font-weight: 300 800;
+  font-display: swap;
+}

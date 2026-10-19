@@ -124,6 +124,24 @@ const dmSansFonts = {
   bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
 } as const;
 
+const absolutelyNativeFontNames = [
+  "Sans-Regular",
+  "Sans-Medium",
+  "Sans-Bold",
+  "Sans-Italic",
+  "Sans-BoldItalic",
+  "Serif-Regular",
+  "Serif-Bold",
+  "Serif-Italic",
+  "Serif-BoldItalic",
+  "Mono-Regular",
+  "Mono-Bold",
+  "Mono-Italic",
+  "Mono-BoldItalic",
+] as const;
+const absolutelyFontPath = (name: string) =>
+  `../../packages/shared/assets/fonts/absolutely/native/Absolutely${name}.ttf`;
+
 const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-widgets",
   {
@@ -311,7 +329,12 @@ const config: ExpoConfig = {
       "expo-font",
       {
         ios: {
-          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+          fonts: [
+            dmSansFonts.regular,
+            dmSansFonts.medium,
+            dmSansFonts.bold,
+            ...absolutelyNativeFontNames.map(absolutelyFontPath),
+          ],
         },
         android: {
           fonts: [
@@ -327,6 +350,23 @@ const config: ExpoConfig = {
               fontFamily: "DMSans-Bold",
               fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
             },
+            ...absolutelyNativeFontNames.map((name) => ({
+              fontFamily: `Absolutely${name}`,
+              fontDefinitions: [
+                { path: absolutelyFontPath(name), weight: 400, style: "normal" as const },
+                ...(name.endsWith("Regular") || name.endsWith("Bold")
+                  ? [
+                      {
+                        path: absolutelyFontPath(
+                          name.replace(/Regular$/, "Italic").replace(/Bold$/, "BoldItalic"),
+                        ),
+                        weight: 400,
+                        style: "italic" as const,
+                      },
+                    ]
+                  : []),
+              ],
+            })),
           ],
         },
       },
