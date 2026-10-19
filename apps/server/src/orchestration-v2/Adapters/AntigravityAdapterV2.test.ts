@@ -278,6 +278,21 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedDirWrite), "a write under an escaping directory link");
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "new.txt")));
+      for (const [link, target] of [
+        [path.join(workspace, "linked-dir"), outside],
+        [danglingLink, plantedTarget],
+      ] as const) {
+        const nestedWriteError = yield* writeTextFile(
+          {
+            sessionId: "mock-session-1",
+            path: path.join(link, "missing", "nested", "file.ts"),
+            content: "planted",
+          },
+          context("fs/write_text_file"),
+        ).pipe(Effect.flip);
+        assert.propertyVal(nestedWriteError, "code", -32602, link);
+        assert.isFalse(yield* fileSystem.exists(path.join(target, "missing")), link);
+      }
       const insideLink = path.join(workspace, "inside-link.ts");
       yield* fileSystem.symlink(insidePath, insideLink);
       const viaInsideLink = yield* readTextFile(
