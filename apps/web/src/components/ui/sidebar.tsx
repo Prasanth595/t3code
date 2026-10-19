@@ -113,6 +113,9 @@ function SidebarProvider({
     mobileBreakpoint === undefined ? "max-md" : { max: mobileBreakpoint },
   );
   const [openMobile, setOpenMobile] = React.useState(false);
+  if (!isMobile && openMobile) {
+    setOpenMobile(false);
+  }
   const [mobileSheetMounted, setMobileSheetMounted] = React.useState(false);
   const setMobileSheetElement = (element: HTMLDivElement | null) => {
     setMobileSheetMounted(element !== null);
