@@ -273,7 +273,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("tailscale prob
       );
 
       const fiber = yield* readTailscaleStatus.pipe(Effect.flip, Effect.forkScoped);
-      const pids = (yield* fs.readFileString(readyPath)).trim().split(" ").map(Number);
+      const pids: Array<number> = [];
       yield* Effect.addFinalizer(() =>
         Effect.forEach(
           pids,
@@ -281,6 +281,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("tailscale prob
           { discard: true },
         ),
       );
+      // Interrupting a FIFO read leaves its threadpool thread parked until a
+      // writer opens the FIFO, so a failed wait opens it to release the reader.
+      const report = yield* fs.readFileString(readyPath).pipe(
+        Effect.raceFirst(Fiber.join(fiber).pipe(Effect.flatMap(Effect.fail))),
+        Effect.timeout("5 seconds"),
+        TestClock.withLive,
+        Effect.onError(() => fs.open(readyPath, { flag: "r+" }).pipe(Effect.scoped, Effect.ignore)),
+      );
+      pids.push(...report.trim().split(" ").map(Number));
       assert.deepEqual(yield* Effect.forEach(pids, isProcessAlive), [true, true]);
 
       yield* TestClock.adjust("3500 millis");
