@@ -194,4 +194,25 @@ describe("AgentScope service", () => {
       }),
     ),
   );
+
+  it.effect("delegates cgroup controllers to agent scopes and slices", () =>
+    withFakeSystemd(({ scope, calls, stateDir }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(agent.args).toContain("--property=Delegate=yes");
+        expect(agent.args).toContain("--property=DelegateControllers=cpu cpuset io memory pids");
+        expect(agent.args).toContain("--property=OOMPolicy=stop");
+
+        const setProperty = calls.filter(([, verb]) => verb === "set-property");
+        const delegatedSlices = setProperty
+          .filter((args) => args.includes("Delegate=yes"))
+          .map((args) => args[3]);
+        expect(delegatedSlices).toEqual([
+          "app-t3code.slice",
+          "app-t3code-agents.slice",
+          ownedAgentSlice(stateDir),
+        ]);
+      }),
+    ),
+  );
 });
