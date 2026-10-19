@@ -3241,6 +3241,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  it.effect.each(toolResultSources)(
+    "leaves out an image whose data URI type conflicts with its mime, read from $source",
+    ({ toolOutputs }) =>
+      Effect.gen(function* () {
+        const svg = btoa("<svg/>");
+        assert.deepEqual(
+          yield* toolOutputs([
+            caption,
+            { type: "file", uri: `data:image/svg+xml;base64,${svg}`, mime: "image/png" },
+            { type: "file", uri: `data:;base64,${PNG}`, mime: "image/png" },
+          ]),
+          ["Generated a cat."],
+        );
+      }),
+  );
+
   it.effect("finishes a workspace command whose stream dropped before its inbox event", () =>
     Effect.gen(function* () {
       // `session.command` answers 204 without the inbox item's id, and the
