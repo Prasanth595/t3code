@@ -82,9 +82,9 @@ export const make = Effect.gen(function* () {
       }),
     decryptString: (value) =>
       Effect.tryPromise({
-        try: async () => (await Electron.safeStorage.decryptStringAsync(Buffer.from(value))).result,
+        try: () => Electron.safeStorage.decryptStringAsync(Buffer.from(value)),
         catch: (cause) => new ElectronSafeStorageDecryptError({ cause }),
-      }),
+      }).pipe(Effect.map(({ result }) => result)),
     selectedStorageBackend: Effect.sync(() => {
       if (platform !== "linux") {
         return Option.none();
