@@ -48,7 +48,6 @@ export interface DesktopSettingsChange {
 }
 
 const DEFAULT_TAILSCALE_SERVE_PORT = 443;
-// Keep native resizing and saved bounds aligned for scaled half-screen tiles.
 export const MIN_MAIN_WINDOW_SIZE = {
   width: 600,
   height: 620,

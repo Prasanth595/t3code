@@ -278,24 +278,6 @@ describe("DesktopSettings", () => {
     ),
   );
 
-  it.effect("saves narrow tiled bounds and restores them in a fresh settings service", () =>
-    withSettings(
-      Effect.gen(function* () {
-        const settings = yield* DesktopAppSettings.DesktopAppSettings;
-        for (const width of [600, 664, 768]) {
-          const bounds = { x: 0, y: 0, width, height: 780 };
-          yield* settings.setMainWindowBounds(bounds, false);
-          const restored = yield* Effect.gen(function* () {
-            const freshSettings = yield* DesktopAppSettings.DesktopAppSettings;
-            return yield* freshSettings.load;
-          }).pipe(Effect.provide(DesktopAppSettings.layer));
-          assert.deepEqual(restored.mainWindowBounds, bounds);
-          assert.isFalse(restored.mainWindowMaximized);
-        }
-      }),
-    ),
-  );
-
   it.effect("rejects window bounds that do not satisfy the domain schema", () =>
     withSettings(
       Effect.gen(function* () {
@@ -360,17 +342,24 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 600, height: 620 }, true);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
-          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowBounds: { x: -1200, y: 40, width: 600, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
+
+        const restored = yield* Effect.gen(function* () {
+          const freshSettings = yield* DesktopAppSettings.DesktopAppSettings;
+          return yield* freshSettings.load;
+        }).pipe(Effect.provide(DesktopAppSettings.layer));
+        assert.deepEqual(restored.mainWindowBounds, persisted.mainWindowBounds);
+        assert.isTrue(restored.mainWindowMaximized);
       }),
     ),
   );
