@@ -1898,7 +1898,8 @@ it.layer(
       }),
     );
 
-    it.effect("refreshes caches and each enabled account catalog after a CLI update", () =>
+    const updateScenarios = ["healthy", "sibling defects", "selected defect"] as const;
+    it.effect.each(updateScenarios)("refreshes account caches after update (%s)", (scenario) =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("example");
         const packageName = "@example/provider";
@@ -1924,7 +1925,7 @@ it.layer(
             installed: true,
             auth: { status: "authenticated", label: config.home },
             checkedAt: "2026-06-10T00:00:00.000Z",
-            version: "1.0.0",
+            version: scenario === "selected defect" && id === "personal" ? null : "1.0.0",
             models: [],
             slashCommands: [],
             skills: [],
@@ -1938,20 +1939,29 @@ it.layer(
             enabled,
             snapshot: {
               resolveMaintenance: () =>
-                Effect.succeed(
-                  makeProviderMaintenanceCapabilities({
+                Effect.sync(() => {
+                  if (id === "broken-maintenance" && events.includes("update")) {
+                    throw new Error("Sibling maintenance failed");
+                  }
+                  return makeProviderMaintenanceCapabilities({
                     provider: driverKind,
-                    packageName,
+                    packageName: scenario === "selected defect" ? null : packageName,
                     updateExecutable: config.binaryPath,
                     updateArgs: ["update"],
                     env: { PROVIDER_HOME: config.home },
                     updateLockKey: config.binaryPath,
-                    latestVersion: "2.0.0",
-                  }),
-                ),
+                    latestVersion: scenario === "selected defect" ? null : "2.0.0",
+                  });
+                }),
               getSnapshot: Effect.succeed(provider),
               refresh: Effect.sync(() => {
                 events.push(`probe:${id}`);
+                if (
+                  id === "broken-discovery" ||
+                  (scenario === "selected defect" && id === "personal")
+                ) {
+                  throw new Error("Provider discovery failed");
+                }
                 return cached
                   ? provider
                   : {
@@ -1985,6 +1995,11 @@ it.layer(
             model: "personal-model",
           }),
           makeInstance("work", { binaryPath: "/work/agent", home: "/work", model: "work-model" }),
+          ...(scenario === "sibling defects"
+            ? ["broken-maintenance", "broken-discovery"].map((id) =>
+                makeInstance(id, { binaryPath: `/${id}/agent`, home: `/${id}`, model: id }),
+              )
+            : []),
           makeInstance(
             "disabled",
             { binaryPath: "/disabled/agent", home: "/disabled", model: "disabled-model" },
@@ -2062,37 +2077,53 @@ it.layer(
           const registry = yield* ProviderRegistry.ProviderRegistry;
           const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
           const before = yield* registry.getProviders;
+          if (scenario === "selected defect") {
+            const selected = before.find((p) => p.instanceId === "personal");
+            assert.strictEqual(selected?.version, null);
+            assert.strictEqual(selected?.versionAdvisory, undefined);
+          }
           const result = yield* runner.updateProvider({
             provider: driver,
             instanceId: ProviderInstanceId.make("personal"),
           });
+          assert.strictEqual(
+            result.providers.find((p) => p.instanceId === "personal")?.updateState?.status,
+            scenario === "selected defect" ? "unchanged" : "succeeded",
+          );
           assert.deepStrictEqual(
             events.filter((event) => event === "update"),
             ["update"],
           );
           assert.strictEqual(events[0], "update");
-          assert.deepStrictEqual(events.filter((event) => event.startsWith("probe:")).toSorted(), [
-            "probe:personal",
-            "probe:work",
-          ]);
+          assert.deepStrictEqual(
+            events.filter((event) => event.startsWith("probe:")).toSorted(),
+            [
+              "probe:personal",
+              "probe:work",
+              ...(scenario === "sibling defects" ? ["probe:broken-discovery"] : []),
+            ].toSorted(),
+          );
           for (const id of ["personal", "work"]) {
             assert.isBelow(events.indexOf(`invalidate:${id}`), events.indexOf(`probe:${id}`));
             assert.include(events, `invalidate:${id}`);
             const provider = result.providers.find((p) => p.instanceId === id);
             assert.deepStrictEqual(
               provider?.models.map((model) => model.slug),
-              [`${id}-model`],
+              scenario === "selected defect" && id === "personal" ? [] : [`${id}-model`],
             );
             assert.strictEqual(provider?.auth.label, `/${id}`);
           }
-          assert.strictEqual(
-            result.providers.find((p) => p.instanceId === "personal")?.updateState?.status,
-            "succeeded",
-          );
+          for (const id of scenario === "sibling defects"
+            ? ["broken-maintenance", "broken-discovery"]
+            : scenario === "selected defect"
+              ? ["personal"]
+              : []) {
+            assert.strictEqual(result.providers.find((p) => p.instanceId === id)?.status, "error");
+          }
           assert.isAtLeast(yield* Ref.get(manifestRefreshes), 1);
           assert.strictEqual(
             yield* latestVersions.cached(packageName, Effect.succeed("2.0.0")),
-            "2.0.0",
+            scenario === "selected defect" ? "1.0.0" : "2.0.0",
           );
           assert.strictEqual(
             yield* latestVersions.cached("unrelated-package", Effect.succeed("2.0.0")),

@@ -698,6 +698,28 @@ export const layer = Layer.effect(
       const instances = (yield* instanceRegistry.listInstances).filter(
         (instance) => instance.driverKind === provider && instance.enabled,
       );
+      const failedInstances = new Set<ProviderInstanceId>();
+      const recoverInstanceFailure = Effect.fn("recoverPostUpdateRefreshFailure")(function* (
+        instanceId: ProviderInstanceId,
+        cause: Cause.Cause<unknown>,
+      ) {
+        if (Cause.hasInterruptsOnly(cause)) {
+          return yield* Effect.interrupt;
+        }
+        yield* Effect.logError("provider post-update refresh failed", {
+          instanceId,
+          cause: Cause.pretty(cause),
+        });
+        failedInstances.add(instanceId);
+        // A cached ready snapshot cannot verify a successful update.
+        return yield* updateProviders((providers) =>
+          providers.map((candidate) =>
+            candidate.instanceId === instanceId
+              ? { ...candidate, status: "error", message: "Provider refresh failed after update." }
+              : candidate,
+          ),
+        );
+      });
       // Accounts can share an installation, but discovery must use each
       // instance's own executable, environment, and credentials.
       yield* Effect.forEach(
@@ -709,12 +731,15 @@ export const layer = Layer.effect(
             if (maintenance.packageName) {
               yield* latestVersions.invalidate(maintenance.packageName);
             }
-          }),
+          }).pipe(Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause))),
         { concurrency: "unbounded", discard: true },
       );
       yield* Effect.forEach(
-        instances,
-        (instance) => refreshOneSource(buildSnapshotSource(instance)),
+        instances.filter((instance) => !failedInstances.has(instance.instanceId)),
+        (instance) =>
+          refreshOneSource(buildSnapshotSource(instance)).pipe(
+            Effect.catchCause((cause) => recoverInstanceFailure(instance.instanceId, cause)),
+          ),
         { concurrency: "unbounded", discard: true },
       );
       return yield* Ref.get(providersRef);
