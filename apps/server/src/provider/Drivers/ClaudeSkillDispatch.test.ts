@@ -63,23 +63,6 @@ describe("planClaudeSkillDispatch", () => {
     }
   });
 
-  it.each([
-    ["do not $implement fixes yet", "do not /implement fixes yet", "/implement fixes yet"],
-    ["before $implement", "before /implement", "/implement"],
-    [
-      "please $implement the fixes\n\nThen report the result",
-      "please /implement the fixes\n\nThen report the result",
-      "/implement the fixes\n\nThen report the result",
-    ],
-    ["Ultrathink:\n$implement fixes", "Ultrathink:\n/implement fixes", "/implement fixes"],
-  ])("keeps the request intact for %j", (prompt, leadingText, commandText) => {
-    expect(planClaudeSkillDispatch(prompt, SKILLS)).toEqual({
-      leadingText,
-      commandText,
-      skillName: "implement",
-    });
-  });
-
   it("ignores a dollar token glued to other text", () => {
     expect(planClaudeSkillDispatch("cost is 5$implement", SKILLS)).toBeUndefined();
   });
