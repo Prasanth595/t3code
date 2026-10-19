@@ -4381,6 +4381,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* driver.readConfigValue(worktreePath, "branch.feature/from-upstream.gh-merge-base"),
           "release",
         );
+        assert.equal(changes.baseRef, "upstream/release");
       }),
     );
 
