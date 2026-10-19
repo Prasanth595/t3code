@@ -212,51 +212,63 @@ const electronApp = ElectronApp.of({
   on: addScopedAppListener,
 });
 
+// Validate descriptor names before eval so closing arbitrary FDs needs no Bash 4.1 syntax.
+const appImageRelaunchScript = `
+for fd in /proc/self/fd/*; do
+  fd=\${fd##*/}
+  case "$fd" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  if [ "$fd" -gt 2 ]; then
+    eval "exec $fd>&-"
+  fi
+done
+while read -r _; do :; done
+exec "$@" </dev/null
+`;
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const env = yield* HostProcess.Environment;
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const appImagePath = env.APPIMAGE;
   if (platform !== "linux" || !Electron.app.isPackaged || !appImagePath?.trim()) {
     return electronApp;
   }
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   return ElectronApp.of({
     ...electronApp,
-    // Electron's relauncher sets no_new_privs, which prevents fusermount from
-    // mounting the replacement AppImage. Wait on a pipe owned by this process
-    // instead: EOF follows its exit, after the single-instance lock is released.
-    // Close inherited native descriptors first, including the AppImage lifetime
-    // pipe and Chromium listeners. Bash supports variable descriptors via exec {fd}>&-;
-    // POSIX sh cannot close these arbitrary descriptor numbers.
-    relaunch: (options) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const handle = yield* spawner.spawn(
-            ChildProcess.make(
-              "bash",
-              [
-                "-c",
-                'for fd in /proc/self/fd/*; do fd=${fd##*/}; if [ "$fd" -gt 2 ]; then exec {fd}>&-; fi; done; while read -r _; do :; done; exec "$@" </dev/null',
-                "t3code-appimage-relaunch",
-                options.execPath ?? appImagePath,
-                ...(options.args ?? process.argv.slice(1)),
-              ],
-              {
-                detached: true,
-                stdin: "pipe",
-                stdout: "ignore",
-                stderr: "ignore",
-                // Noninteractive Bash must not run inherited startup files before waiting.
-                env: { ...env, BASH_ENV: undefined, ENV: undefined },
-              },
-            ),
-          );
-          // The waiting process must survive this scope; its pipe stays open until exit.
-          yield* Effect.asVoid(handle.unref);
-        }),
-      ).pipe(Effect.orDie),
+    // Native relaunch sets no_new_privs, which can prevent fusermount from mounting
+    // the replacement. Release inherited AppImage/Chromium FDs before waiting for EOF.
+    relaunch: Effect.fn("desktop.electron.relaunchAppImage")(
+      function* (options: Electron.RelaunchOptions) {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(
+            "bash",
+            [
+              "-c",
+              appImageRelaunchScript,
+              "t3code-appimage-relaunch",
+              options.execPath ?? appImagePath,
+              ...(options.args ?? process.argv.slice(1)),
+            ],
+            {
+              detached: true,
+              stdin: "pipe",
+              stdout: "ignore",
+              stderr: "ignore",
+              // Startup files could redirect stdin and bypass the parent-exit wait.
+              env: { ...env, BASH_ENV: undefined, ENV: undefined },
+            },
+          ),
+        );
+        // Unref also prevents scope cleanup from killing the waiter; stdin stays open until exit.
+        yield* Effect.asVoid(handle.unref);
+      },
+      Effect.scoped,
+      Effect.orDie,
+    ),
   });
 });
 

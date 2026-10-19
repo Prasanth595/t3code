@@ -184,7 +184,7 @@ export const make = DesktopLifecycle.of({
           args: process.argv.slice(1),
         })
         .pipe(Effect.catchCause(logRelaunchFailure(reason)));
-      // Shutdown has completed even when scheduling the replacement fails.
+      // The backend has stopped; exit even if no replacement could be scheduled.
       yield* electronApp.exit(0);
     }).pipe(Effect.catchCause(logRelaunchFailure(reason)), Effect.forkDetach, Effect.asVoid);
   }),
