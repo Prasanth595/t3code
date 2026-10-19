@@ -1446,7 +1446,7 @@ describe("UsageService", () => {
       const { transcript, settings, home } = yield* setup;
       const committed = claudeLine(1, 100);
       const tail = claudeLine(1, 160, "claude-fable-5", 40).trimEnd();
-      yield* Effect.promise(() => NodeFSP.writeFile(transcript, committed + tail));
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, tail));
 
       const check = (summary: UsageSummary, output: number, thinking: number, records: number) => {
         expect.soft(totalOutputTokens(summary)).toBe(output);
@@ -1459,14 +1459,31 @@ describe("UsageService", () => {
           .toBeCloseTo(records * 10 * 1e-5 + output * 5e-5, 12);
       };
       yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, "usage-scan-cache-v6.json");
+        const legacyPath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
         yield* Effect.gen(function* () {
           const service = yield* UsageService.make;
           check(yield* service.readSummary(WINDOW), 160, 40, 1);
           check(yield* service.readSummary(WINDOW), 160, 40, 1);
         }).pipe(Effect.scoped);
 
+        // A v5 scan of a tail-only file could retain A without a duplicate committed row.
+        const legacy = yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
+            files: Record<string, { r: unknown[][]; t: unknown[][] }>;
+          };
+          const file = document.files[transcript]!;
+          assert.strictEqual(file.r.length, 0);
+          assert.strictEqual(file.t.length, 1);
+          file.t[0]![7] = 0;
+          return encodeUnknownJsonString({ ...document, version: 5 });
+        });
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, committed + tail));
+
         yield* Effect.gen(function* () {
           const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 160, 40, 1);
           check(yield* service.readSummary(WINDOW), 160, 40, 1);
 
           // Preserve the committed prefix and grow the file, so this resumes from the tail.
@@ -1475,7 +1492,21 @@ describe("UsageService", () => {
             .replace('"message":', '"padding":"' + "x".repeat(256) + '","message":');
           yield* Effect.promise(() => NodeFSP.writeFile(transcript, committed + replacement));
           check(yield* service.readSummary(WINDOW), 300, 0, 2);
+        }).pipe(Effect.scoped);
 
+        // Import the obsolete A tail only after the current cache has persisted tail B.
+        yield* Effect.promise(() => NodeFSP.writeFile(legacyPath, legacy));
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+        }).pipe(Effect.scoped);
+        yield* Effect.promise(() => NodeFSP.rm(legacyPath));
+
+        yield* Effect.gen(function* () {
+          const service = yield* UsageService.make;
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
+          check(yield* service.readSummary(WINDOW), 300, 0, 2);
           yield* Effect.promise(() =>
             NodeFSP.appendFile(
               transcript,
