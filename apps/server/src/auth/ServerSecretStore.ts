@@ -247,14 +247,15 @@ export const make = Effect.gen(function* () {
         );
         // Publish complete bytes without replacing a concurrent creator's secret.
         yield* fileSystem.link(temporaryPath, secretPath);
-        const directory = yield* fileSystem.open(serverConfig.secretsDir, { flag: "r" });
-        yield* directory.sync.pipe(
-          Effect.catch((cause) =>
-            platform === "win32" &&
-            Predicate.hasProperty(cause.reason.cause, "code") &&
-            cause.reason.cause.code === "EPERM"
-              ? Effect.void
-              : Effect.fail(cause),
+        // Windows may reject either opening or syncing a directory handle.
+        yield* fileSystem.open(serverConfig.secretsDir, { flag: "r" }).pipe(
+          Effect.flatMap((directory) => directory.sync),
+          Effect.catchIf(
+            (cause) =>
+              platform === "win32" &&
+              Predicate.hasProperty(cause.reason.cause, "code") &&
+              cause.reason.cause.code === "EPERM",
+            () => Effect.void,
           ),
         );
       }),
