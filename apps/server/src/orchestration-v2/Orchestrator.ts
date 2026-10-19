@@ -617,6 +617,21 @@ function nextQueuedRun(
   return queuedRunsInDeliveryOrder(projection)[0];
 }
 
+function pullRequestSnapshotEndsWatch(
+  snapshot: ThreadPullRequestLink["snapshot"],
+  watchStartedAt: ThreadPullRequestWatch["startedAt"],
+): boolean {
+  return (
+    snapshot?.state === "merged" ||
+    // A restarted watch can see a closed snapshot from before the PR reopened.
+    (snapshot?.state === "closed" &&
+      DateTime.isGreaterThanOrEqualTo(
+        DateTime.makeUnsafe(snapshot.syncedAt),
+        DateTime.makeUnsafe(watchStartedAt),
+      ))
+  );
+}
+
 function isStalePullRequestWatchWake(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
   run: OrchestrationV2Run,
@@ -633,14 +648,13 @@ function isStalePullRequestWatchWake(
   if (stamp.watchEnded === true) {
     // The final notice outlives its watch, but a replacement watch supersedes it.
     const latestWatch = link.watch ?? link.endedWatch;
-    return latestWatch !== undefined && latestWatch.startedAt !== stamp.watchStartedAt;
+    return latestWatch?.startedAt !== stamp.watchStartedAt;
   }
   return (
     link.watch === undefined ||
     link.watch.startedAt !== stamp.watchStartedAt ||
     link.watch.headSha !== stamp.headSha ||
-    link.snapshot?.state === "merged" ||
-    link.snapshot?.state === "closed"
+    pullRequestSnapshotEndsWatch(link.snapshot, link.watch.startedAt)
   );
 }
 
@@ -2441,7 +2455,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (
         command.wake.notification.source.kind === "monitor" &&
         command.watch !== null &&
-        (link.snapshot?.state === "merged" || link.snapshot?.state === "closed")
+        pullRequestSnapshotEndsWatch(link.snapshot, command.startedAt)
       ) {
         return;
       }
