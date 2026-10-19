@@ -45,6 +45,7 @@ import * as Statement from "effect/sql/Statement";
 import { LIVE_STREAM_MAX_ITEMS, LiveStreamBufferError } from "./LiveStreamBudget.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { ROLLBACK_FAILED_MESSAGE, ROLLBACK_PARTIAL_MESSAGE } from "./CheckpointRollbackService.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
@@ -2350,14 +2351,41 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* insert("pending:", 1, "pending", null);
       yield* insert("running:", 1, "running", null);
 
-      assert.equal(yield* outbox.pruneSettled, 1_203);
+      const oldRestoreCompletedAt = DateTime.formatIso(DateTime.subtractDuration(now, old));
+      for (const [id, request] of [
+        ["restore-idle", { type: "provider-thread.rollback", expectedIdle: true }],
+        [
+          "restore-fingerprint",
+          { type: "provider-thread.rollback", expectedWorkspaceFingerprint: "accepted" },
+        ],
+        ["restore-state", { type: "provider-thread.rollback", expectedThreadState: "accepted" }],
+        ["rollback-unguarded", { type: "provider-thread.rollback" }],
+      ] as const) {
+        yield* sql`INSERT INTO orchestration_v2_effect_outbox (
+          effect_id, command_id, thread_id, effect_type, payload_json, status,
+          available_at, created_at, updated_at, completed_at
+        ) VALUES (
+          ${id}, 'command:prune-restore', 'thread:prune', 'provider-thread.rollback',
+          ${JSON.stringify(request)}, 'succeeded', ${oldRestoreCompletedAt}, ${oldRestoreCompletedAt},
+          ${oldRestoreCompletedAt}, ${oldRestoreCompletedAt}
+        )`;
+      }
+      assert.equal(yield* outbox.pruneSettled, 1_204);
 
       const remaining = yield* sql<{ readonly effect_id: string }>`
         SELECT effect_id FROM orchestration_v2_effect_outbox ORDER BY effect_id
       `;
       assert.deepEqual(
         remaining.map((row) => row.effect_id),
-        ["failed-old:1", "pending:1", "running:1", "succeeded-recent:1"],
+        [
+          "failed-old:1",
+          "pending:1",
+          "restore-fingerprint",
+          "restore-idle",
+          "restore-state",
+          "running:1",
+          "succeeded-recent:1",
+        ],
       );
       assert.equal(yield* outbox.pruneSettled, 0);
     }).pipe(Effect.provide(layerIsolatedOutbox)),
@@ -2968,6 +2996,131 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           yield* outbox.succeed({ effectId: reclaimed.value.id, workerId: "recovery-worker" });
         }
       }),
+  );
+
+  it.effect.each([
+    {
+      expectedIdle: true,
+      terminalFailureCode: null,
+      expectedMessage: ROLLBACK_PARTIAL_MESSAGE,
+    },
+    {
+      expectedIdle: false,
+      terminalFailureCode: null,
+      expectedMessage: ROLLBACK_PARTIAL_MESSAGE,
+    },
+    {
+      expectedIdle: true,
+      terminalFailureCode: "checkpoint_restore_rejected",
+      expectedMessage: ROLLBACK_FAILED_MESSAGE,
+    },
+    {
+      expectedIdle: true,
+      terminalFailureCode: "checkpoint_restore_partial",
+      expectedMessage: ROLLBACK_PARTIAL_MESSAGE,
+    },
+  ] as const)(
+    "projects a safe guarded restore failure without replay after startup, expectedIdle=$expectedIdle, terminalFailureCode=$terminalFailureCode",
+    ({ expectedIdle, terminalFailureCode, expectedMessage }) =>
+      Effect.gen(function* () {
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const commandId = CommandId.make("command:guarded-restore-process-loss");
+        const threadId = ThreadId.make("thread:guarded-restore-process-loss");
+        const thread = makeThread(threadId, now);
+        const effect = {
+          id: "effect:guarded-restore-process-loss",
+          commandId,
+          threadId,
+          request: {
+            type: "provider-thread.rollback" as const,
+            providerThreadId: ProviderThreadId.make("provider-thread:guarded-restore-process-loss"),
+            checkpointId: CheckpointId.make("checkpoint:guarded-restore-process-loss"),
+            scopeId: CheckpointScopeId.make("scope:guarded-restore-process-loss"),
+            ...(expectedIdle ? { expectedIdle: true as const } : {}),
+            expectedWorkspaceFingerprint: "before-destructive-restore",
+          },
+        };
+        yield* eventSink.commitCommand({
+          commandId,
+          threadId,
+          commandType: "checkpoint.rollback",
+          acceptedAt: now,
+          events: [
+            threadCreatedEvent({ id: "event:guarded-restore-process-loss:thread", thread, now }),
+            {
+              id: EventId.make("event:guarded-restore-process-loss:pending"),
+              type: "thread.metadata-updated",
+              threadId,
+              providerInstanceId,
+              occurredAt: now,
+              payload: { ...thread, rollbackRequestId: commandId, rollbackFailure: null },
+            },
+            {
+              id: EventId.make("event:guarded-restore-process-loss:requested"),
+              type: "checkpoint.rollback-requested",
+              threadId,
+              providerInstanceId,
+              occurredAt: now,
+              payload: {
+                scopeId: effect.request.scopeId,
+                checkpointId: effect.request.checkpointId,
+                requestedAt: now,
+              },
+            },
+          ],
+          effects: [effect],
+        });
+        const pending = yield* projectionStore.getThreadProjection(threadId);
+        assert.equal(pending.thread.rollbackRequestId, commandId);
+        assert.isNull(pending.thread.rollbackFailure);
+        const claimed = yield* outbox.claimNext({
+          workerId: "lost-worker",
+          leaseDurationMs: 30_000,
+        });
+        assert.equal(Option.getOrThrow(claimed).id, effect.id);
+        const internalDiagnostic =
+          "SqlError: private rollback diagnostic\n    at commit (/private/workspace/secret-project/restore.ts:42:7)";
+        if (terminalFailureCode !== null) {
+          assert.isTrue(
+            yield* outbox.fail({
+              effectId: effect.id,
+              workerId: "lost-worker",
+              failureCode: terminalFailureCode,
+              error: internalDiagnostic,
+            }),
+          );
+        }
+
+        const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+          Effect.provide(ServerSettings.layerTest()),
+        );
+        for (let pass = 0; pass < 2; pass++) {
+          yield* recovery.recover;
+          const settled = Option.getOrThrow(yield* outbox.get(effect.id));
+          assert.equal(settled.status, "failed");
+          assert.equal(settled.failureCode, terminalFailureCode ?? "checkpoint_restore_partial");
+          if (terminalFailureCode !== null) {
+            assert.equal(settled.lastError, internalDiagnostic);
+          } else {
+            assert.include(settled.lastError ?? "", "uncertain");
+          }
+          assert.equal(settled.attemptCount, 1);
+          assert.isTrue(
+            Option.isNone(
+              yield* outbox.claimNext({ workerId: "replacement-worker", leaseDurationMs: 30_000 }),
+            ),
+          );
+          const projection = yield* projectionStore.getThreadProjection(threadId);
+          assert.equal(projection.thread.rollbackRequestId, commandId);
+          assert.deepEqual(projection.thread.rollbackFailure, {
+            requestId: commandId,
+            message: expectedMessage,
+          });
+        }
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("atomically cancels stale runs and their process-bound effects", () =>
