@@ -630,21 +630,11 @@ describe("ApnsDeliveries", () => {
     },
   );
 
-  it.effect("queues an update inside the throttle window when a row changes phase", () => {
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const queuedJobs: Array<SignedApnsDeliveryJob> = [];
-    // The server publishes "starting" (Connecting) when a session boots and
-    // "running" (Working) seconds later, then stays silent while the phase
-    // holds. Dropping the second update strands the card on Connecting.
+  it.effect("queues Working four seconds after delivering Connecting", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
     const startingAggregate: RelayAgentActivityAggregateState = {
       ...aggregate,
-      activities: [
-        {
-          ...aggregate.activities[0]!,
-          phase: "starting",
-          status: "Connecting",
-        },
-      ],
+      activities: [{ ...aggregate.activities[0]!, phase: "starting", status: "Connecting" }],
     };
     const runningAggregate: RelayAgentActivityAggregateState = {
       ...aggregate,
@@ -658,23 +648,84 @@ describe("ApnsDeliveries", () => {
         target: {
           ...target,
           last_aggregate_json: JSON.stringify(startingAggregate),
-          last_live_activity_delivery_at: "1970-01-01T00:00:04.000Z",
+          last_live_activity_delivery_at: startingAggregate.updatedAt,
         },
         aggregate: runningAggregate,
-        nowMs: 5_000,
+        nowMs: 4_000,
       });
 
       expect(result?.kind).toBe("live_activity_update");
       expect(queuedJobs).toMatchObject([
-        {
-          payload: {
-            kind: "live_activity_update",
-            aggregate: { activities: [{ phase: "running", status: "Working" }] },
-          },
-        },
+        { payload: { kind: "live_activity_update", aggregate: runningAggregate } },
       ]);
-      expect(attempts).toEqual([]);
-    }).pipe(Effect.provide(makeLayer({ attempts, queuedJobs })));
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
+  it.effect("queues replacement rows inside the throttle window with the same active count", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const replacementAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activities: [
+        {
+          ...aggregate.activities[0]!,
+          threadId: "replacement-thread" as RelayAgentActivityState["threadId"],
+        },
+      ],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(aggregate),
+          last_live_activity_delivery_at: aggregate.updatedAt,
+        },
+        aggregate: replacementAggregate,
+        nowMs: 4_000,
+      });
+
+      expect(result?.kind).toBe("live_activity_update");
+      expect(queuedJobs).toMatchObject([
+        { payload: { kind: "live_activity_update", aggregate: replacementAggregate } },
+      ]);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
+  });
+
+  it.effect("throttles reordered rows whose phases have not changed", () => {
+    const queuedJobs: SignedApnsDeliveryJob[] = [];
+    const previousAggregate: RelayAgentActivityAggregateState = {
+      ...aggregate,
+      activeCount: 2,
+      activities: [
+        ...aggregate.activities,
+        {
+          ...aggregate.activities[0]!,
+          threadId: "starting-thread" as RelayAgentActivityState["threadId"],
+          phase: "starting",
+          status: "Connecting",
+        },
+      ],
+    };
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.sendForTarget({
+        target: {
+          ...target,
+          last_aggregate_json: JSON.stringify(previousAggregate),
+          last_live_activity_delivery_at: previousAggregate.updatedAt,
+        },
+        aggregate: {
+          ...previousAggregate,
+          activities: previousAggregate.activities.toReversed(),
+        },
+        nowMs: 4_000,
+      });
+
+      expect(result).toBeNull();
+      expect(queuedJobs).toEqual([]);
+    }).pipe(Effect.provide(layerFor({ attempts: [], queuedJobs })));
   });
 
   it.effect("queues an end for an active Live Activity when Live Activities are disabled", () => {
