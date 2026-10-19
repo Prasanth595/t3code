@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Exercise synchronous spawn failures at the native probe boundary.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -36,6 +38,11 @@ import {
   withPathDirectoryListings,
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof NodeChildProcess>();
+  return { ...original, execFile: vi.fn(original.execFile) };
+});
 
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -245,6 +252,33 @@ describe("readEnvironmentFromWindowsShell", () => {
       expect(environment).toBeTypeOf("object");
     }),
   );
+
+  effectIt.layer(NodeServices.layer)("synchronous spawn failures", (it) => {
+    it.effect("tries both shells and preserves baseline PATH repair", () =>
+      Effect.gen(function* () {
+        const execFile = vi.mocked(NodeChildProcess.execFile);
+        execFile.mockImplementationOnce(() => {
+          throw new Error("spawn EPERM");
+        });
+        execFile.mockImplementationOnce(() => {
+          throw new Error("spawn EINVAL");
+        });
+        try {
+          const patch = yield* resolveWindowsEnvironment({
+            PATH: "C:\\Windows",
+            APPDATA: "C:\\Roaming",
+          }).pipe(Effect.provideService(CommandAvailability, () => Effect.succeed(true)));
+          expect(patch).toEqual({ PATH: "C:\\Windows;C:\\Roaming\\npm" });
+          expect(execFile.mock.calls.slice(-2).map(([file]) => file)).toEqual([
+            "pwsh.exe",
+            "powershell.exe",
+          ]);
+        } finally {
+          execFile.mockReset();
+        }
+      }),
+    );
+  });
 
   effectIt.effect("returns an empty environment after both shell candidates fail", () =>
     Effect.gen(function* () {

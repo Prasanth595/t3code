@@ -309,14 +309,20 @@ const execWindowsEnvironmentProbe = (
   options: { encoding: "utf8"; timeout: number },
 ) =>
   Effect.callback<Option.Option<string>>((resume) => {
-    const child = NodeChildProcess.execFile(
-      file,
-      args,
-      { ...options, windowsHide: true },
-      (error, stdout) => {
-        resume(Effect.succeed(error ? Option.none() : Option.some(stdout)));
-      },
-    );
+    let child: NodeChildProcess.ChildProcess;
+    try {
+      child = NodeChildProcess.execFile(
+        file,
+        args,
+        { ...options, windowsHide: true },
+        (error, stdout) => {
+          resume(Effect.succeed(error ? Option.none() : Option.some(stdout)));
+        },
+      );
+    } catch {
+      resume(Effect.succeedNone);
+      return;
+    }
     return Effect.sync(() => {
       child.kill();
     });
