@@ -3132,8 +3132,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
         });
         yield* harness.runtime.startTurn(input);
-        if (steered) {
-          yield* harness.runtime.steerTurn({
+        const rawReason = "Auto policy blocked this command: it writes outside the workspace.";
+        const permissionDenials = [
+          { tool_name: "Bash", tool_use_id: "steering-denied-bash", tool_input: {} },
+          { tool_name: "Write", tool_use_id: "steering-denied-write", tool_input: {} },
+        ];
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            uuid: "steering-denial-reason",
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "steering-denied-bash",
+                  is_error: true,
+                  content: rawReason,
+                },
+              ],
+            },
+          }),
+        );
+        const steer = (messageId: string) =>
+          harness.runtime.steerTurn({
             threadId: harness.threadId,
             runId: input.runId,
             providerThread: harness.providerThread,
@@ -3144,19 +3168,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             message: {
               createdBy: "user",
               creationSource: "web",
-              messageId: MessageId.make("message-steering-abort"),
+              messageId: MessageId.make(messageId),
               text: "Include the hierarchy mock.",
               attachments: [],
             },
           });
+        if (steered) {
+          yield* steer("message-steering-abort");
           assert.equal(harness.offeredMessages[1]?.priority, "now");
         }
-        yield* Queue.offer(
-          harness.sdkMessages,
+        yield* harness.offerAndWait(
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-000000000901",
             result: "",
             terminalReason,
+            permissionDenials,
             usage: {
               input_tokens: 600,
               output_tokens: 40,
@@ -3166,6 +3192,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         if (steered) {
+          yield* steer("message-steering-abort-again");
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: "steering-abort-repeated-denial",
+              result: "",
+              terminalReason,
+              permissionDenials: permissionDenials.slice(0, 1),
+              usage: {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+              },
+            }),
+          );
+          assert.lengthOf(harness.terminalEvents(), 0);
+          assert.isFalse(
+            harness.events.some(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+            ),
+          );
           yield* Queue.offer(harness.sdkMessages, wakeAssistant);
           yield* Queue.offer(
             harness.sdkMessages,
@@ -3211,6 +3259,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
         }
         assert.lengthOf(harness.terminalEvents(), 1);
+        const notices = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.lengthOf(notices, 1);
+        const notice = notices[0]!;
+        assert.match(notice.title ?? "", /\b2 actions\b/);
+        assert.include(notice.message, "Bash");
+        assert.include(notice.message, "Write");
+        assert.include(notice.message, rawReason);
+        assert.isTrue(notice.needsAttention);
+        assert.equal(notice.runId, input.runId);
+        assert.isBelow(
+          harness.events.findIndex(
+            (event) => event.type === "turn_item.updated" && event.turnItem.id === notice.id,
+          ),
+          harness.events.indexOf(terminal),
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

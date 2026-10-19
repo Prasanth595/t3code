@@ -3045,6 +3045,7 @@ interface ActiveClaudeTurnContext {
   streamUsage: { readonly messageId: string; usage: ClaudeMessageUsage | null } | null;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   readonly deniedByT3ToolUseIds: Set<string>;
+  readonly permissionDenials: Map<string, SDKResultMessage["permission_denials"][number]>;
   readonly toolErrorTexts: Map<string, string>;
   readonly ignoredTaskIds: Set<string>;
   readonly announcedUsageLimits: Set<string>;
@@ -7848,6 +7849,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
+            for (const denial of message.permission_denials) {
+              context.permissionDenials.set(denial.tool_use_id, denial);
+            }
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
@@ -7904,7 +7908,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resultFailure?.class === "usage_limit"
                 ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
                 : resultFailure;
-            const denials = message.permission_denials.filter(
+            const denials = Array.from(context.permissionDenials.values()).filter(
               (denial) => !context.deniedByT3ToolUseIds.has(denial.tool_use_id),
             );
             if (denials.length > 0) {
@@ -8795,6 +8799,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               streamUsage: null,
               toolCalls: new Map(),
               deniedByT3ToolUseIds: new Set(),
+              permissionDenials: new Map(),
               toolErrorTexts: new Map(),
               ignoredTaskIds: new Set(),
               announcedUsageLimits: new Set(),
