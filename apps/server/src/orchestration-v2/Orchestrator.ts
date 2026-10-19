@@ -763,44 +763,6 @@ export function shouldPrepareLegacyImportHandoff(input: {
   );
 }
 
-/**
- * Imported history goes out with each message until a V2 run completes. A Stop
- * or a server restart ends a run cancelled after that history already reached
- * the native thread, so the delivery records decide instead. Legacy imports are
- * the only manual_context handoffs without source provider threads.
- */
-export function isLegacyImportCovered(input: {
-  readonly providerThread: OrchestrationV2ProviderThread | undefined;
-  readonly contextHandoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
-  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status">>;
-}): boolean {
-  const providerThread = input.providerThread;
-  if (providerThread === undefined) return false;
-  const nativeId = providerThread.nativeThreadRef?.nativeId;
-  return input.contextHandoffs.some((handoff) => {
-    if (
-      handoff.strategy !== "manual_context" ||
-      handoff.status !== "ready" ||
-      handoff.fromProviderThreadIds.length !== 0 ||
-      handoff.toProviderThreadId !== providerThread.id
-    ) {
-      return false;
-    }
-    if (handoff.delivery !== undefined) {
-      return (
-        nativeId !== undefined &&
-        handoff.delivery.nativeThreadId === nativeId &&
-        handoff.delivery.status !== "pending"
-      );
-    }
-    // Turn start redelivers an undelivered handoff whose run failed or was interrupted.
-    return input.runs.some(
-      (run) =>
-        run.id === handoff.targetRunId && (run.status === "failed" || run.status === "interrupted"),
-    );
-  });
-}
-
 export function appendContextHandoffId(
   handoffIds: OrchestrationV2ProviderThread["handoffIds"],
   handoffId: OrchestrationV2ContextHandoff["id"] | null,
@@ -1004,22 +966,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
       );
 
-  const legacyImportCovered = (
+  const legacyImportCovered = Effect.fnUntraced(function* (
     threadId: ThreadId,
     providerThread: OrchestrationV2ProviderThread | undefined,
     runs: ReadonlyArray<OrchestrationV2Run>,
-  ) =>
-    providerThread === undefined
-      ? Effect.succeed(false)
-      : projectionStore.getThreadRecords(threadId, ["contextHandoffs"]).pipe(
-          Effect.map((records) =>
-            isLegacyImportCovered({
-              providerThread,
-              contextHandoffs: records.contextHandoffs,
-              runs,
-            }),
-          ),
+  ) {
+    if (providerThread === undefined) return false;
+    const { contextHandoffs } = yield* projectionStore.getThreadRecords(threadId, [
+      "contextHandoffs",
+    ]);
+    const nativeId = providerThread.nativeThreadRef?.nativeId;
+    return contextHandoffs.some((handoff) => {
+      if (
+        handoff.strategy !== "manual_context" ||
+        handoff.status !== "ready" ||
+        handoff.fromProviderThreadIds.length !== 0 ||
+        handoff.toProviderThreadId !== providerThread.id
+      ) {
+        return false;
+      }
+      if (handoff.delivery !== undefined) {
+        return (
+          nativeId !== undefined &&
+          handoff.delivery.nativeThreadId === nativeId &&
+          handoff.delivery.status !== "pending"
         );
+      }
+      // Turn start retries undelivered handoffs from failed or interrupted runs.
+      return runs.some(
+        (run) =>
+          run.id === handoff.targetRunId &&
+          (run.status === "failed" || run.status === "interrupted"),
+      );
+    });
+  });
 
   const readHandoffItems = (threadId: ThreadId, runIds?: ReadonlyArray<RunId | null>) =>
     projectionStore
@@ -1629,19 +1609,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 ),
               );
       const legacyImportRecoveryHandoff =
-        latestCompletedRun === undefined &&
-        needsFullContext &&
-        legacyImportItems.length > 0 &&
-        !(yield* legacyImportCovered(threadId, deliveryProviderThread, projection.runs).pipe(
-          Effect.mapError(
-            (cause) =>
-              new OrchestratorDispatchError({
-                commandId,
-                commandType: "message.dispatch",
-                cause,
-              }),
-          ),
-        ))
+        latestCompletedRun === undefined && needsFullContext && legacyImportItems.length > 0
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId,
