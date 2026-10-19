@@ -169,6 +169,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+    // This session never reopens its socket. Release pending cancel writes
+    // when it drops so subscriptions can move to the replacement session.
     const transportClosed = yield* Deferred.make<void>();
     const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({

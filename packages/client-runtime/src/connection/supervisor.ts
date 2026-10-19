@@ -498,10 +498,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           break;
         case "Wakeup":
           if (next.reason === "application-active-reconnect") {
-            // Only an attempt that started before the suspension can be stuck
-            // on a transport the OS froze. A fresh attempt keeps its progress.
-            // Wall-clock time on purpose: it counts the time in suspension,
-            // which a monotonic clock can leave out while the device sleeps.
+            // Wall time includes suspension; a retry started as JS resumed
+            // should keep its progress when the active notification follows.
             if ((yield* Clock.currentTimeMillis) - attemptStartedAt >= FRESH_ATTEMPT_WINDOW_MS) {
               return true;
             }
@@ -894,7 +892,6 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
-      // A child scope, so removing the environment still releases this attempt.
       const attemptScope = yield* Scope.fork(supervisorScope);
       const outcome: AttemptOutcome = yield* runAttempt(
         attempt,
@@ -903,12 +900,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         pendingRetry,
         replacing,
       ).pipe(Scope.provide(attemptScope));
-      // Release the finished attempt without waiting: closing its RPC streams
-      // tells the server over the old socket, which waits for a timeout when
-      // that socket is dead. The next attempt must not wait for that. The
-      // release itself must run to completion, so removing the environment
-      // mid-release waits for it instead of interrupting it and leaking the
-      // socket and its ping loop.
+      // Dead-socket teardown must not delay reconnect. Keep it uninterruptible
+      // and owned by the supervisor so removal still waits for cleanup.
       yield* Scope.close(attemptScope, Exit.void).pipe(
         Effect.forkIn(supervisorScope, { uninterruptible: true }),
       );

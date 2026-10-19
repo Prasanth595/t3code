@@ -67,14 +67,12 @@ function recordedFetch(
     calls.push([input, init ?? {}]);
     if (isDescriptorUrl(input)) {
       const response = descriptors[descriptorIndex++] ?? Response.json(DESCRIPTOR);
-      return typeof response === "function" ? response(init ?? {}) : Promise.resolve(response);
+      return Promise.resolve(typeof response === "function" ? response(init ?? {}) : response);
     }
     const response = responses[responseIndex++];
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
-      : typeof response === "function"
-        ? response(init ?? {})
-        : Promise.resolve(response);
+      : Promise.resolve(typeof response === "function" ? response(init ?? {}) : response);
   }) satisfies typeof fetch;
   return { calls, fetchFn };
 }

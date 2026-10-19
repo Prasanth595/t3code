@@ -521,7 +521,7 @@ describe("EnvironmentSupervisor", () => {
       yield* TestClock.adjust("1 second");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       expect(yield* Ref.get(harness.prepareCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1947,7 +1947,7 @@ describe("EnvironmentSupervisor routes", () => {
           "RelayConnectionTarget",
         );
         expect(yield* Ref.get(harness.prepareCount)).toBe(2);
-        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+        expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(1);
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -2025,7 +2025,7 @@ describe("EnvironmentSupervisor routes", () => {
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
         "BearerConnectionTarget",
       );
-      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(1);
     }),
   );
 

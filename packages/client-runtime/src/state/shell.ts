@@ -66,11 +66,6 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
-/**
- * Builds the per-environment shell state (projects and thread shells). The first
- * subscription loads the authoritative HTTP snapshot; later ones, including on a
- * replacement session, resume from the in-memory cursor instead of reloading it.
- */
 export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
@@ -185,6 +180,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
     pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
+    if (pendingLinkIds === undefined && items.some((item) => item.kind === "snapshot")) {
+      yield* cancelActiveFill;
+    }
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
@@ -232,6 +230,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
     if (Option.isSome(next.snapshot)) {
       yield* Ref.set(latestLiveSnapshot, next.snapshot);
+      if (receivedSnapshot && pendingLinkIds === undefined) {
+        pendingLinkRows = new Set();
+      }
     }
     yield* SubscriptionRef.set(state, next);
     if (receivedSnapshot) {
@@ -245,7 +246,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const stateScope = yield* Effect.scope;
   // Each full snapshot supersedes the previous one's fill; links from an older snapshot must
   // not land on rows a newer snapshot reused.
-
   let activeFill: Fiber.Fiber<void> | undefined;
   const cancelActiveFill = Effect.suspend(() => {
     const fill = activeFill;
@@ -327,11 +327,9 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        // Only the disk cache can hold incomplete data, so the first
-        // subscription loads the authoritative HTTP snapshot. After that, every
-        // resubscription, including one on a replacement session, resumes from
-        // the in-memory cursor; the server replays the gap, or sends a snapshot
-        // when the cursor is unusable.
+        // Disk caches may be incomplete. Once authoritative data arrives,
+        // replacement sessions can replay from memory; unusable cursors cause
+        // the server to send a full snapshot.
         let canResume = yield* Ref.get(hasAuthoritativeSnapshot);
         let current = yield* SubscriptionRef.get(state);
         if (!canResume || Option.isNone(current.snapshot)) {

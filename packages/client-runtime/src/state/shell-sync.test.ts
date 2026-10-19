@@ -1171,26 +1171,23 @@ describe("environment shell synchronization", () => {
     }),
   );
 
-  it.effect("drops an older snapshot's links once a newer snapshot reuses its rows", () =>
+  it.effect("drops deferred HTTP links when a replacement sends a snapshot", () =>
     Effect.gen(function* () {
-      const link = (number: number): ThreadPullRequestLink => ({
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number,
-        url: `https://github.com/pingdotgg/t3code/pull/${number}`,
-        source: "agent",
-        linkedAt: "2026-06-20T00:00:00.000Z",
-        snapshot: null,
-        stack: null,
-      });
       const firstLinks = yield* Deferred.make<void>();
-      const secondLinks = yield* Deferred.make<void>();
       const firstFillStarted = yield* Deferred.make<void>();
+      const firstFillEnded = yield* Deferred.make<void>();
       const loads = yield* Ref.make(0);
-      const subscriptions = yield* Ref.make(0);
+      const subscriptions = yield* Queue.unbounded<number | undefined>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
       const client = {
-        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-          Stream.unwrap(Ref.update(subscriptions, (n) => n + 1).pipe(Effect.as(Stream.never))),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: {
+          readonly afterSequence?: number;
+        }) =>
+          Stream.unwrap(
+            Queue.offer(subscriptions, input.afterSequence).pipe(
+              Effect.as(Stream.fromQueue(events)),
+            ),
+          ),
       } as unknown as WsRpcProtocolClient;
       const activeSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
         Option.some(session(client)),
@@ -1220,17 +1217,16 @@ describe("environment shell synchronization", () => {
       });
       const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
         load: () =>
-          Ref.updateAndGet(loads, (n) => n + 1).pipe(
-            Effect.map((n) =>
+          Ref.update(loads, (n) => n + 1).pipe(
+            Effect.as(
               Option.some({
                 ...v2ShellSnapshot,
-                snapshotSequence: n,
-                loadPullRequests: (n === 1
-                  ? Deferred.succeed(firstFillStarted, undefined).pipe(
-                      Effect.andThen(Deferred.await(firstLinks)),
-                    )
-                  : Deferred.await(secondLinks)
-                ).pipe(Effect.as(new Map([[v2ThreadShell.id, [link(n)]]]))),
+                snapshotSequence: 1,
+                loadPullRequests: Deferred.succeed(firstFillStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(firstLinks)),
+                  Effect.as(new Map([[v2ThreadShell.id, []]])),
+                  Effect.ensuring(Deferred.succeed(firstFillEnded, undefined)),
+                ),
               }),
             ),
           ),
@@ -1241,24 +1237,27 @@ describe("environment shell synchronization", () => {
         Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
       );
       yield* Deferred.await(firstFillStarted);
+      expect(yield* Queue.take(subscriptions)).toBe(1);
 
       yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
-      yield* SubscriptionRef.changes(shellState).pipe(
+      expect(yield* Queue.take(subscriptions)).toBe(1);
+      yield* Queue.offer(events, {
+        kind: "snapshot",
+        snapshot: { ...v2ShellSnapshot, snapshotSequence: 2 },
+      });
+      yield* Deferred.await(firstFillEnded);
+      yield* Deferred.succeed(firstLinks, undefined);
+      const latest = yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter(
           (state) => Option.isSome(state.snapshot) && state.snapshot.value.snapshotSequence === 2,
         ),
         Stream.runHead,
+        Effect.map((state) => Option.getOrThrow(Option.getOrThrow(state).snapshot)),
       );
 
-      yield* Deferred.succeed(firstLinks, undefined);
-      yield* Deferred.succeed(secondLinks, undefined);
-      const filled = yield* SubscriptionRef.changes(shellState).pipe(
-        Stream.map((state) => Option.getOrThrow(state.snapshot).threads[0]?.pullRequests),
-        Stream.filter((links) => links !== undefined),
-        Stream.runHead,
-        Effect.map(Option.getOrThrow),
-      );
-      expect(filled).toEqual([link(2)]);
+      expect(latest.threads[0]).toBe(v2ThreadShell);
+      expect(latest.threads[0]?.pullRequests).toBeUndefined();
+      expect(yield* Ref.get(loads)).toBe(1);
     }),
   );
 });

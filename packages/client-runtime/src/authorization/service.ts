@@ -50,7 +50,7 @@ export interface AuthorizedRemoteEnvironment {
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization;
-  /** The descriptor fetched while authorizing, so callers need not fetch it again. */
+  /** Only a descriptor fetched in this call is fresh enough for compatibility checks. */
   readonly descriptor?: ExecutionEnvironmentDescriptor | undefined;
 }
 
@@ -210,8 +210,6 @@ export const make = Effect.gen(function* () {
           _tag: "Bearer" as const,
           token: input.bearerToken,
         },
-        // Only a descriptor fetched in this call. A cached one can be stale,
-        // and the caller checks protocol compatibility against it.
         descriptor: fresh ? descriptor : undefined,
       };
     },
@@ -510,34 +508,32 @@ export const make = Effect.gen(function* () {
             httpBaseUrl: endpoint.httpBaseUrl,
             connectionMethod: "direct",
           });
-    const fetchEndpointDescriptor = (token: TokenStore.RemoteDpopAccessToken) =>
-      (endpoint === undefined
-        ? fetchDescriptor(token.endpoint.httpBaseUrl, "relay")
-        : Effect.succeed(directDescriptor?.fresh ? directDescriptor.descriptor : undefined)
-      ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.forkChild);
-    const authorized = (
+    const authorizeToken = Effect.fnUntraced(function* (
       token: TokenStore.RemoteDpopAccessToken,
-      socketUrl: string,
-      descriptor: ExecutionEnvironmentDescriptor | undefined,
-    ) => ({
-      ...httpAuthorization(token, endpoint?.httpBaseUrl),
-      socketUrl,
-      descriptor,
-    });
+      timeoutMs?: number,
+    ) {
+      const pendingDescriptor = yield* (
+        endpoint === undefined
+          ? fetchDescriptor(token.endpoint.httpBaseUrl, "relay")
+          : Effect.succeed(directDescriptor?.fresh ? directDescriptor.descriptor : undefined)
+      ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient), Effect.forkScoped);
+      const socket = yield* createDpopSocketUrl(token, timeoutMs, endpoint).pipe(Effect.result);
+      const descriptor = Result.isSuccess(socket)
+        ? yield* Fiber.join(pendingDescriptor)
+        : undefined;
+      return Result.map(socket, (socketUrl) => ({
+        ...httpAuthorization(token, endpoint?.httpBaseUrl),
+        socketUrl,
+        descriptor,
+      }));
+    }, Effect.scoped);
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedDescriptor = yield* fetchEndpointDescriptor(selected.token);
-      const cachedSocket = yield* createDpopSocketUrl(
-        selected.token,
-        CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
-        endpoint,
-      ).pipe(Effect.result);
+      const cachedSocket = yield* authorizeToken(selected.token, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
       if (Result.isSuccess(cachedSocket)) {
-        const descriptor = yield* Fiber.join(cachedDescriptor);
         yield* assertSession(selected.identity);
-        return authorized(selected.token, cachedSocket.success, descriptor);
+        return cachedSocket.success;
       }
-      yield* Fiber.interrupt(cachedDescriptor);
       if (cachedSocket.failure._tag === "ConnectionBlockedError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
@@ -552,12 +548,8 @@ export const make = Effect.gen(function* () {
         rejectedAccessToken: selected.token.accessToken,
       });
     }
-    const pendingDescriptor = yield* fetchEndpointDescriptor(selected.token);
-    const socket = yield* createDpopSocketUrl(selected.token, undefined, endpoint).pipe(
-      Effect.result,
-    );
+    const socket = yield* authorizeToken(selected.token);
     if (Result.isFailure(socket)) {
-      yield* Fiber.interrupt(pendingDescriptor);
       if (endpoint === undefined || socket.failure._tag === "ConnectionBlockedError") {
         yield* tokenLock.withPermits(1)(
           removeRejectedToken(input.expectedEnvironmentId, selected.token.accessToken),
@@ -565,9 +557,8 @@ export const make = Effect.gen(function* () {
       }
       return yield* mapDpopSocketError(socket.failure);
     }
-    const descriptor = yield* Fiber.join(pendingDescriptor);
     yield* assertSession(selected.identity);
-    return authorized(selected.token, socket.success, descriptor);
+    return socket.success;
   });
 
   return RemoteEnvironmentAuthorization.of({

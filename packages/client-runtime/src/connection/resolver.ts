@@ -67,7 +67,6 @@ export class ConnectionResolver extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/resolver/ConnectionResolver") {}
 
-/** A prepared connection plus the descriptor its broker already fetched, if any. */
 type BrokeredConnection = PreparedConnection & {
   readonly descriptor?: ExecutionEnvironmentDescriptor | undefined;
 };
@@ -150,7 +149,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         expectedEnvironmentId: target.environmentId,
         directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
       });
-      return { ...authorized, target } satisfies PreparedConnection;
+      return { ...authorized, target } satisfies BrokeredConnection;
     }
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
       Effect.flatMap(
@@ -171,12 +170,7 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       connectionMethod: "direct",
     });
     return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
-      descriptor: authorized.descriptor,
+      ...authorized,
       target,
     } satisfies BrokeredConnection;
   });
@@ -191,12 +185,7 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
         expectedEnvironmentId: target.environmentId,
       });
       return {
-        environmentId: authorized.environmentId,
-        label: authorized.label,
-        httpBaseUrl: authorized.httpBaseUrl,
-        socketUrl: authorized.socketUrl,
-        httpAuthorization: authorized.httpAuthorization,
-        descriptor: authorized.descriptor,
+        ...authorized,
         target,
       } satisfies BrokeredConnection;
     },
@@ -267,12 +256,7 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       connectionMethod: "ssh",
     });
     return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
-      descriptor: authorized.descriptor,
+      ...authorized,
       target,
     } satisfies BrokeredConnection;
   });
