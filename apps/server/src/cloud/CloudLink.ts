@@ -637,16 +637,13 @@ const make = Effect.gen(function* () {
       if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
         return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
       }
-      const session = yield* EnvironmentAuthenticatedPrincipal;
-      // Windows reaches its WSL backend through the distro IP. Trust the
-      // authenticated bootstrap subject, never a caller-supplied origin flag;
-      // paired and cloud clients receive different subjects.
-      const proof = yield* makeCloudLinkProof(
+      const principal = yield* EnvironmentAuthenticatedPrincipal;
+      // WSL desktop requests use the distro IP; only the server-issued bootstrap subject qualifies.
+      return yield* makeCloudLinkProof(
         request,
         requestUrl,
-        session.subject === "desktop-bootstrap",
+        principal.subject === "desktop-bootstrap",
       );
-      return proof satisfies RelayEnvironmentLinkProof;
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
     Effect.catchTags({ PlatformError: internalError("generate-link-proof") }),
