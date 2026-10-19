@@ -87,9 +87,7 @@ query PullRequestSearch($q: String!, $first: Int!, $after: String, $stats: Boole
   }
 }
 
-# The search with each row's stack, for github.com only. Enterprise Server has no pull request
-# stacks, and it validates the whole document before `@include` applies, so an Enterprise host is
-# never sent a document that names `stack` or `stackEntry`.
+# github.com only: include each row's stack in the same search read.
 query PullRequestSearchWithStacks($q: String!, $first: Int!, $after: String, $stats: Boolean!) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     pageInfo {

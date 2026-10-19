@@ -1726,6 +1726,7 @@ export const make = Effect.gen(function* () {
           };
         });
       const stacks = input.host.toLowerCase() === "github.com";
+      // Stack badges are read in batches below, only for rows that survive paging.
       const read = (
         continues: boolean,
         requestedRows = input.limit + 1,
@@ -1733,8 +1734,6 @@ export const make = Effect.gen(function* () {
         collect(requestedRows, (after, rows) =>
           (continues
             ? client
-                // Not `PullRequestSearchWithStacks`: stack badges come from their own batched
-                // read below, for the rows that stay.
                 .PullRequestSearch({
                   // The reader's own words are in the query.
                   q: query,

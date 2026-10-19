@@ -51,9 +51,7 @@ query PullRequestSummary($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
-# The summary with its stack, for github.com only. Enterprise Server has no pull request stacks,
-# and it validates the whole document before `@include` applies, so an Enterprise host is never
-# sent a document that names `stack` or `stackEntry`.
+# github.com only: include stack membership in the same batched summary read.
 query PullRequestSummaryWithStacks($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
