@@ -154,7 +154,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLMediaElement
+      ) {
         return;
       }
       if (
@@ -263,23 +267,60 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const labelId = `${optionIdPrefix}-${index}-label`;
                 const descriptionId = `${optionIdPrefix}-${index}-description`;
                 const hasDescription = option.description && option.description !== option.label;
-                const className = cn(
-                  "group relative flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-150",
-                  isSelected
-                    ? "bg-muted/55 text-foreground"
-                    : "bg-transparent text-foreground/85 hover:bg-muted/30",
-                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
-                  !disabled && !isResponding && "cursor-pointer",
-                );
-                const content = (
-                  <>
+                return (
+                  <div
+                    key={`${activeQuestion.id}:${optionValue}`}
+                    className={cn(
+                      "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-150 has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-primary/25",
+                      isSelected
+                        ? "bg-muted/55 text-foreground"
+                        : "bg-transparent text-foreground/85 hover:bg-muted/30",
+                      (disabled || isResponding) && "opacity-50 cursor-not-allowed",
+                      !disabled && !isResponding && "cursor-pointer",
+                    )}
+                    onClick={(event) => {
+                      const target = event.target;
+                      if (
+                        event.defaultPrevented ||
+                        !(target instanceof Element) ||
+                        !event.currentTarget.contains(target)
+                      )
+                        return;
+                      // Markdown controls and scroll surfaces keep their own click behavior.
+                      const control = target.closest(
+                        'a, button, input, select, textarea, summary, video, audio, [role="button"], [role="link"], [contenteditable], [data-slot^="scroll-area-"], pre, .overflow-x-auto',
+                      );
+                      if (control && event.currentTarget.contains(control)) return;
+                      handleOptionSelection(activeQuestion.id, optionValue);
+                    }}
+                  >
+                    <button
+                      type="button"
+                      disabled={disabled || isResponding}
+                      aria-labelledby={labelId}
+                      aria-describedby={hasDescription ? descriptionId : undefined}
+                      aria-pressed={isSelected}
+                      onClick={() => handleOptionSelection(activeQuestion.id, optionValue)}
+                      className="order-last flex w-5 shrink-0 self-stretch items-center justify-center rounded-sm outline-none disabled:cursor-not-allowed"
+                    >
+                      {isSelected ? (
+                        <CheckIcon aria-hidden className="size-3.5 text-primary" />
+                      ) : shortcutKey !== null ? (
+                        <kbd
+                          aria-hidden
+                          className="text-3xs font-medium text-muted-foreground tabular-nums"
+                        >
+                          {shortcutKey}
+                        </kbd>
+                      ) : null}
+                    </button>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                       <div id={labelId}>
                         <ChatMarkdown
                           text={option.label}
                           cwd={cwd}
                           threadRef={threadRef}
-                          className="text-sm font-medium [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto [&_video[controls]]:pointer-events-auto"
+                          className="text-sm font-medium"
                         />
                       </div>
                       {hasDescription ? (
@@ -288,37 +329,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             text={option.description}
                             cwd={cwd}
                             threadRef={threadRef}
-                            className="text-secondary-label text-2xs [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto [&_video[controls]]:pointer-events-auto"
+                            className="text-secondary-label text-2xs"
                           />
                         </div>
                       ) : null}
-                    </div>
-                    {isSelected ? (
-                      <CheckIcon className="size-3.5 shrink-0 text-primary" />
-                    ) : shortcutKey !== null ? (
-                      <kbd
-                        className={cn(
-                          "flex size-5 shrink-0 items-center justify-center text-3xs font-medium text-muted-foreground tabular-nums",
-                        )}
-                      >
-                        {shortcutKey}
-                      </kbd>
-                    ) : null}
-                  </>
-                );
-                return (
-                  <div key={`${activeQuestion.id}:${optionValue}`} className={className}>
-                    <button
-                      type="button"
-                      disabled={disabled || isResponding}
-                      aria-labelledby={labelId}
-                      aria-describedby={hasDescription ? descriptionId : undefined}
-                      aria-pressed={isSelected}
-                      onClick={() => handleOptionSelection(activeQuestion.id, optionValue)}
-                      className="absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25"
-                    />
-                    <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2 [&_[data-slot^=scroll-area-]]:pointer-events-auto [&_pre]:pointer-events-auto [&_.overflow-x-auto]:pointer-events-auto">
-                      {content}
                     </div>
                   </div>
                 );
