@@ -378,6 +378,7 @@ function makeMockRuntime(input: {
     | Readonly<Record<string, string>>
     | ((runtimeOrdinal: number) => Readonly<Record<string, string>>);
   readonly protocolEvents?: Queue.Queue<EffectAcpProtocol.AcpProtocolLogEvent>;
+  readonly resumeMethod?: AcpSessionRuntime.AcpSessionRuntimeOptions["resumeMethod"];
   readonly cancelBehavior?: AcpSessionRuntime.AcpSessionRuntimeOptions["cancelBehavior"];
   readonly ownDescendantProcessGroups?: boolean;
   readonly ownDetachedProcessGroup?: boolean;
@@ -416,6 +417,7 @@ function makeMockRuntime(input: {
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
+          ...(input.resumeMethod === undefined ? {} : { resumeMethod: input.resumeMethod }),
           ...(input.cancelBehavior === undefined ? {} : { cancelBehavior: input.cancelBehavior }),
           ...(input.ownDetachedProcessGroup === undefined
             ? {}
@@ -2913,7 +2915,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.effect("replaces the ACP session and clears conversation state on rollback", () =>
+  it.effect("clears rollback snapshots without session/load", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2933,11 +2935,30 @@ describe("AcpAdapterV2", () => {
         authorizationHeader: "Bearer rollback-target-token",
         browserToolsAvailable: false,
       });
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
       const makeRuntime = makeMockRuntime({
         childProcessSpawner,
         mockAgentPath,
         environment: { T3_ACP_PROMPT_DELAY_MS: "100" },
+        protocolEvents,
+        wrapRuntime: (runtime, runtimeOrdinal) => ({
+          ...runtime,
+          start: () =>
+            runtime.start().pipe(
+              Effect.map((started) => ({
+                ...started,
+                sessionId: `${started.sessionId}-${runtimeOrdinal}`,
+                initializeResult: {
+                  ...started.initializeResult,
+                  agentCapabilities: {
+                    ...started.initializeResult.agentCapabilities,
+                    loadSession: false,
+                  },
+                },
+              })),
+            ),
+        }),
       });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -3009,6 +3030,7 @@ describe("AcpAdapterV2", () => {
         if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) break;
       }
       const snapshotBeforeRollback = yield* runtime.readThreadSnapshot({ providerThread });
+      assert.isNotEmpty(snapshotBeforeRollback.messages);
 
       const rolledBack = yield* runtime.rollbackThread({
         providerThread: { ...providerThread, appThreadId: rollbackThreadId },
@@ -3020,6 +3042,7 @@ describe("AcpAdapterV2", () => {
         },
       });
       assert.isString(rolledBack.providerThread.nativeThreadRef?.nativeId);
+      assert.notEqual(rolledBack.providerThread.nativeThreadRef?.nativeId, firstSessionId);
       assert.deepEqual(rolledBack.providerTurns, []);
       assert.equal(
         runtimeInputs[1]?.processEnvironment?.T3_ACP_MCP_AUTHORIZATION,
@@ -3042,6 +3065,10 @@ describe("AcpAdapterV2", () => {
       });
       assert.deepEqual(snapshotAfterRollback.providerTurns, []);
       assert.deepEqual(snapshotAfterRollback.messages, []);
+      assert.notInclude(
+        (yield* Queue.clear(protocolEvents)).map(rawProtocolMethod),
+        "session/resume",
+      );
 
       yield* runtime.startTurn(
         makeTurnInput({
@@ -3529,6 +3556,186 @@ describe("AcpAdapterV2", () => {
 
       assert.equal(runtime.providerSession.status, "ready");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each(["load", "resume-switched", "resume-initial"] as const)(
+    "hydrates explicit ACP history once after %s activation",
+    (mode) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const releasePrompt = yield* Deferred.make<void>();
+        let holdPrompt = false;
+        const instanceId = ProviderInstanceId.make("acp-test");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            preferResumeSession: mode !== "load",
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              protocolEvents,
+              resumeMethod: mode === "load" ? "load" : "resume",
+              environment: {
+                T3_ACP_EMIT_LOAD_REPLAY: "1",
+                T3_ACP_PROMPT_RESPONSE_TEXT: "first reply",
+                ...(mode !== "resume-switched"
+                  ? { T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS: "1" }
+                  : {}),
+              },
+              wrapRuntime: (native) => ({
+                ...native,
+                prompt: (input) =>
+                  native
+                    .prompt(input)
+                    .pipe(
+                      Effect.tap(() => (holdPrompt ? Deferred.await(releasePrompt) : Effect.void)),
+                    ),
+              }),
+            }),
+          },
+          selfInvocation,
+        });
+        const threadId = ThreadId.make("thread-acp-history");
+        const modelSelection = { instanceId, model: "default" };
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-acp-history"),
+          modelSelection,
+          runtimePolicy,
+          ...(mode === "resume-initial" ? { initialNativeThreadId: "mock-session-saved" } : {}),
+        });
+        yield* Effect.addFinalizer(() => Deferred.succeed(releasePrompt, undefined));
+        let providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        if (mode !== "resume-initial") {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+            }),
+          );
+          yield* runtime.events.pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+          );
+          yield* Queue.clear(protocolEvents);
+          providerThread = {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: ACP_TEST_DRIVER,
+              nativeId: "mock-session-saved",
+              strength: "strong",
+            },
+          };
+          yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        }
+        const activationEvents = (yield* Queue.clear(protocolEvents)).filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/resume",
+        );
+        assert.lengthOf(activationEvents, 1);
+        assert.deepEqual(
+          rawProtocolRequestParam(activationEvents[0]!, "replayFrom"),
+          mode === "load" ? { type: "start" } : undefined,
+        );
+
+        if (mode !== "resume-switched") {
+          holdPrompt = true;
+          const turn = makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            ordinal: 2,
+          });
+          yield* runtime.startTurn(turn);
+          const streamed = yield* runtime.events.pipe(
+            Stream.takeUntil(
+              (event) =>
+                event.type === "message.updated" && event.message.text.includes("after tool"),
+            ),
+            Stream.runCollect,
+          );
+          // Hold adapter completion so the read overlaps an active resumed turn.
+          const duringTurn = yield* runtime.readThreadSnapshot({ providerThread });
+          const activeHistoryRequests = (yield* Queue.clear(protocolEvents)).filter(
+            (event) =>
+              event.direction === "outgoing" && rawProtocolMethod(event) === "session/resume",
+          );
+          yield* Deferred.succeed(releasePrompt, undefined);
+          const completed = yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          const observed = [...streamed, ...completed];
+          assert.isTrue(
+            observed.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "command_execution" &&
+                event.turnItem.status === "completed",
+            ),
+          );
+          for (const text of ["before tool", "after tool"]) {
+            assert.isTrue(
+              observed.some(
+                (event) =>
+                  event.type === "message.updated" &&
+                  !event.message.streaming &&
+                  event.message.text.includes(text),
+              ),
+            );
+          }
+          assert.include(
+            duringTurn.messages.map((message) => message.id),
+            turn.message.messageId,
+            "active snapshot must retain the current user message",
+          );
+          assert.isEmpty(activeHistoryRequests, "history must wait until the active turn is idle");
+        }
+
+        const first = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.includeMembers(
+          first.messages.map((message) => message.text),
+          ["replay", "replayed assistant text"],
+        );
+        const historyRequests = (yield* Queue.clear(protocolEvents)).filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/resume",
+        );
+        assert.equal(historyRequests.length, mode === "load" ? 0 : 1);
+        if (historyRequests[0]) {
+          assert.deepEqual(rawProtocolRequestParam(historyRequests[0], "replayFrom"), {
+            type: "start",
+          });
+        }
+        const second = yield* runtime.readThreadSnapshot({ providerThread });
+        assert.deepEqual(second.messages, first.messages);
+        assert.notInclude(
+          (yield* Queue.clear(protocolEvents)).map(rawProtocolMethod),
+          "session/resume",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped, TestClock.withLive),
   );
 
   it.effect("reconfigures a loaded ACP session from its own active setup metadata", () =>
