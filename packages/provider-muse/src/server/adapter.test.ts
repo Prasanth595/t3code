@@ -1789,6 +1789,68 @@ describe("MuseAdapterV2", () => {
           { hostPending: yield* olderHarness.runtime.hasPendingBackgroundWork!, ingestionPending },
           { hostPending: false, ingestionPending: false },
         );
+
+        const cancelledTurn = yield* startConversation(olderHarness, olderHost, 2);
+        const children = [
+          {
+            itemId: "sub-1",
+            kind: "subagent",
+            revision: 1,
+            status: "inProgress",
+            turnId: cancelledTurn.nativeId,
+            subagentId: "subagent-1",
+            controlStatus: "running",
+            childSessionId: "child-session-1",
+            objective: "Check the thing",
+          },
+          {
+            itemId: "wf-1",
+            kind: "workflow",
+            revision: 1,
+            status: "inProgress",
+            turnId: cancelledTurn.nativeId,
+            entryId: "Probe workflow",
+            children: [{ childId: "c1", attempt: 1, status: "started" }],
+          },
+        ] satisfies MuseItem[];
+        for (const item of children)
+          yield* olderHost.emit("item/started", { turnId: cancelledTurn.nativeId, item });
+        // The recorded muse_subagent_interrupt root cancels without a subagent item terminal.
+        olderHost.queueResponse("task/list", unsupported);
+        yield* olderHost.emit("turn/completed", {
+          turnId: cancelledTurn.nativeId,
+          terminal: "cancelled",
+        });
+        const cancelled = yield* olderHarness.takeEvent("turn.terminal");
+        const settled = olderHarness.allEvents.findLast(
+          (event) => event.type === "provider_thread.updated",
+        );
+        const childStatuses = children.map((item) => {
+          const latest = olderHarness.allEvents.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === (item.childSessionId ?? item.itemId),
+          );
+          return latest?.type === "turn_item.updated" ? latest.turnItem.status : null;
+        });
+        assert.deepStrictEqual(
+          {
+            terminal: cancelled.status,
+            childStatuses,
+            tasks: settled?.providerThread.pendingBackgroundTasks,
+            ingestionPending: yield* olderHarness.runtime.hasPendingBackgroundWorkForThread!(
+              settled!.providerThread,
+            ),
+            hostPending: yield* olderHarness.runtime.hasPendingBackgroundWork!,
+          },
+          {
+            terminal: "cancelled",
+            childStatuses: ["cancelled", "cancelled"],
+            tasks: [],
+            ingestionPending: false,
+            hostPending: false,
+          },
+        );
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 });

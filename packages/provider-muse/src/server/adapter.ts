@@ -1006,14 +1006,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         seenTerminals.add(turn.nativeId);
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
-          // A non-success root can leave background work alive; a failed read proves nothing.
+          // A non-success root can leave background tools alive; a failed read proves nothing.
           if (
             isBackgroundItem(item) &&
             item.status === "inProgress" &&
             disposition === "reusable" &&
             (status === "completed" ||
-              inventory === undefined ||
-              inventory.tasks.some((task) => task.taskId === item.itemId))
+              (item.kind === "toolCall" &&
+                (inventory === undefined ||
+                  inventory.tasks.some((task) => task.taskId === item.itemId))))
           )
             continue;
           if (turn.dirty.has(item.itemId) || item.status === "inProgress")
