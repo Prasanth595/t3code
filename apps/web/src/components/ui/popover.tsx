@@ -121,6 +121,7 @@ function PopoverPopup({
                 ? "py-1 [--viewport-inline-padding:--spacing(2)]"
                 : popoverViewportPaddingClassName[padding],
               (!tooltipStyle || alertStyle) && "not-data-transitioning:overflow-y-auto",
+              alertStyle && "max-h-[calc(var(--available-height)---spacing(5)-2px)]",
               variant === "panel" &&
                 "overflow-visible py-2 [--viewport-inline-padding:--spacing(2)]",
             )}

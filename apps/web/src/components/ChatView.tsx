@@ -434,10 +434,6 @@ import {
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
-import {
-  resolveProviderChatWarning,
-  resolveThreadErrorChatWarning,
-} from "./chat/ChatWarningIndicator";
 import { useChatWarnings } from "../chatWarningDismissals";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
@@ -2962,19 +2958,21 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     setResumeCompactionPermanentlyDismissed,
   ]);
-  const threadErrorWarning = resolveThreadErrorChatWarning(
-    routeThreadKey,
-    timelineThreadError,
-    localServerError === null && threadError === serverRuntime?.lastError
-      ? (serverRuntime?.lastErrorClass ?? null)
-      : null,
-  );
-  const providerStatusWarning = resolveProviderChatWarning(environmentId, activeProviderStatus);
   const {
     warnings: chatWarnings,
     dismissForNow,
     dismissForever,
-  } = useChatWarnings([threadErrorWarning, providerStatusWarning], environmentId, serverRunId);
+  } = useChatWarnings({
+    threadKey: routeThreadKey,
+    error: timelineThreadError,
+    errorClass:
+      localServerError === null && threadError === serverRuntime?.lastError
+        ? (serverRuntime?.lastErrorClass ?? null)
+        : null,
+    providerStatus: activeProviderStatus,
+    environmentId,
+    serverRunId,
+  });
   const dismissWarningsForNowStable = useStableCallback(dismissForNow);
   const dismissWarningsForeverStable = useStableCallback(dismissForever);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;

@@ -147,11 +147,14 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
     useEffect(() => {
       dismissals = store;
     });
-    const { warnings, dismissForNow, dismissForever } = useChatWarnings(
-      [resolveThreadErrorChatWarning(`${environment}:${thread}`, reason, failureClass)],
-      environment,
-      run,
-    );
+    const { warnings, dismissForNow, dismissForever } = useChatWarnings({
+      threadKey: `${environment}:${thread}`,
+      error: reason,
+      errorClass: failureClass,
+      providerStatus: null,
+      environmentId: environment,
+      serverRunId: run,
+    });
     return (
       <ChatWarningIndicator
         warnings={warnings}
@@ -166,7 +169,7 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
   const render = (props: Parameters<typeof Probe>[0] = {}) =>
     act(async () => root.render(<Probe {...props} />));
   await render();
-  await act(() => dismissals[1]({ temporary: [], permanent: [] }));
+  await act(() => dismissals[1]((current) => ({ ...current, temporary: [], permanent: [] })));
   try {
     await userEvent.click(trigger);
     await userEvent.click(page.getByRole("button", { name: "Dismiss for now", exact: true }));
@@ -197,6 +200,18 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
     await expect.element(trigger).not.toBeInTheDocument();
     await render({ run: "run-b" });
     await expect.element(trigger).toBeVisible();
+    // Another tab can receive a new ready while this owner still retains the old run.
+    const storageKey = "t3code:chat-warning-dismissals:v3";
+    const newValue = JSON.stringify({
+      ...dismissals[0],
+      lastKnownRunByEnvironment: { [environmentId]: "run-c" },
+    });
+    await act(() => {
+      window.localStorage.setItem(storageKey, newValue);
+      window.dispatchEvent(new StorageEvent("storage", { key: storageKey, newValue }));
+    });
+    expect(dismissals[0].lastKnownRunByEnvironment?.[environmentId]).toBe("run-c");
+    expect(window.localStorage.getItem(storageKey)).toBe(newValue);
     await act(async () => root.render(null));
     await render({ run: null });
     await expect.element(trigger).toBeVisible();
