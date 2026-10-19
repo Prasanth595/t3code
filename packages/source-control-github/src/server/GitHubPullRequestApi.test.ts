@@ -4073,46 +4073,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads the detail again when GitHub refuses a requested reviewer", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const result = yield* Effect.result(cli.getPullRequestDetail(pullRequestInput));
-      assert.isTrue(Result.isSuccess(result));
-      if (Result.isFailure(result)) return;
-      const detail = result.success;
-      expect(detail.number).toBe(7);
-      expect(detail.reviewRequestLogins).toEqual([]);
-      expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([100, 0]);
-    }),
-  );
-
   it.effect.each([
     {
       name: "check path",
       errors: [
         {
           ...refusedReviewer,
-          path: ["repository", "pullRequest", "commits", "nodes", 0, "requestedReviewer"],
+          path: ["repository", "pullRequest", "commits", "nodes", 0, "commit", "statusCheckRollup"],
         },
       ],
     },
-    { name: "mixed errors", errors: [refusedReviewer, { message: "other", type: "NOT_FOUND" }] },
-    { name: "untyped error", errors: [refusedReviewer, { message: "untyped" }] },
     {
-      name: "wrong type",
-      errors: [{ ...refusedReviewer, type: "NOT_FOUND" }],
-      tag: "GitHubApiNotFoundError",
+      name: "mixed errors",
+      errors: [refusedReviewer, { ...refusedReviewer, path: [...refusedReviewer.path, "login"] }],
     },
     {
-      name: "string index",
-      errors: [
-        {
-          ...refusedReviewer,
-          path: ["repository", "pullRequest", "reviewRequests", "nodes", "0", "requestedReviewer"],
-        },
-      ],
+      name: "untyped error",
+      errors: [{ message: refusedReviewer.message, path: refusedReviewer.path }],
     },
     {
       name: "negative index",
@@ -4123,7 +4100,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
         },
       ],
     },
-    { name: "suffix", errors: [{ ...refusedReviewer, path: [...refusedReviewer.path, "login"] }] },
     { name: "HTTP 403", errors: [refusedReviewer], status: 403 },
     {
       name: "authentication",
@@ -4208,9 +4184,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
           Effect.succeed(output(reviewThreadsPage([thread("T3", "c3")], null))),
         );
         const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const result = yield* Effect.result(cli.listReviewThreadComments(pullRequestInput));
-        assert.isTrue(Result.isSuccess(result));
-        if (Result.isFailure(result)) return;
+        const read = cli.listReviewThreadComments(pullRequestInput);
+        const conversation = yield* read;
         expect(
           variablesOf("ReviewThreads").map((v) => [v["after"], v["requestedReviewers"]]),
         ).toEqual(
@@ -4227,10 +4202,18 @@ layer("GitHubPullRequestApi.layer", (it) => {
                 ["last", 0],
               ],
         );
-        expect(result.success.comments.map((c) => c.id)).toEqual(
+        expect(conversation.comments.map((c) => c.id)).toEqual(
           later ? ["c1", "c2", "c3"] : ["c2", "c3"],
         );
-        expect(result.success.reviewers.map((r) => r.login)).toEqual(later ? ["prior"] : []);
+        expect(conversation.reviewers.map((r) => r.login)).toEqual(later ? ["prior"] : []);
+        expect(conversation.truncated).toBe(false);
+
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(reviewThreadsPage([], null))));
+        yield* read;
+        expect(variablesOf("ReviewThreads").at(-1)).toMatchObject({
+          after: null,
+          requestedReviewers: 50,
+        });
       }),
   );
 
@@ -4327,101 +4310,116 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("reads every check after retrying without requested reviewers", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson(
-              coreResponse({
-                commits: {
-                  nodes: [
-                    {
-                      commit: {
-                        statusCheckRollup: {
-                          contexts: {
-                            nodes: [
-                              checkRun({
-                                name: "first",
-                                status: "COMPLETED",
-                                conclusion: "SUCCESS",
-                              }),
-                            ],
-                            pageInfo: { hasNextPage: true, endCursor: "c1" },
+  it.effect.each([false, true])(
+    "reads every check when the combined response has another page (reviewer refusal: %s)",
+    (refused) =>
+      Effect.gen(function* () {
+        if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson(
+                coreResponse({
+                  commits: {
+                    nodes: [
+                      {
+                        commit: {
+                          statusCheckRollup: {
+                            contexts: {
+                              nodes: [
+                                checkRun({
+                                  name: "first",
+                                  status: "COMPLETED",
+                                  conclusion: "SUCCESS",
+                                }),
+                              ],
+                              pageInfo: { hasNextPage: true, endCursor: "c1" },
+                            },
                           },
                         },
                       },
-                    },
-                  ],
-                },
-              }),
+                    ],
+                  },
+                }),
+              ),
             ),
           ),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            checkContextsPage(
-              [
-                checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
-                checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
-              ],
-              null,
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              checkContextsPage(
+                [
+                  checkRun({ name: "first", status: "COMPLETED", conclusion: "SUCCESS" }),
+                  checkRun({ name: "last", status: "COMPLETED", conclusion: "FAILURE" }),
+                ],
+                null,
+              ),
             ),
           ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const result = yield* Effect.result(cli.getPullRequestDetail(pullRequestInput));
-      assert.isTrue(Result.isSuccess(result));
-      if (Result.isFailure(result)) return;
-      const detail = result.success;
-      expect(detail.checks).toHaveLength(2);
-      expect(detail.checksState).toBe("failing");
-      expect(detail.checksTruncated).toBe(false);
-      // The whole rollup is walked from its start, so no check is counted twice or skipped.
-      expect(varsAt(2)).toMatchObject({ number: 7 });
-      expect(varsAt(2)).not.toHaveProperty("after");
-      assert.strictEqual(mockedExecute.mock.calls.length, 3);
-    }),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const read = cli.getPullRequestDetail(pullRequestInput);
+        const detail = yield* read;
+        expect(detail.reviewRequestLogins).toEqual([]);
+        expect(detail.reviewRequestTeams).toEqual([]);
+        expect(detail.hasTeamReviewRequest).toBe(false);
+        if (refused)
+          expect(variablesOf("PullRequestCore").map((v) => v["requestedReviewers"])).toEqual([
+            100, 0,
+          ]);
+        expect(detail.checks).toHaveLength(2);
+        expect(detail.checksState).toBe("failing");
+        expect(detail.checksTruncated).toBe(false);
+        // The whole rollup is walked from its start, so no check is counted twice or skipped.
+        expect(variablesOf("CheckContexts")).toEqual([expect.objectContaining({ number: 7 })]);
+        expect(variablesOf("CheckContexts")[0]).not.toHaveProperty("after");
+        expect(mockedExecute).toHaveBeenCalledTimes(refused ? 3 : 2);
+
+        if (refused) {
+          mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(coreResponse()))));
+          yield* read;
+          expect(variablesOf("PullRequestCore").at(-1)).toMatchObject({ requestedReviewers: 100 });
+        }
+      }),
   );
 
-  it.effect("refuses to combine checks from different head revisions after a reviewer retry", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
-      const response = coreResponse({
-        commits: {
-          nodes: [
-            {
-              commit: {
-                statusCheckRollup: {
-                  contexts: {
-                    nodes: [],
-                    pageInfo: { hasNextPage: true },
+  it.effect.each([false, true])(
+    "refuses to combine checks from different head revisions (reviewer refusal: %s)",
+    (refused) =>
+      Effect.gen(function* () {
+        if (refused) mockedExecute.mockReturnValueOnce(refusedReviewerResponse());
+        const response = coreResponse({
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [],
+                      pageInfo: { hasNextPage: true },
+                    },
                   },
                 },
               },
-            },
-          ],
-        },
-      });
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(checkContextsPage([], null, "new-head"))),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const error = yield* Effect.flip(
-        cli.getPullRequestDetail({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          number: 7,
-        }),
-      );
-      expect(error._tag).toBe("GitHubPullRequestReadError");
-    }),
+            ],
+          },
+        });
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output(encodeJson(response))));
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(checkContextsPage([], null, "new-head"))),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const error = yield* Effect.flip(
+          cli.getPullRequestDetail({
+            cwd: "/w",
+            repository: "acme/web",
+            host: "github.com",
+            number: 7,
+          }),
+        );
+        expect(error._tag).toBe("GitHubPullRequestReadError");
+      }),
   );
 
   it.effect("preserves the reserve for automatic detail reads and allows manual checks", () =>

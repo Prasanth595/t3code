@@ -317,14 +317,13 @@ const isGraphQlClientError = (error: unknown): error is GraphQLClientError.Graph
 
 const { isNotFoundOnly } = GitHubGraphQlClient;
 
-// Only optional reviewer metadata may be omitted. Refused checks must still fail the read.
 const isRefusedRequestedReviewersOnly = (error: unknown): boolean =>
   isGraphQlClientError(error) &&
   error.reason._tag === "ResponseError" &&
   error.reason.status === 200 &&
   error.reason.errors.every(
-    ({ path, ...error }) =>
-      error["type"] === "FORBIDDEN" &&
+    ({ path, type }) =>
+      type === "FORBIDDEN" &&
       path?.length === 6 &&
       path[0] === "repository" &&
       path[1] === "pullRequest" &&
@@ -1364,54 +1363,45 @@ export const make = Effect.gen(function* () {
   const getPullRequestDetail: GitHubPullRequestApi["Service"]["getPullRequestDetail"] = (input) => {
     const { owner, name } = parseRepositorySelector(input.repository);
     const operation = "getPullRequestDetail";
+    const read = (requestedReviewers: number) =>
+      client.PullRequestCore({
+        owner,
+        name,
+        number: input.number,
+        headRef: `refs/pull/${input.number}/head`,
+        required: asksRequired(input.host),
+        requestedReviewers,
+      });
     return SourceControlRateLimit.Interactive.pipe(
       Effect.flatMap((allowReserve) =>
-        client
-          .PullRequestCore({
-            owner,
-            name,
-            number: input.number,
-            headRef: `refs/pull/${input.number}/head`,
-            required: asksRequired(input.host),
-            requestedReviewers: 100,
-          })
-          .pipe(
-            Effect.catchIf(isRefusedRequestedReviewersOnly, () =>
-              client.PullRequestCore({
-                owner,
-                name,
-                number: input.number,
-                headRef: `refs/pull/${input.number}/head`,
-                required: asksRequired(input.host),
-                requestedReviewers: 0,
-              }),
-            ),
-            graphql({ ...input, operation, allowReserve }),
-            Effect.map(toPullRequestCore),
-            Effect.flatMap(found({ ...input, operation })),
-            // Past a hundred checks the first page would let the rest imply success, so the whole
-            // rollup is walked instead.
-            Effect.filterOrElse(
-              (core) => !core.checksTruncated,
-              (core) =>
-                readAllCheckContexts(input, allowReserve).pipe(
-                  Effect.filterOrFail(
-                    (all) => all.headSha === core.headSha,
-                    () =>
-                      readError(
-                        input.cwd,
-                        operation,
-                        new Error("Pull request head changed while reading checks."),
-                      ),
-                  ),
-                  Effect.map((all) => ({
-                    ...core,
-                    ...pullRequestChecksFromContexts(all.contexts),
-                    checksTruncated: all.truncated,
-                  })),
+        read(100).pipe(
+          Effect.catchIf(isRefusedRequestedReviewersOnly, () => read(0)),
+          graphql({ ...input, operation, allowReserve }),
+          Effect.map(toPullRequestCore),
+          Effect.flatMap(found({ ...input, operation })),
+          // Past a hundred checks the first page would let the rest imply success, so the whole
+          // rollup is walked instead.
+          Effect.filterOrElse(
+            (core) => !core.checksTruncated,
+            (core) =>
+              readAllCheckContexts(input, allowReserve).pipe(
+                Effect.filterOrFail(
+                  (all) => all.headSha === core.headSha,
+                  () =>
+                    readError(
+                      input.cwd,
+                      operation,
+                      new Error("Pull request head changed while reading checks."),
+                    ),
                 ),
-            ),
+                Effect.map((all) => ({
+                  ...core,
+                  ...pullRequestChecksFromContexts(all.contexts),
+                  checksTruncated: all.truncated,
+                })),
+              ),
           ),
+        ),
       ),
     );
   };
