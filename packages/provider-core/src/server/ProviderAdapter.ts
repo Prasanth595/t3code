@@ -629,6 +629,12 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
+  /**
+   * Reconciles the rollback target when no later terminal app runs exist.
+   * Providers whose native history can advance without an app run supply this;
+   * otherwise the conversation is left untouched.
+   */
+  readonly reconcileRollbackTarget?: ProviderAdapterV2SessionRuntime["rollbackThread"];
   readonly forkThread: (
     input: ProviderAdapterV2ForkThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;

@@ -1047,36 +1047,48 @@ const readCodexThreadHistoryMetadata = Effect.fn("CodexAdapterV2.readThreadHisto
   },
 );
 
-export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
+export const resolveCodexRollbackBoundary = Effect.fn("CodexAdapterV2.resolveRollbackBoundary")(
   function* (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
-    const providerTurns = input.providerThreadTurns;
-    switch (input.target.type) {
-      case "thread_start":
-        return providerTurns.filter(isTerminalProviderTurn).length;
-      case "provider_turn": {
-        if (input.target.providerTurn.providerThreadId !== input.providerThread.id) {
-          return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
-            driver: CODEX_PROVIDER,
-            providerThreadId: input.providerThread.id,
-            cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${input.target.providerTurn.id}: target turn belongs to provider thread ${input.target.providerTurn.providerThreadId}.`,
-          });
-        }
+    const threadTurns = providerTurnsForThread(input.providerThreadTurns, input.providerThread);
+    const beforeFirstOwnedTurn = {
+      type: "before_first_owned_turn" as const,
+      nativeTurnIds: threadTurns.flatMap((turn) =>
+        turn.nativeTurnRef?.nativeId == null ? [] : [turn.nativeTurnRef.nativeId],
+      ),
+    };
+    if (input.target.type === "thread_start") {
+      return beforeFirstOwnedTurn;
+    }
 
-        const rollbackTurnCount = countTerminalTurnsAfterBoundary(
-          providerTurns,
-          input.target.providerTurn.id,
-        );
-        if (rollbackTurnCount === null) {
-          return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
-            driver: CODEX_PROVIDER,
-            providerThreadId: input.providerThread.id,
-            cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${input.target.providerTurn.id}: target turn was not found in durable provider turn history.`,
-          });
-        }
+    const targetTurn = input.target.providerTurn;
+    if (targetTurn.providerThreadId !== input.providerThread.id) {
+      return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
+        driver: CODEX_PROVIDER,
+        providerThreadId: input.providerThread.id,
+        cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${targetTurn.id}: target turn belongs to provider thread ${targetTurn.providerThreadId}.`,
+      });
+    }
 
-        return rollbackTurnCount;
+    const boundaryTurn = threadTurns.find((turn) => turn.id === targetTurn.id);
+    if (boundaryTurn === undefined) {
+      return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
+        driver: CODEX_PROVIDER,
+        providerThreadId: input.providerThread.id,
+        cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${targetTurn.id}: target turn was not found in durable provider turn history.`,
+      });
+    }
+    // Goal control commands do not add native turns to the conversation.
+    let nativeBoundary: OrchestrationV2ProviderTurn | undefined;
+    for (const turn of threadTurns) {
+      if (turn.ordinal > boundaryTurn.ordinal || turn.nativeTurnRef == null) continue;
+      if (nativeBoundary === undefined || turn.ordinal > nativeBoundary.ordinal) {
+        nativeBoundary = turn;
       }
     }
+    const nativeTurnId = nativeBoundary?.nativeTurnRef?.nativeId;
+    return nativeTurnId == null
+      ? beforeFirstOwnedTurn
+      : { type: "after_turn" as const, nativeTurnId };
   },
 );
 
@@ -7185,23 +7197,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           rollbackThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);
-              const numTurns = yield* resolveCodexRollbackTurnCount(threadInput);
+              const boundary = yield* resolveCodexRollbackBoundary(threadInput);
               const nativeConversationHeadRef =
                 threadInput.target.type === "provider_turn"
                   ? threadInput.target.providerTurn.nativeTurnRef
                   : null;
-              if (numTurns === 0) {
-                return {
-                  providerThread: {
-                    ...threadInput.providerThread,
-                    nativeConversationHeadRef,
-                    status: "idle" as const,
-                  },
-                  providerTurns: [],
-                  messages: [],
-                  runtimeRequests: [],
-                };
-              }
               const { historyMode, loaded } = yield* ensureInitialized.pipe(
                 Effect.andThen(readCodexThreadHistoryMetadata(client.raw, threadId)),
               );
@@ -7227,7 +7227,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(revertCodexThread(client, threadId, numTurns)),
+                Effect.andThen(revertCodexThread(client, threadId, boundary)),
               );
               turnTokenUsageByThread.delete(threadId);
               return {
@@ -7257,6 +7257,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
               ),
             ),
+          reconcileRollbackTarget: (threadInput) => runtime.rollbackThread(threadInput),
           forkThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
