@@ -9,7 +9,7 @@ import {
 /* oxlint-enable eslint/no-restricted-imports */
 import type { Ref } from "react";
 
-import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
+import { DIFF_HEADER_HEIGHT, DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
@@ -95,8 +95,8 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   line-height: 1 !important;
   /* Collapsed items are never remeasured: the painted header must match diffHeaderHeight.
      Center controls in that height instead of adding padding to their intrinsic height. */
-  height: 32px !important;
-  min-height: 32px !important;
+  height: ${DIFF_HEADER_HEIGHT}px !important;
+  min-height: ${DIFF_HEADER_HEIGHT}px !important;
   padding-block: 0 !important;
   padding-inline: 8px 12px !important;
 }
@@ -240,7 +240,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
             ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
             : DIFF_VIEW_UNSAFE_CSS,
           itemMetrics: {
-            diffHeaderHeight: 32,
+            diffHeaderHeight: DIFF_HEADER_HEIGHT,
             hunkSeparatorHeight: 24,
             // Pierre uses its general file spacing as a fallback in expanded-file layout paths.
             // Keep it zero alongside the explicit paddingTop or expanding the first file can

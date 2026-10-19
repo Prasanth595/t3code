@@ -152,6 +152,7 @@ export function useReviewFilePatches({
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
     requestFile,
+    requestFiles,
     readyFilePaths,
     renderableFiles,
     settledFileCount,

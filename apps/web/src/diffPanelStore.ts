@@ -3,6 +3,7 @@ import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import type { DiffScrollAnchor } from "./lib/diffRendering";
 import { resolveStorage } from "./lib/storage";
 
 export type DiffPanelSelection =
@@ -10,11 +11,21 @@ export type DiffPanelSelection =
   | { kind: "unstaged" }
   | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
 
+export interface DiffPanelViewState {
+  scrollTop: number;
+  scrollAnchor: DiffScrollAnchor | null;
+  loadedFilePaths: ReadonlyArray<string>;
+  // Selection identity survives remounts; a new request is distinct even when its counter resets.
+  handledReveal: DiffPanelSelection | null;
+}
+
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  viewStateByThreadKey: Record<string, Record<string, DiffPanelViewState>>;
+  saveViewState: (ref: ScopedThreadRef, scope: string, viewState: DiffPanelViewState) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
@@ -32,6 +43,17 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      viewStateByThreadKey: {},
+      saveViewState: (ref, scope, viewState) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          return {
+            viewStateByThreadKey: {
+              ...state.viewStateByThreadKey,
+              [threadKey]: { ...state.viewStateByThreadKey[threadKey], [scope]: viewState },
+            },
+          };
+        }),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
