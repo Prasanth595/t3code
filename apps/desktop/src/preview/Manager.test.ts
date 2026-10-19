@@ -3071,22 +3071,31 @@ describe("PreviewManager", () => {
             },
           },
         );
+        const emit = (event: string, ...args: unknown[]) => {
+          for (const listener of listeners.get(event) ?? []) listener(...args);
+        };
         return {
           wc,
-          fail: (url: string) => {
-            for (const listener of listeners.get("did-fail-load") ?? []) {
-              listener({}, -202, "ERR_CERT_AUTHORITY_INVALID", url, true);
-            }
-          },
+          emit,
+          fail: (url: string) =>
+            emit("did-fail-load", {}, -202, "ERR_CERT_AUTHORITY_INVALID", url, true),
         };
       };
       const initial = makeGuest(42);
       const replacement = makeGuest(43);
       const manager = yield* PreviewManager.PreviewManager;
+      const statuses: PreviewManager.PreviewNavStatus[] = [];
+      yield* manager.subscribeStateChanges((_tabId, state) =>
+        Effect.sync(() => {
+          statuses.push(state.navStatus);
+        }),
+      );
       yield* manager.createTab("tab_1", { serverTab });
       yield* manager.prepareWebview(initial.wc);
       yield* manager.prepareWebview(replacement.wc);
       initial.fail("https://first.local/");
+      initial.emit("did-start-navigation", { isMainFrame: false, isSameDocument: false });
+      initial.emit("did-start-loading");
       replacement.fail("https://second.local/");
       const failure = (url: string) => ({
         type: "loadFailed",
@@ -3111,6 +3120,17 @@ describe("PreviewManager", () => {
       initial.fail("https://stale.local/");
       replacement.fail("https://current.local/");
       expect(JSON.parse(yield* Queue.take(lines))).toEqual(failure("https://current.local/"));
+      expect(statuses).not.toContainEqual(expect.objectContaining({ url: "https://stale.local/" }));
+
+      const retried = makeGuest(44);
+      yield* manager.prepareWebview(retried.wc);
+      retried.fail("https://retry.local/");
+      retried.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+      fromId.mockReturnValue(retried.wc);
+      yield* manager.registerWebview("tab_1", 44);
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "detached", ...serverTab });
+      expect(JSON.parse(yield* Queue.take(lines))).toEqual({ type: "attached", ...serverTab });
+      expect(statuses.at(-1)?.kind).toBe("Success");
     }).pipe(Effect.provide(managerLayer()), Effect.scoped),
   );
 

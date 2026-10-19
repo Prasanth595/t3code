@@ -53,7 +53,6 @@ export class DesktopBrowserChannel extends Context.Service<
     readonly detached: Stream.Stream<DesktopTabKey>;
     readonly attached: Stream.Stream<DesktopTabKey>;
     readonly isAttached: (key: DesktopTabKey) => Effect.Effect<boolean>;
-    /** The latest page-load failure the desktop reported for an attached tab. */
     readonly loadFailure: (
       key: DesktopTabKey,
     ) => Effect.Effect<Option.Option<PreviewAutomationLoadError>>;
@@ -126,7 +125,6 @@ const make = Effect.gen(function* () {
           return PubSub.publish(changes, { key, attached: true });
         case "loadFailed":
           loadFailures.set(id, {
-            // Matches the cap on failures the server observes itself.
             url: event.url.slice(0, 2048),
             code: event.code,
             description: event.description,
@@ -134,7 +132,6 @@ const make = Effect.gen(function* () {
           return Effect.void;
         case "detached": {
           attachedTabs.delete(id);
-          // The desktop reports the failure again when the tab reattaches.
           loadFailures.delete(id);
           const queue = inbound.get(id);
           return (queue ? Queue.shutdown(queue) : Effect.void).pipe(

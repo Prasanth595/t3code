@@ -7,6 +7,7 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
+  type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as NodePath from "node:path";
@@ -61,11 +62,7 @@ export class DesktopBrowserHost extends Context.Service<
     readonly handleCommandLine: (line: string) => Effect.Effect<void>;
     readonly attach: (key: DesktopBrowserTabKey, debuggee: DesktopBrowserTabDebugger) => void;
     readonly detach: (key: DesktopBrowserTabKey) => void;
-    /** Tells the server an attached tab's page failed to load; ignored for other tabs. */
-    readonly loadFailed: (
-      key: DesktopBrowserTabKey,
-      failure: { readonly url: string; readonly code: number; readonly description: string },
-    ) => void;
+    readonly loadFailed: (key: DesktopBrowserTabKey, failure: PreviewAutomationLoadError) => void;
     readonly humanStartedDownload: (source: Electron.WebContents) => boolean;
     readonly placeDownload: (source: Electron.WebContents, item: Electron.DownloadItem) => boolean;
     readonly pointers: Stream.Stream<{

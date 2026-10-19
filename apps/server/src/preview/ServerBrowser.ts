@@ -308,11 +308,7 @@ interface ServerTab {
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   loading: boolean;
-  /**
-   * Why the latest main-frame navigation this server saw failed, null while it
-   * has not failed, and undefined until the server sees a navigation at all.
-   */
-  loadError: PreviewAutomationLoadError | null | undefined;
+  loadError: PreviewAutomationLoadError | undefined;
   closing: boolean;
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
@@ -802,7 +798,7 @@ const make = Effect.gen(function* () {
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
       tab.loading = true;
-      tab.loadError = null;
+      tab.loadError = undefined;
       report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
     });
     page.on("load", () => {
@@ -1346,13 +1342,10 @@ const make = Effect.gen(function* () {
     );
   };
 
-  /**
-   * Why the tab shows the browser's error page. A desktop tab's first load can
-   * fail before this server connects, so the desktop's own report fills in.
-   */
   const loadErrorOf = async (tab: ServerTab) => {
     if (!tab.page.url().startsWith("chrome-error://")) return undefined;
-    if (tab.loadError !== undefined || !tab.desktop) return tab.loadError ?? undefined;
+    // A desktop failure from before CDP attached is superseded by any navigation we observe.
+    if (tab.loadError || !tab.desktop || tab.navigationGeneration > 0) return tab.loadError;
     const reported = await Effect.runPromise(
       desktopChannel.loadFailure({ threadId: tab.threadId, tabId: tab.tabId }),
     );
