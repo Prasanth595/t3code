@@ -2364,7 +2364,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               ...gitCommandContext({ operation: error.operation, cwd, args }),
               reason: error.reason,
               detail:
-                'Git needs a name and email to commit. On the server, run git config --global user.name "Your Name" and git config --global user.email "you@example.com", then commit again.',
+                // Repository settings outrank --global ones, so this also replaces
+                // an empty or invalid identity the repository itself sets.
+                'Git needs a name and email to commit. In this repository on the server, run git config user.name "Your Name" and git config user.email "you@example.com", then commit again.',
               exitCode: error.exitCode,
               stdoutLength: error.stdoutLength,
               stderrLength: error.stderrLength,

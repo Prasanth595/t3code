@@ -4096,7 +4096,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           operation: "GitVcsDriver.commit.commit",
           reason: "identity_unknown",
         });
-        assert.include(error.message, "git config --global user.email");
+        assert.include(error.message, 'git config user.name "Your Name"');
+        assert.notInclude(error.message, "--global");
         assert.notInclude(error.message, "test@test.com");
         assert.deepEqual(locales, ["C"]);
         assert.notProperty(error, "stderr");
