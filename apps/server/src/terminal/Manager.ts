@@ -619,13 +619,15 @@ interface TerminalProcessTableSnapshot {
   readonly commandById: ReadonlyMap<number, string>;
 }
 
+// Idle for at least four times the last fallback query so a slow process
+// table never has the poll loop spend most of its time inside `ps`/WMI.
 export function subprocessSnapshotPollDelayMs(
   pollIntervalMs: number,
   failureCount: number,
   fallbackElapsedMs = 0,
 ): number {
   return Math.min(
-    Math.max(pollIntervalMs * 2 ** failureCount, Math.max(0, fallbackElapsedMs) * 4),
+    Math.max(pollIntervalMs * 2 ** failureCount, fallbackElapsedMs * 4),
     MAX_SUBPROCESS_POLL_INTERVAL_MS,
   );
 }
@@ -1453,6 +1455,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // One process-table snapshot per poll tick, shared across every terminal.
   // Per-terminal `pgrep`/`ps` calls multiply spawn load by terminal count and
   // can exhaust the PID space on hosts with many sessions (#6332).
+  // A slow process table (WMI on Windows can take seconds) is still valid, so
+  // the fallback gets a generous timeout and reports how long it took. The poll
+  // loop paces the next query from that duration, on success and on failure,
+  // so a slow or hung query is not re-issued back to back.
   const fallbackProcessTableSnapshot = (
     platform === "win32"
       ? windowsProcessTableSnapshot()
@@ -1463,11 +1469,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     Effect.timed,
     Effect.flatMap(([elapsed, result]) => {
       const fallbackElapsedMs = Duration.toMillis(elapsed);
-      return Result.match(result, {
-        onSuccess: (snapshot) => Effect.succeed({ snapshot, fallbackElapsedMs }),
-        onFailure: (error) =>
-          Effect.fail(new TerminalSubprocessCheckError({ ...error, fallbackElapsedMs })),
-      });
+      return Result.isSuccess(result)
+        ? Effect.succeed({ snapshot: result.success, fallbackElapsedMs })
+        : new TerminalSubprocessCheckError({ ...result.failure, fallbackElapsedMs });
     }),
   );
   const fetchProcessTableSnapshot: Effect.Effect<
@@ -2425,12 +2429,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     if (Result.isFailure(inspectorResult)) {
       const reason = inspectorResult.failure;
       yield* Effect.logWarning("failed to snapshot processes for terminal subprocess polling", {
-        errorTag: reason._tag,
-        command: reason.command,
-        exitCode: reason.exitCode,
-        timedOut: reason.timedOut,
-        stdoutTruncated: reason.stdoutTruncated,
-        fallbackElapsedMs: reason.fallbackElapsedMs,
+        reason,
       });
       return { snapshotSucceeded: false, fallbackElapsedMs: reason.fallbackElapsedMs ?? 0 };
     }
