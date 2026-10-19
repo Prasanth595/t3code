@@ -1,62 +1,45 @@
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 
 import { createPreloadSnapshot } from "./preloadSnapshot.ts";
 
-it("keeps reads responsive while the main process is busy and shares a refresh", async () => {
-  let synchronousReads = 0;
-  let asynchronousReads = 0;
-  let complete!: (value: string[]) => void;
-  const latest = new Promise<string[]>((resolve) => {
-    complete = resolve;
-  });
-  const snapshot = createPreloadSnapshot(
-    () => {
-      synchronousReads++;
-      return ["primary"];
-    },
-    () => {
-      asynchronousReads++;
-      return latest;
-    },
-  );
+it("serves the startup snapshot while a shared asynchronous refresh is pending", async () => {
+  const initial = ["primary"];
+  const latest = Promise.withResolvers<string[]>();
+  const readInitial = vi.fn(() => initial);
+  const readLatest = vi.fn(() => latest.promise);
+  const snapshot = createPreloadSnapshot(readInitial, readLatest);
 
-  expect(snapshot.read()).toEqual(["primary"]);
-  const refresh = snapshot.refresh();
-  expect(snapshot.refresh()).toBe(refresh);
-  for (let read = 0; read < 1_000; read++) expect(snapshot.read()).toEqual(["primary"]);
-  expect(synchronousReads).toBe(1);
-  expect(asynchronousReads).toBe(1);
+  expect(snapshot.read()).toBe(initial);
+  const first = snapshot.refresh();
+  const second = snapshot.refresh();
+  expect(snapshot.read()).toBe(initial);
+  expect(snapshot.read()).toBe(initial);
+  expect(readInitial).toHaveBeenCalledTimes(1);
+  expect(readLatest).toHaveBeenCalledTimes(1);
 
-  complete(["primary", "wsl"]);
-  await refresh;
-  expect(snapshot.read()).toEqual(["primary", "wsl"]);
-  expect(synchronousReads).toBe(1);
+  const connected = ["primary", "wsl"];
+  latest.resolve(connected);
+  expect(await first).toBe(connected);
+  expect(await second).toBe(connected);
+  expect(snapshot.read()).toBe(connected);
+  expect(readInitial).toHaveBeenCalledTimes(1);
 });
 
-it("preserves the last successful topology after IPC fails and recovers on the next refresh", async () => {
-  let fail = true;
-  const snapshot = createPreloadSnapshot(
-    () => ["primary", "wsl"],
-    async () => {
-      if (fail) throw new Error("IPC unavailable");
-      return [];
-    },
-  );
-  expect(snapshot.read()).toEqual(["primary", "wsl"]);
+it("retains an async snapshot through failure and replaces it on successful recovery", async () => {
+  const connected = ["primary", "wsl"];
+  const readInitial = vi.fn(() => ["stale"]);
+  const readLatest = vi
+    .fn<() => Promise<string[]>>()
+    .mockResolvedValueOnce(connected)
+    .mockRejectedValueOnce(new Error("IPC unavailable"))
+    .mockResolvedValueOnce([]);
+  const snapshot = createPreloadSnapshot(readInitial, readLatest);
+
+  await snapshot.refresh();
+  expect(snapshot.read()).toBe(connected);
   await expect(snapshot.refresh()).rejects.toThrow("IPC unavailable");
-  expect(snapshot.read()).toEqual(["primary", "wsl"]);
-  fail = false;
-  await snapshot.refresh();
+  expect(snapshot.read()).toBe(connected);
+  await expect(snapshot.refresh()).resolves.toEqual([]);
   expect(snapshot.read()).toEqual([]);
-});
-
-it("uses an asynchronous startup result without a synchronous IPC read", async () => {
-  const snapshot = createPreloadSnapshot(
-    () => {
-      throw new Error("unexpected synchronous IPC");
-    },
-    async () => ["wsl"],
-  );
-  await snapshot.refresh();
-  expect(snapshot.read()).toEqual(["wsl"]);
+  expect(readInitial).not.toHaveBeenCalled();
 });
