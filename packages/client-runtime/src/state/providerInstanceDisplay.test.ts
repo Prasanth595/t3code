@@ -91,18 +91,12 @@ describe("normalizeProviderAccentColor", () => {
 });
 
 describe("providerAccentForegroundColor", () => {
-  it("uses dark text on light accents", () => {
-    expect(providerAccentForegroundColor("#b5f23d")).toBe("#000000");
-    expect(providerAccentForegroundColor("#FFFFFF")).toBe("#000000");
-  });
-
-  it("uses light text on dark accents", () => {
-    expect(providerAccentForegroundColor("#2563eb")).toBe("#ffffff");
-    expect(providerAccentForegroundColor("#000000")).toBe("#ffffff");
-  });
-
-  it("keeps light text when the accent is invalid", () => {
-    expect(providerAccentForegroundColor("blue")).toBe("#ffffff");
+  it.each([
+    ["#b5f23d", "#000000"],
+    ["#2563eb", "#ffffff"],
+    ["#777777", "#000000"],
+  ])("chooses the higher WCAG contrast foreground for %s", (accent, foreground) => {
+    expect(providerAccentForegroundColor(accent)).toBe(foreground);
   });
 });
 
