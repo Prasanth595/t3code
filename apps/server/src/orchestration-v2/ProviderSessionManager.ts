@@ -1203,10 +1203,9 @@ export const layerWithOptions = (
 
       // Provider activity restarts the pin budget, so background work that keeps
       // reporting progress (a long Claude workflow) is never cut off; only work
-      // that went silent for maxIdlePinMs is released.
-      const scheduleIdleReleaseInternal = Effect.fn(
-        "ProviderSessionManager.scheduleIdleReleaseInternal",
-      )(function* (
+      // that went silent for maxIdlePinMs is released. This runs for every
+      // provider event, so keep it untraced.
+      const scheduleIdleReleaseInternal = Effect.fnUntraced(function* (
         providerSessionId: ProviderSessionId,
         options?: { readonly providerActivity?: boolean },
       ) {
