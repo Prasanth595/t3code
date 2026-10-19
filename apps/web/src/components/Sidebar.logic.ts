@@ -290,15 +290,33 @@ export function resolveSidebarDropTarget(
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
+  let pinnedKeyOrder: string[] | undefined;
+  if (section === "pinned" && collapsedPinnedOrder !== undefined && overId !== activeKey) {
+    const fullOrder = collapsedPinnedOrder.filter((key) => key !== activeKey);
+    const movedIndex = pinnedOrder.indexOf(activeKey);
+    const previousKey = pinnedOrder[movedIndex - 1];
+    const nextKey = pinnedOrder[movedIndex + 1];
+    const anchorKey = overId === nextKey ? nextKey : previousKey;
+    const anchorIndex = anchorKey === undefined ? -1 : fullOrder.indexOf(anchorKey);
+    const insertionIndex =
+      overId === sidebarMarkerId("pinned-header")
+        ? 0
+        : anchorIndex !== -1
+          ? anchorIndex + (anchorKey === previousKey ? 1 : 0)
+          : Math.max(0, collapsedPinnedOrder.indexOf(activeKey));
+    fullOrder.splice(insertionIndex, 0, activeKey);
+    if (
+      items[activeIndex]!.section !== "pinned" ||
+      fullOrder.some((key, index) => key !== collapsedPinnedOrder[index])
+    ) {
+      pinnedKeyOrder = fullOrder;
+    }
+  }
   return {
     section,
     pinnedOrder,
     activeOrder,
-    ...(overId === sidebarMarkerId("pinned-header") &&
-    collapsedPinnedOrder !== undefined &&
-    collapsedPinnedOrder[0] !== activeKey
-      ? { pinnedKeyOrder: [activeKey, ...collapsedPinnedOrder.filter((key) => key !== activeKey)] }
-      : {}),
+    ...(pinnedKeyOrder === undefined ? {} : { pinnedKeyOrder }),
   };
 }
 
@@ -453,7 +471,7 @@ export function planSidebarThreadDrop(input: {
       ) {
         return { kind: "none" };
       }
-      // A collapsed header means the start of the full run, including hidden pins.
+      // Assign against the full collapsed run so hidden keyless pins keep their positions.
       const assignments = arrange(target.pinnedKeyOrder ?? order, pinnedKeysById, reorderableKeys);
       if (assignments === null) return { kind: "none" };
       if (activeSection === "pinned") {

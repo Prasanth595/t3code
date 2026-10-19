@@ -2388,6 +2388,57 @@ describe("Working shelf (beta)", () => {
       },
     );
 
+    it("preserves hidden keyless pins when dropping below the routed pin in a collapsed shelf", () => {
+      const pins = [
+        { id: "hidden-new", createdAt: "2026-03-09T12:00:00.000Z", pinOrderKey: null },
+        { id: "routed", createdAt: "2026-03-09T11:00:00.000Z", pinOrderKey: null },
+        { id: "hidden-old", createdAt: "2026-03-09T10:00:00.000Z", pinOrderKey: null },
+      ];
+      const dropped = {
+        id: "dropped",
+        createdAt: "2026-03-09T13:00:00.000Z",
+        pinOrderKey: null,
+      };
+      const target = resolveSidebarDropTarget(
+        [
+          marker("pinned-header"),
+          row("routed", "pinned"),
+          marker("pinned-divider"),
+          row("dropped", "active"),
+        ],
+        dropped.id,
+        sidebarMarkerId("pinned-divider"),
+        sortPinnedThreadsForSidebar(pins).map((thread) => thread.id),
+      );
+      expect(target).not.toBeNull();
+      const plan = planSidebarThreadDrop({
+        activeKey: dropped.id,
+        activeSection: "active",
+        target: target!,
+        pinnedOrder: ["routed"],
+        pinnedKeysById: new Map(pins.map((thread) => [thread.id, thread.pinOrderKey])),
+        reorderableKeys: new Set([...pins, dropped].map((thread) => thread.id)),
+        activeOrder: [dropped.id],
+        activeKeysById: new Map(),
+      });
+      expect(plan.kind).toBe("pin");
+      if (plan.kind !== "pin") return;
+      const assignedKeys = new Map([
+        [dropped.id, plan.orderKey!],
+        ...plan.extraAssignments.map(({ id, orderKey }) => [id, orderKey] as const),
+      ]);
+      const persisted = [...pins, dropped].map((thread) => ({
+        ...thread,
+        pinOrderKey: assignedKeys.get(thread.id) ?? thread.pinOrderKey,
+      }));
+      expect(sortPinnedThreadsForSidebar(persisted).map((thread) => thread.id)).toEqual([
+        "hidden-new",
+        "routed",
+        "dropped",
+        "hidden-old",
+      ]);
+    });
+
     it.each(["x", "h1"])(
       "waits for every collapsed-header key assignment with routed thread %s",
       (routedId) => {
