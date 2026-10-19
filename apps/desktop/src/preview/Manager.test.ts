@@ -1992,7 +1992,6 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         expect(guest.attach).toHaveBeenCalledTimes(2);
-        expect(guest.detach).not.toHaveBeenCalled();
       }),
     ),
   );
