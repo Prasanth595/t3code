@@ -888,7 +888,6 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
-    pendingTabs.delete(key);
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
     if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
@@ -1227,6 +1226,7 @@ const make = Effect.gen(function* () {
         throw cause;
       })
       .finally(() => {
+        if (pendingTabs.get(key) !== launch) return;
         pendingTabs.delete(key);
         closedPendingTabs.delete(key);
       });
@@ -1265,13 +1265,19 @@ const make = Effect.gen(function* () {
               "tabLimit",
             ),
           );
-        const reservation = { key: Symbol() as string | symbol };
-        pendingTabs.set(reservation.key, { owner: input.automationOwner ?? null });
+        const reservation = {
+          key: Symbol() as string | symbol,
+          launch: { owner: input.automationOwner ?? null },
+        };
+        pendingTabs.set(reservation.key, reservation.launch);
         return reservation;
       }),
       (reservation) =>
         Effect.sync(() => {
-          pendingTabs.delete(reservation.key);
+          const pending = pendingTabs.get(reservation.key);
+          // An interrupted request still occupies capacity until its launch settles.
+          if (pending === reservation.launch && !pending.promise)
+            pendingTabs.delete(reservation.key);
         }),
     );
     const snapshot = yield* Effect.acquireRelease(
@@ -1280,7 +1286,7 @@ const make = Effect.gen(function* () {
         beforePublish: (snapshot) => {
           pendingTabs.delete(reservation.key);
           reservation.key = tabKey(snapshot.threadId, snapshot.tabId);
-          pendingTabs.set(reservation.key, { owner: input.automationOwner ?? null });
+          pendingTabs.set(reservation.key, reservation.launch);
           input.beforePublish?.(snapshot);
         },
       }),
@@ -1288,7 +1294,7 @@ const make = Effect.gen(function* () {
         Exit.isFailure(exit)
           ? Effect.gen(function* () {
               const key = tabKey(snapshot.threadId, snapshot.tabId);
-              if (pendingTabs.has(key)) closedPendingTabs.add(key);
+              if (pendingTabs.get(key)?.promise) closedPendingTabs.add(key);
               const tab = tabs.get(key);
               if (tab) dropTab(tab, false);
               yield* manager
@@ -1741,10 +1747,15 @@ const make = Effect.gen(function* () {
 
   const openAgentTab = Effect.fnUntraced(function* (request: PreviewAutomationRequest) {
     if (!request.agentSessionId)
-      throw new BrowserControlInterrupted("The agent session is missing. Reconnect the provider.");
+      return yield* Effect.fail(
+        new BrowserControlInterrupted("The agent session is missing. Reconnect the provider."),
+      );
     const agentSessionId = request.agentSessionId;
     const open = request.input as PreviewAutomationOpenInput;
-    const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
+    const url = yield* Effect.try({
+      try: () => (open.url === undefined ? undefined : normalizePreviewUrl(open.url)),
+      catch: ServerBrowserPage.toOperationError,
+    });
     const reuse = open.reuseExistingTab ?? true;
     if (
       reuse &&
@@ -1754,9 +1765,11 @@ const make = Effect.gen(function* () {
           tab.threadId === request.threadId && tab.control.agentId === request.agentSessionId,
       ).length > 1
     )
-      throw new BrowserControlInterrupted(
-        "Multiple tabs are open. Pass tabId or reuseExistingTab=false.",
-        "tabRequired",
+      return yield* Effect.fail(
+        new BrowserControlInterrupted(
+          "Multiple tabs are open. Pass tabId or reuseExistingTab=false.",
+          "tabRequired",
+        ),
       );
 
     const found =
@@ -1772,11 +1785,13 @@ const make = Effect.gen(function* () {
       const desktop = sessions.some(
         (session) => session.tabId === request.tabId && session.runtime !== "server",
       );
-      throw new ServerBrowserPage.ServerBrowserOperationError(
-        desktop ? "PreviewAutomationExecutionError" : "PreviewAutomationTabNotFoundError",
-        desktop
-          ? "This tab belongs to the desktop runtime. This environment's server browser cannot control desktop tabs. Omit tabId to open a server tab instead."
-          : "The requested server preview tab does not exist.",
+      return yield* Effect.fail(
+        new ServerBrowserPage.ServerBrowserOperationError(
+          desktop ? "PreviewAutomationExecutionError" : "PreviewAutomationTabNotFoundError",
+          desktop
+            ? "This tab belongs to the desktop runtime. This environment's server browser cannot control desktop tabs. Omit tabId to open a server tab instead."
+            : "The requested server preview tab does not exist.",
+        ),
       );
     }
     // Only an explicit tabId reuses a tab this session did not open; a tab
@@ -1786,7 +1801,12 @@ const make = Effect.gen(function* () {
         ? found
         : undefined;
     const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
-    const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
+    const profileId = existing
+      ? undefined
+      : yield* Effect.try({
+          try: () => resolveOpenProfile(open.profileId),
+          catch: ServerBrowserPage.toOperationError,
+        });
     if (!existing) closeIdleAgentTabs();
     const tab =
       existing ??
@@ -1799,9 +1819,11 @@ const make = Effect.gen(function* () {
         automationOwner: request.agentSessionId,
       }));
     if (existing?.dialog)
-      throw new BrowserControlInterrupted(
-        "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-        "dialogPending",
+      return yield* Effect.fail(
+        new BrowserControlInterrupted(
+          "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+          "dialogPending",
+        ),
       );
     return yield* Effect.tryPromise({
       try: () =>
@@ -2075,7 +2097,8 @@ const make = Effect.gen(function* () {
       }
       const key = tabKey(event.threadId, event.tabId);
       const tab = tabs.get(key);
-      if (event.type === "closed" && !tab && pendingTabs.has(key)) closedPendingTabs.add(key);
+      if (event.type === "closed" && !tab && pendingTabs.get(key)?.promise)
+        closedPendingTabs.add(key);
       if (!tab) return;
       if (event.type === "closed") {
         closedSessions.add(key);
