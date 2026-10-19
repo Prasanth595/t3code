@@ -1,4 +1,4 @@
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -13,6 +13,10 @@ import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   childThreadInputsTitle,
@@ -63,6 +67,7 @@ import {
   AppState,
   Keyboard,
   Platform,
+  Pressable,
   useWindowDimensions,
   View,
   type GestureResponderEvent,
@@ -91,6 +96,8 @@ import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
+import { AppText as Text } from "../../components/ui/AppText";
+import { refreshArchivedThreadsForEnvironment } from "../archive/useArchivedThreadSnapshots";
 import type { StatusTone } from "../../components/StatusPill";
 import { getComposerDraftSnapshot } from "../../state/use-composer-drafts";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -392,6 +399,29 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const navigation = useNavigation();
   const { session: voiceInputSession } = useGlobalVoiceInput();
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
+  const isArchived = props.selectedThread.archivedAt !== null;
+  const unarchiveThread = useAtomCommand(threadEnvironment.unarchive, { reportFailure: false });
+  const [unarchiving, setUnarchiving] = useState(false);
+  const handleUnarchive = useCallback(async () => {
+    setUnarchiving(true);
+    try {
+      const result = await unarchiveThread({
+        environmentId: props.environmentId,
+        input: { threadId: props.selectedThread.id },
+      });
+      if (result._tag === "Success") {
+        refreshArchivedThreadsForEnvironment(props.environmentId);
+      } else if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Dialog.alert(
+          "Could not unarchive thread",
+          error instanceof Error ? error.message : "Please try again.",
+        );
+      }
+    } finally {
+      setUnarchiving(false);
+    }
+  }, [props.environmentId, props.selectedThread.id, unarchiveThread]);
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
   );
@@ -612,7 +642,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     useState<RuntimeRequestId | null>(null);
   const activeUserInputRequestId = props.activePendingUserInput?.requestId ?? null;
   const composerSlotHidden =
-    activeUserInputRequestId !== null || props.creationState?.kind === "failed";
+    (activeUserInputRequestId !== null && !isArchived) || props.creationState?.kind === "failed";
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -706,7 +736,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   // Android renders the expanded card in-flow (it cannot hit-test the iOS
   // overlay outside the bar's bounds), so its measured overlay height already
   // includes the card — the coverage extra is iOS-only.
-  const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
+  const userInputCoverageApplies =
+    Platform.OS === "ios" && activeUserInputRequestId !== null && !isArchived;
   const combinedContentInsetEndAdjustment = useSharedValue(
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
   );
@@ -921,6 +952,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   ]);
 
   const handleSendMessage = async (followUp?: ActiveTurnComposerAction) => {
+    if (isArchived) return null;
     const targetThreadKey = selectedThreadKey;
     const hasUserMessage = selectedThreadFeed.some(
       (entry) => entry.type === "message" && entry.message.role === "user",
@@ -1191,6 +1223,24 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       />
                     </Animated.View>
                   ) : null}
+                  {isArchived ? (
+                    <View className="mx-3 mb-2 gap-2 rounded-xl border border-border bg-background p-3">
+                      <Text className="text-sm text-foreground">
+                        This thread is archived. Unarchive to send messages. Scheduled tasks stay
+                        paused until you re-enable them in Scheduled tasks.
+                      </Text>
+                      <Pressable
+                        accessibilityRole="button"
+                        disabled={unarchiving}
+                        onPress={() => void handleUnarchive()}
+                        className="min-h-8 justify-center active:opacity-70 disabled:opacity-40"
+                      >
+                        <Text className="font-t3-medium text-sm text-primary">
+                          {unarchiving ? "Unarchiving…" : "Unarchive"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}
                     thread={props.selectedThread}
@@ -1241,11 +1291,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                       />
                     </Animated.View>
                   ) : null}
-                  {props.activePendingApproval || props.activePendingUserInput ? (
+                  {props.activePendingApproval || (props.activePendingUserInput && !isArchived) ? (
                     <Animated.View
                       className="shrink-0 gap-3 px-4 pb-3"
                       style={
-                        activeUserInputRequestId !== null
+                        activeUserInputRequestId !== null && !isArchived
                           ? { paddingBottom: composerBottomInset }
                           : undefined
                       }
@@ -1260,7 +1310,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                           onRespond={props.onRespondToApproval}
                         />
                       ) : null}
-                      {props.activePendingUserInput ? (
+                      {props.activePendingUserInput && !isArchived ? (
                         <PendingUserInputCard
                           canOperateThread={props.canOperateThread}
                           pendingUserInput={props.activePendingUserInput}
@@ -1345,10 +1395,12 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         // the draft: queueing them against a thread id the server may
                         // still reject would strand them in the outbox.
                         sendBlockedReason={
-                          props.creationState?.kind === "preparing" &&
-                          !props.creationState.serverOwned
-                            ? "Starting the task…"
-                            : null
+                          isArchived
+                            ? "Unarchive this thread to send messages"
+                            : props.creationState?.kind === "preparing" &&
+                                !props.creationState.serverOwned
+                              ? "Starting the task…"
+                              : null
                         }
                         draftKey={props.composerDraftKey ?? undefined}
                         followUpBehavior={props.followUpBehavior}
