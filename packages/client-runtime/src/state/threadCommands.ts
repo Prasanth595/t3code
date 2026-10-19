@@ -443,17 +443,7 @@ export function createThreadEnvironmentAtoms<R, E>(
         : {
             ...thread,
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
-            snoozedAt:
-              thread.snoozedUntil != null &&
-              DateTime.formatIso(thread.snoozedUntil) === input.snoozedUntil &&
-              !(
-                thread.pendingRuntimeRequest?.kind === "user_input" &&
-                (thread.snoozedAt == null ||
-                  DateTime.toEpochMillis(thread.pendingRuntimeRequest.createdAt) >
-                    DateTime.toEpochMillis(thread.snoozedAt))
-              )
-                ? (thread.snoozedAt ?? now)
-                : now,
+            snoozedAt: now,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
