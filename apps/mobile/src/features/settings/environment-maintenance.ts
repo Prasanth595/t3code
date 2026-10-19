@@ -7,7 +7,6 @@ import {
 } from "@t3tools/contracts";
 import {
   CLI_RELEASES_PAGE_URL,
-  type CliReleaseChannel,
   cliReleaseChannelOf,
   cliReleaseIndexPageUrl,
   newestCliReleaseVersion,
@@ -47,13 +46,12 @@ export function canUpdateEnvironmentProvider(provider: ServerProvider) {
   );
 }
 
-const decodeLatestRelease = Schema.decodeUnknownSync(Schema.Struct({ tag_name: Schema.String }));
-const decodeReleaseIndex = Schema.decodeUnknownSync(
-  Schema.Array(
-    Schema.Struct({ tag_name: Schema.String, draft: Schema.optionalKey(Schema.Boolean) }),
-  ),
-);
-const FEED_TAG = /<id>tag:github\.com,2008:Repository\/\d+\/([^<]+)<\/id>/g;
+const Release = Schema.Struct({
+  tag_name: Schema.String,
+  draft: Schema.optionalKey(Schema.Boolean),
+});
+const decodeRelease = Schema.decodeUnknownSync(Release);
+const decodeReleases = Schema.decodeUnknownSync(Schema.Array(Release));
 
 async function fetchReleases(url: string, accept: string, signal: AbortSignal) {
   const response = await fetch(url, { signal, headers: { Accept: accept } });
@@ -61,50 +59,37 @@ async function fetchReleases(url: string, accept: string, signal: AbortSignal) {
   return response;
 }
 
-/**
- * Reads github.com release pages, which unlike api.github.com do not share 60 anonymous
- * requests an hour with every other device on the phone's network. Stable hosts read the
- * latest release. Nightly and preview are never marked latest, so they read the feed of
- * the ten newest releases.
- */
-async function channelReleases(channel: CliReleaseChannel, signal: AbortSignal) {
-  if (channel === "stable") {
-    const response = await fetchReleases(
-      `${CLI_RELEASES_PAGE_URL}/latest`,
-      "application/json",
-      signal,
-    );
-    return [decodeLatestRelease(await response.json())];
-  }
+export async function findEnvironmentUpdate(currentVersion: string, signal: AbortSignal) {
+  const channel = cliReleaseChannelOf(currentVersion);
+  // Public release pages avoid the anonymous API quota shared by devices on the same network.
   const response = await fetchReleases(
-    `${CLI_RELEASES_PAGE_URL}.atom`,
-    "application/atom+xml",
+    channel === "stable" ? `${CLI_RELEASES_PAGE_URL}/latest` : `${CLI_RELEASES_PAGE_URL}.atom`,
+    channel === "stable" ? "application/json" : "application/atom+xml",
     signal,
   );
-  return Array.from((await response.text()).matchAll(FEED_TAG), ([, tag_name = ""]) => ({
-    tag_name,
-  }));
-}
+  const releases =
+    channel === "stable"
+      ? [decodeRelease(await response.json())]
+      : Array.from(
+          (await response.text()).matchAll(
+            /<id>tag:github\.com,2008:Repository\/\d+\/([^<]+)<\/id>/g,
+          ),
+          ([, tag_name = ""]) => ({ tag_name }),
+        );
+  let version = newestCliReleaseVersion(releases, channel);
 
-/** Pages the API release index, for a preview that later nightlies pushed out of the feed. */
-async function newestInReleaseIndex(channel: CliReleaseChannel, signal: AbortSignal) {
-  for (let page = 1; ; page++) {
+  // The feed only includes ten releases, so later nightlies can displace a published preview.
+  for (let page = 1; version === undefined; page++) {
     const response = await fetchReleases(
       cliReleaseIndexPageUrl(page),
       "application/vnd.github+json",
       signal,
     );
-    const releases = decodeReleaseIndex(await response.json());
-    const version = newestCliReleaseVersion(releases, channel);
-    if (version !== undefined || releases.length < 100) return version;
+    const releases = decodeReleases(await response.json());
+    version = newestCliReleaseVersion(releases, channel);
+    if (releases.length < 100) break;
   }
-}
 
-export async function findEnvironmentUpdate(currentVersion: string, signal: AbortSignal) {
-  const channel = cliReleaseChannelOf(currentVersion);
-  const version =
-    newestCliReleaseVersion(await channelReleases(channel, signal), channel) ??
-    (await newestInReleaseIndex(channel, signal));
   if (version === undefined) throw new Error(`No ${channel} release was found.`);
   return compareSemverVersions(version, currentVersion) > 0 ? version : null;
 }
