@@ -57,6 +57,7 @@ import {
   type ProviderOptionSelection,
   type RuntimeMode,
   type ScheduledTask,
+  type ServerSettings as ServerSettingsValue,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
@@ -230,6 +231,20 @@ export const isLiveCallerShell = (
       (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
     ) ??
       false));
+
+/** Shared decision; each transport keeps its own settings-read failure mapping. */
+export const refuseGovernedThreadLaunch = (
+  scope: McpInvocationScope,
+  policy: ServerSettingsValue["delegationPolicy"],
+) =>
+  scope.thread !== undefined && policy !== null
+    ? Effect.fail(
+        failure(
+          "delegation_depth_exceeded",
+          "Governed agents must launch through delegate_task; alternate app launch paths are disabled.",
+        ),
+      )
+    : Effect.void;
 
 function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
@@ -1641,11 +1656,7 @@ const make = Effect.gen(function* () {
       const policy = (yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       )).delegationPolicy;
-      if (policy !== null)
-        return yield* failure(
-          "delegation_depth_exceeded",
-          "Governed agents must launch through delegate_task; alternate app launch paths are disabled.",
-        );
+      yield* refuseGovernedThreadLaunch(scope, policy);
     });
 
   return OrchestratorMcpService.of({

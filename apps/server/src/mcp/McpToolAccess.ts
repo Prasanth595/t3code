@@ -17,7 +17,11 @@ import {
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
+import {
+  refuseGovernedThreadLaunch,
+  resolveInteractionMode,
+  resolveRuntimeMode,
+} from "./OrchestratorMcpService.ts";
 import {
   assertFullAccess,
   assertLiveCaller,
@@ -110,12 +114,7 @@ export const refuseGovernedLaunch = McpInvocationContext.McpInvocationContext.pi
           const settings = yield* ServerSettings.ServerSettingsService;
           const policy = (yield* settings.getSettings.pipe(Effect.mapError(unavailable)))
             .delegationPolicy;
-          if (policy !== null)
-            return yield* new OrchestratorMcpFailure({
-              code: "delegation_depth_exceeded",
-              message:
-                "Governed agents must launch through delegate_task; alternate app launch paths are disabled.",
-            });
+          yield* refuseGovernedThreadLaunch(scope, policy);
         }),
   ),
 );

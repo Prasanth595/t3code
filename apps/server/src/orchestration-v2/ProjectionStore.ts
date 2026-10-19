@@ -6087,8 +6087,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const getDelegationBudget: ProjectionStoreV2Shape["getDelegationBudget"] = (rootThreadId) =>
       sql<{ active: number; total: number }>`
-        SELECT COUNT(*) AS total,
-          COALESCE(SUM(CASE WHEN task.status IN ('completed', 'failed', 'cancelled', 'interrupted') THEN 0 ELSE 1 END), 0) AS active
+        SELECT COUNT(DISTINCT task.child_thread_id) AS total,
+          COUNT(DISTINCT CASE WHEN task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN task.child_thread_id END) AS active
         FROM orchestration_v2_projection_subagents AS task
         JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = task.thread_id
         WHERE task.origin = 'app_owned'
@@ -6159,16 +6159,20 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             const tasks = Array.from(state.projections.values())
               .filter((projection) => projection.thread.lineage.rootThreadId === rootThreadId)
               .flatMap((projection) => projection.subagents)
-              .filter((task) => task.origin === "app_owned");
+              .filter((task) => task.origin === "app_owned" && task.childThreadId !== null);
             return {
-              total: tasks.length,
-              active: tasks.filter(
-                (task) =>
-                  task.status !== "completed" &&
-                  task.status !== "failed" &&
-                  task.status !== "cancelled" &&
-                  task.status !== "interrupted",
-              ).length,
+              total: new Set(tasks.map((task) => task.childThreadId)).size,
+              active: new Set(
+                tasks
+                  .filter(
+                    (task) =>
+                      task.status !== "completed" &&
+                      task.status !== "failed" &&
+                      task.status !== "cancelled" &&
+                      task.status !== "interrupted",
+                  )
+                  .map((task) => task.childThreadId),
+              ).size,
             };
           }),
         ),

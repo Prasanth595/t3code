@@ -9,7 +9,12 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Layer from "effect/Layer";
+import type * as PlatformError from "effect/PlatformError";
+import type { MigrationError } from "effect/sql/Migrator";
+import type { SqlError } from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 import * as EventSink from "./EventSink.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
@@ -35,7 +40,13 @@ const adapter = (driver: string, id = instanceId) =>
     openSession: () => Effect.die("Admission must not start a provider"),
   }) as ProviderAdapter.ProviderAdapterV2["Service"];
 const database = SqlitePersistence.layerMemory;
-const testLayer = (enabled = true, databaseLayer: typeof database = database) =>
+const testLayer = (
+  enabled = true,
+  databaseLayer: Layer.Layer<
+    SqlClient.SqlClient,
+    MigrationError | PlatformError.PlatformError | SqlError
+  > = database,
+) =>
   Layer.mergeAll(
     ProjectionStore.layer,
     ProviderReplayHarness.layerWithRegistry(
@@ -255,4 +266,49 @@ it.effect("preserves unrestricted nested delegation and unsupported targets when
     });
     assert.deepEqual(yield* projections.getDelegationBudget(parentId), { active: 2, total: 2 });
   }).pipe(Effect.provide(testLayer(false))),
+);
+
+it.live("reopening SQLite preserves accepted child counts and idempotent receipts", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-delegation-budget-" });
+      const disk = SqlitePersistence.layerFromPath(`${directory}/state.sqlite`).pipe(
+        Layer.provide(NodeServices.layer),
+      );
+      const accepted = yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* startRoot;
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const command = yield* request("disk-first");
+          const receipt = yield* orchestrator.dispatch(command);
+          return { command, sequence: receipt.sequence };
+        }).pipe(Effect.provide(testLayer(true, disk))),
+      );
+      // A new connection and service scope, after the first connection has closed.
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          assert.equal(
+            (yield* orchestrator.dispatch(accepted.command)).sequence,
+            accepted.sequence,
+          );
+          assert.deepEqual(yield* projections.getDelegationBudget(parentId), {
+            active: 1,
+            total: 1,
+          });
+          yield* orchestrator.dispatch(yield* request("disk-second"));
+          assert.deepEqual(yield* projections.getDelegationBudget(parentId), {
+            active: 2,
+            total: 2,
+          });
+          assert.equal(
+            code(yield* orchestrator.dispatch(yield* request("disk-third")).pipe(Effect.result)),
+            "delegation_budget_exceeded",
+          );
+        }).pipe(Effect.provide(testLayer(true, disk))),
+      );
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
 );
