@@ -1,8 +1,20 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import type { SDKModel } from "@cursor/sdk";
+import type { AgentOptions, SDKModel } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -11,6 +23,10 @@ import { vi } from "vite-plus/test";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import {
+  DEFAULT_HANDOFF_TOKEN_CAP,
+  handoffBudget,
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { CursorDriver } from "./driver.ts";
@@ -158,14 +174,20 @@ it.layer(layerTest)("CursorDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("reports the default context window from the last loaded Cursor catalog", () =>
+  it.effect("budgets handoffs for the SDK model across catalog refreshes and option changes", () =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-window-" });
       const catalog = Promise.withResolvers<Array<SDKModel>>();
+      const catalogRequested = Promise.withResolvers<void>();
       const me = vi.spyOn(Cursor, "me").mockResolvedValue({
         apiKeyName: "T3 Code",
         createdAt: "2026-01-01T00:00:00.000Z",
       });
-      const models = vi.spyOn(Cursor.models, "list").mockReturnValue(catalog.promise);
+      const models = vi.spyOn(Cursor.models, "list").mockImplementation(() => {
+        catalogRequested.resolve();
+        return catalog.promise;
+      });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           me.mockRestore();
@@ -173,6 +195,8 @@ it.layer(layerTest)("CursorDriver", (it) => {
         }),
       );
       const instanceId = ProviderInstanceId.make("cursor-catalog-window");
+      const openedModels: Array<AgentOptions["model"]> = [];
+      const sentModels: Array<AgentOptions["model"]> = [];
       const instance = yield* CursorDriver.create({
         instanceId,
         displayName: "Cursor",
@@ -182,7 +206,32 @@ it.layer(layerTest)("CursorDriver", (it) => {
       }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           assertComplete: Effect.void,
-          open: () => Effect.die("This test opens no Cursor agent"),
+          open: (request) =>
+            Effect.sync(() => {
+              openedModels.push(request.options.model);
+              return {
+                agentId: "native-cursor-window",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: (input) =>
+                  Effect.sync(() => {
+                    sentModels.push(input.options?.model);
+                    const runId = `native-cursor-window-run-${sentModels.length}`;
+                    return {
+                      agentId: "native-cursor-window",
+                      runId,
+                      cancel: Effect.void,
+                      wait: Effect.succeed({
+                        id: runId,
+                        requestId: runId,
+                        status: "finished" as const,
+                        model: { id: "claude-opus-5-5" },
+                        durationMs: 1,
+                      }),
+                    };
+                  }),
+              };
+            }),
         }),
       );
       const selection = (contextWindow?: string) => ({
@@ -192,18 +241,90 @@ it.layer(layerTest)("CursorDriver", (it) => {
           ? {}
           : { options: [{ id: "contextWindow", value: contextWindow }] }),
       });
-      const runtime = yield* instance.orchestrationAdapter.openSession({
-        threadId: ThreadId.make("cursor-catalog-window-thread"),
-        providerSessionId: ProviderSessionId.make("cursor-catalog-window-session"),
-        modelSelection: selection(),
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        }),
+      const threadId = ThreadId.make("cursor-catalog-window-thread");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
       });
-
+      const runtime = yield* instance.orchestrationAdapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-catalog-window-session"),
+        modelSelection: selection("1m"),
+        runtimePolicy,
+      });
+      const refresh = yield* instance.snapshot.refresh.pipe(Effect.forkScoped);
+      yield* Effect.promise(() => catalogRequested.promise);
       expect(runtime.getModelContextWindow?.(selection())).toBeUndefined();
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: selection("1m"),
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const startTurn = Effect.fnUntraced(function* (contextWindow?: string) {
+        const modelSelection = selection(contextWindow);
+        const ordinal = sentModels.length + 1;
+        yield* runtime.startTurn({
+          threadId,
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          runId: RunId.make(`cursor-window-run-${ordinal}`),
+          runOrdinal: ordinal,
+          providerTurnOrdinal: ordinal,
+          attemptId: RunAttemptId.make(`cursor-window-attempt-${ordinal}`),
+          rootNodeId: NodeId.make(`cursor-window-root-${ordinal}`),
+          appThread: {
+            id: threadId,
+            projectId: ProjectId.make("cursor-window-project"),
+            createdBy: "user",
+            creationSource: "web",
+            title: "Cursor context window",
+            providerInstanceId: instanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: providerThread.id,
+            lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+          message: {
+            messageId: MessageId.make(`cursor-window-message-${ordinal}`),
+            createdBy: "user",
+            creationSource: "web",
+            text: "Continue.",
+            attachments: [],
+          },
+        });
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const window = runtime.getModelContextWindow?.(modelSelection);
+        return {
+          model: sentModels.at(-1),
+          window,
+          allowance: handoffBudget({
+            tokenCap: DEFAULT_HANDOFF_TOKEN_CAP,
+            userText: "Continue.",
+            attachments: [],
+            providerThread,
+            nativeContextEstimate: 400_000,
+            modelContextWindow: window,
+          }),
+        };
+      });
+      const beforeCatalog = yield* startTurn("1m");
       catalog.resolve([
         {
           id: "claude-opus-5-5",
@@ -224,13 +345,49 @@ it.layer(layerTest)("CursorDriver", (it) => {
           ],
         },
       ]);
-      yield* instance.snapshot.refresh;
-      expect(runtime.getModelContextWindow?.(selection())).toBe(1_000_000);
-      expect(runtime.getModelContextWindow?.(selection("300k"))).toBe(300_000);
-
+      expect((yield* Fiber.join(refresh)).status).toBe("ready");
+      const catalogDefault = yield* startTurn();
+      const explicitWindow = yield* startTurn("500k");
+      const unknownWindow = yield* startTurn("max");
       me.mockRejectedValue(new Error("Cursor is unreachable"));
       expect((yield* instance.snapshot.refresh).status).toBe("error");
-      expect(runtime.getModelContextWindow?.(selection())).toBe(1_000_000);
+      const retainedDefault = yield* startTurn();
+
+      expect(openedModels).toEqual([
+        {
+          id: "claude-opus-5-5",
+          params: [{ id: "context", value: "1m" }],
+        },
+      ]);
+      expect({
+        beforeCatalog,
+        catalogDefault,
+        explicitWindow,
+        unknownWindow,
+        retainedDefault,
+      }).toEqual({
+        beforeCatalog: {
+          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
+          window: 1_000_000,
+          allowance: DEFAULT_HANDOFF_TOKEN_CAP,
+        },
+        catalogDefault: {
+          model: { id: "claude-opus-5-5" },
+          window: 1_000_000,
+          allowance: DEFAULT_HANDOFF_TOKEN_CAP,
+        },
+        explicitWindow: {
+          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "500k" }] },
+          window: 500_000,
+          allowance: 0,
+        },
+        unknownWindow: {
+          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "max" }] },
+          window: undefined,
+          allowance: 0,
+        },
+        retainedDefault: catalogDefault,
+      });
     }).pipe(Effect.scoped),
   );
 

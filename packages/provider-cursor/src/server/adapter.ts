@@ -2667,36 +2667,6 @@ export type CursorAdapterV2DriverEnv =
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
 
-export const createCursorAdapterV2 = Effect.fn("CursorAdapterV2Driver.create")(
-  function* (
-    input: ProviderAdapterDriverCreateInput<CursorSettings>,
-    hooks: Pick<CursorAdapterV2Options, "getModels"> = {},
-  ) {
-    const hostEnvironment = yield* HostProcess.Environment;
-    return yield* makeCursorAdapterV2({
-      instanceId: input.instanceId,
-      settings: {
-        ...input.config,
-        enabled: input.enabled,
-      },
-      environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-      ...hooks,
-    });
-  },
-  (effect, input, _hooks) =>
-    effect.pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderAdapterDriverCreateError({
-            driver: CURSOR_DRIVER_KIND,
-            instanceId: input.instanceId,
-            detail: "Failed to create Cursor Agent SDK adapter.",
-            cause,
-          }),
-      ),
-    ),
-);
-
 export const CursorAdapterV2Driver: ProviderAdapterDriver<
   CursorSettings,
   CursorAdapterV2DriverEnv
@@ -2704,5 +2674,29 @@ export const CursorAdapterV2Driver: ProviderAdapterDriver<
   driverKind: CURSOR_DRIVER_KIND,
   configSchema: CursorSettings,
   defaultConfig: (): CursorSettings => DEFAULT_CURSOR_SETTINGS,
-  create: (input) => createCursorAdapterV2(input, {}),
+  create: Effect.fn("CursorAdapterV2Driver.create")(
+    function* (input: ProviderAdapterDriverCreateInput<CursorSettings>) {
+      const hostEnvironment = yield* HostProcess.Environment;
+      return yield* makeCursorAdapterV2({
+        instanceId: input.instanceId,
+        settings: {
+          ...input.config,
+          enabled: input.enabled,
+        },
+        environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+      });
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterDriverCreateError({
+              driver: CURSOR_DRIVER_KIND,
+              instanceId: input.instanceId,
+              detail: "Failed to create Cursor Agent SDK adapter.",
+              cause,
+            }),
+        ),
+      ),
+  ),
 };

@@ -14,7 +14,7 @@ import { readCursorUsageLimits } from "./usageLimits.ts";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeCursorTextGeneration } from "./textGeneration.ts";
-import { createCursorAdapterV2, type CursorAdapterV2DriverEnv } from "./adapter.ts";
+import { makeCursorAdapterV2, type CursorAdapterV2DriverEnv } from "./adapter.ts";
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { buildInitialCursorProviderSnapshot, checkCursorProviderStatus } from "./status.ts";
 import * as CursorSdkCatalog from "./CursorSdkCatalog.ts";
@@ -159,17 +159,12 @@ export const CursorDriver: ProviderDriver<
         });
 
       let catalogModels: ReadonlyArray<ServerProviderModel> = [];
-      const orchestrationAdapter = yield* createCursorAdapterV2(
-        {
-          instanceId,
-          displayName,
-          accentColor,
-          environment,
-          enabled,
-          config,
-        },
-        { getModels: () => catalogModels },
-      ).pipe(
+      const orchestrationAdapter = yield* makeCursorAdapterV2({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnv,
+        getModels: () => catalogModels,
+      }).pipe(
         Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
           ...sdkRunner,
           open: (input) =>
