@@ -22,7 +22,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mountEditor(value: string, richTextEnabled = true) {
+async function mountEditor(
+  value: string,
+  richTextEnabled = true,
+  isPathQueryActive?: () => boolean,
+) {
   await act(async () =>
     root.render(
       <ComposerPromptEditor
@@ -30,6 +34,7 @@ async function mountEditor(value: string, richTextEnabled = true) {
         value={value}
         cursor={value.length}
         richTextEnabled={richTextEnabled}
+        {...(isPathQueryActive ? { isPathQueryActive } : {})}
         contextRecords={new Map()}
         skills={[]}
         disabled={false}
@@ -135,3 +140,28 @@ it.each([false, true])(
     expect(serializeEditorDoc(editor.state.doc).value).toBe('"word"');
   },
 );
+
+it("pastes a continued file query literally before resuming ordinary markdown paste", async () => {
+  let active = true;
+  const editor = await mountEditor("@Foreign", true, () => active);
+  async function paste(text: string) {
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    });
+  }
+  await act(async () => typeText(editor, 9, 9, " "));
+  await paste("__Subsidiaries__.md");
+  expect(editor.view.dom.querySelector("strong")).toBeNull();
+  expect(serializeEditorDoc(editor.state.doc).value).toBe("@Foreign __Subsidiaries__.md");
+  await paste(" @README.md");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(
+    "@Foreign __Subsidiaries__.md @README.md",
+  );
+  active = false;
+  await paste(" __ordinary__");
+  expect(editor.view.dom.querySelector("strong")?.textContent).toBe("ordinary");
+});
