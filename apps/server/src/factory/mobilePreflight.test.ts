@@ -253,6 +253,14 @@ describe("mobile-preflight.sh", () => {
       ),
       `${profile} does not grant App Group ${GROUP}`,
     );
+    expectFailure(
+      stubbed(
+        withProfile(profile, {
+          "Entitlements:com.apple.security.application-groups": [`${GROUP}.other`],
+        }),
+      ),
+      `${profile} does not grant App Group ${GROUP}`,
+    );
   });
 
   it.each([
