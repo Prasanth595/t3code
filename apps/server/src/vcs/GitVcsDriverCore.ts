@@ -1714,7 +1714,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { concurrency: 1, discard: true },
         );
       }).pipe(Effect.ensuring(cleanupIsolatedFetch));
-    });
+    }).pipe(
+      Effect.timeoutOption(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+      Effect.flatMap((result) =>
+        Effect.fromOption(
+          result,
+          () =>
+            new GitCommandError({
+              operation: "GitVcsDriver.fetchRemoteForStatus",
+              command: "git",
+              cwd: gitCommonDir,
+              detail: "Git status refresh timed out.",
+            }),
+        ),
+      ),
+    );
 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
