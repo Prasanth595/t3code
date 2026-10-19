@@ -1,6 +1,7 @@
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   TerminalCwdError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
@@ -993,7 +994,18 @@ const INHERITED_INPUT_RESET =
   "\u001b[?1;9;66;67;1000;1002;1003;1004;1005;1006;1015;2004l" +
   "\u001b[?25;1035;1036h\u001b[<100u\u001b[=0;1u\u001b[>4m";
 
-function neutralizeInheritedHistory(history: string): string {
+function neutralizeInheritedHistory(history: string, maxLines: number, maxBytes: number): string {
+  // Scan exactly the cold replay window, reserving the entire longest reset so
+  // neither the server nor the client can trim away the entry after we choose its exit.
+  const resetBytes = history.includes("\u001b")
+    ? Buffer.byteLength(INHERITED_INPUT_RESET + "\u001b7\u001b[?1049l")
+    : 0;
+  history = new BoundedTerminalHistory(
+    // The suffix occupies the empty line after a trailing newline, too.
+    resetBytes > 0 && history.endsWith("\n") ? maxLines - 1 : maxLines,
+    history,
+    Math.max(0, maxBytes - resetBytes),
+  ).value();
   if (!history.includes("\u001b")) return history;
   // An unconditional 1049 reset restores a stale saved cursor on the main
   // screen. The exit must match the inherited screen's cursor-save behavior.
@@ -2613,7 +2625,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const inherited = yield* readHistory(input.threadId, terminalId);
       const history = new BoundedTerminalHistory(
         historyLineLimit,
-        neutralizeInheritedHistory(inherited.value()),
+        neutralizeInheritedHistory(
+          inherited.value(),
+          historyLineLimit,
+          Math.min(historyByteLimit, DEFAULT_MAX_TERMINAL_BUFFER_BYTES),
+        ),
         historyByteLimit,
       );
       const cols = input.cols ?? DEFAULT_OPEN_COLS;

@@ -46,6 +46,12 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import {
+  applyTerminalAttachStreamEvent,
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+  nextTerminalAttachSeedState,
+  terminalOutputText,
+} from "../../../../packages/client-runtime/src/state/terminalSession.ts";
 
 vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
@@ -1753,9 +1759,11 @@ it.layer(
       const replay = (history: string) => {
         call("ghostty_terminal_reset", terminal);
         const bytes = new TextEncoder().encode(history);
-        expect(bytes.length).toBeLessThan(16256);
-        new Uint8Array(memory.buffer, buffer + 128, bytes.length).set(bytes);
-        call("ghostty_terminal_vt_write", terminal, buffer + 128, bytes.length);
+        for (let offset = 0; offset < bytes.length; offset += 16256) {
+          const chunk = bytes.subarray(offset, offset + 16256);
+          new Uint8Array(memory.buffer, buffer + 128, chunk.length).set(chunk);
+          call("ghostty_terminal_vt_write", terminal, buffer + 128, chunk.length);
+        }
         const get = (name: string, field: number) => {
           view().setUint32(buffer + 20, 0, true);
           expect(call(name, terminal, field, buffer + 20)).toBe(0);
@@ -1869,6 +1877,22 @@ it.layer(
       const third = yield* restarted.open(openInput());
       expect(replay(third.history)).toEqual(replay(text + "fresh shell"));
       expect(ptyAdapter.spawnInputs).toHaveLength(3);
+
+      const cut = yield* createManager(100);
+      const mixed = `main\u001b[4;10H\u001b[?1049h${"\r".repeat(DEFAULT_MAX_TERMINAL_BUFFER_BYTES)}\u001b[7;18Hretained\u001b[?47hmore`;
+      yield* fs.writeFileString(yield* historyLogPath(cut.logsDir), mixed);
+      const snapshot = yield* cut.manager.open(openInput());
+      const clientHistory = terminalOutputText(
+        applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+          type: "snapshot",
+          snapshot,
+        }).output,
+      );
+      expect(replay(clientHistory).cursor).toEqual(
+        replay("\u001b[7;18Hretained\u001b[?47hmore\u001b[?47l").cursor,
+      );
+      expect(replay(clientHistory)).toMatchObject({ screen: 0, kitty: 0, mouse: 0, release: "" });
+      yield* cut.manager.close({ threadId: "thread-1" });
     }),
   );
 
