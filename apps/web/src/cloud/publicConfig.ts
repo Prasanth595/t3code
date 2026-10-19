@@ -78,7 +78,7 @@ export function hasCloudPublicConfig(): boolean {
     return false;
   }
 
-  // Packaged web clients also run on private hosts, where production Clerk keys are rejected.
+  // Electron has its own auth runtime; development keys also support private browser origins.
   if (
     typeof window === "undefined" ||
     window.desktopBridge !== undefined ||
@@ -88,6 +88,7 @@ export function hasCloudPublicConfig(): boolean {
   }
 
   try {
+    // Custom Frontend API hosts use clerk.<production domain>.
     const domain = clerkFrontendApiHostnameFromPublishableKey(config.clerkPublishableKey).replace(
       /^clerk\./u,
       "",
@@ -95,7 +96,7 @@ export function hasCloudPublicConfig(): boolean {
     const { hostname, protocol, port } = window.location;
     return (
       protocol === "https:" &&
-      (port === "" || port === "443") &&
+      port === "" &&
       (hostname === domain || hostname.endsWith(`.${domain}`))
     );
   } catch {
