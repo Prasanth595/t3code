@@ -3768,24 +3768,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitProviderEvent = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
         ) {
-          // Persist child artifacts in session order, even while their original
-          // run still subscribes. A queued running update must not overwrite a
-          // terminal outcome persisted by a dropped wake.
+          // Live turn items share the run lane so text and cards allocate display
+          // positions in emission order. Other child lifecycle rows stay ordered
+          // with terminal outcomes persisted by a dropped wake.
           const artifactThreadId =
             event.type === "subagent.updated"
               ? event.subagent.threadId
               : event.type === "node.updated" &&
                   (event.node.kind === "subagent" || event.node.runId === null)
                 ? event.node.threadId
-                : event.type === "turn_item.updated" &&
-                    (event.turnItem.type === "subagent" ||
-                      (event.turnItem.runId === null &&
-                        event.turnItem.type !== "assistant_message" &&
-                        event.turnItem.type !== "reasoning"))
-                  ? event.turnItem.threadId
-                  : event.type === "app_thread.created"
-                    ? event.appThread.id
-                    : undefined;
+                : event.type === "app_thread.created"
+                  ? event.appThread.id
+                  : undefined;
           const sessionThreadId = (yield* sessionEventThread) ?? artifactThreadId;
           yield* Queue.offer(
             events,

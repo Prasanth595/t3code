@@ -482,6 +482,155 @@ it.effect.each(deliveries)(
     ),
 );
 
+it.effect("persists root assistant text before the Agent card it introduces", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("claude-transcript-order");
+      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: modelSelection.instanceId,
+        settings,
+        environment: {},
+        attachmentsDir: cwd,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed(sessionId),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.fromQueue(sdkMessages),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:transcript-order");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-transcript-order"),
+          threadId,
+          projectId: ProjectId.make("project:transcript-order"),
+          title: "Transcript order",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* watch(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start-transcript-order"),
+          threadId,
+          messageId: MessageId.make("start-transcript-order"),
+          text: "Start background research.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const settled = yield* watch(
+          (event) => event.type === "run.updated" && event.payload.status === "waiting",
+        );
+        const introduction = "I will start a research agent.";
+        yield* Queue.offerAll(sdkMessages, [
+          frame({
+            type: "assistant",
+            uuid: "research-introduction",
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            message: {
+              id: "research-introduction",
+              role: "assistant",
+              type: "message",
+              model: modelSelection.model,
+              content: [
+                { type: "text", text: introduction },
+                {
+                  type: "tool_use",
+                  id: "research-launch",
+                  name: "Agent",
+                  input: {
+                    description: "Research",
+                    prompt: "Research the task.",
+                    subagent_type: "general-purpose",
+                    run_in_background: true,
+                  },
+                },
+              ],
+              stop_reason: "tool_use",
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          }),
+          frame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "research",
+            tool_use_id: "research-launch",
+            description: "Research",
+            task_type: "local_agent",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            uuid: "research-started",
+            session_id: sessionId,
+          }),
+          result("research-root-finished", false),
+        ]);
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const text = projection.turnItems.find(
+          (item) => item.type === "assistant_message" && item.text === introduction,
+        );
+        const card = projection.turnItems.find((item) => item.type === "subagent");
+        assert.ok(text, "the root introduction is persisted");
+        assert.ok(card, "the Agent card is persisted");
+        assert.isBelow(text.ordinal, card.ordinal, "the introduction precedes its Agent card");
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "claude-transcript-order" },
+            ProviderAdapterRegistry.layerSingle(adapter),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
 it.effect("persists a resumed subagent outcome when its buffered wake is dropped", () =>
   Effect.scoped(
     Effect.gen(function* () {
