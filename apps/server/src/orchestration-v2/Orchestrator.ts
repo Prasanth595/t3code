@@ -617,13 +617,21 @@ function nextQueuedRun(
   return queuedRunsInDeliveryOrder(projection)[0];
 }
 
+function followsCurrentConversation(
+  message: OrchestrationV2ConversationMessage | undefined,
+): boolean {
+  return (
+    message?.notification?.source.kind === "monitor" && !isBufferedProviderNotification(message)
+  );
+}
+
 function queuedRunModelSelection(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
   run: OrchestrationV2Run,
 ): ModelSelection {
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  // Monitor updates follow the agent currently handling the thread.
-  return message?.notification?.source.kind === "monitor"
+  // App-owned monitor updates follow the agent currently handling the thread.
+  return followsCurrentConversation(message)
     ? projection.thread.modelSelection
     : run.modelSelection;
 }
@@ -1339,6 +1347,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
+      // A limited provider would fail and consume every waiting message.
       if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
         return;
       }
@@ -1461,12 +1470,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const activeProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
-      const targetProviderThread =
-        queuedMessage.notification?.source.kind === "monitor"
-          ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId
-            ? activeProviderThread
-            : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
-          : storedProviderThread;
+      const followsCurrent = followsCurrentConversation(queuedMessage);
+      const targetProviderThread = followsCurrent
+        ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId
+          ? activeProviderThread
+          : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
+        : storedProviderThread;
       const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
         id: idAllocator.derive.providerThread({
           driver: targetAdapter.driver,
@@ -1491,20 +1500,40 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.modelSelection,
         queuedRun.modelSelection,
       );
-      const switchPlan = selectionChanged
-        ? yield* providerSwitchService
-            .plan({ projection, targetModelSelection: queuedRun.modelSelection })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new OrchestratorDispatchError({
-                    commandId,
-                    commandType: "message.dispatch",
-                    cause,
-                  }),
-              ),
-            )
-        : null;
+      // The picker may already have moved ahead of the native conversation.
+      const switchFromActiveProvider =
+        followsCurrent &&
+        activeProviderThread !== undefined &&
+        activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
+      const switchPlan =
+        selectionChanged || switchFromActiveProvider
+          ? yield* providerSwitchService
+              .plan({
+                projection: switchFromActiveProvider
+                  ? {
+                      ...projection,
+                      thread: {
+                        ...projection.thread,
+                        modelSelection: {
+                          ...projection.thread.modelSelection,
+                          instanceId: activeProviderThread.providerInstanceId,
+                        },
+                      },
+                    }
+                  : projection,
+                targetModelSelection: queuedRun.modelSelection,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestratorDispatchError({
+                      commandId,
+                      commandType: "message.dispatch",
+                      cause,
+                    }),
+                ),
+              )
+          : null;
       const canResumeAcrossInstances =
         switchPlan?.instanceChanged === true &&
         switchPlan.transition.type === "restart_and_resume" &&
@@ -1798,7 +1827,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               summary: activeHandoff.summaryText,
             };
       const executionIdentityEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
-        storedCheckpointScope === undefined || storedProviderThread.id !== queuedProviderThread.id
+        storedCheckpointScope === undefined ||
+        storedProviderThread.id !== queuedProviderThread.id ||
+        attempt.providerInstanceId !== queuedRun.providerInstanceId
           ? [
               {
                 type: "checkpoint-scope.created",

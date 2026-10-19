@@ -4670,13 +4670,19 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect(
-    "delivers a queued monitor update in the current conversation on the same provider",
-    () =>
+  it.effect.each([
+    ["server", modelSelection],
+    ["provider", modelSelection],
+    ["provider", { ...modelSelection, instanceId: alternateInstanceId }],
+  ] as const)(
+    "delivers a queued monitor update from %s after conversation selection %j",
+    ([creationSource, currentSelection]) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make("runtime-layer-queue-current-conversation");
+        const threadId = ThreadId.make(
+          `runtime-layer-queue-current-conversation-${creationSource}-${currentSelection.instanceId}`,
+        );
         yield* orchestrator.dispatch({
           type: "thread.create",
           commandId: CommandId.make(`${threadId}:create`),
@@ -4700,7 +4706,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             text: type,
             attachments: [],
             createdBy: "agent",
-            creationSource: "server",
+            creationSource,
             dispatchMode: { type },
             ...(type === "queue_after_active"
               ? {
@@ -4723,6 +4729,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           id: ProviderThreadId.make(`${threadId}:current`),
           updatedAt: now,
         };
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`${threadId}:select-current`),
+          threadId,
+          modelSelection: currentSelection,
+        });
         yield* eventSink.write({
           events: [
             {
@@ -4742,23 +4754,32 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             },
           ],
         });
+        const expectedThreadId =
+          creationSource === "provider" ? queued.providerThreadId : current.id;
         yield* orchestrator.resumeQueuedRuns;
         const after = yield* orchestrator.getThreadProjection(threadId);
         const delivered = after.runs.find((run) => run.id === queued.id)!;
         assert.equal(delivered.status, "starting");
-        assert.equal(delivered.providerThreadId, current.id);
-        assert.equal(after.thread.activeProviderThreadId, current.id);
+        assert.deepEqual(delivered.modelSelection, modelSelection);
+        assert.equal(delivered.providerInstanceId, modelSelection.instanceId);
+        assert.equal(
+          after.attempts.find((attempt) => attempt.id === delivered.activeAttemptId)
+            ?.providerInstanceId,
+          modelSelection.instanceId,
+        );
+        assert.equal(delivered.providerThreadId, expectedThreadId);
+        assert.equal(after.thread.activeProviderThreadId, expectedThreadId);
         assert.equal(
           after.attempts.find((attempt) => attempt.id === delivered.activeAttemptId)
             ?.providerThreadId,
-          current.id,
+          expectedThreadId,
         );
         const root = after.nodes.find((node) => node.id === delivered.rootNodeId)!;
-        assert.equal(root.providerThreadId, current.id);
+        assert.equal(root.providerThreadId, expectedThreadId);
         assert.equal(
           after.checkpointScopes.find((scope) => scope.id === root.checkpointScopeId)
             ?.providerThreadId,
-          current.id,
+          expectedThreadId,
         );
       }),
   );

@@ -2234,20 +2234,37 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
-  it.live.each(["automatic", "queue.resume"] as const)(
-    "delivers a queued PR update on the current provider through %s",
-    (delivery) =>
+  it.live.each([
+    ["automatic", "Claude"],
+    ["queue.resume", "Claude"],
+    ["automatic", "compatible Codex"],
+    ["queue.resume", "compatible Codex"],
+  ] as const)(
+    "delivers a queued PR update on the current provider through %s (%s)",
+    ([delivery, target]) =>
       Effect.scoped(
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace(`pr-wake-${delivery}`);
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const started = yield* Deferred.make<void>();
           const release = yield* Deferred.make<void>();
+          const compatible = target === "compatible Codex";
           const selection = {
-            ...CLAUDE_MODEL_SELECTION,
+            ...(compatible
+              ? { ...CODEX_MODEL_SELECTION, instanceId: ProviderInstanceId.make("codex-alternate") }
+              : CLAUDE_MODEL_SELECTION),
             options: [{ id: "reasoningEffort", value: "low" }],
           };
-          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          const targetCapabilities = compatible
+            ? {
+                ...CodexProviderCapabilitiesV2,
+                context: {
+                  ...CodexProviderCapabilitiesV2.context,
+                  canConsumeHandoffSummaries: false,
+                },
+              }
+            : ClaudeProviderCapabilitiesV2;
+          const adapters = [
             makeTestAdapter({
               instanceId: CODEX_MODEL_SELECTION.instanceId,
               driver: CODEX_DRIVER,
@@ -2266,13 +2283,43 @@ describe("orchestration v2 provider switching", () => {
             }),
             makeTestAdapter({
               instanceId: selection.instanceId,
-              driver: CLAUDE_DRIVER,
-              capabilities: ClaudeProviderCapabilitiesV2,
+              driver: compatible ? CODEX_DRIVER : CLAUDE_DRIVER,
+              capabilities: targetCapabilities,
               modelSelection: selection,
               responseByRunOrdinal: {},
               capturedTurns,
             }),
-          ]);
+          ];
+          const layerRegistry = compatible
+            ? Layer.succeed(
+                ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+                ProviderAdapterRegistry.ProviderAdapterRegistryV2.of({
+                  get: (instanceId) => {
+                    const adapter = adapters.find(
+                      (candidate) => candidate.instanceId === instanceId,
+                    );
+                    return adapter === undefined
+                      ? Effect.fail(
+                          new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                            instanceId,
+                          }),
+                        )
+                      : Effect.succeed(adapter);
+                  },
+                  list: () => Effect.succeed(adapters.map((adapter) => adapter.instanceId)),
+                  getMetadata: (instanceId) =>
+                    Effect.succeed({
+                      driver: CODEX_DRIVER,
+                      continuationKey: "codex:shared-native-account-history",
+                      enabled: true,
+                      capabilities:
+                        instanceId === selection.instanceId
+                          ? targetCapabilities
+                          : CodexProviderCapabilitiesV2,
+                    }),
+                }),
+              )
+            : ProviderAdapterRegistry.layerFromAdapters(adapters);
           yield* Effect.gen(function* () {
             const orchestrator = yield* Orchestrator.OrchestratorV2;
             const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -2357,7 +2404,7 @@ describe("orchestration v2 provider switching", () => {
                 ({ event }) =>
                   event.type === "run.updated" &&
                   event.runId === wake.id &&
-                  event.payload.status === "completed",
+                  (event.payload.status === "completed" || event.payload.status === "failed"),
               ),
               Stream.runHead,
             );
@@ -2366,11 +2413,12 @@ describe("orchestration v2 provider switching", () => {
             const turns = yield* Ref.get(capturedTurns);
             assert.lengthOf(turns, delivery === "automatic" ? 3 : 2);
             const executed = turns.at(-1)!;
-            assert.equal(executed.driver, CLAUDE_DRIVER);
+            assert.equal(executed.driver, compatible ? CODEX_DRIVER : CLAUDE_DRIVER);
             assert.include(executed.text, "Review the new PR comments");
             assert.deepEqual(executed.modelSelection, selection);
             assert.deepEqual(after.thread.modelSelection, selection);
             const delivered = after.runs.find((run) => run.id === wake.id)!;
+            assert.equal(delivered.status, "completed");
             assert.deepEqual(delivered.modelSelection, selection);
             assert.equal(delivered.providerInstanceId, selection.instanceId);
             assert.equal(delivered.providerThreadId, executed.providerThreadId);
@@ -2379,6 +2427,24 @@ describe("orchestration v2 provider switching", () => {
               assert.equal(executed.providerThreadId, turns[1]!.providerThreadId);
               assert.equal(executed.nativeThreadId, turns[1]!.nativeThreadId);
             }
+            if (compatible) {
+              assert.equal(executed.nativeThreadId, turns[0]!.nativeThreadId);
+              assert.isEmpty(after.contextHandoffs);
+              if (delivery === "automatic") {
+                assert.equal(delivered.providerThreadId, wake.providerThreadId);
+              }
+            }
+            assert.equal(
+              after.providerThreads.find((entry) => entry.id === delivered.providerThreadId)
+                ?.providerInstanceId,
+              selection.instanceId,
+            );
+            assert.equal(
+              after.turnItems.find(
+                (entry) => entry.type === "notification" && entry.runId === wake.id,
+              )?.providerThreadId,
+              delivered.providerThreadId,
+            );
             const attempt = after.attempts.find((entry) => entry.id === delivered.activeAttemptId);
             const root = after.nodes.find((entry) => entry.id === delivered.rootNodeId);
             assert.equal(attempt?.providerInstanceId, selection.instanceId);
