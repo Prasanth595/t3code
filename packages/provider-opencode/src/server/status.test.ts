@@ -896,7 +896,7 @@ it.effect("waits for OpenCode 2 model names, provider labels, and variants to se
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
-it.effect("bounds an unsettled OpenCode 2 catalog and prefers the last settled inventory", () =>
+it.effect("bounds an unsettled OpenCode 2 catalog and keeps its latest nonempty observation", () =>
   Effect.gen(function* () {
     let reads = 0;
     let latest: ReadonlyArray<OpenCode2Model> = [];
@@ -929,8 +929,52 @@ it.effect("bounds an unsettled OpenCode 2 catalog and prefers the last settled i
     yield* TestClock.adjust("5 seconds");
     NodeAssert.ok(fresh.pollUnsafe());
     NodeAssert.ok(reads > 1);
-    NodeAssert.deepEqual(yield* Fiber.join(fresh), [bigPickle]);
+    NodeAssert.deepEqual(yield* Fiber.join(fresh), latest);
   }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect(
+  "refreshes a warm OpenCode 2 catalog when slow reads cannot settle before the deadline",
+  () =>
+    Effect.gen(function* () {
+      let listed: ReadonlyArray<OpenCode2Model> = [bigPickle];
+      let slow = false;
+      const load = yield* makeOpenCode2ModelLoader(
+        Effect.gen(function* () {
+          if (slow) yield* Effect.sleep("3 seconds");
+          return listed;
+        }),
+      );
+      const warm = yield* load.pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      NodeAssert.deepEqual(yield* Fiber.join(warm), [bigPickle]);
+
+      listed = [{ ...bigPickle, name: "Fresh Pickle" }];
+      slow = true;
+      const fresh = yield* load.pipe(Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+      NodeAssert.ok(fresh.pollUnsafe());
+      NodeAssert.deepEqual(yield* Fiber.join(fresh), listed);
+    }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect(
+  "keeps a fresh OpenCode 2 observation if confirmation fails but propagates an initial failure",
+  () =>
+    Effect.gen(function* () {
+      const error = new OpenCodeRuntime.OpenCodeRuntimeError({
+        operation: "model.list",
+        detail: "Model list failed",
+      });
+      let reads = 0;
+      const load = yield* makeOpenCode2ModelLoader(
+        Effect.suspend(() => (reads++ === 0 ? Effect.succeed([bigPickle]) : Effect.fail(error))),
+      );
+      const fresh = yield* load.pipe(Effect.forkChild);
+      yield* TestClock.adjust("250 millis");
+      NodeAssert.deepEqual(yield* Fiber.join(fresh), [bigPickle]);
+      NodeAssert.equal(yield* load.pipe(Effect.flip), error);
+    }).pipe(Effect.provide(TestClock.layer())),
 );
 
 const builtinCommands = [
