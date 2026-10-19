@@ -255,6 +255,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   yield* annotateTarget(target);
 
   const supervisorScope = yield* Scope.Scope;
+  const attemptsScope = yield* Scope.fork(supervisorScope);
   const connectivity = yield* Connectivity.Connectivity;
   const driver = yield* ConnectionDriver.ConnectionDriver;
   const wakeups = yield* ConnectionWakeups.ConnectionWakeups;
@@ -892,7 +893,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
-      const attemptScope = yield* Scope.fork(supervisorScope);
+      const attemptScope = yield* Scope.fork(attemptsScope);
       const outcome: AttemptOutcome = yield* runAttempt(
         attempt,
         nextGeneration,

@@ -91,6 +91,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   });
   const awaitingCompletion = yield* Ref.make(false);
   const hasAuthoritativeSnapshot = yield* Ref.make(false);
+  const serverVersion = yield* Ref.make<string | undefined>(undefined);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
@@ -325,10 +326,21 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        const supportsCompletionMarker = yield* session.initialConfig.pipe(
-          Effect.map((config) => config.shellResumeCompletionMarker === true),
-          Effect.orElseSucceed(() => false),
-        );
+        const config = yield* session.initialConfig.pipe(Effect.orElseSucceed(() => undefined));
+        const supportsCompletionMarker = config?.shellResumeCompletionMarker === true;
+        if (config !== undefined) {
+          const previousVersion = yield* Ref.getAndSet(
+            serverVersion,
+            config.environment.serverVersion,
+          );
+          if (
+            previousVersion !== undefined &&
+            previousVersion !== config.environment.serverVersion
+          ) {
+            // Migrations can rewrite projections without advancing the replay cursor.
+            yield* Ref.set(hasAuthoritativeSnapshot, false);
+          }
+        }
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
