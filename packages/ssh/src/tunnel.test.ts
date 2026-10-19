@@ -124,7 +124,6 @@ describe("ssh tunnel scripts", () => {
       script,
       'T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"',
     );
-    assert.include(script, 'while ! (set -C; printf \'%s\\n\' "$$" > "$T3_LOCK") 2>/dev/null; do');
     assert.include(script, 'if ! kill -0 "$T3_LOCK_OWNER" 2>/dev/null; then');
     assert.include(script, 'if [ "$T3_LOCK_UNOWNED" -ge 5 ]; then');
     assert.include(script, 'if [ "$T3_LOCK_WAITED" -ge 360 ]; then');
@@ -232,7 +231,6 @@ describe("ssh tunnel scripts", () => {
 
   it("embeds the runner in the launch script byte for byte", () => {
     const runner = SshTunnel.buildRemoteT3RunnerScript(ARCHIVE);
-    assert.include(runner, 'printf \'%s\\n\' "$$" > "$T3_LOCK"');
     assert.include(SshTunnel.buildRemoteLaunchScript(ARCHIVE), runner);
   });
 
@@ -1055,14 +1053,19 @@ describe("remote port picker", () => {
 const runScript = (
   home: string,
   args: ReadonlyArray<string>,
-  path: string = process.env.PATH ?? "",
+  options?: {
+    path?: string;
+    stdin?: Stream.Stream<Uint8Array>;
+    onStderrLine?: (line: string) => Effect.Effect<void>;
+  },
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make("sh", args, {
-        env: { PATH: path, HOME: home },
+        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home },
         extendEnv: false,
+        ...(options?.stdin ? { stdin: { stream: options.stdin } } : {}),
       }),
     );
     const [stdout, stderr, exitCode] = yield* Effect.all(
@@ -1076,9 +1079,11 @@ const runScript = (
         ),
         child.stderr.pipe(
           Stream.decodeText(),
+          Stream.splitLines,
+          Stream.tap((line) => options?.onStderrLine?.(line) ?? Effect.void),
           Stream.runFold(
             () => "",
-            (acc, chunk) => acc + chunk,
+            (acc, line) => `${acc}${line}\n`,
           ),
         ),
         child.exitCode.pipe(Effect.map(Number)),
@@ -1094,8 +1099,8 @@ describe("archive runner script", () => {
   const windowsHost = hostPlatform === "win32";
   const archiveVersion = "1.2.3-preview.20260911.4";
 
-  const runRunner = (home: string, runner: string, path?: string) =>
-    runScript(home, [runner, "--version"], path);
+  const runRunner = (home: string, runner: string, options?: Parameters<typeof runScript>[2]) =>
+    runScript(home, [runner, "--version"], options);
 
   const makeMirror = Effect.fn("makeMirror")(function* (root: string) {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1131,37 +1136,49 @@ describe("archive runner script", () => {
         );
         const home = `${root}/home`;
         yield* fs.makeDirectory(home, { recursive: true });
-        // uutils coreutils (Ubuntu's default) mkdir exits 0 when it loses the
-        // race to create a directory. Shim that behavior so the race covers
-        // such hosts wherever the test runs, and count unpacks to prove a
-        // single install. Each shim drops its own directory from PATH.
+        // Reproduce mkdir succeeding on EEXIST, even on hosts without the uutils bug.
         const bin = `${root}/bin`;
         yield* fs.makeDirectory(bin);
-        yield* fs.writeFileString(
-          `${bin}/mkdir`,
-          '#!/bin/sh\nPATH=${PATH#*:}\nexec mkdir -p "$@"\n',
-        );
-        yield* fs.writeFileString(
-          `${bin}/tar`,
-          '#!/bin/sh\necho >> "${0%/*}/installs"\nPATH=${PATH#*:}\nexec tar "$@"\n',
-        );
-        yield* fs.chmod(`${bin}/mkdir`, 0o755);
-        yield* fs.chmod(`${bin}/tar`, 0o755);
-        const racePath = `${bin}:${process.env.PATH ?? ""}`;
-
-        const results = yield* Effect.all(
-          [
-            runRunner(home, runner, racePath),
-            runRunner(home, runner, racePath),
-            runRunner(home, runner, racePath),
-          ],
-          { concurrency: "unbounded" },
-        );
+        for (const [name, script] of Object.entries({
+          mkdir: 'PATH=${PATH#*:}\nexec mkdir -p "$@"',
+          tar: 'echo >> "${0%/*}/installs"\necho installing >&2\nread -r release\nPATH=${PATH#*:}\nexec tar "$@"',
+          sleep: 'echo waiting >&2\nPATH=${PATH#*:}\nexec sleep "$@"',
+        })) {
+          yield* fs.writeFileString(`${bin}/${name}`, `#!/bin/sh\n${script}\n`);
+          yield* fs.chmod(`${bin}/${name}`, 0o755);
+        }
+        const path = `${bin}:${process.env.PATH ?? ""}`;
+        const installing = yield* Deferred.make<void>();
+        const contended = yield* Deferred.make<void>();
+        // Hold the first extraction until another runner either waits for the lock
+        // or incorrectly begins installing. This forces contention without timing assumptions.
+        const first = yield* runRunner(home, runner, {
+          path,
+          stdin: Stream.fromEffect(
+            Deferred.await(contended).pipe(Effect.as(new TextEncoder().encode("release\n"))),
+          ),
+          onStderrLine: (line) =>
+            line === "installing"
+              ? Deferred.succeed(installing, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        }).pipe(Effect.forkChild);
+        yield* Deferred.await(installing);
+        const contender = runRunner(home, runner, {
+          path,
+          stdin: Stream.make(new TextEncoder().encode("release\n")),
+          onStderrLine: (line) =>
+            line === "installing" || line === "waiting"
+              ? Deferred.succeed(contended, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+        });
+        const results = yield* Effect.all([Fiber.join(first), contender, contender], {
+          concurrency: "unbounded",
+        });
+        assert.equal(yield* fs.readFileString(`${bin}/installs`), "\n");
         for (const result of results) {
           assert.equal(result.exitCode, 0, result.stderr);
           assert.include(result.stdout, `t3 v${archiveVersion}`);
         }
-        assert.equal(yield* fs.readFileString(`${bin}/installs`), "\n");
         const versionsDir = `${home}/.t3/runtime/versions`;
         assert.deepEqual(yield* fs.readDirectory(versionsDir), [archiveVersion]);
         assert.equal(

@@ -461,17 +461,9 @@ t3_runtime_ready() {
 }
 if ! t3_runtime_ready; then
   mkdir -p "$HOME/.t3/runtime/versions"
-  # Concurrent launches (two clients, a retry racing a slow first run) must
-  # not both install: the lock is a file created exclusively and the ready
-  # check repeats under it.
   T3_LOCK="$HOME/.t3/runtime/versions/.$T3_ARCHIVE_VERSION.install.lock"
-  # noclobber makes the shell create the lock with O_EXCL. mkdir is not
-  # exclusive everywhere: uutils coreutils 0.10 (Ubuntu's default since
-  # 25.10) exits 0 when it loses the race to create the directory
-  # (uutils/coreutils#13970, fixed in 0.11). The lock holds the owner's pid,
-  # so a lock with a live owner is never reclaimed however slow its download
-  # is, and a lock whose owner is dead is reclaimed at once. An empty lock is a crash between the create and the pid write; it
-  # is reclaimed after a short grace so a live owner has time to publish.
+  # uutils mkdir can report success on EEXIST, so use shell noclobber.
+  # An empty lock gets a short grace period for its owner to publish a PID.
   T3_LOCK_WAITED=0
   T3_LOCK_UNOWNED=0
   while ! (set -C; printf '%s\\n' "$$" > "$T3_LOCK") 2>/dev/null; do
