@@ -81,57 +81,41 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
-const isTimedOutChildProcess = (error: unknown) =>
-  error instanceof Error && "killed" in error && error.killed === true;
-
 const signatureChecksWithRetry = new WeakSet<VerifyUpdateCodeSignature>();
 
-// When a check fails and its PowerShell capability probe fails too, electron-updater logs this,
-// skips the check and resolves null, which NsisUpdater accepts as a valid signature.
-const skippedSignatureCheck = "Ignoring signature validation";
-
-// The retry follows a failed check, so it passes only on a null that was not a skipped check.
-const retryTimedOutSignatureCheck = async (
-  verify: VerifyUpdateCodeSignature,
-  publisherNames: string[],
-  path: string,
-) => {
-  const logger = autoUpdater.logger;
-  let skipped = false;
-  autoUpdater.logger = {
-    info: (message) => logger?.info(message),
-    warn: (message) => {
-      skipped ||= String(message).includes(skippedSignatureCheck);
-      logger?.warn(message);
-    },
-    error: (message) => logger?.error(message),
-    debug: (message) => logger?.debug?.(message),
-  };
-  try {
-    const result = await verify(publisherNames, path);
-    if (typeof result === "string" || (result === null && !skipped)) return result;
-    return "the signature could not be verified after a timed-out check was retried";
-  } finally {
-    autoUpdater.logger = logger;
-  }
-};
-
-// electron-updater's Windows signature check kills PowerShell after 20 s. Endpoint security
-// scanning a freshly downloaded installer can exceed that on the first check, while a repeat
-// check of the scanned file is fast. Retry a timed-out check once; any other outcome, including
-// a rejected signature, is returned unchanged.
 const retrySignatureCheckAfterTimeout = () => {
-  // Only the Windows (NSIS) updater has a signature check.
+  // Only the Windows NSIS updater exposes this hook; its PowerShell check times out after 20 s.
   const updater = autoUpdater as AutoUpdater &
     Partial<Pick<NsisUpdater, "verifyUpdateCodeSignature">>;
   const verify = updater.verifyUpdateCodeSignature;
   if (verify === undefined || signatureChecksWithRetry.has(verify)) return;
-  const verifyWithRetry: VerifyUpdateCodeSignature = (publisherNames, path) =>
-    verify(publisherNames, path).catch((error: unknown) =>
-      isTimedOutChildProcess(error)
-        ? retryTimedOutSignatureCheck(verify, publisherNames, path)
-        : Promise.reject(error),
-    );
+
+  const verifyWithRetry: VerifyUpdateCodeSignature = async (publisherNames, path) => {
+    try {
+      return await verify(publisherNames, path);
+    } catch (error) {
+      if (!(error instanceof Error && "killed" in error && error.killed === true)) throw error;
+    }
+
+    const logger = updater.logger;
+    let skipped = false;
+    updater.logger = {
+      info: (message) => logger?.info(message),
+      warn: (message) => {
+        // A failed capability probe makes electron-updater warn and return null without checking.
+        skipped ||= String(message).includes("Ignoring signature validation");
+        logger?.warn(message);
+      },
+      error: (message) => logger?.error(message),
+      debug: (message) => logger?.debug?.(message),
+    };
+    try {
+      const result = await verify(publisherNames, path);
+      return skipped ? "Signature validation was skipped after a timed-out check." : result;
+    } finally {
+      updater.logger = logger;
+    }
+  };
   signatureChecksWithRetry.add(verifyWithRetry);
   updater.verifyUpdateCodeSignature = verifyWithRetry;
 };

@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import type { Logger, VerifyUpdateCodeSignature } from "electron-updater";
+import type { VerifyUpdateCodeSignature } from "electron-updater";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { autoUpdaterMock } = vi.hoisted(() => ({
@@ -14,12 +14,12 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     fullChangelog: false,
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
-    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as Logger | null,
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    verifyUpdateCodeSignature: undefined as VerifyUpdateCodeSignature | undefined,
     on: vi.fn(),
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
-    verifyUpdateCodeSignature: undefined as VerifyUpdateCodeSignature | undefined,
   },
 }));
 
@@ -144,32 +144,32 @@ describe("ElectronUpdater", () => {
   describe("Windows update signature check", () => {
     const publisherNames = ["T3 Tools Inc"];
     const installerPath = "C:\\updater\\pending\\temp-T3-Code-x64.exe";
-    // execFile rejects like this when electron-updater's 20 s PowerShell limit kills the check.
+    // execFile marks the error killed when the verifier exceeds its 20-second timeout.
     const timedOut = () =>
       Object.assign(new Error("Command failed: powershell.exe"), { killed: true });
 
-    // NsisUpdater runs the verifier after the download and fails on any non-null result.
-    const downloadVerifyingSignature = (verify = autoUpdaterMock.verifyUpdateCodeSignature) => {
-      autoUpdaterMock.verifyUpdateCodeSignature = verify;
+    const downloadVerifyingSignature = () => {
       autoUpdaterMock.downloadUpdate.mockImplementationOnce(async () => {
-        const rejection = await autoUpdaterMock.verifyUpdateCodeSignature?.(
+        const rejection = await autoUpdaterMock.verifyUpdateCodeSignature!(
           publisherNames,
           installerPath,
         );
-        if (rejection != null) throw new Error(`not signed by the application owner: ${rejection}`);
+        // NSIS accepts only null as a successful signature check.
+        if (rejection !== null) throw new Error(`Invalid signature: ${rejection}`);
         return [];
       });
       return Effect.flatMap(ElectronUpdater.ElectronUpdater, (updater) => updater.downloadUpdate);
     };
 
-    it.effect("retries a signature check that timed out once", () =>
+    it.effect("retries a timed-out signature check with the same verifier and installer", () =>
       Effect.gen(function* () {
         const verify = vi
           .fn<VerifyUpdateCodeSignature>()
           .mockRejectedValueOnce(timedOut())
           .mockResolvedValueOnce(null);
+        autoUpdaterMock.verifyUpdateCodeSignature = verify;
 
-        yield* downloadVerifyingSignature(verify);
+        yield* downloadVerifyingSignature();
 
         assert.deepEqual(verify.mock.calls, [
           [publisherNames, installerPath],
@@ -178,51 +178,45 @@ describe("ElectronUpdater", () => {
       }).pipe(Effect.provide(ElectronUpdater.layer)),
     );
 
-    it.effect("does not retry a rejected signature, another failure or a second timeout", () =>
+    it.effect("fails on invalid signatures, other errors and two timeouts on each download", () =>
       Effect.gen(function* () {
-        const cases: ReadonlyArray<readonly [() => Promise<string | null>, number]> = [
-          [() => Promise.resolve("publisherNames: T3 Tools Inc, raw info: {}"), 1],
-          [() => Promise.reject(new Error("Cannot execute Get-AuthenticodeSignature")), 1],
-          [() => Promise.reject(timedOut()), 2],
+        const cases = [
+          { outcome: () => Promise.resolve("Invalid publisher"), calls: 1 },
+          { outcome: () => Promise.reject(new Error("Cannot execute PowerShell")), calls: 1 },
+          { outcome: () => Promise.reject(timedOut()), calls: 2 },
         ];
-        for (const [outcome, expectedCalls] of cases) {
+        for (const { outcome, calls } of cases) {
           const verify = vi.fn<VerifyUpdateCodeSignature>(outcome);
-          const error = yield* downloadVerifyingSignature(verify).pipe(Effect.flip);
+          autoUpdaterMock.verifyUpdateCodeSignature = verify;
 
-          assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
-          assert.equal(verify.mock.calls.length, expectedCalls);
+          // Reusing the installed verifier must neither stack retries nor exhaust future retries.
+          for (let download = 1; download <= 2; download++) {
+            const error = yield* downloadVerifyingSignature().pipe(Effect.flip);
+            assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
+            assert.equal(verify.mock.calls.length, calls * download);
+          }
         }
       }).pipe(Effect.provide(ElectronUpdater.layer)),
     );
 
-    it.effect("rejects a retried check that electron-updater skipped", () =>
+    it.effect("rejects a retry when the upstream capability probe skips verification", () =>
       Effect.gen(function* () {
-        // After a failed check, electron-updater resolves null when its PowerShell probe also fails.
         const verify = vi
           .fn<VerifyUpdateCodeSignature>()
           .mockRejectedValueOnce(timedOut())
           .mockImplementationOnce(async () => {
-            autoUpdaterMock.logger?.warn(
+            // Upstream resolves null even though its failed capability probe skips verification.
+            autoUpdaterMock.logger.warn(
               "Cannot execute ConvertTo-Json: spawnSync powershell.exe ETIMEDOUT. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.",
             );
             return null;
           });
+        autoUpdaterMock.verifyUpdateCodeSignature = verify;
 
-        const error = yield* downloadVerifyingSignature(verify).pipe(Effect.flip);
+        const error = yield* downloadVerifyingSignature().pipe(Effect.flip);
 
         assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
         assert.equal(verify.mock.calls.length, 2);
-      }).pipe(Effect.provide(ElectronUpdater.layer)),
-    );
-
-    it.effect("retries once per download when the verifier is reused", () =>
-      Effect.gen(function* () {
-        const verify = vi.fn<VerifyUpdateCodeSignature>(() => Promise.reject(timedOut()));
-
-        yield* downloadVerifyingSignature(verify).pipe(Effect.flip);
-        yield* downloadVerifyingSignature().pipe(Effect.flip);
-
-        assert.equal(verify.mock.calls.length, 4);
       }).pipe(Effect.provide(ElectronUpdater.layer)),
     );
   });
