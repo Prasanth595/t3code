@@ -3453,98 +3453,139 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer))),
   );
 
-  it.effect("rejects an image steer stopped during attachment resolution without sending it", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-oc2-stopped-image-",
-      });
-      const image = ChatImageAttachment.make({
-        type: "image",
-        id: ChatAttachmentId.make("thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc"),
-        name: "screen.png",
-        mimeType: "image/png",
-        sizeBytes: 4,
-      });
-      const path = resolveAttachmentPath({ attachmentsDir, attachment: image })!;
-      yield* fileSystem.writeFileString(path, "data");
-      const resolving = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const prompts: Array<unknown> = [];
-      const { runtime, thread } = yield* resumed(
-        [
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          event("session.execution.started", { sessionID: SESSION }),
-          out("session.interrupt", { sessionID: SESSION }),
-          reply("session.interrupt", { interrupted: true }),
-          event("session.execution.interrupted", { sessionID: SESSION }),
-          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-          promptAccepted,
-          event("session.execution.started", { sessionID: SESSION }),
-          event("session.execution.succeeded", { sessionID: SESSION }),
-        ],
-        {
-          attachmentsDir,
-          onPrompt: (input) => prompts.push(input),
-          fileSystem: {
-            ...fileSystem,
-            exists: (file) =>
-              file === path
-                ? Effect.gen(function* () {
-                    yield* Deferred.succeed(resolving, undefined);
-                    yield* Deferred.await(release);
-                    return yield* fileSystem.exists(file);
-                  })
-                : fileSystem.exists(file),
+  it.effect.each([false, true])(
+    "rejects an image steer stopped during attachment resolution (held end: %s)",
+    (heldEnd) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-oc2-stopped-image-",
+        });
+        const image = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make(
+            "thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc",
+          ),
+          name: "screen.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+        });
+        const path = resolveAttachmentPath({ attachmentsDir, attachment: image })!;
+        yield* fileSystem.writeFileString(path, "data");
+        const resolving = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const gate = makeProviderReplayGate(["execution-end", "interrupt-reply"]);
+        const executionEnded = yield* Deferred.make<void>();
+        const prompts: Array<unknown> = [];
+        const { runtime, thread } = yield* resumed(
+          [
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.started", { sessionID: SESSION }),
+            ...(heldEnd
+              ? [
+                  event("session.execution.succeeded", { sessionID: SESSION }, "execution-end"),
+                  event("session.text.ended", {
+                    sessionID: SESSION,
+                    assistantMessageID: "msg_finished_before_stop",
+                    ordinal: 0,
+                    text: "Finished before Stop.",
+                  }),
+                ]
+              : []),
+            out("session.interrupt", { sessionID: SESSION }),
+            ...(heldEnd
+              ? [event("session.usage.updated", { sessionID: SESSION }, "interrupt-reply")]
+              : []),
+            reply("session.interrupt", { interrupted: !heldEnd }),
+            ...(heldEnd ? [] : [event("session.execution.interrupted", { sessionID: SESSION })]),
+            out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+            promptAccepted,
+            event("session.execution.started", { sessionID: SESSION }),
+            event("session.execution.succeeded", { sessionID: SESSION }),
+          ],
+          {
+            attachmentsDir,
+            replayGate: gate,
+            onPrompt: (input) => prompts.push(input),
+            fileSystem: {
+              ...fileSystem,
+              exists: (file) =>
+                file === path
+                  ? Effect.gen(function* () {
+                      yield* Deferred.succeed(resolving, undefined);
+                      yield* Deferred.await(release);
+                      return yield* fileSystem.exists(file);
+                    })
+                  : fileSystem.exists(file),
+            },
           },
-        },
-      );
-      const stopped = yield* Deferred.make<void>();
-      const completed = yield* Deferred.make<void>();
-      const terminals: Array<string> = [];
-      yield* runtime.events.pipe(
-        Stream.tap((event) => {
-          if (event.type !== "turn.terminal") return Effect.void;
-          terminals.push(event.status);
-          return Deferred.succeed(terminals.length === 1 ? stopped : completed, undefined);
-        }),
-        Stream.runDrain,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(turnInput(thread));
-      const steer = yield* runtime
-        .steerTurn({
-          threadId,
-          runId: RunId.make("run:opencode2-adapter"),
-          providerThread: thread,
-          providerTurnId: yield* providerTurnId,
-          message: {
-            ...turnInput(thread).message,
-            messageId: MessageId.make("message:opencode2-adapter:steer"),
-            text: "Do not send this image after Stop.",
-            attachments: [image],
-          },
-        })
-        .pipe(Effect.exit, Effect.forkScoped);
-      yield* Deferred.await(resolving);
-      yield* runtime.interruptTurn({
-        providerThread: thread,
-        providerTurnId: yield* providerTurnId,
-      });
-      yield* Deferred.await(stopped);
-      yield* Deferred.succeed(release, undefined);
-      const result = yield* Fiber.join(steer);
-      assert.lengthOf(prompts, 1);
-      assert.isTrue(Exit.isFailure(result));
-      if (Exit.isFailure(result)) {
-        assert.deepInclude(Cause.squash(result.cause), { _tag: "ProviderAdapterProtocolError" });
-      }
-      yield* runtime.startTurn(secondTurn(thread));
-      yield* Deferred.await(completed);
-      assert.lengthOf(prompts, 2);
-      assert.deepEqual(terminals, ["interrupted", "completed"]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        );
+        const stopped = yield* Deferred.make<void>();
+        const completed = yield* Deferred.make<void>();
+        const terminals: Array<string> = [];
+        yield* runtime.events.pipe(
+          Stream.tap((event) => {
+            if (
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === "Finished before Stop."
+            ) {
+              return Deferred.succeed(executionEnded, undefined);
+            }
+            if (event.type !== "turn.terminal") return Effect.void;
+            terminals.push(event.status);
+            return Deferred.succeed(terminals.length === 1 ? stopped : completed, undefined);
+          }),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(turnInput(thread));
+        const steer = yield* runtime
+          .steerTurn({
+            threadId,
+            runId: RunId.make("run:opencode2-adapter"),
+            providerThread: thread,
+            providerTurnId: yield* providerTurnId,
+            message: {
+              ...turnInput(thread).message,
+              messageId: MessageId.make("message:opencode2-adapter:steer"),
+              text: "Do not send this image after Stop.",
+              attachments: [image],
+            },
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        yield* Deferred.await(resolving);
+        if (heldEnd) {
+          gate.release("execution-end");
+          yield* Deferred.await(executionEnded);
+        }
+        const interrupt = yield* runtime
+          .interruptTurn({
+            providerThread: thread,
+            providerTurnId: yield* providerTurnId,
+          })
+          .pipe(Effect.forkScoped);
+        if (heldEnd) {
+          assert.isTrue(yield* Effect.promise(() => gate.waitForReached("interrupt-reply")));
+        } else {
+          yield* Deferred.await(stopped);
+        }
+        yield* Deferred.succeed(release, undefined);
+        const result = yield* Fiber.join(steer);
+        assert.lengthOf(prompts, 1);
+        assert.isTrue(Exit.isFailure(result));
+        if (Exit.isFailure(result)) {
+          assert.deepInclude(Cause.squash(result.cause), { _tag: "ProviderAdapterProtocolError" });
+        }
+        yield* Deferred.await(stopped);
+        gate.release("interrupt-reply");
+        yield* Fiber.join(interrupt);
+        yield* runtime.startTurn(secondTurn(thread));
+        yield* Deferred.await(completed);
+        assert.lengthOf(prompts, 2);
+        assert.deepEqual(terminals, ["interrupted", "completed"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads user and assistant text from the session's message list", () =>

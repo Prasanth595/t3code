@@ -3615,7 +3615,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 turn.steers.delete(inboxID);
                 // Stop may have stranded this steer, but it never reached OpenCode.
                 state.strandedSteers.delete(inboxID);
-                if (state.active === turn) yield* endIfSettled(state, turn);
+                if (state.active === turn) {
+                  if (turn.interrupted && turn.heldEnd !== undefined) {
+                    turn.heldEnd = { status: "interrupted" };
+                  }
+                  yield* endIfSettled(state, turn);
+                }
               }),
             );
             return yield* new ProviderAdapter.ProviderAdapterProtocolError({
