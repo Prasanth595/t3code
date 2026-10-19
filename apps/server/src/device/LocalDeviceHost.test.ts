@@ -389,7 +389,7 @@ describe("Android SDK availability", () => {
           `${root}/platform-tools/adb`,
           `${root}/emulator/emulator`,
           `${root}/cmdline-tools/latest/bin/avdmanager`,
-          "/Applications/Android Studio.app/Contents/jbr/bin/java",
+          "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java",
         ],
         { HOME: "/test/home" },
       );
@@ -426,7 +426,15 @@ describe("Android SDK availability", () => {
           Effect.provideService(HostProcess.Platform, platform),
           Effect.provideService(
             FileSystem.FileSystem,
-            FileSystem.makeNoop({ exists: (file) => Effect.succeed(files.includes(file)) }),
+            FileSystem.makeNoop({
+              exists: (file) => Effect.succeed(files.includes(file)),
+              readDirectory: (directory) =>
+                Effect.succeed(
+                  files
+                    .filter((file) => file.startsWith(`${directory}/`))
+                    .map((file) => file.slice(directory.length + 1)),
+                ),
+            }),
           ),
           Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
         );
@@ -443,6 +451,17 @@ describe("Android SDK availability", () => {
         ),
       ).toBe("D:\\Apps\\Android\\Android Studio\\jbr");
       expect(yield* javaHome([], { HOME: "/test/home" }, "linux")).toBeNull();
+      const macStudio = "/Applications/Android Studio.app/Contents/jbr/Contents/Home";
+      expect(yield* javaHome([`${macStudio}/bin/java`], { HOME: "/Users/test" }, "darwin")).toBe(
+        macStudio,
+      );
+      expect(
+        yield* javaHome(
+          [`${macStudio}/bin/java`, "/Library/Java/JavaVirtualMachines/temurin-17.jdk"],
+          { HOME: "/Users/test" },
+          "darwin",
+        ),
+      ).toBeUndefined();
     }),
   );
 
@@ -470,17 +489,12 @@ it.effect("puts detected Android tools on the helper PATH without losing existin
   }).pipe(Effect.provide(NodePath.layerPosix)),
 );
 
-it.effect("finds an Android SDK and JDK installed after the server started", () =>
+it.effect("finds an Android SDK installed after the server started", () =>
   Effect.gen(function* () {
     const runs: Array<ProcessRunner.ProcessRunInput> = [];
     const { host, fs, baseDir } = yield* agentFixture(() => Effect.succeed(processOutput(0)), runs);
     const sdk = `${baseDir}/Library/Android/sdk`;
-    const jbr = `${baseDir}/Applications/Android Studio.app/Contents/jbr`;
-    for (const file of [
-      `${sdk}/platform-tools/adb`,
-      `${sdk}/emulator/emulator`,
-      `${jbr}/bin/java`,
-    ]) {
+    for (const file of [`${sdk}/platform-tools/adb`, `${sdk}/emulator/emulator`]) {
       yield* fs.makeDirectory(file.slice(0, file.lastIndexOf("/")), { recursive: true });
       yield* fs.writeFileString(file, "");
     }
@@ -488,7 +502,7 @@ it.effect("finds an Android SDK and JDK installed after the server started", () 
     yield* ready!.run("emulator", ["-list-avds"]);
     expect(runs.at(-1)).toMatchObject({
       command: `${sdk}/emulator/emulator`,
-      env: { ANDROID_HOME: sdk, JAVA_HOME: jbr },
+      env: { ANDROID_HOME: sdk },
     });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

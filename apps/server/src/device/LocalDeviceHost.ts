@@ -18,7 +18,7 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveCommandPath } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -135,7 +135,7 @@ const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
  * The hub lists AVDs with avdmanager, a Java program. GUI-launched servers
  * rarely inherit a JDK, so fall back to the one bundled with Android Studio.
  * Keep the candidates in step with `remoteDeviceEnvironment`.
- * `undefined` means `java` is already on PATH.
+ * `undefined` means a working `java` is already on PATH.
  */
 const androidJava = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -144,26 +144,45 @@ const androidJava = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const javaHome = environment.JAVA_HOME?.trim();
   if (javaHome) return javaHome;
-  if (yield* isCommandAvailable("java")) return undefined;
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const java = yield* resolveCommandPath("java");
+  if (platform === "darwin") {
+    // /usr/bin/java is a launcher stub that fails unless a JDK is registered here.
+    for (const directory of [
+      "/Library/Java/JavaVirtualMachines",
+      path.join(home, "Library", "Java", "JavaVirtualMachines"),
+    ]) {
+      const installed = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+      if (installed.length > 0) return undefined;
+    }
+    if (java && java !== "/usr/bin/java") return undefined;
+  } else if (java) {
+    return undefined;
+  }
   const candidates =
     platform === "win32"
-      ? [path.join(environment.ProgramFiles ?? "C:\\Program Files", "Android", "Android Studio")]
+      ? [
+          path.join(
+            environment.ProgramFiles ?? "C:\\Program Files",
+            "Android",
+            "Android Studio",
+            "jbr",
+          ),
+        ]
       : platform === "darwin"
         ? [
-            "/Applications/Android Studio.app/Contents",
-            path.join(home, "Applications", "Android Studio.app", "Contents"),
+            "/Applications/Android Studio.app/Contents/jbr/Contents/Home",
+            path.join(home, "Applications/Android Studio.app/Contents/jbr/Contents/Home"),
           ]
         : [
-            path.join(home, ".local", "opt", "android-studio"),
-            "/opt/android-studio",
-            "/usr/local/android-studio",
-            "/snap/android-studio/current",
+            path.join(home, ".local", "opt", "android-studio", "jbr"),
+            "/opt/android-studio/jbr",
+            "/usr/local/android-studio/jbr",
+            "/snap/android-studio/current/jbr",
           ];
   for (const candidate of candidates) {
-    const jbr = path.join(candidate, "jbr");
-    const java = path.join(jbr, "bin", platform === "win32" ? "java.exe" : "java");
-    if (yield* fs.exists(java).pipe(Effect.orElseSucceed(() => false))) return jbr;
+    const executable = path.join(candidate, "bin", platform === "win32" ? "java.exe" : "java");
+    if (yield* fs.exists(executable).pipe(Effect.orElseSucceed(() => false))) return candidate;
   }
   return null;
 });
