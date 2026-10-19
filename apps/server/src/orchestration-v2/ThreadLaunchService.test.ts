@@ -1573,6 +1573,45 @@ it.effect.each(["stable", "upstream/release"])(
     ),
 );
 
+it.effect.each([false, true])(
+  "skips fetch only when no remote is selected (remote selected: %s)",
+  (remoteSelected) =>
+    Effect.gen(function* () {
+      const setupStarted = yield* Deferred.make<void>();
+      const fetchWorktreeBaseCommit = vi.fn(() => Effect.succeed(null));
+      const harness = makeHarness({
+        git: {
+          resolveWorktreeBaseRemote: () =>
+            Effect.succeed(remoteSelected ? { remoteName: "origin", branchName: "main" } : null),
+        },
+        fetchWorktreeBaseCommit,
+        runSetup: () =>
+          Deferred.succeed(setupStarted, undefined).pipe(
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:fetch-progress",
+            thread: "thread:launch:fetch-progress",
+            workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+          }),
+        );
+        yield* Deferred.await(setupStarted);
+        const snapshot = yield* tracker.get(launched.threadId);
+        assert.equal(
+          snapshot?.stages.find((stage) => stage.id === "fetch")?.status,
+          remoteSelected ? "done" : "skipped",
+        );
+        assert.equal(fetchWorktreeBaseCommit.mock.calls.length, remoteSelected ? 1 : 0);
+        assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, "main");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";

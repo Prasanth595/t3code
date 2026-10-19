@@ -391,9 +391,16 @@ const make = Effect.gen(function* () {
         }
         let startRef = input.workspaceStrategy.baseRef;
         let baseRefName = input.workspaceStrategy.baseRef;
-        const startFromOrigin = input.workspaceStrategy.startFromOrigin === true;
-        yield* setupTracker.stageStatus(threadId, "fetch", startFromOrigin ? "running" : "skipped");
-        if (startFromOrigin) {
+        const shouldFetch =
+          input.workspaceStrategy.startFromOrigin === true &&
+          (yield* git
+            .resolveWorktreeBaseRemote({
+              cwd: project.workspaceRoot,
+              refName: input.workspaceStrategy.baseRef,
+            })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))) !== null;
+        yield* setupTracker.stageStatus(threadId, "fetch", shouldFetch ? "running" : "skipped");
+        if (shouldFetch) {
           const remoteBase = yield* git
             .fetchWorktreeBaseCommit({
               cwd: project.workspaceRoot,
@@ -405,7 +412,7 @@ const make = Effect.gen(function* () {
             baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
           }
         }
-        if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
+        if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         if (
           branch !== null &&
           isTemporaryWorktreeBranch(branch) &&
