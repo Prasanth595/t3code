@@ -124,4 +124,29 @@ describe("FactoryNavIcon", () => {
     expect(b.left).toBeGreaterThanOrEqual(button.left);
     expect(b.bottom).toBeLessThanOrEqual(button.bottom);
   });
+
+  it("places the badge from the icon in a default-size button with a label", async () => {
+    state.count = 3;
+    const offset = (view: Awaited<ReturnType<typeof renderFooter>>) => {
+      const b = view.button("Factory").querySelector("[data-slot=badge]")!.getBoundingClientRect();
+      const icon = view.svg("Factory").getBoundingClientRect();
+      return { top: b.top - icon.top, right: b.right - icon.right };
+    };
+    const footer = await renderFooter();
+    const inFooter = offset(footer);
+    await footer.unmount();
+    const labelled = await renderFooter(
+      <SidebarProvider>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton aria-label="Factory">
+              <FactoryNavIcon />
+              <span>Factory</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarProvider>,
+    );
+    expect(offset(labelled)).toEqual(inFooter);
+  });
 });
