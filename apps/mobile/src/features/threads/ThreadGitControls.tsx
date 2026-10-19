@@ -117,22 +117,12 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
 function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const navigation = useNavigation();
   const openPullRequest = useOpenPullRequest();
-  const environmentId = props.environmentId;
-  const canWriteSourceControl = useEnvironmentScope(
-    environmentId ? EnvironmentId.make(String(environmentId)) : null,
-    AuthSourceControlWriteScope,
-  );
-  const threadId = props.threadId;
+  const environmentId = EnvironmentId.make(props.environmentId);
+  const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
+  const threadId = ThreadId.make(props.threadId);
   const { gitOperationLabel, onPull, onRunAction } = props;
-  const thread = useThreadShell({
-    environmentId: EnvironmentId.make(String(environmentId)),
-    threadId: ThreadId.make(String(threadId)),
-  });
-  const project = useProject(
-    thread
-      ? { environmentId: EnvironmentId.make(String(environmentId)), projectId: thread.projectId }
-      : null,
-  );
+  const thread = useThreadShell({ environmentId, threadId });
+  const project = useProject(thread ? { environmentId, projectId: thread.projectId } : null);
   const repositoryKey = project?.repositoryIdentity?.canonicalKey;
   const gitStatus = useMemo(
     () => resolveThreadGitStatus(props.gitStatus, thread?.pullRequests, repositoryKey),

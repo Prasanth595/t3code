@@ -431,36 +431,37 @@ export function pullRequestListLines(
   });
 }
 
-/** Use a linked branch snapshot while the separate VCS PR lookup has no result. */
+// Branch lookup and linked PR snapshots refresh independently.
 export function resolveThreadGitStatus(
   status: VcsStatusResult | null,
   links: ReadonlyArray<ThreadPullRequestLink> | undefined,
   repositoryKey: string | null | undefined,
 ): VcsStatusResult | null {
   if (!status || status.pr !== null || status.refName === null || !repositoryKey) return status;
-  const canonicalKey = canonicalRepositoryKey(repositoryKey.toLowerCase());
-  const link = links?.find((link) => {
+  const canonicalKey = canonicalRepositoryKey(repositoryKey.trim().toLowerCase());
+  for (const link of links ?? []) {
+    const snapshot = link.snapshot;
     if (
       link.source === "stack-dismissed" ||
-      link.snapshot?.state !== "open" ||
-      link.snapshot.headBranch !== status.refName
+      snapshot?.state !== "open" ||
+      snapshot.headBranch !== status.refName
     )
-      return false;
+      continue;
     const key = legacyThreadPullRequestKey(link, link.host);
-    return canonicalRepositoryKey(`${key.host}/${key.repository}`) === canonicalKey;
-  });
-  if (!link?.snapshot) return status;
-  return {
-    ...status,
-    pr: {
-      number: link.number,
-      url: link.url,
-      title: link.snapshot.title,
-      headRef: link.snapshot.headBranch,
-      baseRef: link.snapshot.baseBranch,
-      state: link.snapshot.state,
-      isDraft: link.snapshot.isDraft,
-      updatedAt: link.snapshot.updatedAt,
-    },
-  };
+    if (canonicalRepositoryKey(`${key.host}/${key.repository}`) !== canonicalKey) continue;
+    return {
+      ...status,
+      pr: {
+        number: link.number,
+        url: link.url,
+        title: snapshot.title,
+        headRef: snapshot.headBranch,
+        baseRef: snapshot.baseBranch,
+        state: snapshot.state,
+        isDraft: snapshot.isDraft,
+        updatedAt: snapshot.updatedAt,
+      },
+    };
+  }
+  return status;
 }
