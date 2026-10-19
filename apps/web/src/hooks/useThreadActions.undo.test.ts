@@ -54,6 +54,7 @@ const threadShells = vi.hoisted(() => ({
     archivedAt: string | null;
     settledOverride: "settled" | "active" | null;
     settledAt: string | null;
+    lineage: { relationshipToParent: "subagent" | "fork" | null };
   }[],
 }));
 vi.mock("../state/entities", async (original) => ({
@@ -240,12 +241,16 @@ describe("unsettleLastThread", () => {
     archivedAt: null,
     settledOverride: "settled" as const,
     settledAt,
+    lineage: { relationshipToParent: null },
     ...overrides,
   });
 
   it("restores the latest eligible thread without navigating and expires its settle Undo", async () => {
     threadShells.current = [
       settled("older", "2026-01-02T00:00:00.000Z"),
+      settled("hidden-child", "2026-01-09T00:00:00.000Z", {
+        lineage: { relationshipToParent: "subagent" },
+      }),
       settled("latest", "2026-01-03T00:00:00.000Z", { environmentId: "remote-env" }),
       settled("older-after-latest", "2026-01-01T00:00:00.000Z"),
       settled("archived", "2026-01-09T00:00:00.000Z", { archivedAt: "2026-01-09T00:00:00.000Z" }),

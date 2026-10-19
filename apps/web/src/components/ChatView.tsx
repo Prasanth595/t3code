@@ -1049,7 +1049,7 @@ export default function ChatView(props: ChatViewProps) {
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, unsettleLastThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
   const routeThreadKey = scopedThreadKey(routeThreadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
@@ -5526,9 +5526,6 @@ export default function ChatView(props: ChatViewProps) {
       focusComposerStable();
     },
     commands: {
-      "thread.unsettleLast": ({ event }) => {
-        if (!event.repeat) void unsettleLastThread();
-      },
       "thread.copyReference": ({ event }) => {
         if (!event.repeat) copyActiveThreadReferenceStable();
       },

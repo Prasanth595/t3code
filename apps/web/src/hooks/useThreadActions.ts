@@ -26,7 +26,11 @@ import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRouter } from "@tanstack/react-router";
 
-import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
+import {
+  getFallbackThreadIdAfterDelete,
+  isSidebarSubagentThread,
+  pinOrderKeyBetween,
+} from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { environmentSession, readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -626,6 +630,7 @@ export function useThreadActions() {
     for (const thread of readThreadShells()) {
       if (
         thread.archivedAt !== null ||
+        isSidebarSubagentThread(thread) ||
         thread.settledOverride !== "settled" ||
         thread.settledAt === null ||
         !readEnvironmentSupportsSettlement(thread.environmentId) ||
