@@ -63,7 +63,6 @@ export const startup = Promise.all([
     // the lazy component and surfaces through the route error boundary.
     if (reloadScheduled) return;
     if (!chunkLoadFailed) clearChunkReloadGuard();
-    // Auth cleanup must update the same connection registry as the routed UI.
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
         <AppAtomRegistryProvider>
