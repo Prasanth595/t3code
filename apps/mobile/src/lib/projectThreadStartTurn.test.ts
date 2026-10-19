@@ -13,6 +13,7 @@ import { serializeComposerMessageForServer } from "./composerContext";
 import {
   buildProjectThreadStartTurnInput,
   deriveThreadTitleFromPrompt,
+  type ProjectThreadStartTurnSpec,
 } from "./projectThreadStartTurn";
 
 describe("project thread title", () => {
@@ -54,7 +55,7 @@ describe("project thread title", () => {
   ])("titles a $type-only message without changing its data", ({ text, title, ...attachment }) => {
     const uploadedAttachments = [{ ...attachment, id: "prepared-attachment", sizeBytes: 3 }];
     const wire = serializeComposerMessageForServer(text, undefined, true);
-    const input = buildProjectThreadStartTurnInput({
+    const spec = {
       projectId: ProjectId.make("project"),
       projectCwd: "/workspace",
       threadId: "image-thread",
@@ -72,12 +73,22 @@ describe("project thread title", () => {
       worktreePath: null,
       startFromOrigin: false,
       worktreeBranchName: "unused",
-    });
+    } satisfies ProjectThreadStartTurnSpec;
+    const input = buildProjectThreadStartTurnInput(spec);
 
     expect(input.titleSeed).toBe(title);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
     expect(input.message.attachments).toEqual(uploadedAttachments);
     expect(input.message.text).toBe(wire.text);
+    const relaunched = buildProjectThreadStartTurnInput({
+      ...spec,
+      threadId: "local-relaunch",
+      text: input.message.text,
+      titleText: input.bootstrap.createThread.title,
+    });
+    expect(relaunched.titleSeed).toBe(title);
+    expect(relaunched.message.text).toBe(wire.text);
+    expect(relaunched.message.attachments).toEqual(uploadedAttachments);
   });
 
   it.each([
