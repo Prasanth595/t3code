@@ -609,12 +609,13 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const terminalBottomInset =
     (keyboardState.isVisible ? keyboardState.height : 0) +
     (isAccessoryVisible ? TERMINAL_ACCESSORY_HEIGHT : 0);
+  const [androidBottomBarHeight, setAndroidBottomBarHeight] = useState(56);
   const { height: keyboardHeight, progress: keyboardProgress } = useReanimatedKeyboardAnimation();
   const androidViewportStyle = useAnimatedStyle(() => ({
     paddingBottom:
       -keyboardHeight.value +
       keyboardProgress.value * (canOperateTerminal ? TERMINAL_ACCESSORY_HEIGHT : 0) +
-      (1 - keyboardProgress.value) * (56 + insets.bottom),
+      (1 - keyboardProgress.value) * (androidBottomBarHeight + insets.bottom),
   }));
   const androidBottomBarStyle = useAnimatedStyle(() => ({
     opacity: 1 - keyboardProgress.value,
@@ -1314,7 +1315,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               {Platform.OS === "android" ? (
                 <Animated.View
                   className="min-h-14 flex-row items-center gap-2 bg-card-alt px-2"
+                  onLayout={(event) => setAndroidBottomBarHeight(event.nativeEvent.layout.height)}
                   pointerEvents={keyboardState.isVisible ? "none" : "auto"}
+                  importantForAccessibility={
+                    keyboardState.isVisible ? "no-hide-descendants" : "auto"
+                  }
                   style={[
                     { position: "absolute", bottom: insets.bottom, left: 0, right: 0 },
                     androidBottomBarStyle,
@@ -1346,6 +1351,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               {(Platform.OS === "android" ? canOperateTerminal : isAccessoryVisible) ? (
                 <KeyboardStickyView
                   pointerEvents={keyboardState.isVisible ? "auto" : "none"}
+                  importantForAccessibility={
+                    keyboardState.isVisible ? "auto" : "no-hide-descendants"
+                  }
                   style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
                   offset={{ closed: 0, opened: 0 }}
                 >
