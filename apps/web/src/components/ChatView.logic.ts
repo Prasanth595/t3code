@@ -1125,7 +1125,6 @@ export async function waitForRevertedMessage(
         thread.providerThreads.some(
           (providerThread) =>
             providerThread.id === providerThreadId &&
-            providerThread.status === "active" &&
             providerThread.lastRunOrdinal === (turnCount === 0 ? null : turnCount),
         ) &&
         thread.runs.some((run) => run.id === witness.id && run.status === "rolled_back")

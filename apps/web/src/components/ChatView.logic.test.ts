@@ -2249,7 +2249,7 @@ describe("waitForRevertedMessage", () => {
           ownerNodeId: null,
           nativeThreadRef: null,
           nativeConversationHeadRef: null,
-          status: "active",
+          status: "idle",
           firstRunOrdinal: 1,
           lastRunOrdinal: 4,
           handoffIds: [],
