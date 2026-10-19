@@ -9,8 +9,11 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import { useEffect } from "react";
 
+import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { countFilesChangedAfterTurnCount } from "~/session-logic";
 import { DeviceSetup } from "../device/DeviceSetup";
 import { PullRequestThreadDialog } from "../PullRequestThreadDialog";
 import {
@@ -183,8 +186,6 @@ export function BranchRestoreConfirmHost(props: {
 interface PendingRevert {
   readonly turnCount: number;
   readonly messageId: MessageId;
-  /** Files the agent changed in checkpoints this rewind would undo. */
-  readonly changedFileCount: number;
 }
 
 const revertConfirmAtom = makeThreadOverlayAtom<PendingRevert>("revert-confirm");
@@ -195,9 +196,13 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
+  /** Read while open, so a checkpoint captured after opening still counts. */
+  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  const changedFileCount =
+    pending === null ? 0 : countFilesChangedAfterTurnCount(props.checkpoints, pending.turnCount);
   const confirm = (restoreFiles: boolean) => {
     if (pending === null) return;
     closeThreadOverlay(revertConfirmAtom);
@@ -215,8 +220,8 @@ export function RevertConfirmHost(props: {
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
-            {pending !== null && pending.changedFileCount > 0
-              ? ` The agent changed ${pending.changedFileCount} ${pending.changedFileCount === 1 ? "file" : "files"} since then.`
+            {changedFileCount > 0
+              ? ` The agent changed ${changedFileCount} ${changedFileCount === 1 ? "file" : "files"} since then.`
               : null}
           </AlertDialogDescription>
         </AlertDialogHeader>

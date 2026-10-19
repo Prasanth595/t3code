@@ -182,7 +182,6 @@ import {
   selectHandoffImageResources,
   deriveActivePlanState,
   deriveActiveWorkStartedAt,
-  countFilesChangedAfterTurnCount,
   deriveCanInterruptRunningThread,
   findLatestProposedPlan,
   hasActionableProposedPlan,
@@ -5735,11 +5734,7 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (restoreFiles === undefined) {
-      openRevertConfirm(routeThreadKey, {
-        turnCount,
-        messageId,
-        changedFileCount: countFilesChangedAfterTurnCount(turnDiffSummaries, turnCount),
-      });
+      openRevertConfirm(routeThreadKey, { turnCount, messageId });
       return;
     }
 
@@ -8615,7 +8610,11 @@ export default function ChatView(props: ChatViewProps) {
         </RightPanelSheet>
       ) : null}
 
-      <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
+      <RevertConfirmHost
+        threadKey={routeThreadKey}
+        checkpoints={turnDiffSummaries}
+        onConfirm={onConfirmRevertStable}
+      />
       <LinkPullRequestDialogHost />
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
