@@ -5,11 +5,13 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
+import { withAppTokenRepair } from "./forkAppTokenRepairErrors";
 import { serverEnvironment } from "./server";
 
 export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
-  stateAtom: environmentCatalog.stateAtom,
+  // Fork: the message of the app token repair (forkAppTokenRepairErrors.ts).
+  stateAtom: withAppTokenRepair(environmentCatalog.stateAtom),
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
 

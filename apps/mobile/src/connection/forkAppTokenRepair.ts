@@ -31,7 +31,10 @@ import { AppState } from "react-native";
 
 import { buildPairingUrl } from "../features/connection/pairing";
 import { appAtomRegistry } from "../state/atom-registry";
-import { appTokenRepairErrorAtom } from "../state/forkAppTokenRepairErrors";
+import {
+  appTokenEnvironmentIdsAtom,
+  appTokenRepairErrorAtom,
+} from "../state/forkAppTokenRepairErrors";
 import type { AppTokenClient } from "../persistence/mobile-preferences";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../state/preferences";
 import { issueMachinePairingCredential } from "./clientEnroll";
@@ -222,9 +225,14 @@ export const layer = Layer.effectDiscard(
         return origin === null ? [] : [{ ...machine, origin }];
       });
       const disabled = disabledByRepair();
+      const savedEnvironments = yield* savedAppTokenEnvironments;
+      appAtomRegistry.set(
+        appTokenEnvironmentIdsAtom,
+        savedEnvironments.map((environment) => environment.environmentId),
+      );
       const plan = planMachineSync({
         machines,
-        saved: yield* savedAppTokenEnvironments,
+        saved: savedEnvironments,
         disabledByRepair: disabled,
       });
       for (const environmentId of plan.disable) {
