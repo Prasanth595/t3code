@@ -60,7 +60,6 @@ import type { ActiveTurnComposerAction } from "@t3tools/client-runtime/state/com
 import * as Haptics from "expo-haptics";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  AccessibilityInfo,
   AppState,
   Keyboard,
   Platform,
@@ -82,6 +81,7 @@ import Animated, {
   useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
+  useReducedMotion,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
@@ -727,27 +727,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
-  // Avoid animating until the system preference is known.
-  const reduceMotionRef = useRef(true);
-  useEffect(() => {
-    // A change event or cleanup makes a still-pending initial query stale.
-    let superseded = false;
-    const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
-      superseded = true;
-      reduceMotionRef.current = enabled;
-    });
-    void AccessibilityInfo.isReduceMotionEnabled()
-      .then((enabled) => {
-        if (!superseded) reduceMotionRef.current = enabled;
-      })
-      .catch(() => {
-        // Keep the current preference if the native query fails.
-      });
-    return () => {
-      superseded = true;
-      subscription.remove();
-    };
-  }, []);
+  const reduceMotion = useReducedMotion();
   // Repin timers fire after the render that scheduled them, so they read follow
   // state from the ref the writers below keep in step with it.
   const endFollowEnabledRef = useRef(true);
@@ -918,7 +898,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
             return;
           }
           return scrollMessageToEnd({
-            animated: !reduceMotionRef.current,
+            animated: !reduceMotion,
             closeKeyboard: false,
           });
         })
@@ -941,6 +921,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     contentPresentationKind,
     props.queuedMessages,
     selectedThreadFeed,
+    reduceMotion,
     scrollMessageToEnd,
     selectedThreadKey,
   ]);
@@ -1006,11 +987,9 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
 
   const handleScrollToEnd = () => {
     void Haptics.selectionAsync();
-    void scrollMessageToEnd({ animated: !reduceMotionRef.current, closeKeyboard: false }).catch(
-      () => {
-        freeze.set(false);
-      },
-    );
+    void scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false }).catch(() => {
+      freeze.set(false);
+    });
   };
 
   const showScrollToEndButton = contentPresentationKind === "ready" && !endFollowEnabled;
