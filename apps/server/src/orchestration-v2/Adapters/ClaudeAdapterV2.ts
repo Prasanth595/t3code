@@ -510,7 +510,6 @@ export class ClaudeAgentSdkQueryRunner extends Context.Service<
 export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
   readonly options: ForkSessionOptions;
-  /** The instance environment; its CLAUDE_CONFIG_DIR locates the session files. */
   readonly environment: NodeJS.ProcessEnv;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -750,34 +749,27 @@ const decodeClaudeHistoryFork = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Struct({ sessionId: Schema.String })),
 );
 
-/** The directory the SDK reads session files from for this environment. */
 const claudeConfigDirOf = (
   path: Path.Path,
   environment: NodeJS.ProcessEnv,
   homeDirectory: string,
-) => path.resolve(environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude"));
+) => path.resolve(environment.CLAUDE_CONFIG_DIR ?? path.join(homeDirectory, ".claude"));
 
-/**
- * The SDK's history helpers read session files through `process.env`, which is
- * the server's environment and not the instance's. A fork for an instance whose
- * CLAUDE_CONFIG_DIR differs from the server's therefore runs in the history
- * worker process under the instance environment, so the server's own
- * environment never changes while other providers run.
- */
+// The SDK reads CLAUDE_CONFIG_DIR from process.env. Isolate custom homes in a
+// worker so concurrent providers keep the server's environment.
 const forkClaudeSessionInWorker = Effect.fn("forkClaudeSessionInWorker")(function* (
   input: ClaudeAgentSdkSessionForkInput,
 ) {
   const path = yield* Path.Path;
-  // The single executable has no Node to run a sibling script, so it hosts
-  // the worker as a hidden subcommand of itself.
+  const fromSource = import.meta.url.endsWith(".ts");
+  // A single executable hosts the worker itself; it has no sibling script.
   const workerArguments = (yield* HostProcess.IsExecutable)
     ? ["__claude-history"]
     : [
+        ...(fromSource ? ["--experimental-strip-types"] : []),
         yield* path.fromFileUrl(
           new URL(
-            import.meta.url.endsWith(".ts")
-              ? "../../claude-history-worker.ts"
-              : "./claude-history-worker.mjs",
+            fromSource ? "../../claude-history-worker.ts" : "./claude-history-worker.mjs",
             import.meta.url,
           ),
         ),
