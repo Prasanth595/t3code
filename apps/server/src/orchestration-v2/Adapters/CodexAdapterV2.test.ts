@@ -1961,6 +1961,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1970,7 +1971,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         [];
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
         open: (openInput) =>
-          Layer.build(CodexReplay.layerReplay(transcript)).pipe(
+          CodexReplay.makeReplayDriver(
+            transcript,
+            beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
+          ).pipe(
+            Effect.flatMap((driver) => Layer.build(CodexReplay.layerReplayWithDriver(driver))),
             Effect.mapError(
               (cause) =>
                 new ProviderAdapter.ProviderAdapterOpenSessionError({
@@ -8968,6 +8973,168 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             [[providerTurnId, "completed"]],
           );
           assert.include(providerGoals(harness.events), "active");
+        }).pipe(Effect.scoped, provideServices),
+      );
+
+      it.effect("adopts a native goal turn started while goal/get is pending", () =>
+        Effect.gen(function* () {
+          const getPending = yield* Deferred.make<void>();
+          const releaseGet = yield* Deferred.make<void>();
+          const startObserved = yield* Deferred.make<void>();
+          const requests: Array<string> = [];
+          const resume = resumeRequests("active", "active");
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "goal-resume-pending-get",
+              entries: [
+                ...sessionStart,
+                ...resume.slice(0, 1),
+                goalUpdated("active", null),
+                turnStarted("pending-get-turn"),
+                notification("native start observed", "thread/goal/updated", {
+                  threadId: nativeThreadId,
+                  turnId: "pending-get-turn",
+                  goal: codexGoal("active", 11),
+                }),
+                ...resume.slice(1),
+                goalUpdated("complete", "pending-get-turn"),
+                turnCompleted("pending-get-turn"),
+              ],
+            }),
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.tokensUsed === 11
+                ? Deferred.succeed(startObserved, undefined)
+                : Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+            undefined,
+            (entry) =>
+              entry.label === "thread/goal/get"
+                ? Deferred.succeed(getPending, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseGet)),
+                  )
+                : Effect.void,
+          );
+          const start = yield* harness.runtime
+            .startTurn(yield* goalTurnInput(harness, "/goal resume"))
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(getPending);
+          yield* Deferred.await(startObserved);
+          assert.notInclude(requests, "thread/goal/set");
+          assert.notInclude(requests, "turn/interrupt");
+          yield* Deferred.succeed(releaseGet, undefined);
+          yield* Fiber.join(start);
+          yield* harness.firstTerminal;
+          assert.deepEqual(runningTurns(harness.events), [["pending-get-turn", 1]]);
+          assert.notInclude(requests, "turn/start");
+          assert.notInclude(requests, "turn/interrupt");
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => event.status),
+            ["completed"],
+          );
+        }).pipe(Effect.scoped, provideServices),
+      );
+
+      it.effect("cancels a pending resume on Stop before claiming native work", () =>
+        Effect.gen(function* () {
+          const getPending = yield* Deferred.make<void>();
+          const requests: Array<string> = [];
+          const resume = resumeRequests("active", "active");
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "goal-resume-pending-stop",
+              entries: [
+                ...sessionStart,
+                ...resume.slice(0, 1),
+                goalUpdated("active", null),
+                ...request(
+                  4,
+                  "thread/goal/set",
+                  { threadId: nativeThreadId, status: "paused" },
+                  { goal: codexGoal("paused", 10) },
+                ),
+                ...resume.slice(1, 2),
+              ],
+            }),
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.goal?.status === "active"
+                ? Deferred.succeed(getPending, undefined)
+                : Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+          );
+          const start = yield* harness.runtime
+            .startTurn(yield* goalTurnInput(harness, "/goal resume"))
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(getPending);
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: ProviderTurnId.make("pending-goal-turn"),
+          });
+          yield* Fiber.join(start);
+          yield* harness.firstTerminal;
+          assert.deepEqual(requests.slice(2), ["thread/goal/get", "thread/goal/set"]);
+          assert.deepEqual(
+            harness.terminalEvents().map((event) => event.status),
+            ["interrupted"],
+          );
+        }).pipe(Effect.scoped, provideServices),
+      );
+
+      it.effect("does not claim a native turn when resume settings fail", () =>
+        Effect.gen(function* () {
+          const requests: Array<string> = [];
+          const resume = resumeRequests("paused", "active");
+          const harness = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "goal-resume-settings-failed",
+              entries: [
+                ...sessionStart,
+                ...resume.slice(0, 3),
+                goalUpdated("active", "settings-turn"),
+                turnStarted("settings-turn"),
+                {
+                  type: "emit_inbound",
+                  label: "settings rejected",
+                  frame: { id: 4, error: { code: -32603, message: "Settings rejected" } },
+                },
+                ...request(
+                  5,
+                  "thread/goal/set",
+                  { threadId: nativeThreadId, status: "paused" },
+                  { goal: codexGoal("paused", 10) },
+                ),
+                ...request(
+                  6,
+                  "turn/interrupt",
+                  { threadId: nativeThreadId, turnId: "settings-turn" },
+                  {},
+                ),
+                turnCompleted("settings-turn"),
+              ],
+            }),
+            () => Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+          );
+          const error = yield* Effect.flip(
+            harness.runtime.startTurn(yield* goalTurnInput(harness, "/goal resume")),
+          );
+          assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+          assert.include(errorCauseChainText(error), "Settings rejected");
+          yield* TestClock.adjust("6 seconds");
+          assert.deepEqual(runningTurns(harness.events), []);
+          assert.deepEqual(harness.terminalEvents(), []);
+          assert.include(requests, "turn/interrupt");
+          assert.notInclude(requests, "turn/start");
         }).pipe(Effect.scoped, provideServices),
       );
 
