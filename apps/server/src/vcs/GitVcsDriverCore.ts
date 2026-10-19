@@ -3613,18 +3613,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
-  // A pull request's number belongs to its repository, so only a remote naming that serves it.
-  const noPullRequestRemote = (operation: string, cwd: string) =>
-    new GitCommandError({
-      ...gitCommandContext({ operation, cwd, args: [] }),
-      detail: "No remote names the pull request's repository.",
-    });
-
   const fetchPullRequestBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestBranch"] =
     Effect.fn("fetchPullRequestBranch")(function* (input) {
-      const remoteName =
-        input.remoteName ??
-        (yield* noPullRequestRemote("GitVcsDriver.fetchPullRequestBranch", input.cwd));
+      const remoteName = input.remoteName;
+      if (remoteName === null) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.fetchPullRequestBranch",
+            cwd: input.cwd,
+            args: [],
+          }),
+          detail: "No remote names the pull request's repository.",
+        });
+      }
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestBranch",
         input.cwd,
@@ -3656,9 +3657,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchPullRequestHeadCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchPullRequestHeadCommit"] =
     Effect.fn("fetchPullRequestHeadCommit")(function* (input) {
-      const remoteName =
-        input.remoteName ??
-        (yield* noPullRequestRemote("GitVcsDriver.fetchPullRequestHeadCommit", input.cwd));
+      const remoteName = input.remoteName;
+      if (remoteName === null) {
+        return yield* new GitCommandError({
+          ...gitCommandContext({
+            operation: "GitVcsDriver.fetchPullRequestHeadCommit",
+            cwd: input.cwd,
+            args: [],
+          }),
+          detail: "No remote names the pull request's repository.",
+        });
+      }
       // No refspec destination: the pull head lands in FETCH_HEAD (per worktree) instead of a
       // branch, which is the only way to read it while that branch is checked out somewhere.
       yield* executeGit(

@@ -320,7 +320,6 @@ export function parseRepositoryNameWithOwnerFromRemoteUrl(
   );
 }
 
-/** The key of the repository a pull request URL belongs to, or null for a shape this cannot read. */
 function pullRequestBaseRepositoryKey(url: string): string | null {
   // `pullRequestRepositoryKey` does not read Forgejo's and GitCafe's `/pulls/`.
   const link = parseChangeRequestUrl(url);
@@ -330,22 +329,19 @@ function pullRequestBaseRepositoryKey(url: string): string | null {
   return key === null ? null : canonicalRepositoryKey(key);
 }
 
-/** The pull request's repository in the case its URL writes it, else the path of its `key`. */
 function pullRequestRepositoryName(url: string, key: string): string {
-  // The link's repository is lower-cased, but it spells the start of the URL's own path.
+  // Preserve the spelling in recognized links when reporting the mismatch.
   const link = parseChangeRequestUrl(url);
   return link === null
     ? splitRepositoryKey(key).path
     : new URL(url).pathname.slice(1, link.repository.length + 1);
 }
 
-/** A repository key's host and the path below it. */
 function splitRepositoryKey(key: string): { readonly host: string; readonly path: string } {
   const slash = key.indexOf("/");
   return { host: key.slice(0, slash), path: key.slice(slash + 1) };
 }
 
-/** An HTTP or HTTPS URL's port, empty for its scheme's default, or null for any other URL. */
 function httpPort(url: string): string | null {
   try {
     const { protocol, port } = new URL(url);
@@ -355,39 +351,28 @@ function httpPort(url: string): string | null {
   }
 }
 
-/**
- * Whether a remote names the repository at `repositoryKey`, on the host of the pull request at
- * `pullRequestUrl`. Keys leave the port out, but over HTTP it can tell two installs on one host
- * apart. An SSH port says nothing about the web one, and GitHub also serves SSH from
- * `ssh.github.com`, its endpoint on port 443. A dotless SSH host is an `~/.ssh/config` alias such
- * as `git@github-work:`, which stands for a host it does not name, so only its path is compared.
- * Any other host must match.
- */
 function namesRepository(
   remoteUrl: string,
   pullRequestUrl: string,
   repositoryKey: string,
 ): boolean {
+  // HTTP ports distinguish installations; an SSH port says nothing about the web port.
   const remotePort = httpPort(remoteUrl);
   if (remotePort !== null && remotePort !== httpPort(pullRequestUrl)) return false;
   const ssh = isSshRemoteUrl(remoteUrl);
   const key = canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl));
+  // GitHub also serves SSH at ssh.github.com:443.
   const remoteKey = ssh ? key.replace(/^ssh\.github\.com\//u, "github.com/") : key;
   if (remoteKey === repositoryKey) return true;
+  // Dotless SSH hosts may be aliases whose real hostname is unavailable here.
   const remote = splitRepositoryKey(remoteKey);
   return (
     ssh && !remote.host.includes(".") && remote.path === splitRepositoryKey(repositoryKey).path
   );
 }
 
-/**
- * The key of the pull request's repository when no remote of a checkout whose remotes are at
- * `remoteUrls` names it or the fork its head comes from, or null when one does. Only a definite
- * mismatch answers with a key: no hosted remote, as with only local or relative paths, or a pull
- * request URL this cannot read is no evidence either way. Any remote can vouch, so a fork clone
- * may name its base anything, and an extra remote for the repository vouches for any checkout.
- */
-export function pullRequestCheckoutMismatch(
+// Any hosted remote can establish a match; absent evidence does not establish a mismatch.
+function pullRequestCheckoutMismatch(
   remoteUrls: ReadonlyArray<string>,
   pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
 ): string | null {
@@ -401,8 +386,7 @@ export function pullRequestCheckoutMismatch(
   const base = splitRepositoryKey(baseKey);
   const head = resolveHeadRepositoryNameWithOwner(pullRequest);
   const holds = (remoteUrl: string) => {
-    // Forks live on their base's host. A Forgejo install mounted below its host's root serves
-    // them over HTTP below that mount too, which the head's `owner/name` leaves out.
+    // Forgejo HTTP forks retain the installation mount omitted by the head's owner/name.
     const mount =
       httpPort(remoteUrl) !== null &&
       parseChangeRequestUrl(pullRequest.url)?.authority !== undefined
@@ -417,25 +401,20 @@ export function pullRequestCheckoutMismatch(
   return hosted.some(holds) ? null : baseKey;
 }
 
-/**
- * The remote of `remotes` to fetch the pull request at `pullRequestUrl` by number from: the primary
- * or else the first remote naming its repository, as a fork can have its own pull request under
- * that number. With none, a hosted primary gives null; without hosted evidence it is the primary.
- */
-export function pullRequestRefRemote(
+// PR numbers belong to the base repository, even when a fork remote allowed the checkout.
+function pullRequestRefRemote(
   remotes: ReadonlyMap<string, string>,
   primaryRemote: string | null,
   pullRequestUrl: string,
 ): string | null {
   const baseKey = pullRequestBaseRepositoryKey(pullRequestUrl);
-  const url = (name: string | null) => remotes.get(name ?? "") ?? "";
-  const hosted = (name: string | null) =>
-    parseRepositoryNameWithOwnerFromRemoteUrl(url(name)) !== null;
-  const named = [primaryRemote, ...remotes.keys()].find(
-    (name) =>
-      hosted(name) && baseKey !== null && namesRepository(url(name), pullRequestUrl, baseKey),
+  if (baseKey === null) return primaryRemote;
+  const hosted = [...remotes].filter(
+    ([, url]) => parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null,
   );
-  return named ?? (baseKey !== null && hosted(primaryRemote) ? null : primaryRemote);
+  const matching = hosted.filter(([, url]) => namesRepository(url, pullRequestUrl, baseKey));
+  const preferred = matching.find(([name]) => name === primaryRemote) ?? matching[0];
+  return preferred?.[0] ?? (hosted.length === 0 ? primaryRemote : null);
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -2766,9 +2745,8 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
-  // Each of a checkout's remotes by name, at its URL as configured: the first of the remote's
-  // URLs, the one fetch uses, before `insteadOf` rewrites it. Since Git 2.46 an empty URL clears
-  // those before it, so the URL a remote with one fetches from depends on the version: it is empty.
+  // Fetch uses the first configured URL, before insteadOf rewrites. Empty entries changed
+  // behavior in Git 2.46, so a remote containing any empty URL supplies no evidence.
   const readCheckoutRemoteUrls = Effect.fn("readCheckoutRemoteUrls")(function* (cwd: string) {
     const { stdout } = yield* gitCore.execute({
       operation: "GitManager.readCheckoutRemoteUrls",
@@ -2820,9 +2798,7 @@ export const make = Effect.gen(function* () {
         ...pullRequest,
         ...toPullRequestHeadRemoteInfo(pullRequestSummary),
       } as const;
-      // A pull request can be read through any project on its host, so the checkout asked to
-      // hold it is not necessarily a checkout of its repository. Fetching into it anyway pulls
-      // an unrelated history in, runs its setup and hands the task to the wrong project.
+      // Hosting reads can borrow another project's credentials; they do not verify this checkout.
       const remotes = yield* readCheckoutRemoteUrls(input.cwd);
       const mismatch = pullRequestCheckoutMismatch(
         [...remotes.values()],
@@ -2845,10 +2821,7 @@ export const make = Effect.gen(function* () {
         const details = yield* gitCore.statusDetails(input.cwd);
         yield* configurePullRequestHeadUpstream(
           input.cwd,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
         return {
@@ -2865,17 +2838,13 @@ export const make = Effect.gen(function* () {
         const details = yield* gitCore.statusDetails(worktreePath);
         yield* configurePullRequestHeadUpstream(
           worktreePath,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
       });
 
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
-      // Any remote may vouch, but only one naming the repository serves its pull request numbers.
       const pullRequestRemote = pullRequestRefRemote(
         remotes,
         yield* gitCore.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)),
