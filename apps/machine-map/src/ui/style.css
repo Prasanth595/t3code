@@ -551,6 +551,7 @@ p.error-text {
 }
 .row .link.left {
   display: grid;
+  overflow-wrap: anywhere;
   text-align: left;
   color: var(--ink);
   text-decoration: none;
@@ -971,6 +972,7 @@ details.more[open] summary {
   border-radius: var(--radius);
 }
 .view {
+  min-width: 0;
   padding: 22px 24px;
 }
 .view-head {
@@ -1710,6 +1712,11 @@ td .stickers,
 .history-filters select {
   width: auto;
   min-width: 9em;
+  max-width: 100%;
+}
+.history-day .item-main > .grow {
+  flex-basis: 12rem;
+  overflow-wrap: anywhere;
 }
 .history-day + .history-day {
   margin-top: 24px;

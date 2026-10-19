@@ -111,9 +111,9 @@ export function pointOffset(a: Point, b: Point, p: Point): PairOffset {
 /**
  * Places each pair card on its line. A card with a `fixed` center (MM-1108) stays there, unless
  * it covers a machine card or a note, for example after a card grew. Then it moves the shortest way off them. Each other card takes the first spot that covers no
- * machine card, no note and no pair card placed before it. Without a free spot, it takes the spot
- * that covers the least. A second push for that card can move it onto a machine card, so it
- * stays; the owner can drag it. Revisit when crowded maps on desktop show stacked pair cards.
+ * machine card, no note and no pair card placed before it. Without a free spot near the line, it
+ * moves the least-covered spot off the machines and notes. Pair cards may still share space on a
+ * crowded map; the owner can drag them apart.
  */
 export function placePairs(
   pairs: ReadonlyArray<{
@@ -161,7 +161,8 @@ export function placePairs(
       }
       if (best?.score === 0) break;
     }
-    const box = best?.box ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, w, h };
+    const candidate = best?.box ?? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, w, h };
+    const box = best?.score === 0 ? candidate : keepOff(candidate);
     placed.push(pad(box));
     return { x: box.x, y: box.y };
   });
@@ -233,6 +234,7 @@ const FIT_MARGIN = 24;
 
 /**
  * MM-1116 "Fit": every box shows inside a `width` x `height` screen, centered, at most at 100%.
+ * The bottom 64 pixels stay clear of the 44-pixel map controls and their bottom inset.
  * Null without boxes.
  */
 export function fitView(
@@ -241,6 +243,7 @@ export function fitView(
   height: number,
 ): MapViewport | null {
   if (boxes.length === 0 || width <= 0 || height <= 0) return null;
+  const availableHeight = Math.max(1, height - 64);
   const left = Math.min(...boxes.map((b) => b.x - b.w / 2));
   const right = Math.max(...boxes.map((b) => b.x + b.w / 2));
   const top = Math.min(...boxes.map((b) => b.y - b.h / 2));
@@ -249,10 +252,14 @@ export function fitView(
     Math.min(
       1,
       (width - 2 * FIT_MARGIN) / Math.max(1, right - left),
-      (height - 2 * FIT_MARGIN) / Math.max(1, bottom - top),
+      (availableHeight - 2 * FIT_MARGIN) / Math.max(1, bottom - top),
     ),
   );
-  return { k, x: width / 2 - ((left + right) / 2) * k, y: height / 2 - ((top + bottom) / 2) * k };
+  return {
+    k,
+    x: width / 2 - ((left + right) / 2) * k,
+    y: availableHeight / 2 - ((top + bottom) / 2) * k,
+  };
 }
 
 /** Whether at least one box shows, in part, on a `width` x `height` screen. */
