@@ -1,6 +1,11 @@
 import { RegistryContext } from "@effect/atom-react";
-import { EnvironmentId, ProviderInstanceId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
-import { mergeUsage } from "@t3tools/shared/usageMerge";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  USAGE_CONTRACT_VERSION,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
+import { type MergedUsage, mergeUsage } from "@t3tools/shared/usageMerge";
 import type { Atom } from "effect/reactivity";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,6 +16,7 @@ import "~/index.css";
 
 type Presentations = ReadonlyMap<EnvironmentId, Record<string, unknown>>;
 const state = vi.hoisted(() => ({
+  usage: null as MergedUsage | null,
   presentations: null as unknown as Atom.Writable<Presentations>,
   refreshProviders: vi.fn<(input: unknown) => Promise<undefined>>(),
 }));
@@ -60,12 +66,12 @@ vi.mock(import("../../state/usage"), async (original) => {
   };
   return {
     ...(await original()),
-    useUsage: (() => ({
-      merged: mergeUsage([], USAGE_CONTRACT_VERSION),
+    useUsage: ((window: UsageSummaryInput) => ({
+      merged: state.usage ?? mergeUsage([], USAGE_CONTRACT_VERSION),
       environments: [environment],
       selectedEnvironments: [environment],
       isPending: false,
-      shown: null,
+      shown: state.usage === null ? null : { window, merged: state.usage },
       isPartial: false,
       refresh: async () => undefined,
     })) as never,
@@ -145,6 +151,7 @@ beforeEach(async () => {
   environmentNumber += 1;
   environmentId = EnvironmentId.make(`test-${environmentNumber}`);
   localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ metric: "limits", windowDays: 30 }));
+  state.usage = null;
   state.refreshProviders.mockReset().mockResolvedValue(undefined);
   await setPresentations([[environmentId, presentation()]]);
   container = document.createElement("div");
@@ -246,4 +253,47 @@ it("keeps manual refresh busy until the already-running automatic check settles"
 
   await act(async () => finishRefresh());
   await expect.element(refreshButton()).toHaveAttribute("aria-busy", "false");
+});
+
+it("ranks provider summaries by Tokens and Cost when switching metrics", async () => {
+  state.usage = {
+    ...mergeUsage([], USAGE_CONTRACT_VERSION),
+    totalTokens: 300,
+    costUsd: 30,
+    records: 2,
+    sessions: 2,
+    providers: [
+      {
+        provider: "codex",
+        totalTokens: 100,
+        costUsd: 20,
+        records: 1,
+        sessions: 1,
+        tokenShare: 1 / 3,
+        costShare: 2 / 3,
+      },
+      {
+        provider: "claude",
+        totalTokens: 200,
+        costUsd: 10,
+        records: 1,
+        sessions: 1,
+        tokenShare: 2 / 3,
+        costShare: 1 / 3,
+      },
+    ],
+  };
+  await render();
+  const providerOrder = () =>
+    page
+      .getByText(/^(Codex|Claude Code)$/)
+      .elements()
+      .map((element) => element.textContent);
+
+  await act(() => selectMetric("Tokens"));
+  await expect.poll(providerOrder).toEqual(["Claude Code", "Codex"]);
+  await act(() => selectMetric("Cost"));
+  await expect.poll(providerOrder).toEqual(["Codex", "Claude Code"]);
+  await act(() => selectMetric("Tokens"));
+  await expect.poll(providerOrder).toEqual(["Claude Code", "Codex"]);
 });

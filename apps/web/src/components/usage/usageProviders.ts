@@ -61,12 +61,6 @@ export function providersWithUsage(
   return PROVIDER_ORDER.filter((provider) => active.has(provider));
 }
 
-/**
- * Summary-row order: ranked by the metric on display so the rows always
- * descend, matching the mobile Usage screen. Anything but cost ranks by
- * tokens, like the row values. Ties keep {@link PROVIDER_ORDER}.
- * Charts and tables keep the stable order so series don't move around.
- */
 export function rankProvidersByMetric(
   providers: readonly UsageProviderKind[],
   totals: readonly {
@@ -76,11 +70,8 @@ export function rankProvidersByMetric(
   }[],
   metric: UsageMetric,
 ): readonly UsageProviderKind[] {
-  /** The figure a provider ranks by; providers without totals rank as zero. */
-  const value = (provider: UsageProviderKind) => {
-    const entry = totals.find((candidate) => candidate.provider === provider);
-    if (!entry) return 0;
-    return metric === "cost" ? entry.costUsd : entry.totalTokens;
-  };
+  const field = metric === "cost" ? "costUsd" : "totalTokens";
+  const value = (provider: UsageProviderKind) =>
+    totals.find((entry) => entry.provider === provider)?.[field] ?? 0;
   return providers.toSorted((left, right) => value(right) - value(left));
 }
