@@ -193,7 +193,10 @@ export interface AcpAdapterV2ExtensionContext {
 
 export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
-  /** Rewrites user text before attachments and T3 instructions wrap it (Grok skill mentions). */
+  /**
+   * Rewrites the user's text before attachment paths, T3 instructions and native
+   * slash-command detection see it, so a rewrite can produce a native command.
+   */
   readonly rewriteUserText?: (
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -6320,22 +6323,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             hasT3Mcp: (yield* readMcpContext(turnInput.threadId)).servers.length > 0,
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
-          const messageText = providerMessageTextWithAttachmentPaths({
-            text:
-              flavor.rewriteUserText === undefined
-                ? turnInput.message.text
-                : yield* flavor
-                    .rewriteUserText(turnInput.message.text, turnInput)
-                    .pipe(
-                      Effect.provideService(
-                        ChildProcessSpawner.ChildProcessSpawner,
-                        childProcessSpawner,
-                      ),
+          const userText =
+            flavor.rewriteUserText === undefined
+              ? turnInput.message.text
+              : yield* flavor
+                  .rewriteUserText(turnInput.message.text, turnInput)
+                  .pipe(
+                    Effect.provideService(
+                      ChildProcessSpawner.ChildProcessSpawner,
+                      childProcessSpawner,
                     ),
+                  );
+          const messageText = providerMessageTextWithAttachmentPaths({
+            text: userText,
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
-          const isNativeSlashCommand = turnInput.message.text.trimStart().startsWith("/");
+          const isNativeSlashCommand = userText.trimStart().startsWith("/");
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
