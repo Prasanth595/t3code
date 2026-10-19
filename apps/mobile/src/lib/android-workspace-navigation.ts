@@ -17,8 +17,13 @@ interface WorkspaceNavigation {
 }
 
 function androidWorkspaceBackReturnsToThread(state: NavigationState) {
+  const current = state.routes[state.index];
+  const params = current?.params as ReactNavigation.RootParamList["Thread"] | undefined;
   return (
-    state.routes[state.index]?.name === "Thread" && state.routes[state.index - 1]?.name === "Thread"
+    current?.name === "Thread" &&
+    state.routes[state.index - 1]?.name === "Thread" &&
+    params !== undefined &&
+    !parentThreadIsBelow(state, params)
   );
 }
 
