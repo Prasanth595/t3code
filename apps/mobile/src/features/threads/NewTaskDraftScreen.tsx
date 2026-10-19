@@ -1572,7 +1572,7 @@ export function NewTaskDraftScreen(props: {
       composerMenu.trigger &&
       (composerMenu.items.length > 0 ||
         composerMenu.trigger.kind === "pull-request" ||
-        composerMenu.trigger.kind === "path") ? (
+        (composerMenu.trigger.kind === "path" && composerMenu.trigger.query.trim().length > 0)) ? (
         <View className="mb-2">
           <ComposerCommandPopover
             items={composerMenu.items}

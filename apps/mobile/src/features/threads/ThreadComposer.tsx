@@ -675,7 +675,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         composerMenu.trigger &&
         (composerMenu.items.length > 0 ||
           composerMenu.trigger.kind === "pull-request" ||
-          composerMenu.trigger.kind === "path") ? (
+          (composerMenu.trigger.kind === "path" &&
+            composerMenu.trigger.query.trim().length > 0)) ? (
           <ComposerPopoverAnchor>
             <ComposerCommandPopover
               items={composerMenu.items}
