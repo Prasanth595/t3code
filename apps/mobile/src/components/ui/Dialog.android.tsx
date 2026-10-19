@@ -56,37 +56,50 @@ export function prompt(request: TextInputDialogRequest): void {
 
 /** Android presenter for Dialog.alert, Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
-  const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
-    null,
-  );
-  const [inputValue, setInputValue] = useState("");
+  // Requests wait their turn, so a second dialog never replaces one that is
+  // still waiting for an answer.
+  const [queue, setQueue] = useState<ReadonlyArray<DialogRequest & { readonly id: number }>>([]);
+  const presented = queue[0] ?? null;
+  const [input, setInput] = useState<{ readonly id: number; readonly value: string } | null>(null);
+  const inputValue =
+    input !== null && input.id === presented?.id
+      ? input.value
+      : presented?.kind === "text-input"
+        ? presented.request.initialValue
+        : "";
   const nextPresentationId = useRef(0);
   useEffect(() => {
     presentRequest = (request) => {
-      setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
-      setPresented({ ...request, id: ++nextPresentationId.current });
+      setQueue((current) => [...current, { ...request, id: ++nextPresentationId.current }]);
     };
     return () => {
       presentRequest = null;
     };
   }, []);
+  const dismissPresented = useCallback(() => setQueue((current) => current.slice(1)), []);
+  const setInputValue = useCallback(
+    (value: string) => {
+      if (presented !== null) setInput({ id: presented.id, value });
+    },
+    [presented],
+  );
 
   const handleCancel = useCallback(() => {
-    setPresented(null);
+    dismissPresented();
     if (presented?.kind === "alert") presented.request.options?.onDismiss?.();
     else presented?.request.onCancel?.();
-  }, [presented]);
+  }, [dismissPresented, presented]);
 
   const handleConfirm = useCallback(
     (nativeInputValue?: string) => {
-      setPresented(null);
+      dismissPresented();
       if (presented?.kind === "confirm") {
         presented.request.onConfirm();
       } else if (presented?.kind === "text-input") {
         presented.request.onConfirm(nativeInputValue ?? inputValue);
       }
     },
-    [inputValue, presented],
+    [dismissPresented, inputValue, presented],
   );
 
   if (presented?.kind === "alert") {
@@ -101,7 +114,7 @@ export function Host() {
         alertActions={presented.request.buttons ?? [{ text: "OK" }]}
         dismissable={presented.request.options?.cancelable ?? false}
         onAlertAction={(action) => {
-          setPresented(null);
+          dismissPresented();
           action.onPress?.();
         }}
         onCancel={handleCancel}
