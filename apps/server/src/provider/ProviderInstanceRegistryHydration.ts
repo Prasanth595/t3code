@@ -46,8 +46,11 @@
  */
 import {
   defaultInstanceIdForDriver,
+  providerInstanceConfigEnabledFlag,
+  resolveProviderInstanceEnabled,
   type ProviderInstanceConfig,
   type ProviderInstanceConfigMap,
+  type ProviderInstanceId,
   ServerSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -59,58 +62,54 @@ import { BUILT_IN_DRIVERS, type BuiltInDriversEnv } from "./builtInDrivers.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import * as ProviderOrchestrationAdapterInfrastructure from "./ProviderOrchestrationAdapterInfrastructure.ts";
-import * as AcpRegistrySupport from "./acp/AcpRegistrySupport.ts";
-import * as AcpRegistryCatalog from "./AcpRegistryCatalog.ts";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import * as ProviderHostLive from "./ProviderHostLive.ts";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import type * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
+import type * as ServerConfig from "../config.ts";
 
 type ProviderInstanceRegistryHydrationEnv =
   | Exclude<
       BuiltInDriversEnv,
       | ProviderOrchestrationAdapterInfrastructure.ProviderOrchestrationAdapterInfrastructure
       | AcpRegistrySupport.AcpRegistryCatalog
+      | ProviderHost.ProviderHost
     >
-  | Settings.ServerSettingsService;
+  | Settings.ServerSettingsService
+  | BackgroundPolicy.BackgroundPolicy
+  | ServerConfig.ServerConfig;
 
-/**
- * Synthesize a `ProviderInstanceConfigMap` from a `ServerSettings` snapshot.
- *
- * Strategy:
- *   1. Copy all explicit `settings.providerInstances` entries verbatim.
- *   2. For each built-in driver whose `defaultInstanceIdForDriver(id)` key
- *      is *not* already in the explicit map, synthesize an entry from the
- *      matching legacy `settings.providers.<kind>` blob.
- *
- * The returned map is the input the registry consumes; pure & exported
- * separately so the hydration logic can be exercised by unit tests
- * without layering.
- */
 export const deriveProviderInstanceConfigMap = (
   settings: ServerSettings,
 ): ProviderInstanceConfigMap => {
   const merged: Record<string, ProviderInstanceConfig> = { ...settings.providerInstances };
 
   for (const driver of BUILT_IN_DRIVERS) {
+    if (driver.metadata.hasDefaultInstance === false) continue;
     const instanceId = defaultInstanceIdForDriver(driver.driverKind);
-    if (instanceId in merged) {
-      // Explicit `providerInstances` entry for this slot — user-authored
-      // config always wins over the legacy mirror.
-      continue;
-    }
+    if (instanceId in merged) continue;
+    merged[instanceId] = { driver: driver.driverKind };
+  }
 
-    // Only built-in drivers have a legacy mirror; the registry's
-    // `providers` struct is keyed on the same literal slug as
-    // `driverKind`. Access is dynamic (the driver kind is a branded string),
-    // but it's constrained to `keyof settings.providers` by the union of
-    // built-in driver kinds.
-    const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
-    const legacyConfig = settings.providers[legacyKey];
-    if (legacyConfig === undefined) {
-      continue;
+  // A project that turns an instance on needs it alive and probed even when the machine itself
+  // has it off, or a thread in that project would route to an instance nobody ever checked in
+  // on.
+  for (const overrides of Object.values(settings.projectSettingsOverrides)) {
+    for (const [rawInstanceId, projectOverride] of Object.entries(
+      overrides?.providerInstances ?? {},
+    )) {
+      if (projectOverride.enabled !== true) continue;
+      const instanceId = rawInstanceId as ProviderInstanceId;
+      const existing = merged[instanceId];
+      if (existing === undefined || resolveProviderInstanceEnabled(existing)) continue;
+      merged[instanceId] = {
+        ...existing,
+        enabled: true,
+        ...(providerInstanceConfigEnabledFlag(existing.config) === false
+          ? { config: { ...(existing.config as Record<string, unknown>), enabled: true } }
+          : {}),
+      };
     }
-
-    merged[instanceId] = {
-      driver: driver.driverKind,
-      config: legacyConfig,
-    };
   }
 
   return merged as ProviderInstanceConfigMap;
@@ -191,7 +190,8 @@ export const layer: Layer.Layer<
       configMap: initialConfigMap,
     }).pipe(
       Layer.provide(ProviderOrchestrationAdapterInfrastructure.layer),
-      Layer.provide(AcpRegistryCatalog.layer),
+      Layer.provide(AcpRegistrySupport.layerFromHost),
+      Layer.provide(ProviderHostLive.layer),
     );
 
     return layerSettingsWatcher(settingsChanges).pipe(Layer.provideMerge(layerMutable));
