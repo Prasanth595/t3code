@@ -95,13 +95,6 @@ export function endQueuedRunEdit(
   setQueuedRunEdit(threadKey, null);
 }
 
-/**
- * Leaves edit mode once the edited run is no longer queued (it started, was
- * steered, or was removed elsewhere). A changed edit moves into the thread's
- * own draft when that draft is empty and is otherwise discarded; an untouched
- * edit is just the message that was sent, so it is dropped as "clean".
- * Returns null when the composer is not editing `runId`.
- */
 export function recoverQueuedRunEdit(
   threadKey: string,
   runId: RunId,
@@ -111,6 +104,7 @@ export function recoverQueuedRunEdit(
   const editDraft = getComposerDraftSnapshot(queuedEditDraftKey(threadKey, runId));
   const dirty = editDraft.text !== edit.originalText || editDraft.attachments.length > 0;
   if (!dirty) {
+    // Untouched text was already sent; restoring it would duplicate the message.
     endQueuedRunEdit(threadKey);
     return "clean";
   }

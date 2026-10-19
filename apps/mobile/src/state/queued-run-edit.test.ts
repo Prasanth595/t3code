@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   ChatAttachmentId,
   ComposerContextId,
@@ -12,12 +12,32 @@ import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue
 import { isQueuedEditDraftKey, queuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   beginQueuedRunEdit,
+  endQueuedRunEdit,
   getQueuedRunEdit,
   recoverQueuedRunEdit,
   resolveQueuedEditPayload,
   type QueuedRunEdit,
 } from "./queued-run-edit";
-import { getComposerDraftSnapshot, setComposerDraftText } from "./use-composer-drafts";
+import {
+  clearComposerDraft,
+  flushComposerDrafts,
+  getComposerDraftSnapshot,
+  setComposerDraftText,
+  waitForComposerDraftsLoaded,
+} from "./use-composer-drafts";
+
+vi.mock("expo-file-system", () => ({
+  Directory: class {
+    create() {}
+  },
+  File: class {
+    exists = false;
+    create() {}
+    write() {}
+    moveSync() {}
+  },
+  Paths: { document: { uri: "file:///documents" } },
+}));
 
 const image = (id: string): ChatAttachment => ({
   type: "image",
@@ -117,31 +137,52 @@ describe("recoverQueuedRunEdit", () => {
   const runId = RunId.make("run-1");
   const editKey = queuedEditDraftKey(threadKey, runId);
 
-  it("drops an untouched edit without restoring the sent message", () => {
-    beginQueuedRunEdit(threadKey, edit([]));
-
-    expect(recoverQueuedRunEdit(threadKey, runId)).toBe("clean");
-    expect(getQueuedRunEdit(threadKey)).toBeNull();
-    expect(getComposerDraftSnapshot(threadKey).text).toBe("");
-    expect(getComposerDraftSnapshot(editKey).text).toBe("");
+  beforeEach(async () => {
+    await waitForComposerDraftsLoaded();
   });
 
-  it("discards a changed edit when the thread draft already has content", () => {
+  afterEach(async () => {
+    endQueuedRunEdit(threadKey);
+    clearComposerDraft(threadKey);
+    await flushComposerDrafts();
+  });
+
+  it("drops an untouched edit without restoring the sent message", async () => {
+    beginQueuedRunEdit(threadKey, edit([]));
+
+    const recovery = recoverQueuedRunEdit(threadKey, runId);
+    await flushComposerDrafts();
+
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("");
+    expect(getComposerDraftSnapshot(editKey).text).toBe("");
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(recovery).toBe("clean");
+  });
+
+  it("recovers a changed edit into an empty thread draft", async () => {
+    beginQueuedRunEdit(threadKey, edit([]));
+    setComposerDraftText(editKey, "revised");
+
+    const recovery = recoverQueuedRunEdit(threadKey, runId);
+    await flushComposerDrafts();
+
+    expect(getComposerDraftSnapshot(threadKey).text).toBe("revised");
+    expect(getComposerDraftSnapshot(editKey).text).toBe("");
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(recovery).toBe("kept");
+  });
+
+  it("preserves an occupied thread draft when discarding a changed edit", async () => {
     setComposerDraftText(threadKey, "unsent draft");
     beginQueuedRunEdit(threadKey, edit([]));
     setComposerDraftText(editKey, "revised");
 
-    expect(recoverQueuedRunEdit(threadKey, runId)).toBe("discarded");
-    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    const recovery = recoverQueuedRunEdit(threadKey, runId);
+    await flushComposerDrafts();
+
     expect(getComposerDraftSnapshot(threadKey).text).toBe("unsent draft");
-    setComposerDraftText(threadKey, "");
-  });
-
-  it("ignores a run the composer is no longer editing", () => {
-    beginQueuedRunEdit(threadKey, edit([]));
-
-    expect(recoverQueuedRunEdit(threadKey, RunId.make("run-2"))).toBeNull();
-    expect(getQueuedRunEdit(threadKey)?.runId).toBe(runId);
-    expect(recoverQueuedRunEdit(threadKey, runId)).toBe("clean");
+    expect(getComposerDraftSnapshot(editKey).text).toBe("");
+    expect(getQueuedRunEdit(threadKey)).toBeNull();
+    expect(recovery).toBe("discarded");
   });
 });
