@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -201,7 +201,7 @@ it.layer(NodeServices.layer)("secret publication", (it) => {
       assert.deepEqual(Option.getOrThrow(yield* store.get("signing-key")), winner);
       assert.deepEqual(yield* fs.readDirectory(config.secretsDir), ["signing-key.bin"]);
       const stat = yield* fs.stat(`${config.secretsDir}/signing-key.bin`);
-      if ((yield* HostProcessPlatform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
+      if ((yield* HostProcess.Platform) !== "win32") assert.equal(stat.mode & 0o777, 0o600);
     }).pipe(Effect.provide(configLayer())),
   );
 
@@ -265,7 +265,7 @@ it.layer(NodeServices.layer)("secret publication", (it) => {
           cause: Object.assign(new Error("Injected directory sync failure"), { code }),
         });
         const store = yield* ServerSecretStore.make.pipe(
-          Effect.provideService(HostProcessPlatform, platform),
+          Effect.provideService(HostProcess.Platform, platform),
           Effect.provideService(FileSystem.FileSystem, {
             ...fs,
             open: (path, options) =>
