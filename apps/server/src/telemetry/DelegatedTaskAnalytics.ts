@@ -45,7 +45,6 @@ const make = Effect.gen(function* () {
       const task = event.payload;
       if (task.origin !== "app_owned" || !FINAL_STATUSES.has(task.status)) return;
       if (reported.has(task.id)) return;
-      reported.add(task.id);
       const parent = yield* orchestrator.getThreadShell(task.threadId);
       const providers = yield* registry.getProviders;
       const parentDimensions =
@@ -78,6 +77,8 @@ const make = Effect.gen(function* () {
         ...(task.completionWake === undefined ? {} : { completionWake: task.completionWake }),
         ...(durationSeconds === undefined ? {} : { durationSeconds }),
       });
+      // Only after recording: a failed lookup leaves the next final update to report it.
+      reported.add(task.id);
     }).pipe(Effect.ignoreCause);
 
   yield* forkParked(

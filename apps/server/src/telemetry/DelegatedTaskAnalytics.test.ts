@@ -31,10 +31,13 @@ const subagentEvent = (status: string, origin = "app_owned") =>
 
 it.effect("records each delegated task's final outcome once, without ids or prompts", () => {
   const recorded: Array<{ event: string; properties: unknown }> = [];
+  let shellLookups = 0;
   return Effect.gen(function* () {
     const analytics = yield* DelegatedTaskAnalytics.DelegatedTaskAnalytics;
     yield* analytics.onSubagent(subagentEvent("running"));
     yield* analytics.onSubagent(subagentEvent("completed", "provider_native"));
+    // The first parent lookup fails; the next final update still reports the task.
+    yield* analytics.onSubagent(subagentEvent("completed"));
     yield* analytics.onSubagent(subagentEvent("completed"));
     yield* analytics.onSubagent(subagentEvent("completed"));
     expect(recorded).toEqual([
@@ -60,12 +63,14 @@ it.effect("records each delegated task's final outcome once, without ids or prom
             Layer.mock(Orchestrator.OrchestratorV2)({
               streamDomainEvents: Stream.empty,
               getThreadShell: () =>
-                Effect.succeed({
-                  modelSelection: {
-                    instanceId: ProviderInstanceId.make("codex"),
-                    model: "gpt-5.5",
-                  },
-                } as never),
+                ++shellLookups === 1
+                  ? Effect.die("thread store unavailable")
+                  : Effect.succeed({
+                      modelSelection: {
+                        instanceId: ProviderInstanceId.make("codex"),
+                        model: "gpt-5.5",
+                      },
+                    } as never),
             }),
             Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed([
