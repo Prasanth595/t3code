@@ -419,7 +419,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   );
 
   it.effect(
-    "builds web, server and desktop with the resolved version and restores exact manifests",
+    "builds web, server and desktop with the resolved version, restores changed manifests and preserves edits to matching ones",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -431,9 +431,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "scripts": { "build:desktop": "node build.cjs" }
         }`;
         yield* fs.writeFileString(path.join(root, "package.json"), packageJson);
+        const version = "0.0.43-nightly.20260920.2018";
+        const matchingPath = "packages/contracts/package.json";
         const originals = releasePackageFiles.map((relativePath, index) => ({
           relativePath,
-          contents: `{ "version": "0.0.${index + 1}", "name": "${relativePath}" }\r\n`,
+          contents: `{ "version": "${relativePath === matchingPath ? version : `0.0.${index + 1}`}", "name": "${relativePath}" }\r\n`,
+        }));
+        const afterBuild = originals.map(({ relativePath, contents }) => ({
+          relativePath,
+          contents:
+            relativePath === matchingPath
+              ? `${JSON.stringify({ version, name: matchingPath, description: "edited during compilation" })}\n`
+              : contents,
         }));
         for (const { relativePath, contents } of originals) {
           const filePath = path.join(root, relativePath);
@@ -447,22 +456,24 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             require("./apps/web/package.json").version,
             require("./apps/server/package.json").version,
             require("./apps/desktop/package.json").version
-          ].join("\\n"));`,
+          ].join("\\n"));
+          const manifest = require("./${matchingPath}");
+          manifest.description = "edited during compilation";
+          require("node:fs").writeFileSync("${matchingPath}", JSON.stringify(manifest) + "\\n");`,
         );
-        const version = "0.0.43-nightly.20260920.2018";
         yield* buildDesktopBundles(root, version, false);
         assert.equal(
           yield* fs.readFileString(path.join(root, "version.txt")),
           [version, version, version, version].join("\n"),
         );
-        for (const { relativePath, contents } of originals) {
+        for (const { relativePath, contents } of afterBuild) {
           assert.equal(yield* fs.readFileString(path.join(root, relativePath)), contents);
         }
         assert.equal(yield* fs.readFileString(path.join(root, "package.json")), packageJson);
         yield* fs.writeFileString(path.join(root, "build.cjs"), "process.exit(1);");
         const failure = yield* Effect.flip(buildDesktopBundles(root, "0.0.44", false));
         assert.instanceOf(failure, BuildCommandFailedError);
-        for (const { relativePath, contents } of originals) {
+        for (const { relativePath, contents } of afterBuild) {
           assert.equal(yield* fs.readFileString(path.join(root, relativePath)), contents);
         }
         const invalidPath = releasePackageFiles[releasePackageFiles.length - 1]!;
@@ -474,7 +485,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         );
         const alignmentFailure = yield* Effect.flip(buildDesktopBundles(root, "0.0.44", false));
         assert.instanceOf(alignmentFailure, ReleasePackageManifestError);
-        for (const { relativePath, contents } of originals) {
+        for (const { relativePath, contents } of afterBuild) {
           assert.equal(
             yield* fs.readFileString(path.join(root, relativePath)),
             relativePath === invalidPath ? "invalid manifest" : contents,
