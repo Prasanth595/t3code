@@ -698,10 +698,7 @@ export function reconcileMountedTerminalThreadIds(input: {
   return nextThreadIds;
 }
 
-/**
- * A launch context's or summary's null worktree means the project checkout, not
- * "unknown", so only fall back to the thread's worktree when neither exists.
- */
+// Null identifies the project checkout when a launch or session is known.
 export function resolveTerminalWorktreePath(input: {
   launchContext: { readonly worktreePath: string | null } | null;
   summary: { readonly worktreePath: string | null } | null;
