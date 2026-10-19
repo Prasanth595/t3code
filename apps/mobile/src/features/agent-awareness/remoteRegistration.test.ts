@@ -624,42 +624,73 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     },
   );
 
-  it.effect(
-    "dismisses ended Live Activities before foreground discovery with no work running",
-    () => {
-      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+  it.effect("dismisses ended Live Activities when the idle app returns to the foreground", () => {
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
 
-      return Effect.gen(function* () {
-        yield* refreshActiveLiveActivityRemoteRegistration();
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      widgetMocks.dismissEnded.mockClear();
 
-        expect(widgetMocks.dismissEnded).toHaveBeenCalledOnce();
-        expect(widgetMocks.dismissEnded.mock.invocationCallOrder[0]).toBeLessThan(
-          widgetMocks.getInstances.mock.invocationCallOrder[0]!,
-        );
-        expect(widgetMocks.start).not.toHaveBeenCalled();
-      }).pipe(Effect.provide(layerRelayTest));
-    },
-  );
+      for (const listener of appStateMock.listeners) listener("background");
+      yield* runBackgroundOperations();
+      expect(widgetMocks.dismissEnded).not.toHaveBeenCalled();
+
+      for (const listener of appStateMock.listeners) listener("active");
+      yield* runBackgroundOperations();
+
+      expect(widgetMocks.dismissEnded).toHaveBeenCalledOnce();
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerRelayTest));
+  });
 
   it.effect("still registers the active card when ended-card cleanup throws", () => {
-    widgetMocks.dismissEnded.mockImplementation(() => {
-      throw new Error("Cannot find function dismissEnded");
+    const registrations: unknown[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (request.url.endsWith("/v1/client/dpop-token")) {
+        return Response.json({
+          access_token: "relay-dpop-token",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "DPoP",
+          expires_in: 300,
+          scope: "mobile:registration",
+        });
+      }
+      if (request.url.endsWith("/v1/mobile/live-activities")) {
+        registrations.push(await request.json());
+      }
+      return Response.json({ ok: true });
     });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
     const activity = {
       getId: () => "activity-1",
       getPushToken: vi.fn(() => Promise.resolve("activity-token")),
       addPushTokenListener: vi.fn(),
       end: vi.fn(),
     };
-    widgetMocks.getInstances.mockReturnValue([activity] as never);
-    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
 
     return Effect.gen(function* () {
-      yield* refreshActiveLiveActivityRemoteRegistration();
+      yield* runBackgroundOperations();
+      widgetMocks.dismissEnded.mockReset();
+      widgetMocks.dismissEnded.mockImplementation(() => {
+        throw new Error("Cannot find function dismissEnded");
+      });
+      widgetMocks.getInstances.mockReturnValue([activity] as never);
 
-      expect(activity.getPushToken).toHaveBeenCalled();
+      for (const listener of appStateMock.listeners) listener("active");
+      yield* runBackgroundOperations();
+
+      expect(widgetMocks.dismissEnded).toHaveBeenCalledOnce();
+      expect(registrations).toEqual([
+        { deviceId: "device-1", activityPushToken: "activity-token" },
+      ]);
       expect(activity.end).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerRelayTest));
+      expect(widgetMocks.start).not.toHaveBeenCalled();
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it("ends local Live Activities and stops foreground reconciliation on cloud sign-out", () => {
