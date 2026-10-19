@@ -93,18 +93,22 @@ export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(f
   const resolvedHost = SSH_ENDPOINT_HOSTS.get(hostName) ?? hostName;
   const provider = detectSourceControlProviderFromGitRemoteUrl(`git@${resolvedHost}:`);
   const isForge = provider !== null && provider.kind !== "unknown";
+  const aliasProvider = detectSourceControlProviderFromGitRemoteUrl(`git@${alias}:`);
+  const aliasIsForge = aliasProvider !== null && aliasProvider.kind !== "unknown";
   const port = config.get("port") ?? remote.port;
   const configUser = config.get("user");
+  const login = remote.user ?? configUser;
   const user = remote.user ?? (isSshName(configUser) ? configUser : undefined);
   const personalPath =
     !isForge &&
-    user !== undefined &&
-    user !== "git" &&
+    login !== undefined &&
+    login !== "git" &&
     (!remote.path.startsWith("/") || remote.path.startsWith("/~"));
   // Known forges keep their existing SSH/HTTPS identity. Other non-default
   // ports may serve distinct repositories, so their aliases stay distinct.
   const host =
     isLocalLoopbackHost(hostName) ||
+    (aliasIsForge && !isForge) ||
     (!isForge && port !== undefined && port !== "22") ||
     personalPath
       ? alias

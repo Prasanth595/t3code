@@ -274,7 +274,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("keeps ambiguous personal-login aliases while absolute paths share an identity", () =>
     Effect.gen(function* () {
       const alice = () => Effect.succeed(processOutput("hostname server.test\nuser alice\n"));
-      const bob = () => Effect.succeed(processOutput("hostname server.test\nuser bob\n"));
+      const bob = () =>
+        Effect.succeed(processOutput("hostname server.test\nuser bob@corp.example\n"));
       expect((yield* resolveRemote("alice-box:app.git", alice))?.canonicalKey).toBe(
         "alice-box/app",
       );
@@ -296,7 +297,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }),
   );
 
-  it.effect("passes the remote login and port to a bounded config-only SSH lookup", () =>
+  it.effect("passes the remote login and port to a bounded SSH configuration lookup", () =>
     Effect.gen(function* () {
       const identity = yield* resolveRemote("git+ssh://git@review:2222/Team/App.git", (input) => {
         expect(input.args).toEqual(["-G", "-l", "git", "-p", "2222", "review"]);
@@ -323,6 +324,13 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         "tunnel-b/team/app",
       );
 
+      const forge = yield* resolveRemote("git@gitlab.corp.example:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname 10.1.2.3\nuser git\n")),
+      );
+      expect(forge).toMatchObject({
+        canonicalKey: "gitlab.corp.example/team/app",
+        provider: "gitlab",
+      });
       const dev1 = yield* resolveRemote("git@dev1:Team/App.git", () =>
         Effect.succeed(processOutput("hostname server.test\nuser git\nport 2222\n")),
       );
@@ -342,10 +350,13 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       };
       for (const remote of [
         "https://github.com/Team/App.git",
+        "git+ssh://git@github.com/Team/App.git",
         "git@github.com:Team/App.git",
         "git@ssh.github.com:Team/App.git",
       ]) {
-        expect((yield* resolveRemote(remote, ssh))?.canonicalKey).toBe("github.com/team/app");
+        const identity = yield* resolveRemote(remote, ssh);
+        expect(identity?.canonicalKey).toBe("github.com/team/app");
+        expect(identity?.displayName).toBe("Team/App");
       }
       expect(sshCalls).toBe(0);
     }),

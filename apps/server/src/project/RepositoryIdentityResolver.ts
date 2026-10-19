@@ -92,7 +92,9 @@ function pickPrimaryRemote(
 
 function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
   const canonicalPath = canonicalKey.split("/").slice(1).join("/");
-  const displayPath = repositoryPathFromRemoteUrl(remoteUrl);
+  const displayPath = repositoryPathFromRemoteUrl(
+    remoteUrl.replace(/^(?:git\+ssh|ssh\+git):/i, "ssh:"),
+  );
   return displayPath?.toLowerCase() === canonicalPath ? displayPath : canonicalPath;
 }
 
