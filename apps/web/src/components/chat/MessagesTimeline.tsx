@@ -1105,38 +1105,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Added or removed rows change the content height.
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
-  const handleScroll = () => {
+  const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
-    const isAtEnd = resolveTimelineIsAtEnd(state);
-    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
-    if (position && state && isAtEnd !== undefined && !paintOnly) {
-      const index = state.indexByKey(position.rowId);
-      const row = index === undefined ? undefined : state.elementAtIndex(index);
-      const element = listRef.current?.getScrollableNode();
-      if (row && element) {
-        rememberTimelinePosition(
-          listIdentityKey,
-          {
-            ...position,
-            offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
-            scrollOffset: element.scrollTop,
-            atEnd: isAtEnd,
-            disclosures: {
-              runs: paintedExpandedRunIds,
-              workGroups: paintedExpandedWorkGroupIds,
-              attempts: paintedExpandedAttemptIds,
-              workGroupState: workGroupViewState,
-            },
-          },
-          liveFollowEnabled && !anchoredEndSpace,
-        );
-      }
-    }
-    if (isAtEnd !== undefined && !citationPositioning) {
-      onIsAtEndChange(isAtEnd);
-    }
-    reportContentOverflow();
     if (!state || minimapItems.length === 0) {
       return;
     }
@@ -1176,29 +1147,67 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
+  });
+
+  const minimapRefreshFrameRef = useRef<number | null>(null);
+  const scheduleMinimapRefresh = () => {
+    if (minimapRefreshFrameRef.current !== null) return;
+    // LegendList recycles row containers before React commits their positions.
+    minimapRefreshFrameRef.current = requestAnimationFrame(() => {
+      minimapRefreshFrameRef.current = null;
+      refreshMinimap();
+    });
   };
 
-  const refreshAfterMeasurement = useStableCallback(handleScroll);
-  const itemMeasurementFrameRef = useRef<number | null>(null);
+  const handleScroll = () => {
+    const state = listRef.current?.getState?.();
+    if (restoringThreadPosition || state?.data !== rows) return;
+    const isAtEnd = resolveTimelineIsAtEnd(state);
+    const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
+    if (position && state && isAtEnd !== undefined && !paintOnly) {
+      const index = state.indexByKey(position.rowId);
+      const row = index === undefined ? undefined : state.elementAtIndex(index);
+      const element = listRef.current?.getScrollableNode();
+      if (row && element) {
+        rememberTimelinePosition(
+          listIdentityKey,
+          {
+            ...position,
+            offsetWithinRow: element.getBoundingClientRect().top - row.getBoundingClientRect().top,
+            scrollOffset: element.scrollTop,
+            atEnd: isAtEnd,
+            disclosures: {
+              runs: paintedExpandedRunIds,
+              workGroups: paintedExpandedWorkGroupIds,
+              attempts: paintedExpandedAttemptIds,
+              workGroupState: workGroupViewState,
+            },
+          },
+          liveFollowEnabled && !anchoredEndSpace,
+        );
+      }
+    }
+    if (isAtEnd !== undefined && !citationPositioning) {
+      onIsAtEndChange(isAtEnd);
+    }
+    reportContentOverflow();
+    scheduleMinimapRefresh();
+  };
+
   const handleItemSizeChanged = () => {
     if (disclosurePinsEndRef.current) {
       queueMicrotask(pinDisclosureToEnd);
       scheduleDisclosureSettle();
     }
     reportContentOverflow();
-    if (itemMeasurementFrameRef.current !== null) return;
-    // Read after LegendList has applied all row measurements for this frame.
-    itemMeasurementFrameRef.current = requestAnimationFrame(() => {
-      itemMeasurementFrameRef.current = null;
-      refreshAfterMeasurement();
-    });
+    scheduleMinimapRefresh();
   };
 
   useEffect(
     () => () => {
-      if (itemMeasurementFrameRef.current !== null) {
-        cancelAnimationFrame(itemMeasurementFrameRef.current);
-        itemMeasurementFrameRef.current = null;
+      if (minimapRefreshFrameRef.current !== null) {
+        cancelAnimationFrame(minimapRefreshFrameRef.current);
+        minimapRefreshFrameRef.current = null;
       }
     },
     [],
