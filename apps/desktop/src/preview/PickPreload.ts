@@ -252,8 +252,7 @@ function unionRects(
   const top = Math.min(...rects.map((rect) => rect.y));
   const right = Math.max(...rects.map((rect) => rect.x + rect.width));
   const bottom = Math.max(...rects.map((rect) => rect.y + rect.height));
-  // Keep offscreen bounds intact; main intersects them with the captured
-  // viewport instead of moving an invisible selection onto unrelated pixels.
+  // Main clips to the captured viewport; clipping here would lose offscreen bounds.
   return {
     x: left - padding,
     y: top - padding,

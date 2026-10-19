@@ -270,18 +270,11 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
   ) {
     return null;
   }
-  return {
-    x: Math.floor(x),
-    y: Math.floor(y),
-    width: Math.max(1, Math.ceil(width)),
-    height: Math.max(1, Math.ceil(height)),
-  };
+  return { x, y, width, height };
 };
 
-/**
- * Crops a viewport capture to a picked annotation. `cropRect` is in CSS px;
- * the capture's pixels are CSS px × the guest's `devicePixelRatio`.
- */
+// capturePage returns a 1x NativeImage containing device pixels, so crop() uses
+// CSS coordinates scaled by the guest's devicePixelRatio (including page zoom).
 const cropAnnotationScreenshot = (
   image: Electron.NativeImage,
   cropRect: PreviewAnnotationRect | null,
@@ -291,17 +284,17 @@ const cropAnnotationScreenshot = (
   const full = image.getSize();
   if (full.width <= 0 || full.height <= 0) return null;
   const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
-  // Padding and unions can overlap the viewport without any selected target.
-  // Check the individual unpadded bounds before accepting even a full capture.
-  // Zero-size bounds stay eligible: a stroked SVG line reports zero height.
+  // Padding or a union of offscreen targets can overlap an empty viewport area.
+  // A zero-width/height SVG line can still paint at the top or left edge.
   if (
     targetRects.length > 0 &&
     !targetRects.some(
       (rect) =>
+        (rect.width > 0 || rect.height > 0) &&
         rect.x * scale < full.width &&
         rect.y * scale < full.height &&
-        (rect.x + rect.width) * scale > 0 &&
-        (rect.y + rect.height) * scale > 0,
+        (rect.width === 0 ? rect.x >= 0 : rect.x + rect.width > 0) &&
+        (rect.height === 0 ? rect.y >= 0 : rect.y + rect.height > 0),
     )
   ) {
     return null;
@@ -328,6 +321,7 @@ const cropAnnotationScreenshot = (
     height: bottom - y,
   });
   const size = cropped.getSize();
+  if (size.width <= 0 || size.height <= 0) return null;
   return { dataUrl: cropped.toDataURL(), width: size.width, height: size.height, cropRect };
 };
 
