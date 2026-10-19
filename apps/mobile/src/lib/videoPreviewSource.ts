@@ -5,6 +5,7 @@ import type { DraftComposerFileAttachment } from "./composerImages";
 import type { MediaActionsSource } from "./mediaActionsSource";
 
 export type MediaVideoPreviewSource = {
+  readonly fallbackUri?: string;
   readonly type: "media";
   readonly name: string;
   readonly mimeType: string;

@@ -10,7 +10,13 @@ export interface PullRequestMediaLocation {
 /** Keep the original resource identity so previewers can resolve and renew its capability. */
 export function pullRequestMediaSource(url: string, location: PullRequestMediaLocation | null) {
   const resource = location ? pullRequestMediaResource(url, location.cwd) : null;
-  return location && resource ? { environmentId: location.environmentId, resource } : { uri: url };
+  return location && resource
+    ? {
+        environmentId: location.environmentId,
+        resource,
+        ...(resource._tag === "bitbucket-media" ? { fallbackUri: url } : {}),
+      }
+    : { uri: url };
 }
 
 export function pullRequestImageSource(

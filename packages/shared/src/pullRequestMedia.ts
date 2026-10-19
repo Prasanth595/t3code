@@ -8,10 +8,6 @@ export type PullRequestMediaResource = Extract<
   { readonly _tag: "github-media" | "bitbucket-media" }
 >;
 
-/**
- * The asset resource that loads `source` through the server's source control credential, or
- * null when no host credential decides whether it loads — those keep loading directly.
- */
 export function pullRequestMediaResource(
   source: string,
   cwd: string,
@@ -22,10 +18,7 @@ export function pullRequestMediaResource(
   return bitbucketUrl === null ? null : { _tag: "bitbucket-media", url: bitbucketUrl };
 }
 
-/**
- * Last path segment, for the signed URL's display name. A percent sequence a host accepts but
- * `decodeURIComponent` rejects is left encoded rather than failing the whole asset.
- */
+/** Keep malformed percent escapes from breaking an otherwise usable media URL. */
 export function pullRequestMediaFileName(fetchUrl: string): string {
   const segment = new URL(fetchUrl).pathname.split("/").pop() ?? "";
   let decoded: string;

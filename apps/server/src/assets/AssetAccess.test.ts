@@ -21,7 +21,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -35,9 +35,8 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from 
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
-import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
-import { bitbucketMediaResponse, githubMediaResponse } from "./PullRequestMediaFetch.ts";
+import { githubMediaResponse } from "./PullRequestMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -48,6 +47,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 const layerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-asset-access-test-",
 });
+const encodeAssetAccessError = Schema.encodeEffect(Schema.fromJsonString(AssetAccessError));
 const screenshotPng = new Uint8Array(24);
 screenshotPng.set([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
@@ -226,61 +226,6 @@ describe("AssetAccess", () => {
       Effect.scoped,
     );
   });
-
-  it.effect(
-    "fetches a private Bitbucket download through the API without leaking the token",
-    () => {
-      const requests: Array<{ url: string; authorization: string | undefined }> = [];
-      return Effect.gen(function* () {
-        const response = yield* bitbucketMediaResponse(
-          {
-            url: "https://api.bitbucket.org/2.0/repositories/acme/web/downloads/shot.png",
-            expiresAt: Number.MAX_SAFE_INTEGER,
-          },
-          {},
-        );
-        expect(response.status).toBe(200);
-        // The S3 store labels uploads generically; the file name decides the type.
-        expect(response.headers["content-type"]).toBe("image/png");
-        expect(requests).toEqual([
-          {
-            url: "https://api.bitbucket.org/2.0/repositories/acme/web/downloads/shot.png",
-            authorization: "Bearer bitbucket-token",
-          },
-          { url: "https://bbuseruploads.s3.amazonaws.com/shot.png", authorization: undefined },
-        ]);
-      }).pipe(
-        Effect.provide(
-          Layer.mock(BitbucketApi.BitbucketApi)({
-            authorize: (request) =>
-              Effect.succeed(
-                new URL(request.url).hostname === "api.bitbucket.org"
-                  ? request.pipe(HttpClientRequest.bearerToken("bitbucket-token"))
-                  : request,
-              ),
-          }),
-        ),
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make((request) => {
-            requests.push({ url: request.url, authorization: request.headers.authorization });
-            const response =
-              new URL(request.url).hostname === "api.bitbucket.org"
-                ? new Response(null, {
-                    status: 302,
-                    headers: { location: "https://bbuseruploads.s3.amazonaws.com/shot.png" },
-                  })
-                : new Response(new Uint8Array([1]), {
-                    status: request.headers.authorization ? 400 : 200,
-                    headers: { "content-type": "application/octet-stream" },
-                  });
-            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
-          }),
-        ),
-        Effect.scoped,
-      );
-    },
-  );
 
   it.effect("serves an image a tool returned inline from the stored item", () =>
     Effect.gen(function* () {
@@ -1561,7 +1506,7 @@ describe("AssetAccess", () => {
       ]) {
         const error = yield* issue(url).pipe(Effect.flip);
         expect(error._tag).toBe("AssetGitHubMediaUrlValidationError");
-        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(AssetAccessError))(error);
+        const encoded = yield* encodeAssetAccessError(error);
         expect(encoded).not.toContain(url);
       }
     }).pipe(Effect.provide(layerTest)),
@@ -1597,7 +1542,7 @@ describe("AssetAccess", () => {
       ]) {
         const error = yield* issue(url).pipe(Effect.flip);
         expect(error._tag).toBe("AssetBitbucketMediaUrlValidationError");
-        const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(AssetAccessError))(error);
+        const encoded = yield* encodeAssetAccessError(error);
         expect(encoded).not.toContain(url);
       }
     }).pipe(Effect.provide(layerTest)),

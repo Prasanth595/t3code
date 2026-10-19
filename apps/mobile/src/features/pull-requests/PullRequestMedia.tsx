@@ -30,11 +30,21 @@ export function usePullRequestMediaUrl(url: string) {
     [context, url],
   );
   const asset = useAssetUrlState(context?.environmentId ?? null, resource);
-  const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource);
+  const source = pullRequestMediaSource(url, context);
+  const fallbackUri = "fallbackUri" in source ? source.fallbackUri : undefined;
+  const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource, fallbackUri);
+  const uri =
+    asset._tag === "Success"
+      ? asset.url
+      : resource
+        ? asset._tag === "Failure"
+          ? (fallbackUri ?? null)
+          : null
+        : url;
   return {
-    uri: asset._tag === "Success" ? asset.url : resource ? null : url,
-    unavailable: resource !== null && asset._tag === "Failure",
-    source: pullRequestMediaSource(url, context),
+    uri,
+    unavailable: uri === null && resource !== null && asset._tag === "Failure",
+    source,
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
 }

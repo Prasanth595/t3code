@@ -436,7 +436,7 @@ export const layerAssetRoute = HttpRouter.add(
         Effect.tapError((error) =>
           Effect.logWarning("Failed to fetch pull request media.", {
             kind: asset.kind,
-            reason: error.reason._tag,
+            reason: error._tag === "TimeoutError" ? error._tag : error.reason._tag,
           }),
         ),
         Effect.orElseSucceed(() =>

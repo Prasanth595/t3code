@@ -59,23 +59,16 @@ const githubToken = GitHubCredentials.GitHubCredentials.pipe(
   Effect.orElseSucceed(() => null),
 );
 
-/** Adds the host's credential to a request bound for that host, and leaves any other as it is. */
 type Authorize = (
   request: HttpClientRequest.HttpClientRequest,
 ) => Effect.Effect<HttpClientRequest.HttpClientRequest>;
 
-/**
- * Follows the host's redirect to the signed object itself, and never carries the credential off
- * the host: the object URL authorizes with its own signature, and the store it lives in has no
- * business seeing a token.
- */
 const fetchFollowingRedirects = Effect.fn("PullRequestMediaFetch.fetchFollowingRedirects")(
   function* (url: string, headers: Record<string, string>, authorize: Authorize) {
     const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
     let target = url;
     for (let hop = 0; ; hop += 1) {
-      // `authorize` decides from the target, not from the hop count, so a redirect to a signed
-      // object URL goes out without the credential.
+      // Reauthorize each target so signed object stores never receive the provider's token.
       const request = yield* authorize(
         HttpClientRequest.get(target).pipe(
           HttpClientRequest.setHeaders({
@@ -87,7 +80,10 @@ const fetchFollowingRedirects = Effect.fn("PullRequestMediaFetch.fetchFollowingR
       );
       const response: HttpClientResponse.HttpClientResponse = yield* httpClient
         .execute(request)
-        .pipe(Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT));
+        .pipe(
+          Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
+          Effect.timeout("30 seconds"),
+        );
       const location = response.headers.location;
       if (response.status < 300 || response.status >= 400) return response;
       // A chain this long is not the host answering with bytes, and its body is not the media.
@@ -99,7 +95,6 @@ const fetchFollowingRedirects = Effect.fn("PullRequestMediaFetch.fetchFollowingR
   },
 );
 
-/** Streams the media at `asset.url` back to the client, fetched with `authorize`'s credential. */
 const mediaResponse = Effect.fn("PullRequestMediaFetch.mediaResponse")(function* (
   asset: { readonly url: string; readonly expiresAt: number },
   requestHeaders: Record<string, string | undefined>,
@@ -153,16 +148,11 @@ const mediaResponse = Effect.fn("PullRequestMediaFetch.mediaResponse")(function*
   });
 });
 
-/**
- * Serves media a pull request body points at on GitHub through the `gh` credential, which is the
- * only thing that distinguishes a readable private attachment from a 404.
- */
 export const githubMediaResponse = Effect.fn("PullRequestMediaFetch.githubMediaResponse")(
   function* (
     asset: { readonly url: string; readonly expiresAt: number },
     requestHeaders: Record<string, string | undefined>,
   ) {
-    // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
     const token = yield* githubToken;
     return yield* mediaResponse(asset, requestHeaders, (request) =>
       Effect.succeed(
@@ -174,10 +164,6 @@ export const githubMediaResponse = Effect.fn("PullRequestMediaFetch.githubMediaR
   },
 );
 
-/**
- * Serves a file a pull request body links from a Bitbucket repository's Downloads through the
- * API, the one Bitbucket host that honours the configured credential for it.
- */
 export const bitbucketMediaResponse = Effect.fn("PullRequestMediaFetch.bitbucketMediaResponse")(
   function* (
     asset: { readonly url: string; readonly expiresAt: number },
@@ -188,7 +174,6 @@ export const bitbucketMediaResponse = Effect.fn("PullRequestMediaFetch.bitbucket
   },
 );
 
-/** Serves pull request media through the credential of the host it was signed for. */
 export const pullRequestMediaResponse = Effect.fn("PullRequestMediaFetch.pullRequestMediaResponse")(
   function* (
     asset: {

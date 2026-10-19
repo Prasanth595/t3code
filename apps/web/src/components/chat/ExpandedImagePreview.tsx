@@ -9,6 +9,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
+import { pullRequestMediaResource } from "@t3tools/shared/pullRequestMedia";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
@@ -46,6 +47,8 @@ export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;
   cwd?: string | undefined;
+  environmentId?: EnvironmentId | undefined;
+  pullRequestMedia?: boolean | undefined;
   threadRef?: ScopedThreadRef | undefined;
   httpBaseUrl?: string | undefined;
   onOpenFile?: ((relativePath: string) => void) | undefined;
@@ -65,13 +68,20 @@ export async function resolveMarkdownMediaPreview(input: {
 
   let src: string;
   let asset: MediaActionSource["asset"];
-  if (media.access === "direct") {
+  const pullRequestResource =
+    input.pullRequestMedia && input.cwd !== undefined && media.access === "direct"
+      ? pullRequestMediaResource(resolveProtocolRelativeMediaUrl(media.uri), input.cwd)
+      : null;
+  if (media.access === "direct" && pullRequestResource === null) {
     src = resolveProtocolRelativeMediaUrl(media.uri);
   } else {
-    if (media.access === "unavailable" || !input.threadRef || !input.httpBaseUrl) {
+    const environmentId = input.environmentId ?? input.threadRef?.environmentId;
+    const resource =
+      pullRequestResource ?? (media.access === "environment" ? media.resource : null);
+    if (resource === null || environmentId === undefined || !input.httpBaseUrl) {
       throw new Error("Reconnect to this environment and open the media again.");
     }
-    asset = { environmentId: input.threadRef.environmentId, resource: media.resource };
+    asset = { environmentId, resource };
     const result = await input.createAssetUrl({
       environmentId: asset.environmentId,
       input: { resource: asset.resource },

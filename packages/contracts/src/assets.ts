@@ -54,9 +54,7 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
-  // A file a pull request body links from a Bitbucket Cloud repository's Downloads. A private
-  // repository serves it only through the API with a credential, so the server fetches it with
-  // the Bitbucket credential configured for the environment.
+  // Private Downloads use the environment's Bitbucket API credential.
   Schema.TaggedStruct("bitbucket-media", {
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),

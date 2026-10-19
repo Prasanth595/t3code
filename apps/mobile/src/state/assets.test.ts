@@ -46,6 +46,7 @@ vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
 import { useRefreshAssetUrl, useAssetUrlState } from "./assets";
+import { pullRequestMediaSource } from "../features/pull-requests/pullRequestMediaSource";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
@@ -110,4 +111,23 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   });
   state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(denied)));
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBeNull();
+});
+
+it("falls back to the authored Bitbucket URL when an older server cannot sign it", async () => {
+  const url = "https://bitbucket.org/acme/web/downloads/demo.mp4?download=1";
+  const source = pullRequestMediaSource(url, { environmentId, cwd: "/repo" });
+  if (!("resource" in source)) throw new Error("Expected a renewable media resource");
+  const refresh = useRefreshAssetUrl(environmentId, source.resource, source.fallbackUri);
+  const unsupported = new Error("Unsupported asset resource: bitbucket-media");
+  state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(unsupported)));
+  await expect(refresh()).resolves.toBe(url);
+
+  state.mint.mockRejectedValue(unsupported);
+  await expect(refresh()).resolves.toBe(url);
+  await expect(useRefreshAssetUrl(environmentId, resource)()).rejects.toBe(unsupported);
+
+  state.mint.mockResolvedValue(
+    AsyncResult.success({ relativeUrl: "/api/assets/renewed.mp4", expiresAt: 2 }),
+  );
+  await expect(refresh()).resolves.toBe("https://host.test/api/assets/renewed.mp4");
 });
