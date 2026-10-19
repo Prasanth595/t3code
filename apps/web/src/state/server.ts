@@ -25,6 +25,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { isHostedStaticApp } from "../hostedPairing";
+import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
@@ -179,7 +181,10 @@ const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
  */
 export const primaryServerEnvironmentThemesAtom = Atom.make(
   (get): ReadonlyArray<EnvironmentTheme> | null => {
-    if (get(primaryEnvironmentIdAtom) === null) return EMPTY_ENVIRONMENT_THEMES;
+    if (get(primaryEnvironmentIdAtom) === null) {
+      // The catalog discovers the primary asynchronously unless this host disables it.
+      return isLocalEnvironmentDisabled() || isHostedStaticApp() ? EMPTY_ENVIRONMENT_THEMES : null;
+    }
     const config = get(primaryServerConfigAtom);
     if (config === null) return null;
     return (

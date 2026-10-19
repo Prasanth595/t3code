@@ -12,8 +12,13 @@ import * as Option from "effect/Option";
 import { type Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { primaryServerConfigAtom, primaryServerEnvironmentThemesAtom } from "../state/server";
+
+vi.mock("../localEnvironment", () => ({
+  isLocalEnvironmentDisabled: vi.fn(() => false),
+}));
 
 // The reducer is package-private; load it for this cross-package behavior test.
 const { applyServerConfigProjection, withoutEnvironmentThemes } = await vi.importActual<{
@@ -147,6 +152,7 @@ afterEach(() => {
   vi.doUnmock("../state/server");
   vi.resetModules();
   vi.restoreAllMocks();
+  vi.mocked(isLocalEnvironmentDisabled).mockReturnValue(false);
   vi.unstubAllGlobals();
 });
 
@@ -220,7 +226,7 @@ describe("published theme refresh", () => {
     },
   );
 
-  it("keeps an unchanged palette across reconnect, then clears it for a legacy server or no primary", async () => {
+  it("keeps an unchanged palette through discovery and reconnect, then clears it for a legacy server or disabled local environment", async () => {
     const previous = await setupThemeSync();
     vi.resetModules();
     const reloaded = await setupThemeSync("dark", previous.storage, null);
@@ -228,6 +234,15 @@ describe("published theme refresh", () => {
     const paint = vi.spyOn(reloaded.root.style, "setProperty");
     const cached = reloaded.palette.getEnvironmentThemes();
     const snapshot = reloaded.readSnapshot();
+    const canvasVariable = reloaded.palette.getThemeColorVariable("canvas");
+    const canvas = reloaded.styles.get(canvasVariable);
+
+    expect.soft(reloaded.publishConfig(null, null).theme).toBe(NIGHTFALL_THEME.id);
+    expect.soft(reloaded.palette.getEnvironmentThemes()).toBe(cached);
+    expect.soft(reloaded.readSnapshot()).toBe(snapshot);
+    expect.soft(reloaded.styles.get(canvasVariable)).toBe(canvas);
+    expect.soft(writeStorage).not.toHaveBeenCalled();
+    expect.soft(paint).not.toHaveBeenCalled();
 
     let projection = applyServerConfigProjection(Option.none(), SNAPSHOT);
     projection = applyServerConfigProjection(projection, {
@@ -242,10 +257,10 @@ describe("published theme refresh", () => {
     projection = applyServerConfigProjection(projection, SNAPSHOT);
     syncProjection();
 
-    expect(reloaded.palette.getEnvironmentThemes()).toBe(cached);
-    expect(reloaded.readSnapshot()).toBe(snapshot);
-    expect(writeStorage).not.toHaveBeenCalled();
-    expect(paint).not.toHaveBeenCalled();
+    expect.soft(reloaded.palette.getEnvironmentThemes()).toBe(cached);
+    expect.soft(reloaded.readSnapshot()).toBe(snapshot);
+    expect.soft(writeStorage).not.toHaveBeenCalled();
+    expect.soft(paint).not.toHaveBeenCalled();
 
     projection = applyServerConfigProjection(projection, {
       ...SNAPSHOT,
@@ -258,9 +273,11 @@ describe("published theme refresh", () => {
     expect(reloaded.palette.getEnvironmentThemes()).toEqual([]);
 
     reloaded.publish([NIGHTFALL_THEME]);
+    vi.mocked(isLocalEnvironmentDisabled).mockReturnValue(true);
     expect(reloaded.publishConfig(null, null).theme).toBe("system");
     expect(reloaded.palette.getEnvironmentThemes()).toEqual([]);
     expect(reloaded.root.dataset.themeId).toBeUndefined();
+    vi.mocked(isLocalEnvironmentDisabled).mockReturnValue(false);
     vi.resetModules();
     const nextReload = await setupThemeSync("dark", previous.storage, null);
     expect(nextReload.theme.theme).toBe("system");
