@@ -4,6 +4,7 @@ import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { DesktopThreadSwipeNavigation } from "./DesktopThreadSwipeNavigation";
+import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
 
 const sensors: SidebarPointerSensor[] = [];
 let hidden = false;
@@ -324,6 +325,12 @@ describe("desktop thread swipe navigation", () => {
 
     wheel({ deltaX: 160 });
     wheel({ deltaX: -160 });
+    const scroller = document.createElement("div");
+    scroller.style.cssText = "width: 100px; overflow-x: auto";
+    scroller.innerHTML = '<div style="width:300px;height:20px"></div>';
+    container.append(scroller);
+    act(() => vi.advanceTimersByTime(179));
+    expect(wheel({ deltaX: 160 }, scroller).defaultPrevented).toBe(true);
     act(() => vi.advanceTimersByTime(179));
     wheel({ deltaX: -160 });
     expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
@@ -353,6 +360,38 @@ describe("desktop thread swipe navigation", () => {
       expect(navigate).not.toHaveBeenCalled();
     }
 
+    const input = document.createElement("input");
+    input.style.width = "80px";
+    input.value = "long editable text ".repeat(30);
+    container.append(input);
+    expect(input.scrollWidth).toBeGreaterThan(input.clientWidth);
+    expect(wheel({ deltaX: 160 }, input).defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    expect(wheel({ deltaX: 120 }).defaultPrevented).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
+  });
+
+  it("keeps the background thread still while a modal owns the interaction", () => {
+    act(() =>
+      root.render(
+        <>
+          <DesktopThreadSwipeNavigation navigate={navigate} />
+          <Dialog open>
+            <DialogPopup>
+              <DialogTitle>Thread action</DialogTitle>
+            </DialogPopup>
+          </Dialog>
+        </>,
+      ),
+    );
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(wheel({ deltaX: 160 }, dialog!).defaultPrevented).toBe(false);
+    expect(wheel({ deltaX: 160 }).defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    act(() => root.render(<DesktopThreadSwipeNavigation navigate={navigate} />));
     expect(wheel({ deltaX: 120 }).defaultPrevented).toBe(true);
     expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
   });

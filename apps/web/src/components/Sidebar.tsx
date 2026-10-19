@@ -4540,7 +4540,9 @@ export default function Sidebar() {
   const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <>
-      {isElectron && <DesktopThreadSwipeNavigation navigate={navigateToAdjacentThread} />}
+      {isElectron && !isSearchingThreads && (
+        <DesktopThreadSwipeNavigation navigate={navigateToAdjacentThread} />
+      )}
       <ThreadContextDragGhost />
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent

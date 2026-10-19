@@ -1,5 +1,7 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useState } from "react";
+import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { isModelPickerOpen } from "../modelPickerVisibility";
 
 type ThreadSwipeDirection = "previous" | "next";
 type ThreadSwipeGesture = {
@@ -14,7 +16,10 @@ function canScrollHorizontally(path: ReadonlyArray<EventTarget>): boolean {
   for (const target of path) {
     if (!(target instanceof Element)) continue;
     const overflowX = window.getComputedStyle(target).overflowX;
-    if (/^(auto|scroll|overlay)$/.test(overflowX) && target.scrollWidth > target.clientWidth + 1) {
+    if (
+      target.scrollWidth > target.clientWidth + 1 &&
+      (target instanceof HTMLInputElement || /^(auto|scroll|overlay)$/.test(overflowX))
+    ) {
       return true;
     }
   }
@@ -54,7 +59,14 @@ export function DesktopThreadSwipeNavigation(input: {
 
       const deltaX = event.deltaX;
       if (Math.abs(deltaX) <= Math.abs(event.deltaY) * 1.15) return;
-      if (canScrollHorizontally(event.composedPath())) return;
+      if (
+        isCommandPaletteOpen() ||
+        isModelPickerOpen() ||
+        document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+      ) {
+        return;
+      }
+      if (!didNavigate && canScrollHorizontally(event.composedPath())) return;
 
       event.preventDefault();
       if (idleTimer !== null) window.clearTimeout(idleTimer);
