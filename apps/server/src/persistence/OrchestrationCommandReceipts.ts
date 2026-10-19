@@ -42,7 +42,6 @@ export class OrchestrationCommandReceiptRepository extends Context.Service<
 
     readonly getLatestLifecycle: (input: {
       readonly threadId: ThreadId;
-      readonly throughSequence?: number | undefined;
     }) => Effect.Effect<
       Option.Option<OrchestrationCommandReceipt>,
       OrchestrationCommandReceiptRepositoryError
@@ -119,17 +118,15 @@ const makeOrchestrationCommandReceiptRepository = Effect.gen(function* () {
   const findLatestLifecycle = SqlSchema.findOneOption({
     Request: Schema.Struct({
       threadId: ThreadId,
-      throughSequence: Schema.optional(NonNegativeInt),
     }),
     Result: OrchestrationCommandReceipt,
-    execute: ({ threadId, throughSequence }) => sql`
+    execute: ({ threadId }) => sql`
       SELECT command_id AS "commandId", aggregate_kind AS "aggregateKind",
         aggregate_id AS "aggregateId", command_type AS "commandType",
         accepted_at AS "acceptedAt", result_sequence AS "resultSequence", status, error
       FROM orchestration_command_receipts
       WHERE aggregate_kind = 'thread' AND aggregate_id = ${threadId}
         AND status = 'accepted' AND command_type IN ('thread.archive', 'thread.unarchive', 'thread.delete')
-        ${throughSequence === undefined ? sql`` : sql`AND result_sequence <= ${throughSequence}`}
       ORDER BY result_sequence DESC LIMIT 1
     `,
   });

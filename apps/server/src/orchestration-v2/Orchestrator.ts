@@ -90,7 +90,7 @@ import {
   isNativeMaintenanceCommand,
   resolveMessageDispatchIntent,
 } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import {
@@ -3364,9 +3364,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.commandId,
           command.threadId,
           command.type === "thread.archive" ? "archive" : "unarchive",
-          (yield* commandReceipts
-            .getLatestLifecycle(command.threadId)
-            .pipe(mapDispatchError(command)))?.commandId ?? null,
         );
         yield* Ref.update(effects, (existing) => [...existing, cascade]);
       }
@@ -11319,6 +11316,56 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     };
   });
 
+  const lifecycleOwnedByAncestor = Effect.fnUntraced(function* (
+    lifecycle: CommandReceiptV2,
+    thread: OrchestrationV2AppThread,
+    ancestorThreadId: ThreadId,
+  ) {
+    const commandType = lifecycle.commandType;
+    const throughSequence = lifecycle.resultSequence;
+    const visited = new Set<ThreadId>();
+    // Follow retained receipts along actual subagent edges, stopping at an
+    // independent action. An ID suffix alone does not establish ownership.
+    while (thread.id !== ancestorThreadId) {
+      if (visited.has(thread.id)) return false;
+      visited.add(thread.id);
+      const parentId = thread.lineage.parentThreadId;
+      if (parentId === null || thread.lineage.relationshipToParent !== "subagent") return false;
+      const suffix = `:subagent:${thread.id}`;
+      let sourceCommandId: CommandId | undefined;
+      for (let retry = 0; retry < 32; retry++) {
+        const ending = retry === 0 ? suffix : `${suffix}:retry:${retry}`;
+        if (lifecycle.commandId.length > ending.length && lifecycle.commandId.endsWith(ending)) {
+          sourceCommandId = CommandId.make(lifecycle.commandId.slice(0, -ending.length));
+          const derived = `${sourceCommandId}${suffix}`;
+          for (let earlier = 0; earlier < retry; earlier++) {
+            const rejected = yield* commandReceipts.getByCommandId(
+              CommandId.make(earlier === 0 ? derived : `${derived}:retry:${earlier}`),
+            );
+            if (Option.isNone(rejected) || rejected.value.status !== "rejected") return false;
+          }
+          break;
+        }
+      }
+      if (sourceCommandId === undefined) return false;
+      const source = yield* commandReceipts.getByCommandId(sourceCommandId);
+      if (
+        Option.isNone(source) ||
+        source.value.status !== "accepted" ||
+        source.value.threadId !== parentId ||
+        (source.value.commandType !== commandType &&
+          source.value.commandType !== "subagent-threads.cascade") ||
+        source.value.resultSequence > throughSequence
+      )
+        return false;
+      const parent = yield* projectionStore.getThread(parentId);
+      if (parent.projectId !== thread.projectId) return false;
+      lifecycle = source.value;
+      thread = parent;
+    }
+    return lifecycle.commandType === commandType;
+  });
+
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
@@ -11402,17 +11449,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const thread = yield* projectionStore
         .getThread(command.threadId)
         .pipe(mapDispatchError(command));
-      // A superseded cascade can commit after this parent choice; its exact
-      // predecessor ID distinguishes that work from a newer independent choice.
+      const owned =
+        lifecycle !== null &&
+        (yield* lifecycleOwnedByAncestor(lifecycle, thread, cascade.ancestorThreadId).pipe(
+          mapDispatchError(command),
+        ));
       if (
         thread.deletedAt !== null ||
         (command.type === "thread.archive"
           ? thread.archivedAt !== null ||
-            (lifecycle !== null &&
-              lifecycle.resultSequence > cascade.sourceSequence &&
-              lifecycle.commandId !== cascade.previousLifecycleCommandId)
-          : thread.archivedAt === null ||
-            lifecycle?.commandId !== cascade.previousLifecycleCommandId)
+            (lifecycle !== null && lifecycle.resultSequence > cascade.sourceSequence && !owned)
+          : thread.archivedAt === null || !owned)
       ) {
         const sequence = yield* eventSink
           .latestSequence({ threadId: command.threadId })

@@ -434,7 +434,7 @@ export interface ThreadManagementServiceShape {
     readonly commandId: CommandId;
     readonly operation: "archive" | "unarchive" | "delete";
     readonly sourceSequence?: number | undefined;
-    readonly previousLifecycleCommandId?: CommandId | null | undefined;
+    readonly ancestorThreadId?: ThreadId | undefined;
   }) => Effect.Effect<
     void,
     | Orchestrator.OrchestratorV2Error
@@ -1156,7 +1156,8 @@ const make = Effect.gen(function* () {
         return;
       const sourceSequence =
         input.sourceSequence ?? (Option.isSome(receipt) ? receipt.value.resultSequence : 0);
-      const lifecycle = yield* receipts.getLatestLifecycle(input.threadId);
+      const lifecycle =
+        operation === "delete" ? null : yield* receipts.getLatestLifecycle(input.threadId);
       const { thread } = yield* orchestrator.getThreadRecords(input.threadId, []);
       const limit = yield* DispatchModeLimit;
       if (
@@ -1168,13 +1169,7 @@ const make = Effect.gen(function* () {
               lifecycle.commandId !== input.commandId)))
       )
         return;
-      const previousLifecycleCommandId =
-        operation === "delete"
-          ? null
-          : input.previousLifecycleCommandId !== undefined
-            ? input.previousLifecycleCommandId
-            : ((yield* receipts.getLatestLifecycle(input.threadId, sourceSequence - 1))
-                ?.commandId ?? null);
+      const ancestorThreadId = input.ancestorThreadId ?? input.threadId;
       const children = yield* orchestrator.getSubagentChildThreads(input.threadId, {
         includeDeleted: operation === "delete",
       });
@@ -1184,12 +1179,6 @@ const make = Effect.gen(function* () {
           const commandId = yield* commandIdFrom(
             CommandId.make(`${input.commandId}:subagent:${child.id}`),
           );
-          const childPreviousLifecycleId =
-            previousLifecycleCommandId === null
-              ? null
-              : yield* commandIdFrom(
-                  CommandId.make(`${previousLifecycleCommandId}:subagent:${child.id}`),
-                );
           if (operation === "delete" && child.deletedAt !== null) {
             return yield* cascadeSubagentLifecycle({ ...input, commandId, threadId: child.id });
           }
@@ -1204,7 +1193,7 @@ const make = Effect.gen(function* () {
                 ? undefined
                 : {
                     sourceSequence,
-                    previousLifecycleCommandId: childPreviousLifecycleId,
+                    ancestorThreadId,
                   },
             ),
             Effect.catchTags({ OrchestratorThreadAboveModeLimitError: () => Effect.succeed(null) }),
@@ -1215,7 +1204,7 @@ const make = Effect.gen(function* () {
               commandId,
               threadId: child.id,
               sourceSequence,
-              previousLifecycleCommandId: childPreviousLifecycleId,
+              ancestorThreadId,
             });
           }
         }),

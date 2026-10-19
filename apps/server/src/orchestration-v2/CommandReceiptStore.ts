@@ -77,7 +77,6 @@ type AnyCommandReceiptV2 = CommandReceiptV2 | ProjectCommandReceiptV2;
 export interface CommandReceiptStoreV2Shape {
   readonly getLatestLifecycle: (
     threadId: ThreadId,
-    throughSequence?: number,
   ) => Effect.Effect<CommandReceiptV2 | null, CommandReceiptStoreV2Error>;
   readonly insertIfAbsent: (
     receipt: AnyCommandReceiptV2,
@@ -151,8 +150,8 @@ const layerBase: Layer.Layer<
     const receipts = yield* OrchestrationCommandReceipts.OrchestrationCommandReceiptRepository;
 
     return CommandReceiptStoreV2.of({
-      getLatestLifecycle: (threadId, throughSequence) =>
-        receipts.getLatestLifecycle({ threadId, throughSequence }).pipe(
+      getLatestLifecycle: (threadId) =>
+        receipts.getLatestLifecycle({ threadId }).pipe(
           Effect.flatMap((receipt) =>
             Option.isSome(receipt) ? fromApplicationReceipt(receipt.value) : Effect.succeed(null),
           ),

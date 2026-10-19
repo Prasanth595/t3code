@@ -6393,7 +6393,7 @@ describe("subagent lifecycle", () => {
   const parent = ThreadId.make("parent");
   const app = ThreadId.make("app");
   const native = ThreadId.make("native");
-  const grandchild = ThreadId.make("grandchild");
+  const grandchild = ThreadId.make("grandchild:retry:31");
   const limit = { runtimeMode: "approval-required", interactionMode: "plan" } as const;
   afterEach(() => vi.restoreAllMocks());
   const probeChildLock = Effect.gen(function* () {
@@ -6534,15 +6534,30 @@ describe("subagent lifecycle", () => {
         const f = yield* fixture;
         yield* f.command("archive", app);
         yield* f.worker.drain();
+        yield* f.command("archive");
+        yield* f.worker.drain();
+        yield* f.command("unarchive");
+        yield* f.worker.drain();
+        assert.isTrue(yield* f.archived(app), "independent intermediate stays archived");
+        assert.isTrue(yield* f.archived(grandchild), "independent intermediate owns its archive");
         yield* f.command("unarchive", grandchild);
         yield* f.worker.drain();
 
-        yield* f.command("archive");
+        yield* f.threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-owned:parent"),
+          threadId: parent,
+        });
         yield* f.worker.drain();
         for (const id of [app, native, grandchild]) assert.isTrue(yield* f.archived(id));
         yield* f.command("unarchive", native);
         yield* f.worker.drain();
-        yield* f.command("archive", native);
+        // An unused retry-shaped user ID is not a cascade retry.
+        yield* f.threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(`archive-owned:parent:subagent:${native}:retry:31`),
+          threadId: native,
+        });
         yield* f.worker.drain();
 
         for (const id of [parent, app, native, grandchild]) {
@@ -6569,7 +6584,11 @@ describe("subagent lifecycle", () => {
           WHERE status = 'succeeded'
         `;
         assert.isAbove(yield* f.outbox.pruneSettled, 0);
-        yield* f.command("unarchive");
+        yield* f.threads.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("unarchive-owned:parent"),
+          threadId: parent,
+        });
         yield* f.worker.drain();
 
         assert.isTrue(yield* f.archived(app), "pre-existing independent archive");
@@ -6595,7 +6614,7 @@ describe("subagent lifecycle", () => {
             threadId: effect.threadId,
             operation: effect.request.operation,
             sourceSequence: effect.request.sourceSequence,
-            previousLifecycleCommandId: effect.request.previousLifecycleCommandId,
+            ancestorThreadId: effect.request.ancestorThreadId,
           });
         });
 
@@ -6636,6 +6655,27 @@ describe("subagent lifecycle", () => {
         for (const id of [parent, app, native, grandchild]) {
           assert.isTrue(yield* f.archived(id), `${id} archived after delayed nested restore`);
         }
+
+        yield* f.threads.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("unarchive-superseded:parent"),
+          threadId: parent,
+        });
+        yield* f.threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-superseding:parent"),
+          threadId: parent,
+        });
+        yield* f.worker.drain();
+        yield* f.threads.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("unarchive-latest:parent"),
+          threadId: parent,
+        });
+        yield* f.worker.drain();
+        for (const id of [parent, app, native, grandchild]) {
+          assert.isFalse(yield* f.archived(id), `${id} restored after superseded undo`);
+        }
       }).pipe(Effect.provide(layerTest)),
   );
 
@@ -6644,9 +6684,21 @@ describe("subagent lifecycle", () => {
       const f = yield* fixture;
       yield* f.command("archive", app);
       yield* f.worker.drain();
+      yield* f.command("unarchive", grandchild);
+      yield* f.worker.drain();
       yield* f.command("archive");
       assert.equal((yield* f.cascadeEffect("archive")).status, "pending");
       yield* f.command("unarchive", app);
+      const effect = yield* f.cascadeEffect("archive");
+      if (effect.request.type !== "subagent-threads.cascade") throw new Error("Expected cascade");
+      yield* f.threads.cascadeSubagentLifecycle({
+        commandId: effect.commandId,
+        threadId: effect.threadId,
+        operation: effect.request.operation,
+        sourceSequence: effect.request.sourceSequence,
+        ancestorThreadId: effect.request.ancestorThreadId,
+      });
+      assert.isFalse(yield* f.archived(grandchild), "obsolete walk excludes the whole subtree");
       yield* f.worker.drain();
 
       assert.isTrue(yield* f.archived(parent));

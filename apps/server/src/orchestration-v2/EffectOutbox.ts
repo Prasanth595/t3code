@@ -33,8 +33,7 @@ import { forkParked } from "../serverActivation.ts";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 
 export const SubagentLifecycle = Context.Reference<
-  | { readonly sourceSequence: number; readonly previousLifecycleCommandId: CommandId | null }
-  | undefined
+  { readonly sourceSequence: number; readonly ancestorThreadId: ThreadId } | undefined
 >("t3/orchestration-v2/SubagentLifecycle", { defaultValue: () => undefined });
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
@@ -116,7 +115,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("subagent-threads.cascade"),
     operation: Schema.Literals(["archive", "unarchive", "delete"]),
     sourceSequence: Schema.optional(NonNegativeInt),
-    previousLifecycleCommandId: Schema.optional(Schema.NullOr(CommandId)),
+    ancestorThreadId: Schema.optional(ThreadId),
     limit: Schema.optional(
       Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
     ),
@@ -202,7 +201,6 @@ export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycle
   commandId: CommandId,
   threadId: ThreadId,
   operation: "archive" | "unarchive" | "delete",
-  previousLifecycleCommandId: CommandId | null = null,
 ) {
   const limit = yield* DispatchModeLimit;
   const cascade = yield* SubagentLifecycle;
@@ -214,8 +212,7 @@ export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycle
       type: "subagent-threads.cascade",
       operation,
       sourceSequence: cascade?.sourceSequence,
-      previousLifecycleCommandId:
-        cascade === undefined ? previousLifecycleCommandId : cascade.previousLifecycleCommandId,
+      ancestorThreadId: cascade?.ancestorThreadId ?? threadId,
       limit:
         limit === undefined
           ? undefined
