@@ -51,8 +51,12 @@ const partTracker = () => {
       let part: Part | undefined;
       while (rest.length > 0) {
         if (partEnd === null) {
-          // A header split across chunks is re-scanned per chunk, bounded by MAX_HEADER_BYTES.
-          const head = size === 0 ? rest : Buffer.concat([...pieces, rest]);
+          // A header split across chunks is re-scanned per chunk. Only a header-sized
+          // prefix of the new chunk joins the scan, so frame bytes are never copied.
+          const head =
+            size === 0
+              ? rest
+              : Buffer.concat([...pieces, rest.subarray(0, MAX_HEADER_BYTES + HEADER_END.length)]);
           const headerEnd = head.indexOf(HEADER_END);
           if (headerEnd < 0 && head.length <= MAX_HEADER_BYTES) {
             pieces.push(rest);
@@ -103,8 +107,9 @@ export const repeatStillFrame = <E, R>(body: Stream.Stream<Uint8Array, E, R>) =>
         return chunks;
       };
       return Effect.gen(function* () {
-        pending ??= yield* Effect.forkIn(pull, scope);
         const still = tracker.still;
+        if (still === null && pending === null) return forward(yield* pull);
+        pending ??= yield* Effect.forkIn(pull, scope);
         if (still === null) return forward(yield* Fiber.join(pending));
         // Timing out the join leaves the pull running, so a frame arriving mid-wait is kept.
         const next = yield* Fiber.join(pending).pipe(Effect.timeoutOption(STILL_FRAME_DELAY));

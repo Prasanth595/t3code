@@ -65,6 +65,16 @@ describe("repeatStillFrame", () => {
     }),
   );
 
+  it.effect("recognizes a frame whose final CRLF arrives in a later chunk", () =>
+    Effect.gen(function* () {
+      const { send, finish } = yield* viewer;
+      const first = part("first");
+      yield* send(first.subarray(0, -1), first.subarray(-1));
+      yield* TestClock.adjust(STILL_FRAME_DELAY);
+      expect(yield* finish).toBe(`${first}${first}`);
+    }),
+  );
+
   it.effect("passes through bodies without the hub's part framing", () =>
     Effect.gen(function* () {
       const { send, finish } = yield* viewer;
