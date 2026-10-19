@@ -5,7 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
@@ -79,9 +79,8 @@ export function createDesktopNetworkAccessStateAtom(
     } satisfies DesktopNetworkAccessSnapshot;
   });
 
-  // Keep the loaded snapshot alive, but let the SWR wrapper unmount so reopening
-  // Connections after the stale period revalidates while showing the old snapshot.
   return Atom.make(loadDesktopNetworkAccess()).pipe(
+    // Retain the snapshot, but let the SWR wrapper revalidate when Settings remounts.
     Atom.keepAlive,
     Atom.swr({
       staleTime: DESKTOP_NETWORK_ACCESS_STALE_TIME_MS,
