@@ -1832,7 +1832,8 @@ const withDesktopBuildLock = <A, E, R>(repoRoot: string, build: Effect.Effect<A,
               : error,
           ),
         ),
-      () => build,
+      // Stop packaging children and finish stage cleanup before another build can enter.
+      () => build.pipe(Effect.scoped),
       (_, exit) =>
         fs
           .remove(lockPath, { recursive: true })
@@ -1862,6 +1863,7 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
     () =>
       Effect.gen(function* () {
         yield* updateReleasePackageVersions(appVersion, { rootDir: repoRoot });
+        // The compiler must stop reading the aligned manifests before restoration.
         yield* runCommand(
           ChildProcess.make(spawnCommand.command, spawnCommand.args, {
             cwd: repoRoot,
@@ -1886,8 +1888,7 @@ const buildDesktopBundlesUnlocked = Effect.fn("buildDesktopBundlesUnlocked")(fun
         if (failures.length === 0) return;
         const error = new DesktopBuildManifestRestoreError({ failures });
         if (Exit.isFailure(exit)) {
-          // Keep the build/alignment failure catchable while reporting every
-          // manifest the caller may need to restore manually.
+          // Cleanup must not hide the original build or alignment failure.
           yield* Effect.logError(error);
         } else {
           return yield* error;
@@ -4086,7 +4087,9 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
   buildVersion: Flag.String("build-version").pipe(
-    Flag.withDescription("Artifact version metadata (env: T3CODE_DESKTOP_VERSION)."),
+    Flag.withDescription(
+      "Compiled bundle and desktop package version (env: T3CODE_DESKTOP_VERSION).",
+    ),
     Flag.optional,
   ),
   outputDir: Flag.String("output-dir").pipe(
