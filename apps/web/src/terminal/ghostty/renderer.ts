@@ -49,14 +49,15 @@ function fillSolidPowerlineSeparator(
   text: string,
   left: number,
   top: number,
-  metrics: GhosttyCellMetrics,
+  width: number,
+  height: number,
 ): void {
-  const right = left + metrics.width;
+  const right = left + width;
   const [base, point] = text === POWERLINE_SOLID_RIGHT ? [left, right] : [right, left];
   context.beginPath();
   context.moveTo(base, top);
-  context.lineTo(point, top + metrics.height / 2);
-  context.lineTo(base, top + metrics.height);
+  context.lineTo(point, top + height / 2);
+  context.lineTo(base, top + height);
   context.closePath();
   context.fill();
 }
@@ -231,7 +232,8 @@ export function renderGhosttySnapshot(options: {
             first.text,
             padding + runStart * metrics.width,
             top,
-            metrics,
+            metrics.width,
+            height,
           );
         }
         runStart += 1;
@@ -309,7 +311,7 @@ export function renderGhosttySnapshot(options: {
       if (cell?.text) {
         context.fillStyle = cssColor(snapshot.background);
         if (isSolidPowerlineSeparator(cell.text)) {
-          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics);
+          fillSolidPowerlineSeparator(context, cell.text, left, top, metrics.width, height);
         } else {
           context.font = fontForCell(cell, fontSize, fontFamily);
           context.fillText(cell.text, left, top + metrics.baseline, metrics.width);

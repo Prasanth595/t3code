@@ -85,6 +85,7 @@ describe("renderGhosttySnapshot", () => {
       fill: () => paths.push(path),
       fillRect: () => {},
       fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      getTransform: () => ({ d: 1 }),
       lineTo: (x: number, y: number) => path.push([x, y]),
       moveTo: (x: number, y: number) => path.push([x, y]),
       rect: () => {},
