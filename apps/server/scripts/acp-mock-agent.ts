@@ -77,6 +77,7 @@ const emitEmptySuccessfulBashThenHang =
 const exitOnCancel = process.env.T3_ACP_EXIT_ON_CANCEL === "1";
 const runningCommandIgnoresTerm = process.env.T3_ACP_RUNNING_COMMAND_IGNORE_TERM === "1";
 const runningCommandPidPath = process.env.T3_ACP_RUNNING_COMMAND_PID_PATH;
+const agentPidPath = process.env.T3_ACP_AGENT_PID_PATH;
 const runningCommandSeparateSession = process.env.T3_ACP_RUNNING_COMMAND_SEPARATE_SESSION === "1";
 const exitAfterRunningCommandLaunch = process.env.T3_ACP_EXIT_AFTER_RUNNING_COMMAND_LAUNCH === "1";
 const omitXAiPromptCompleteStopReason =
@@ -1378,6 +1379,9 @@ const program = Effect.gen(function* () {
         });
         if (runningCommandPidPath !== undefined) {
           NodeFS.writeFileSync(runningCommandPidPath, String(command.pid));
+        }
+        if (agentPidPath !== undefined) {
+          NodeFS.writeFileSync(agentPidPath, String(process.pid));
         }
         if (reportOutlivingCommandExit) {
           yield* Effect.callback<void>((resume) => {

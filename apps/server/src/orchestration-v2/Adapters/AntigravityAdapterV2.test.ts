@@ -536,6 +536,7 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
       );
       const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: `t3-ag-${label}-` });
       const commandPidPath = path.join(workspace, "command.pid");
+      const agentPidPath = path.join(workspace, "agent.pid");
       const commandPids: Array<number> = [];
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
@@ -569,6 +570,7 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
               env: {
                 T3_ACP_ANTIGRAVITY: "1",
                 T3_ACP_RUNNING_COMMAND_PID_PATH: commandPidPath,
+                T3_ACP_AGENT_PID_PATH: agentPidPath,
                 ...env,
               },
             },
@@ -677,6 +679,7 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
         waitForReply,
         waitForTerminal,
         readCommandPid,
+        readAgentPid: fileSystem.readFileString(agentPidPath).pipe(Effect.map(Number)),
         commandItem,
         finishArmed,
       };
@@ -723,6 +726,8 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
       yield* mock.waitForReply;
       const commandPid = yield* mock.readCommandPid;
       assert.isTrue(pidIsRunning(commandPid));
+      const agentPid = yield* mock.readAgentPid;
+      assert.isTrue(pidIsRunning(agentPid));
       const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
       if (providerTurnId == null) return yield* Effect.die("missing command item");
 
@@ -734,10 +739,14 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
       assert.equal(yield* mock.waitForTerminal, "interrupted");
       assert.equal(mock.commandItem("command-outliving-prompt")?.status, "interrupted");
       assert.isFalse(pidIsRunning(commandPid), "Stop ends the command");
+      assert.isFalse(pidIsRunning(agentPid), "Stop ends the ACP agent");
 
       yield* mock.startTurn(2);
       yield* mock.waitForReply;
-      assert.isTrue(pidIsRunning(yield* mock.readCommandPid), "a respawned agent runs turn 2");
+      assert.isTrue(pidIsRunning(yield* mock.readCommandPid), "turn 2 starts a command");
+      const nextAgentPid = yield* mock.readAgentPid;
+      assert.notEqual(nextAgentPid, agentPid, "turn 2 respawns the ACP agent");
+      assert.isTrue(pidIsRunning(nextAgentPid));
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
