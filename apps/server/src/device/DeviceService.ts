@@ -689,7 +689,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
             "Android emulator video needs working ffmpeg with the libx264 encoder. Install it on the device host's PATH or set SERVE_EMU_FFMPEG there, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, turn device support off and on for SSH hosts, or restart the local environment server.",
         });
       }
-      if (!/\blibx264\b/.test(`${encoders.stdout}\n${encoders.stderr}`)) {
+      if (!/^\s*V\S*[ \t]+libx264(?:[ \t]|$)/m.test(`${encoders.stdout}\n${encoders.stderr}`)) {
         return yield* new DevicePlatformUnavailableError({
           hostId: host.id,
           platform: "android",

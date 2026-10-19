@@ -416,7 +416,11 @@ describe("device setup consent", () => {
 
       yield* Ref.set(encoderResult, { code: 1, stdout: "", stderr: "cannot execute ffmpeg" });
       expect((yield* openEmulator.pipe(Effect.flip)).message).toMatch(/ffmpeg/i);
-      yield* Ref.set(encoderResult, { code: 0, stdout: " V....D libopenh264", stderr: "" });
+      yield* Ref.set(encoderResult, {
+        code: 0,
+        stdout: " V....D libx264rgb   libx264 H.264 / AVC RGB (codec h264)",
+        stderr: "",
+      });
       expect((yield* openEmulator.pipe(Effect.flip)).message).toMatch(/libx264/i);
       expect(requests.filter((url) => url.endsWith("/boot"))).toEqual([]);
       expect((yield* service.state).sessions).toEqual([physical, ios]);
