@@ -1053,13 +1053,17 @@ describe("what to say when an action fails", () => {
   });
 
   it("uses bounded git diagnostics and falls back when checkout has no useful detail", () => {
-    const diagnostic = (detail: string) =>
+    const diagnostic = (detail: string, reason?: GitCommandError["reason"]) =>
       new GitCommandError({
         cwd: "/workspace",
         operation: "GitVcsDriver.createWorktree",
         command: "git worktree add",
         detail,
+        reason,
       });
+    expect(
+      checkoutFailureDescription(diagnostic("git worktree add failed", "path_already_exists")),
+    ).toBe("git worktree add failed (path_already_exists)");
     const reason = "The worktree directory already exists. Choose another directory.";
     expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
     expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
