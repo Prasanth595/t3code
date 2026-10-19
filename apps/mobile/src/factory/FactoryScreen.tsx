@@ -20,8 +20,9 @@ import {
   mintPairingToken,
   originOf,
   parseFactoryMessage,
+  nextSignIn,
   probeFactory,
-  signInDecision,
+  type SignInState,
 } from "./factorySignIn";
 import {
   FACTORY_BEFORE_CONTENT_LOADED_SCRIPT,
@@ -58,10 +59,12 @@ export function FactoryScreen() {
     case "relay-only":
       return <Message text={FACTORY_RELAY_ONLY_MESSAGE} />;
     case "one":
-      return <FactoryWebView connection={choice.connection} />;
+      return (
+        <FactoryWebView key={choice.connection.environmentId} connection={choice.connection} />
+      );
     case "several": {
       const picked = choice.connections.find((c) => c.environmentId === pickedId);
-      if (picked) return <FactoryWebView connection={picked} />;
+      if (picked) return <FactoryWebView key={picked.environmentId} connection={picked} />;
       return (
         <View className="flex-1 bg-screen px-5 pt-4">
           <ListSection title="Environment">
@@ -90,12 +93,14 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   const [phase, setPhase] = useState<Phase>({ kind: "probing" });
   const [attempt, setAttempt] = useState(0);
   const webViewRef = useRef<WebView<object>>(null);
-  // One sign-in per open. A sign-in that ends unauthenticated again must not mint again.
-  const signedInRef = useRef(false);
+  const signInRef = useRef<SignInState>("idle");
+  // Bumped on every open and on unmount, so a mint that outlives its open is dropped.
+  const generationRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    signedInRef.current = false;
+    const generation = ++generationRef.current;
+    signInRef.current = "idle";
     setPhase({ kind: "probing" });
     void probeFactory({ httpBaseUrl, bearerToken }, fetch).then((result) => {
       if (!cancelled)
@@ -103,6 +108,7 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
     });
     return () => {
       cancelled = true;
+      if (generationRef.current === generation) generationRef.current += 1;
     };
   }, [httpBaseUrl, bearerToken, attempt]);
 
@@ -112,21 +118,26 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
     async (event: WebViewMessageEvent) => {
       const message = parseFactoryMessage(event.nativeEvent.data);
       if (message === null) return;
-      if (message.type === "exchange") {
-        if (!message.ok)
-          setPhase({ kind: "error", reason: "Signing in to the Factory pages failed." });
-        return;
-      }
-      const decision = signInDecision(message, httpBaseUrl, signedInRef.current);
-      if (decision === "failed") {
+      const next = nextSignIn(signInRef.current, message, event.nativeEvent.url, httpBaseUrl);
+      signInRef.current = next.state;
+      if (next.action === "exchange-failed") {
+        setPhase({ kind: "error", reason: "Signing in to the Factory pages failed." });
+      } else if (next.action === "rejected") {
         setPhase({ kind: "error", reason: "The server did not accept the sign-in." });
-      } else if (decision === "sign-in") {
-        signedInRef.current = true;
+      } else if (next.action === "mint") {
+        const generation = generationRef.current;
         const minted = await mintPairingToken({ httpBaseUrl, bearerToken }, fetch);
+        if (generation !== generationRef.current) return;
         if (!minted.ok) {
           setPhase({ kind: "error", reason: minted.reason });
           return;
         }
+        signInRef.current = nextSignIn(
+          signInRef.current,
+          { type: "minted" },
+          event.nativeEvent.url,
+          httpBaseUrl,
+        ).state;
         webViewRef.current?.injectJavaScript(
           factoryExchangeScript(minted.credential, originOf(httpBaseUrl) ?? ""),
         );

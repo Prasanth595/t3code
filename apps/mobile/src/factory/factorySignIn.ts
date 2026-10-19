@@ -67,31 +67,58 @@ export function parseFactoryMessage(data: string): FactoryWebViewMessage | null 
   return null;
 }
 
+export type SignInState = "idle" | "minting" | "exchanging" | "exchanged" | "signed-in";
+export type SignInEvent = FactoryWebViewMessage | { readonly type: "minted" };
+export type SignInAction = "mint" | "rejected" | "exchange-failed" | "none";
+
+const IDLE_NONE = { action: "none" } as const;
+
 /**
- * Sign in only when the WebView is unauthenticated: on the pair page or after a 401 from
- * the status endpoint. A second unauthenticated signal after a sign-in attempt is
- * "failed", so the screen shows Retry instead of minting again.
+ * One sign-in per unauthenticated signal. idle -> minting -> exchanging (credential
+ * injected) -> exchanged (cookie set) -> signed-in (landed on /factory). A second
+ * unauthenticated signal while exchanged is "rejected": the server took the credential but
+ * the WebView is still unauthenticated, so Retry replaces a loop. Messages count only when
+ * the WebView's top frame (eventUrl) is on the server's origin.
  */
-export function signInDecision(
-  message: FactoryWebViewMessage,
+export function nextSignIn(
+  state: SignInState,
+  event: SignInEvent,
+  eventUrl: string,
   httpBaseUrl: string,
-  alreadyAttempted: boolean,
-): "sign-in" | "failed" | "ignore" {
-  let unauthenticated = false;
-  if (message.type === "unauthorized") {
-    unauthenticated = true;
-  } else if (message.type === "location") {
+): { readonly state: SignInState; readonly action: SignInAction } {
+  if (event.type === "minted") {
+    return { state: state === "minting" ? "exchanging" : state, ...IDLE_NONE };
+  }
+  const serverOrigin = originOf(httpBaseUrl);
+  if (serverOrigin === null || originOf(eventUrl) !== serverOrigin) return { state, ...IDLE_NONE };
+
+  if (event.type === "exchange") {
+    if (state !== "exchanging") return { state, ...IDLE_NONE };
+    return event.ok
+      ? { state: "exchanged", ...IDLE_NONE }
+      : { state: "idle", action: "exchange-failed" };
+  }
+
+  let href: URL | null = null;
+  if (event.type === "location") {
     try {
-      const href = new URL(message.href);
-      unauthenticated =
-        href.origin === originOf(httpBaseUrl) &&
-        (href.pathname === "/pair" || href.pathname === "/pair/");
+      href = new URL(event.href);
     } catch {
-      unauthenticated = false;
+      return { state, ...IDLE_NONE };
     }
   }
-  if (!unauthenticated) return "ignore";
-  return alreadyAttempted ? "failed" : "sign-in";
+  if (href !== null && href.origin === serverOrigin && /^\/factory(\/|$)/.test(href.pathname)) {
+    return { state: state === "exchanged" ? "signed-in" : state, ...IDLE_NONE };
+  }
+  const unauthenticated =
+    event.type === "unauthorized" ||
+    (href !== null &&
+      href.origin === serverOrigin &&
+      (href.pathname === "/pair" || href.pathname === "/pair/"));
+  if (!unauthenticated) return { state, ...IDLE_NONE };
+  if (state === "minting" || state === "exchanging") return { state, ...IDLE_NONE };
+  if (state === "exchanged") return { state: "idle", action: "rejected" };
+  return { state: "minting", action: "mint" };
 }
 
 async function request(fetchFn: FactoryFetch, url: string, init: RequestInit) {

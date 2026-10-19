@@ -992,7 +992,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     Factory: createNativeStackScreen({
       screen: FactoryScreen,
       linking: "factory",
-      options: { title: "Factory" },
+      options: { ...SOLID_HEADER_OPTIONS, title: "Factory" },
     }),
   },
 });
