@@ -1,5 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Exercise synchronous spawn failures at the native probe boundary.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -39,9 +37,13 @@ import {
   type WindowsShellEnvironmentReader,
 } from "./shell.ts";
 
+const nativeProbe = vi.hoisted(() => ({
+  execFile: vi.fn<typeof import("node:child_process").execFile>(),
+}));
+
 vi.mock("node:child_process", async (importOriginal) => {
-  const original = await importOriginal<typeof NodeChildProcess>();
-  return { ...original, execFile: vi.fn(original.execFile) };
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, execFile: nativeProbe.execFile.mockImplementation(original.execFile) };
 });
 
 const withWindowsEnvironmentMocks = <A, E, R>(
@@ -256,7 +258,7 @@ describe("readEnvironmentFromWindowsShell", () => {
   effectIt.layer(NodeServices.layer)("synchronous spawn failures", (it) => {
     it.effect("tries both shells and preserves baseline PATH repair", () =>
       Effect.gen(function* () {
-        const execFile = vi.mocked(NodeChildProcess.execFile);
+        const execFile = nativeProbe.execFile;
         execFile.mockImplementationOnce(() => {
           throw new Error("spawn EPERM");
         });
@@ -274,7 +276,7 @@ describe("readEnvironmentFromWindowsShell", () => {
             "powershell.exe",
           ]);
         } finally {
-          execFile.mockReset();
+          execFile.mockClear();
         }
       }),
     );
