@@ -13,6 +13,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
 prepareProviderAuthDelivery();
@@ -64,11 +65,13 @@ export const startup = Promise.all([
     if (!chunkLoadFailed) clearChunkReloadGuard();
     ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <React.StrictMode>
-        {ManagedAuthShell && clerkPublishableKey ? (
-          <ManagedAuthShell publishableKey={clerkPublishableKey}>{app}</ManagedAuthShell>
-        ) : (
-          app
-        )}
+        <AppAtomRegistryProvider>
+          {ManagedAuthShell && clerkPublishableKey ? (
+            <ManagedAuthShell publishableKey={clerkPublishableKey}>{app}</ManagedAuthShell>
+          ) : (
+            app
+          )}
+        </AppAtomRegistryProvider>
       </React.StrictMode>,
     );
   })
