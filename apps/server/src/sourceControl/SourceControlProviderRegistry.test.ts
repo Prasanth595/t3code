@@ -1,4 +1,4 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, type RepositoryIdentity } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
@@ -641,28 +641,49 @@ it.effect("asks again once Settings change", () =>
   }),
 );
 
-it.effect("marks a GitHub Enterprise identity GitHub through the real discovery", () =>
-  Effect.gen(function* () {
-    const remoteUrl = "git@githubenterprise.dev.example.com:team/workspace.git";
-    const registry = yield* makeRegistry({
-      remotes: [{ name: "origin", url: remoteUrl }],
-      githubApi: {
-        credential: (host) =>
-          Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` }),
-      },
-    });
-    const github = yield* registry.get(SourceControlProviderKind.make("github"));
-    const refined = yield* github.refineRepositoryIdentity!({
-      identity: {
-        canonicalKey: "githubenterprise.dev.example.com/team/workspace",
-        locator: { source: "git-remote", remoteName: "origin", remoteUrl },
+it.effect(
+  "refines an Enterprise identity by credentials without claiming unknown or Forgejo hosts",
+  () =>
+    Effect.gen(function* () {
+      const identity: RepositoryIdentity = {
+        canonicalKey: "git.corp.example/team/workspace",
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: "git@git.corp.example:team/workspace.git",
+        },
         rootPath: "/repo",
         displayName: "team/workspace",
         provider: "unknown",
-      },
-      resolveContext: (input) =>
-        registry.resolveHandle(input).pipe(Effect.map((handle) => handle.context)),
-    });
-    assert.strictEqual(refined.provider, "github");
-  }),
+      };
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: identity.locator.remoteUrl }],
+        githubApi: {
+          credential: (host) =>
+            host === "git.corp.example"
+              ? Effect.succeed({
+                  token: Redacted.make("token"),
+                  fingerprint: `${host}:fingerprint`,
+                })
+              : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+        },
+      });
+      const github = yield* registry.get(SourceControlProviderKind.make("github"));
+      const refine = (candidate: RepositoryIdentity) =>
+        github.refineRepositoryIdentity?.({
+          identity: candidate,
+          resolveContext: (input) =>
+            registry.resolveHandle(input).pipe(Effect.map((handle) => handle.context)),
+        }) ?? Effect.succeed(candidate);
+
+      assert.deepStrictEqual(yield* refine(identity), { ...identity, provider: "github" });
+      const unclaimed = {
+        ...identity,
+        canonicalKey: "code.corp.example/team/workspace",
+        locator: { ...identity.locator, remoteUrl: "git@code.corp.example:team/workspace.git" },
+      };
+      assert.deepStrictEqual(yield* refine(unclaimed), unclaimed);
+      const forgejo = { ...identity, provider: "forgejo" };
+      assert.deepStrictEqual(yield* refine(forgejo), forgejo);
+    }),
 );
