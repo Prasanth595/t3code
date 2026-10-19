@@ -66,10 +66,8 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
     const handler = (event: KeyboardEvent) => {
       const target = event.target;
       if (
-        target instanceof Element &&
-        target !== document.body &&
-        !drawerRef.current?.contains(target) &&
-        !composerFormRef.current?.contains(target)
+        !(target instanceof Node) ||
+        (!drawerRef.current?.contains(target) && !composerFormRef.current?.contains(target))
       ) {
         return;
       }
