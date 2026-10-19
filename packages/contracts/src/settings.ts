@@ -207,7 +207,7 @@ const OTHER_MODIFIER_LABELS: Record<SnapShotModifier, string> = {
 };
 
 export function snapShotModifierPairLabel(modifier: SnapShotModifier, apple: boolean): string {
-  // A pair is both physical keys held together, so name each side; "Shift + Shift" reads as a double tap.
+  // "Shift + Shift" reads as a double tap; name each physical side instead.
   const label = (apple ? APPLE_MODIFIER_LABELS : OTHER_MODIFIER_LABELS)[modifier];
   return `Left ${label} + Right ${label}`;
 }
