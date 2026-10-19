@@ -941,10 +941,11 @@ export const layer: Layer.Layer<
             input.session.subscribeEvents === undefined
               ? { events: input.session.events, close: Effect.void }
               : yield* input.session.subscribeEvents;
+          const closeEventSubscription = yield* Effect.cached(eventSubscription.close);
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
-            Effect.onError(() => eventSubscription.close),
+            Effect.onError(() => closeEventSubscription),
             Effect.mapError(
               (cause) =>
                 new RunExecutionStartError({
@@ -1385,8 +1386,12 @@ export const layer: Layer.Layer<
                   ),
                 ),
             ),
-            Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(closeEventSubscription),
             Effect.forkDetach,
+          );
+          // An unstarted fiber skips its finalizer when interrupted.
+          const stopProviderEvents = Fiber.interrupt(providerEventFiber).pipe(
+            Effect.ensuring(closeEventSubscription),
           );
 
           // A provider turn is a sign that the session is still alive. Keep
@@ -1437,7 +1442,7 @@ export const layer: Layer.Layer<
               ? Exit.succeed(true)
               : yield* Effect.exit(input.shouldStartProviderTurn());
           if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-            yield* Fiber.interrupt(providerEventFiber);
+            yield* stopProviderEvents;
             return;
           }
 
@@ -1462,7 +1467,7 @@ export const layer: Layer.Layer<
                 runId: input.run.id,
                 cause,
               }).pipe(
-                Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                Effect.andThen(stopProviderEvents),
                 Effect.andThen(Ref.get(latestProviderThread)),
                 Effect.flatMap((providerThread) =>
                   Ref.get(latestTurnItemOrdinal).pipe(
