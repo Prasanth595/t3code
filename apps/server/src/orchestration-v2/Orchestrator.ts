@@ -6941,11 +6941,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
+    // A wake from the child's own work, such as a finished background command,
+    // has no sender, but its run still owes the parent a result. Monitor wakes
+    // report progress and never count as task work.
+    const wake = command.notification !== undefined;
     if (
       command.scheduledTaskId !== undefined ||
-      command.notification !== undefined ||
+      command.notification?.source.kind === "monitor" ||
       command.restartContinuationOfRunId !== undefined ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
+      (!wake && command.createdBy !== "user" && command.creationSource !== "mcp")
     )
       return;
     const pending = yield* Ref.get(events);
@@ -6971,7 +6975,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       child.lineage.relationshipToParent !== "subagent" ||
       parentThreadId === null ||
-      (command.createdBy !== "user" && command.senderThreadId !== parentThreadId)
+      (!wake && command.createdBy !== "user" && command.senderThreadId !== parentThreadId)
     )
       return;
     const run =
