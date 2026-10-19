@@ -2098,7 +2098,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ["catalog none", "first", null, "none", "auto"],
         ["user detailed", "first", "user", "detailed", "detailed"],
         ["project concise", "first", "project", "concise", "concise"],
-        ["session auto", "first", "sessionFlags", "auto", "auto"],
+        ["packaged defaults", "first", "packagedDefaults", "none", "auto"],
         ["resumed session none", "resume", "sessionFlags", "none", "none"],
         ["forked project concise", "fork", "project", "concise", "concise"],
       ] as const
@@ -2174,38 +2174,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           ],
         });
-        const layers: Array<CodexSchema.V2ConfigReadResponse__ConfigLayer> = [];
-        // Lower-priority preferences must not beat the effective config origin.
-        if (source === "project" || source === "sessionFlags") {
-          layers.push({
-            name: { type: "user", file: "/tmp/codex-home/config.toml" },
-            version: "user",
-            config: { model_reasoning_summary: "detailed" },
-          });
-        }
-        if (source !== null) {
-          layers.push({
-            name:
-              source === "user"
-                ? { type: "user", file: "/tmp/codex-home/config.toml" }
-                : source === "project"
-                  ? { type: "project", dotCodexFolder: "/workspace/.codex" }
-                  : { type: "sessionFlags" },
-            version: "effective",
-            config: { model_reasoning_summary: configured },
-          });
-        }
-        const effectiveLayer = layers.at(-1);
         const config: CodexSchema.V2ConfigReadResponse = {
           config: { model_reasoning_summary: configured },
-          layers,
           origins:
-            effectiveLayer === undefined
+            source === null
               ? {}
               : {
                   model_reasoning_summary: {
-                    name: effectiveLayer.name,
-                    version: effectiveLayer.version,
+                    name:
+                      source === "user"
+                        ? { type: "user", file: "/tmp/codex-home/config.toml" }
+                        : source === "project"
+                          ? { type: "project", dotCodexFolder: "/workspace/.codex" }
+                          : source === "packagedDefaults"
+                            ? { type: source, file: "/tmp/codex-package/config.toml" }
+                            : { type: source },
+                    version: "effective",
                   },
                 },
         };
@@ -2239,7 +2223,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 "/workspace",
                 "project preferences require the turn working directory",
               );
-              return { ...config, layers: params.includeLayers ? layers : null };
+              return config;
             }),
         );
         const providerThread =
