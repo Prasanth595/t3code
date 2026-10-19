@@ -8,6 +8,8 @@ import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -86,32 +88,146 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lists an OpenCode 2 workspace's own skills and commands from its server", () =>
+  it.effect(
+    "isolates workspace agents and keeps skills and commands when agent discovery fails",
+    () =>
+      Effect.gen(function* () {
+        serverStarts.length = 0;
+        const requested: Array<string> = [];
+        let failAgents = false;
+        const agentDirectories: Array<string | null> = [];
+        const server = HttpClient.make((request, url) => {
+          const directory = url.searchParams.get("location[directory]");
+          if (url.pathname === "/api/agent") agentDirectories.push(directory);
+          const responses = {
+            ...OPENCODE_2_RESPONSES,
+            ...OPENCODE_2_WORKSPACE_RESPONSES,
+            "/api/agent": {
+              status: failAgents ? 500 : 200,
+              contentType: "application/json",
+              body: JSON.stringify({
+                location: { directory },
+                data: [
+                  { id: "build", mode: "primary", hidden: false },
+                  {
+                    id: directory === "/work" ? "reviewer" : "writer",
+                    mode: "all",
+                    hidden: false,
+                  },
+                  { id: "internal", mode: "primary", hidden: true },
+                  { id: "explore", mode: "subagent", hidden: false },
+                ].map((agent) => ({
+                  ...agent,
+                  name: agent.id,
+                  request: { settings: {}, headers: {}, body: {} },
+                  permissions: [],
+                })),
+              }),
+            },
+          };
+          return replayOpenCodeServer(responses, "secret", requested).execute(request);
+        });
+        const instance = yield* create(
+          { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+          server,
+        );
+
+        const global = structuredClone(yield* instance.snapshot.getSnapshot);
+        const workspace = yield* instance.snapshotForCwd!("/work");
+        assert.includeMembers(
+          workspace.skills.map((skill) => skill.name),
+          ["plum", "opencode"],
+        );
+        assert.deepStrictEqual(
+          workspace.slashCommands.map((command) => command.name),
+          ["compact", "init", "review", "bee"],
+        );
+        assert.include(requested, "/api/skill");
+        const choices = (snapshot: typeof workspace) => {
+          const descriptor = snapshot.optionDescriptors?.find((option) => option.id === "agent");
+          return descriptor?.type === "select"
+            ? descriptor.options.map((option) => option.id)
+            : undefined;
+        };
+        assert.deepStrictEqual(choices(workspace), ["build", "reviewer"]);
+        assert.deepStrictEqual(choices(yield* instance.snapshotForCwd!("/other")), [
+          "build",
+          "writer",
+        ]);
+
+        failAgents = true;
+        const failed = yield* instance.snapshotForCwd!("/work");
+        assert.deepStrictEqual(failed.skills, workspace.skills);
+        assert.deepStrictEqual(failed.slashCommands, workspace.slashCommands);
+        assert.isUndefined(failed.optionDescriptors);
+        assert.deepStrictEqual(failed.models, global.models);
+
+        failAgents = false;
+        assert.deepStrictEqual(choices(yield* instance.snapshotForCwd!("/work")), [
+          "build",
+          "reviewer",
+        ]);
+        assert.deepStrictEqual(agentDirectories, ["/work", "/other", "/work", "/work"]);
+        assert.deepStrictEqual(yield* instance.snapshot.getSnapshot, global);
+        assert.deepStrictEqual(serverStarts, []);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps workspace skills and commands before the deadline when agents hang", () =>
     Effect.gen(function* () {
       serverStarts.length = 0;
-      const requested: Array<string> = [];
-      const server = replayOpenCodeServer(
-        { ...OPENCODE_2_RESPONSES, ...OPENCODE_2_WORKSPACE_RESPONSES },
-        "secret",
-        requested,
-      );
+      const agentRequested = yield* Deferred.make<void>();
+      let commandReads = 0;
+      const server = HttpClient.make((request, url) => {
+        if (url.pathname === "/api/agent") {
+          return Deferred.succeed(agentRequested, undefined).pipe(Effect.andThen(Effect.never));
+        }
+        if (url.pathname === "/api/command") commandReads++;
+        const responses = {
+          ...OPENCODE_2_RESPONSES,
+          ...OPENCODE_2_WORKSPACE_RESPONSES,
+          // No scan events: discovery must use the supported ten-second fallback.
+          "/api/event": { status: 200, contentType: "text/event-stream", body: "" },
+          "/api/command":
+            commandReads === 1
+              ? {
+                  status: 200,
+                  contentType: "application/json",
+                  body: '{"location":{"directory":"/work"},"data":[]}',
+                }
+              : OPENCODE_2_WORKSPACE_RESPONSES["/api/command"],
+        };
+        return replayOpenCodeServer(responses, "secret").execute(request);
+      });
       const instance = yield* create(
         { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
         server,
       );
-
-      const workspace = yield* instance.snapshotForCwd!("/work");
-      assert.includeMembers(
+      const startedAt = yield* Clock.currentTimeMillis;
+      const pending = yield* instance.snapshotForCwd!("/work").pipe(
+        Effect.flatMap((workspace) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((completedAt) => ({ workspace, elapsed: completedAt - startedAt })),
+          ),
+        ),
+        Effect.forkChild,
+      );
+      yield* Deferred.await(agentRequested);
+      yield* TestClock.adjust("20 seconds");
+      const { workspace, elapsed } = yield* Fiber.join(pending);
+      assert.isBelow(elapsed, 20_000);
+      assert.strictEqual(commandReads, 2);
+      assert.deepStrictEqual(
         workspace.skills.map((skill) => skill.name),
-        ["plum", "opencode"],
+        ["opencode", "plum", "report"],
       );
       assert.deepStrictEqual(
         workspace.slashCommands.map((command) => command.name),
         ["compact", "init", "review", "bee"],
       );
-      assert.include(requested, "/api/skill");
+      assert.isUndefined(workspace.optionDescriptors);
       assert.deepStrictEqual(serverStarts, []);
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect("answers capability reads without waiting on an unreachable server", () =>
