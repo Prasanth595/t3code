@@ -362,6 +362,9 @@ patchedDependencies:
   # skip, the fingerprint silently drops every Expo native module and OTAs reach stale binaries.
   "@expo/fingerprint@0.21.5": patches/@expo__fingerprint@0.21.5.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
+  # `focusEmulation: false` launch option: lets the server browser hide previews nobody
+  # watches, which Playwright's focus emulation otherwise keeps painting (ServerBrowserContexts.test.ts).
+  playwright-core@1.60.0: patches/playwright-core@1.60.0.patch
 
 peerDependencyRules:
   allowAny:
