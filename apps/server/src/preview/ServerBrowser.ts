@@ -888,6 +888,7 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
+    pendingTabs.delete(key);
     reportLiveTabs();
     // A popup is already loading its own URL, and the desktop loads its tab's.
     if (!adopted && !desktop && snapshot.navStatus._tag === "Loading") {
