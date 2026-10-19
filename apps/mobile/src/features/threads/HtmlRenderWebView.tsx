@@ -51,7 +51,8 @@ function postTheme(view: WebView<object> | null, theme: HtmlRenderTheme) {
 
 const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
-const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
+// Android can expand innerWidth to the content width; clientWidth stays at the viewport width.
+const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>d.clientWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
 
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
@@ -136,10 +137,9 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
-        // Android only: the page holds vertical drags until it reaches an edge,
-        // then hands them to the feed (patches/react-native-webview). A page
-        // that only overflows sideways leaves vertical drags to the feed.
-        nestedScrollEnabled={props.nested && overflow.y}
+        // Android's patched WebView keeps horizontal gestures even with vertical
+        // drift, and hands vertical drags to the feed at the page's scroll edges.
+        nestedScrollEnabled={props.nested && scrollable}
         overScrollMode={props.nested ? "never" : "always"}
         onShouldStartLoadWithRequest={(request) =>
           request.isTopFrame === false ||
