@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   resolveInlineCodeFileLinkMeta,
@@ -271,10 +271,16 @@ describe("resolveInlineCodeFileLinkMeta", () => {
 describe("withMarkdownFileLinkPath", () => {
   it("points every path field at the new file and keeps the position", () => {
     const meta = resolveInlineCodeFileLinkMeta("docs/plan.md:12:3", "/repo");
-    expect(meta).not.toBeNull();
-    expect(withMarkdownFileLinkPath(meta!, "/repo/BudgetLens/docs/plan.md", "/repo")).toEqual(
-      resolveMarkdownFileLinkMeta("/repo/BudgetLens/docs/plan.md:12:3", "/repo"),
-    );
+    assert(meta);
+    expect(withMarkdownFileLinkPath(meta, "/repo/BudgetLens/docs/plan.md", "/repo")).toEqual({
+      filePath: "/repo/BudgetLens/docs/plan.md",
+      targetPath: "/repo/BudgetLens/docs/plan.md:12:3",
+      displayPath: "repo/BudgetLens/docs/plan.md:12:3",
+      workspaceRelativePath: "BudgetLens/docs/plan.md",
+      basename: "plan.md",
+      line: 12,
+      column: 3,
+    });
   });
 });
 
