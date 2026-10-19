@@ -174,15 +174,18 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
 /**
- * Palettes published by the primary environment's machine. Only the primary
- * environment: a client follows the machine it is anchored to, not every
- * environment it happens to be connected to. Null until the first config
- * arrives, so "not connected yet" is not mistaken for "publishes nothing".
+ * Only the primary environment supplies palettes. Null means its published
+ * set is still unknown; an empty set authoritatively clears the reload cache.
  */
 export const primaryServerEnvironmentThemesAtom = Atom.make(
   (get): ReadonlyArray<EnvironmentTheme> | null => {
+    if (get(primaryEnvironmentIdAtom) === null) return EMPTY_ENVIRONMENT_THEMES;
     const config = get(primaryServerConfigAtom);
-    return config === null ? null : (config.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES);
+    if (config === null) return null;
+    return (
+      config.environmentThemes ??
+      (config.environment.capabilities.environmentThemes === true ? null : EMPTY_ENVIRONMENT_THEMES)
+    );
   },
 ).pipe(Atom.withLabel("web-primary-server-environment-themes"));
 

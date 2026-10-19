@@ -1,5 +1,28 @@
-import type { EnvironmentTheme } from "@t3tools/contracts";
+import {
+  resolveServerConfigValue,
+  type ServerConfigProjection,
+} from "@t3tools/client-runtime/state/server";
+import {
+  EnvironmentId,
+  type EnvironmentTheme,
+  type ServerConfig,
+  type ServerConfigStreamEvent,
+} from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { type Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { primaryServerConfigAtom, primaryServerEnvironmentThemesAtom } from "../state/server";
+
+// The reducer is package-private; load it for this cross-package behavior test.
+const { applyServerConfigProjection, withoutEnvironmentThemes } = await vi.importActual<{
+  applyServerConfigProjection: (
+    current: Option.Option<ServerConfigProjection>,
+    event: ServerConfigStreamEvent,
+  ) => Option.Option<ServerConfigProjection>;
+  withoutEnvironmentThemes: (config: ServerConfig) => ServerConfig;
+}>("../../../../packages/client-runtime/src/state/serverConfigProjection");
 
 const NIGHTFALL_THEME = {
   id: "nightfall",
@@ -14,6 +37,12 @@ const LIGHT_THEME = {
   appearance: "light",
   canvas: "#eff1f5",
 } as const satisfies EnvironmentTheme;
+
+const PRIMARY = EnvironmentId.make("primary");
+const CONFIG = {
+  environment: { capabilities: { environmentThemes: true } },
+} as unknown as ServerConfig;
+const SNAPSHOT = { version: 1, type: "snapshot", config: CONFIG } as const;
 
 async function setupThemeSync(
   mode: "dark" | "system" = "dark",
@@ -53,7 +82,7 @@ async function setupThemeSync(
   });
   vi.stubGlobal("requestAnimationFrame", vi.fn());
 
-  let published = initialPublished;
+  let registry: AtomRegistry.AtomRegistry;
   let readSnapshot: (() => unknown) | undefined;
   const effects: Array<() => void> = [];
   const lastPublished: { current: ReadonlyArray<EnvironmentTheme> | null } = { current: null };
@@ -66,8 +95,11 @@ async function setupThemeSync(
       return getSnapshot();
     },
   }));
-  vi.doMock("@effect/atom-react", () => ({ useAtomValue: () => published }));
-  vi.doMock("../state/server", () => ({ primaryServerEnvironmentThemesAtom: {} }));
+  vi.doMock("@effect/atom-react", () => ({
+    useAtomValue: <A>(atom: Atom.Atom<A>) => registry.get(atom),
+  }));
+  // Module resets reload the hook; keep it on the same real atoms as this harness.
+  vi.doMock("../state/server", () => ({ primaryServerEnvironmentThemesAtom }));
 
   const palette = await import("../themePalette");
   storage.set(palette.THEME_APPEARANCE_MODE_STORAGE_KEY, mode);
@@ -76,17 +108,37 @@ async function setupThemeSync(
   const flushEffects = () => {
     for (const effect of effects.splice(0)) effect();
   };
-  const publish = (themes: ReadonlyArray<EnvironmentTheme> | null) => {
-    published = themes;
-    useEnvironmentThemeSync();
-    flushEffects();
-    const theme = useTheme();
-    flushEffects();
-    return theme;
+  const publishConfig = (config: ServerConfig | null, primary: EnvironmentId | null = PRIMARY) => {
+    registry = AtomRegistry.make({
+      initialValues: [
+        [primaryEnvironmentIdAtom, primary],
+        [primaryServerConfigAtom, config],
+      ],
+    });
+    try {
+      useEnvironmentThemeSync();
+      flushEffects();
+      const theme = useTheme();
+      flushEffects();
+      return theme;
+    } finally {
+      registry.dispose();
+    }
   };
-  const theme = publish(published);
+  const publish = (themes: ReadonlyArray<EnvironmentTheme> | null) =>
+    publishConfig(themes === null ? null : { ...CONFIG, environmentThemes: themes });
+  const theme = publish(initialPublished);
 
-  return { publish, palette, root, styles, storage, theme, readSnapshot: () => readSnapshot?.() };
+  return {
+    publish,
+    publishConfig,
+    palette,
+    root,
+    styles,
+    storage,
+    theme,
+    readSnapshot: () => readSnapshot?.(),
+  };
 }
 
 afterEach(() => {
@@ -103,7 +155,7 @@ describe("published theme refresh", () => {
     { name: "updated palettes", themes: [LIGHT_THEME], selection: NIGHTFALL_THEME.id },
     { name: "no palettes", themes: [], selection: "system" },
   ])(
-    "keeps the reload cache until the first config publishes $name",
+    "keeps the reload cache until the theme event publishes $name",
     async ({ themes, selection }) => {
       const previous = await setupThemeSync();
       const previousCanvas = previous.styles.get(previous.palette.getThemeColorVariable("canvas"));
@@ -116,8 +168,37 @@ describe("published theme refresh", () => {
         previousCanvas,
       );
       expect(reloaded.publish(null).theme).toBe(NIGHTFALL_THEME.id);
+      const writeStorage = vi.spyOn(window.localStorage, "setItem");
+      const paint = vi.spyOn(reloaded.root.style, "setProperty");
+      const cached = reloaded.palette.getEnvironmentThemes();
+      const cachedConfig = withoutEnvironmentThemes({
+        ...CONFIG,
+        environmentThemes: [NIGHTFALL_THEME],
+      });
+      let projection: Option.Option<ServerConfigProjection> = Option.some({
+        config: cachedConfig,
+        latestEvent: { ...SNAPSHOT, config: cachedConfig },
+        source: "cache",
+      });
+      const syncProjection = () =>
+        reloaded.publishConfig(resolveServerConfigValue(Option.getOrNull(projection), null));
 
-      expect(reloaded.publish(themes).theme).toBe(selection);
+      expect.soft(syncProjection().theme).toBe(NIGHTFALL_THEME.id);
+      projection = applyServerConfigProjection(projection, SNAPSHOT);
+      expect.soft(syncProjection().theme).toBe(NIGHTFALL_THEME.id);
+      expect.soft(reloaded.palette.getEnvironmentThemes()).toBe(cached);
+      expect
+        .soft(reloaded.styles.get(reloaded.palette.getThemeColorVariable("canvas")))
+        .toBe(previousCanvas);
+      expect.soft(writeStorage).not.toHaveBeenCalled();
+      expect.soft(paint).not.toHaveBeenCalled();
+
+      projection = applyServerConfigProjection(projection, {
+        version: 1,
+        type: "environmentThemesUpdated",
+        payload: { themes },
+      });
+      expect(syncProjection().theme).toBe(selection);
       expect(reloaded.palette.getEnvironmentThemes().map((theme) => theme.id)).toEqual(
         themes.map((theme) => theme.id),
       );
@@ -139,7 +220,7 @@ describe("published theme refresh", () => {
     },
   );
 
-  it("does not rewrite storage or repaint for an unchanged first config or reconnect", async () => {
+  it("keeps an unchanged palette across reconnect, then clears it for a legacy server or no primary", async () => {
     const previous = await setupThemeSync();
     vi.resetModules();
     const reloaded = await setupThemeSync("dark", previous.storage, null);
@@ -148,14 +229,41 @@ describe("published theme refresh", () => {
     const cached = reloaded.palette.getEnvironmentThemes();
     const snapshot = reloaded.readSnapshot();
 
-    reloaded.publish([{ ...NIGHTFALL_THEME }]);
-    reloaded.publish(null);
-    reloaded.publish([{ ...NIGHTFALL_THEME }]);
+    let projection = applyServerConfigProjection(Option.none(), SNAPSHOT);
+    projection = applyServerConfigProjection(projection, {
+      version: 1,
+      type: "environmentThemesUpdated",
+      payload: { themes: [{ ...NIGHTFALL_THEME }] },
+    });
+    const syncProjection = () =>
+      reloaded.publishConfig(resolveServerConfigValue(Option.getOrNull(projection), null));
+    syncProjection();
+    reloaded.publishConfig(null);
+    projection = applyServerConfigProjection(projection, SNAPSHOT);
+    syncProjection();
 
     expect(reloaded.palette.getEnvironmentThemes()).toBe(cached);
     expect(reloaded.readSnapshot()).toBe(snapshot);
     expect(writeStorage).not.toHaveBeenCalled();
     expect(paint).not.toHaveBeenCalled();
+
+    projection = applyServerConfigProjection(projection, {
+      ...SNAPSHOT,
+      config: {
+        ...CONFIG,
+        environment: { ...CONFIG.environment, capabilities: { repositoryIdentity: false } },
+      },
+    });
+    expect(syncProjection().theme).toBe("system");
+    expect(reloaded.palette.getEnvironmentThemes()).toEqual([]);
+
+    reloaded.publish([NIGHTFALL_THEME]);
+    expect(reloaded.publishConfig(null, null).theme).toBe("system");
+    expect(reloaded.palette.getEnvironmentThemes()).toEqual([]);
+    expect(reloaded.root.dataset.themeId).toBeUndefined();
+    vi.resetModules();
+    const nextReload = await setupThemeSync("dark", previous.storage, null);
+    expect(nextReload.theme.theme).toBe("system");
   });
 
   it.each(["dark", "system"] as const)(

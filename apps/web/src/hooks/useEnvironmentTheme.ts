@@ -95,7 +95,7 @@ export function useEnvironmentThemeSync(): void {
   const lastPublished = useRef<ReadonlyArray<EnvironmentTheme> | null>(null);
 
   useEffect(() => {
-    // Keep the reload cache until config arrives; an actual empty set clears it.
+    // Keep the reload cache while themes are unknown; an empty set clears it.
     if (published === null) return;
     // Every reconnect snapshot delivers a fresh but usually identical array;
     // regenerating palettes and repainting the document for it is exactly the
