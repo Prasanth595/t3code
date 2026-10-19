@@ -1857,17 +1857,47 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Effect.void;
 
         const nativeLogging = options.nativeLogging?.(input.threadId);
-        const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
+        const handleRuntimeTerminationAtGeneration = (
+          runtimeGeneration: number,
+          error: EffectAcpErrors.AcpError,
+        ) =>
           runRuntimeCallbackAtGeneration(
             runtimeGeneration,
-            Ref.set(runtimeRestartRequired, true),
+            Effect.gen(function* () {
+              yield* Ref.set(runtimeRestartRequired, true);
+              const context = yield* Ref.get(activeTurn);
+              // In-flight prompts report termination through their existing failure path.
+              if (context === null || !context.promptSettled || context.finalized) return;
+              yield* quarantineStoppedRun();
+              yield* cancelPendingRuntimeRequests();
+              const terminatedScope = runtimeScope;
+              // Return from the transport callback before closing its own scope.
+              yield* Effect.gen(function* () {
+                if (terminatedScope !== undefined) {
+                  yield* Scope.close(terminatedScope, Exit.fail(error));
+                }
+                yield* runRuntimeCallbackAtGeneration(
+                  runtimeGeneration,
+                  Effect.gen(function* () {
+                    if (context.finalized) return;
+                    yield* terminalizeOpenRunOwnedItems(context, { terminalizeSubagents: true });
+                    yield* finalizeTurn(
+                      context,
+                      "failed",
+                      flavor.promptFailure?.(error) ??
+                        makeProviderFailure({ cause: error, class: "provider_error" }),
+                    );
+                  }),
+                );
+              }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+            }),
           ).pipe(Effect.asVoid);
         const makeRuntimeInput = (
           runtimeGeneration: number,
           mcpContext: AcpMcpContext,
           resumeSessionId?: string,
-          onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
-            handleRuntimeTerminationAtGeneration(runtimeGeneration),
+          onTermination: AcpAdapterV2RuntimeInput["onTermination"] = (error) =>
+            handleRuntimeTerminationAtGeneration(runtimeGeneration, error),
         ): AcpAdapterV2RuntimeInput => {
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
@@ -5629,7 +5659,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               candidateLifecycle,
               (current): readonly [Effect.Effect<void>, CandidateLifecycle] => {
                 if (current._tag === "Committed") {
-                  return [handleRuntimeTerminationAtGeneration(replacementGeneration), current];
+                  return [
+                    handleRuntimeTerminationAtGeneration(replacementGeneration, error),
+                    current,
+                  ];
                 }
                 return [
                   Effect.void,
@@ -6391,6 +6424,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           const restartRequired = yield* Ref.get(runtimeRestartRequired);
           if (!restartRequired) return false;
+          yield* runtimeCallbackPermit.withPermit(
+            Effect.gen(function* () {
+              yield* quarantineNativeTransportAtGeneration(
+                yield* Ref.get(runtimeCallbackGeneration),
+              );
+              yield* advanceRuntimeCallbackGeneration;
+              yield* quarantineStoppedRun();
+              yield* Ref.set(endedBackgroundTaskIds, new Set());
+            }),
+          );
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
