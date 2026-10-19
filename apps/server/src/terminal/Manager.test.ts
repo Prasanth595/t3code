@@ -248,6 +248,9 @@ interface CreateManagerOptions {
   >;
   subprocessPollIntervalMs?: number;
   processKillGraceMs?: number;
+  registerTerminalProcesses?: Parameters<
+    typeof TerminalManager.makeWithOptions
+  >[0]["registerTerminalProcesses"];
   maxRetainedInactiveSessions?: number;
   historyByteLimit?: number;
   ptyAdapter?: FakePtyAdapter;
@@ -298,6 +301,9 @@ const createManager = (
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
         processKillGraceMs: options.processKillGraceMs ?? 1,
+        ...(options.registerTerminalProcesses !== undefined
+          ? { registerTerminalProcesses: options.registerTerminalProcesses }
+          : {}),
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
           : {}),
@@ -1068,60 +1074,11 @@ it.layer(
     }),
   );
 
-  it.effect("emits subprocess activity events when child-process state changes", () =>
-    Effect.gen(function* () {
-      let inspect: {
-        readonly hasRunningSubprocess: boolean;
-        readonly childCommand: string | null;
-        readonly processIds: ReadonlyArray<number>;
-      } = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-      const { manager, getEvents } = yield* createManager(5, {
-        subprocessInspector: () => Effect.succeed(inspect),
-        subprocessPollIntervalMs: 20,
-      });
-
-      yield* manager.open(openInput());
-      expect((yield* getEvents).some((event) => event.type === "activity")).toBe(false);
-
-      // A child starts after input; an idle shell is not snapshotted again until then.
-      inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100, 101] };
-      yield* manager.write({
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        data: "vim\r",
-      });
-      yield* waitFor(
-        Effect.map(getEvents, (events) =>
-          events.some(
-            (event) =>
-              event.type === "activity" &&
-              event.hasRunningSubprocess === true &&
-              event.label === "vim",
-          ),
-        ),
-        "1200 millis",
-      );
-
-      inspect = { hasRunningSubprocess: false, childCommand: null, processIds: [] };
-      yield* waitFor(
-        Effect.map(getEvents, (events) =>
-          events.some(
-            (event) =>
-              event.type === "activity" &&
-              event.hasRunningSubprocess === false &&
-              event.label === "Terminal 1",
-          ),
-        ),
-        "1200 millis",
-      );
-    }),
-  );
-
-  it.effect("skips process snapshots while an idle shell gets no input or output", () =>
+  it.effect("skips snapshots only when every terminal is quiet and wakes on input or output", () =>
     Effect.gen(function* () {
       let snapshots = 0;
       let processes: Array<{ pid: number; ppid: number; name: string }> = [];
-      const { manager, ptyAdapter } = yield* createManager(5, {
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
         processKillGraceMs: 0,
         subprocessPollIntervalMs: 1_000,
         processTable: Effect.sync(() => {
@@ -1129,57 +1086,110 @@ it.layer(
           return processes;
         }),
       }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      const events = yield* Queue.unbounded<TerminalEvent>();
+      const activity = yield* Queue.unbounded<Extract<TerminalEvent, { type: "activity" }>>();
+      const output = yield* Deferred.make<void>();
       const unsubscribe = yield* manager.subscribe((event) =>
-        Queue.offer(events, event).pipe(Effect.asVoid),
+        event.type === "activity"
+          ? Queue.offer(activity, event).pipe(Effect.asVoid)
+          : event.type === "output"
+            ? Deferred.succeed(output, undefined).pipe(Effect.asVoid)
+            : Effect.void,
       );
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
-      const takeEvent = Effect.fn(function* (type: TerminalEvent["type"]) {
-        while (true) {
-          const event = yield* Queue.take(events);
-          if (event.type === type) return event;
-        }
-      });
-
       yield* manager.open(openInput());
-      const shell = ptyAdapter.processes[0]!;
-      const shellOnly = [{ pid: shell.pid, ppid: 1, name: "zsh" }];
-      processes = shellOnly;
+      yield* manager.open(openInput({ terminalId: "second" }));
+      const [first, second] = ptyAdapter.processes;
+      const shells = ptyAdapter.processes.map(({ pid }) => ({ pid, ppid: 1, name: "zsh" }));
+      processes = shells;
 
-      // Two snapshots confirm the shell is idle, then polling stops snapshotting.
-      yield* TestClock.adjust("5 seconds");
-      assert.equal(snapshots, 2);
-
-      // Output resumes snapshots until two more find the shell idle again.
-      shell.emitData("prompt$ ");
-      yield* takeEvent("output");
-      yield* TestClock.adjust("3 seconds");
-      assert.equal(snapshots, 4);
-
-      // A command started from input is found, and polled every tick while it runs.
-      processes = [...shellOnly, { pid: 100, ppid: shell.pid, name: "sleep" }];
-      yield* manager.write({
-        threadId: "thread-1",
-        terminalId: DEFAULT_TERMINAL_ID,
-        data: "sleep 9\r",
-      });
       yield* TestClock.adjust("1 second");
-      const started = yield* takeEvent("activity");
-      assert.isTrue(started.type === "activity" && started.hasRunningSubprocess);
+      assert.equal(snapshots, 1);
+      yield* TestClock.adjust("1 second");
+      assert.equal(snapshots, 2);
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(snapshots, 2);
+      expect((yield* getEvents).filter((event) => event.type === "activity")).toEqual([]);
+
+      processes = [...shells, { pid: 100, ppid: second!.pid, name: "vim" }];
+      yield* manager.write({ threadId: "thread-1", terminalId: "second", data: "vim\r" });
+      yield* TestClock.adjust("1 second");
+      expect(yield* Queue.take(activity)).toMatchObject({
+        terminalId: "second",
+        hasRunningSubprocess: true,
+        label: "vim",
+      });
       yield* TestClock.adjust("2 seconds");
+      assert.equal(snapshots, 5);
+
+      processes = shells;
+      yield* TestClock.adjust("1 second");
+      expect(yield* Queue.take(activity)).toMatchObject({
+        terminalId: "second",
+        hasRunningSubprocess: false,
+        label: "second",
+      });
+      yield* TestClock.adjust("3 seconds");
       assert.equal(snapshots, 7);
 
-      // Its exit is seen at once, and the quiet shell stops being snapshotted again.
-      processes = shellOnly;
+      processes = [...shells, { pid: 101, ppid: first!.pid, name: "node" }];
+      first!.emitData("server started\r\n");
+      yield* Deferred.await(output);
       yield* TestClock.adjust("1 second");
-      const finished = yield* takeEvent("activity");
-      assert.isTrue(finished.type === "activity" && !finished.hasRunningSubprocess);
-      yield* TestClock.adjust("4 seconds");
-      assert.equal(snapshots, 9);
+      expect(yield* Queue.take(activity)).toMatchObject({
+        terminalId: DEFAULT_TERMINAL_ID,
+        hasRunningSubprocess: true,
+        label: "node",
+      });
+      assert.equal(snapshots, 8);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
 
-      // A quiet shell is still snapshotted on every 30th tick.
+  it.effect("discovers and registers a silent child within 30 quiet ticks", () =>
+    Effect.gen(function* () {
+      let snapshots = 0;
+      let processes: Array<{ pid: number; ppid: number; name: string }> = [];
+      const registered = yield* Deferred.make<{
+        readonly threadId: string;
+        readonly terminalId: string;
+        readonly processIds: ReadonlyArray<number>;
+      }>();
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 0,
+        subprocessPollIntervalMs: 1_000,
+        processTable: Effect.sync(() => {
+          snapshots += 1;
+          return processes;
+        }),
+        registerTerminalProcesses: (input) =>
+          input.processIds.includes(100)
+            ? Deferred.succeed(registered, input).pipe(Effect.asVoid)
+            : Effect.void,
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const activity = yield* Queue.unbounded<Extract<TerminalEvent, { type: "activity" }>>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "activity" ? Queue.offer(activity, event).pipe(Effect.asVoid) : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      processes = [{ pid: shell.pid, ppid: 1, name: "zsh" }];
+      yield* TestClock.adjust("2 seconds");
+      assert.equal(snapshots, 2);
+
+      processes = [...processes, { pid: 100, ppid: shell.pid, name: "node" }];
       yield* TestClock.adjust("30 seconds");
-      assert.equal(snapshots, 10);
+      assert.equal(snapshots, 3);
+      assert.isTrue(yield* Deferred.isDone(registered));
+      expect(yield* Deferred.await(registered)).toEqual({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        processIds: [shell.pid, 100],
+      });
+      expect(yield* Queue.take(activity)).toMatchObject({
+        terminalId: DEFAULT_TERMINAL_ID,
+        hasRunningSubprocess: true,
+        label: "node",
+      });
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
