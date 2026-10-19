@@ -531,10 +531,6 @@ function isBlockingRun(run: OrchestrationV2Run): boolean {
   );
 }
 
-/**
- * The usage-limited run the thread is waiting out, or null. Queued work waits
- * behind it like it waits behind an active run, until the thread is continued.
- */
 function limitBlockingRun(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -4716,9 +4712,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.dispatchMode,
         command.deliveryIntent,
       );
-      // Work that waits for the active run also waits out a usage limit, so a
-      // background wake cannot start a turn that hides the limit from recovery.
-      // It starts nothing yet, so it leaves the thread settled or snoozed.
+      // Queued work must preserve the failure for recovery and leave the
+      // thread snoozed or settled until it actually resumes.
       const limitedRun =
         dispatchMode.type === "queue_after_active" ? limitBlockingRun(projection) : null;
       if (projection.thread.settledOverride !== null && limitedRun === null) {
