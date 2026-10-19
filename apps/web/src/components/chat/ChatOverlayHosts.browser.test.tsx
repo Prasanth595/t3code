@@ -1,5 +1,6 @@
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { MessageId, RunId } from "@t3tools/contracts";
+import { MessageId, RunId, type OrchestrationV2Run } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -24,6 +25,7 @@ afterEach(async () => {
 });
 
 const messageId = MessageId.make("message-1");
+const STARTED_AT = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const dialog = () => document.querySelector('[role="alertdialog"]');
 
 describe("RevertConfirmHost", () => {
@@ -65,7 +67,7 @@ describe("RevertConfirmHost", () => {
     });
     const host = (
       checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
-      runs: ReadonlyArray<{ ordinal: number; status: "completed" | "failed" }> = [],
+      runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status" | "startedAt">> = [],
     ) => (
       <AppAtomRegistryProvider>
         <RevertConfirmHost
@@ -87,7 +89,10 @@ describe("RevertConfirmHost", () => {
     // A failed run is never captured, so the count becomes a lower bound.
     await act(() =>
       root.render(
-        host([...first, checkpoint(3, ["c.ts", "d.ts"])], [{ ordinal: 4, status: "failed" }]),
+        host(
+          [...first, checkpoint(3, ["c.ts", "d.ts"])],
+          [{ ordinal: 4, status: "failed", startedAt: STARTED_AT }],
+        ),
       ),
     );
     expect(dialog()?.textContent).toContain("The agent changed at least 3 files since then.");

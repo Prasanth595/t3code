@@ -1061,18 +1061,28 @@ export function countFilesChangedAfterTurnCount(
 
 /**
  * Whether the agent may have changed files after `turnCount` that no checkpoint recorded,
- * so `countFilesChangedAfterTurnCount` is a lower bound. Failed runs are never captured,
- * and missing or errored captures carry no file list.
+ * so `countFilesChangedAfterTurnCount` is a lower bound. A run that started but has no
+ * checkpoint either failed (never captured) or is still being captured after Stop, and
+ * missing or errored captures carry no file list.
  */
 export function hasUnrecordedChangesAfterTurnCount(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly runs: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["runs"][number], "ordinal" | "status">
+    Pick<OrchestrationV2ThreadProjection["runs"][number], "ordinal" | "status" | "startedAt">
   >;
   readonly turnCount: number;
 }): boolean {
+  const capturedTurnCounts = new Set(
+    input.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
+  );
   return (
-    input.runs.some((run) => run.ordinal > input.turnCount && run.status === "failed") ||
+    input.runs.some(
+      (run) =>
+        run.ordinal > input.turnCount &&
+        run.status !== "rolled_back" &&
+        run.startedAt !== null &&
+        !capturedTurnCounts.has(run.ordinal),
+    ) ||
     input.checkpoints.some(
       (checkpoint) =>
         checkpoint.checkpointTurnCount > input.turnCount &&

@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RunStatus,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
@@ -376,44 +377,30 @@ describe("V2 session presentation", () => {
       assistantMessageId: null,
       completedAt: "2026-06-20T00:00:00.000Z",
     });
+    const startedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const run = (ordinal: number, status: OrchestrationV2RunStatus, started = true) => ({
+      ordinal,
+      status,
+      startedAt: started ? startedAt : null,
+    });
     const ready = [checkpoint(1, "ready"), checkpoint(2, "ready")];
+    const unrecorded = (
+      checkpoints: ReadonlyArray<ReturnType<typeof checkpoint>>,
+      runs: ReadonlyArray<ReturnType<typeof run>>,
+      turnCount: number,
+    ) => hasUnrecordedChangesAfterTurnCount({ checkpoints, runs, turnCount });
 
-    expect(hasUnrecordedChangesAfterTurnCount({ checkpoints: ready, runs: [], turnCount: 0 })).toBe(
-      false,
-    );
-    // Failed runs are never captured.
+    expect(unrecorded(ready, [run(1, "completed"), run(2, "completed")], 0)).toBe(false);
+    // A failed run is never captured.
+    expect(unrecorded(ready, [run(3, "failed")], 1)).toBe(true);
+    // A stopped run whose capture has not landed yet.
+    expect(unrecorded(ready, [run(3, "interrupted")], 2)).toBe(true);
+    // Runs before the rewind point, discarded by an earlier rewind, or never started do not count.
     expect(
-      hasUnrecordedChangesAfterTurnCount({
-        checkpoints: ready,
-        runs: [{ ordinal: 3, status: "failed" }],
-        turnCount: 1,
-      }),
-    ).toBe(true);
-    // A failed run before the rewind point, or one an earlier rewind discarded, does not count.
-    expect(
-      hasUnrecordedChangesAfterTurnCount({
-        checkpoints: ready,
-        runs: [
-          { ordinal: 1, status: "failed" },
-          { ordinal: 3, status: "rolled_back" },
-        ],
-        turnCount: 1,
-      }),
+      unrecorded(ready, [run(1, "failed"), run(3, "rolled_back"), run(4, "cancelled", false)], 1),
     ).toBe(false);
-    expect(
-      hasUnrecordedChangesAfterTurnCount({
-        checkpoints: [...ready, checkpoint(3, "error")],
-        runs: [],
-        turnCount: 2,
-      }),
-    ).toBe(true);
-    expect(
-      hasUnrecordedChangesAfterTurnCount({
-        checkpoints: [...ready, checkpoint(3, "stale")],
-        runs: [],
-        turnCount: 2,
-      }),
-    ).toBe(false);
+    expect(unrecorded([...ready, checkpoint(3, "error")], [], 2)).toBe(true);
+    expect(unrecorded([...ready, checkpoint(3, "stale")], [], 2)).toBe(false);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

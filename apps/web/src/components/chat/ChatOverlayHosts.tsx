@@ -187,7 +187,7 @@ export function BranchRestoreConfirmHost(props: {
   );
 }
 
-/** A failed or uncaptured run makes the checkpoint count a lower bound. */
+/** A run with no recorded checkpoint makes the count a lower bound. */
 function describeChangedFiles(count: number, hasUnrecordedChanges: boolean): string | null {
   if (count === 0) {
     return hasUnrecordedChanges ? "The agent may have changed files since then." : null;
@@ -213,7 +213,7 @@ export function RevertConfirmHost(props: {
   readonly threadKey: string;
   /** Read while open, so a checkpoint captured after opening still counts. */
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status" | "startedAt">>;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
