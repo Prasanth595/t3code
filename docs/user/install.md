@@ -182,12 +182,18 @@ at startup and adds its entries ahead of the `PATH` it was started with. The
 desktop app also reads a fixed set of session and configuration variables, such
 as `SSH_AUTH_SOCK` and `T3CODE_TELEMETRY_ENABLED`, but never secrets. Each login
 shell gets 5 seconds and must not wait for input; if yours does not answer, T3
-Code tries other shells, then falls back to the `PATH` it was started with.
+Code tries other shells, then on macOS `launchctl getenv PATH`, then falls back
+to the `PATH` it was started with.
 
 API keys exported only in `~/.zshrc` therefore reach agents only when T3 Code
 starts from that shell. Add them to a provider instance as environment variables
-marked sensitive, or set them where T3 Code starts. For the Linux background service, put them in a file only you
-can read, such as `~/.config/t3code/service.env` with mode `600`. Then run
+marked sensitive, or set them where T3 Code starts. Muse and Antigravity ignore
+keys T3 Code inherits, so set theirs on the instance. On macOS,
+`t3 service install` rewrites the background service's configuration, so use
+provider instances there too.
+
+For the Linux background service, put the variables in a file only you can
+read, such as `~/.config/t3code/service.env` with mode `600`. Then run
 `systemctl --user edit t3code.service`, add the lines below, and run
 `t3 service restart`:
 
