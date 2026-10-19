@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Hosted handoff test uses a real localhost listener without an OpenAI account.
 import * as NodeHttp from "node:http";
+import * as NodeNet from "node:net";
 import * as NodeEvents from "node:events";
 import * as NodePath from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
@@ -40,6 +41,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import { cancelCodexAuthCallback } from "./CodexAuthCallback.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
@@ -381,7 +383,7 @@ it.effect(
     const listeners = new Map<string, (...args: unknown[]) => void>();
     const revealed = Promise.withResolvers<void>();
     const loadURL = vi.fn(async (_url: string) => undefined);
-    const window = { loadURL };
+    const window = { loadURL, isDestroyed: () => false };
     const electronApp = {
       on: (name: string, listener: (...args: unknown[]) => void) =>
         Effect.sync(() => {
@@ -389,7 +391,8 @@ it.effect(
         }),
     } as unknown as ElectronApp.ElectronApp["Service"];
     const electronWindow = {
-      currentMainOrFirst: Effect.succeed(Option.some(window)),
+      waitForMain: Effect.succeed(window),
+      main: Effect.succeedSome(window),
       reveal: () => Effect.sync(() => revealed.resolve()),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     return Effect.gen(function* () {
@@ -666,9 +669,9 @@ it.effect.each(["window created", "startup cancelled"] as const)(
       const waitFinished = yield* Deferred.make<void>();
       const revealed = yield* Deferred.make<void>();
       const loadURL = vi.fn(async (_url: string) => undefined);
-      const window = { loadURL } as unknown as Electron.BrowserWindow;
+      const window = { loadURL, isDestroyed: () => false } as unknown as Electron.BrowserWindow;
       const electronWindow = {
-        currentMainOrFirst: Effect.succeedNone,
+        main: Effect.succeedSome(window),
         waitForMain: Deferred.succeed(waiting, undefined).pipe(
           Effect.andThen(Deferred.await(windowAvailable)),
           Effect.ensuring(Deferred.succeed(waitFinished, undefined)),
@@ -716,4 +719,164 @@ it.effect.each(["window created", "startup cancelled"] as const)(
           : [],
       );
     }),
+);
+
+it.effect(
+  "cancels a hosted sign-in and closes its callback listener with the configure scope",
+  () =>
+    Effect.gen(function* () {
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn() });
+      const port = yield* Effect.promise(async () => {
+        const server = NodeHttp.createServer();
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("address");
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        return address.port;
+      });
+      const authorizationUrl = new URL("https://auth.openai.com/api/accounts/authorize");
+      authorizationUrl.search = new URLSearchParams({
+        client_id: "dynamic_agent_client",
+        response_type: "code",
+        redirect_uri: `http://127.0.0.1:${port}/auth/callback`,
+        state: "c".repeat(43),
+        code_challenge_method: "S256",
+        code_challenge: "b".repeat(43),
+      }).toString();
+      const link = codexAuthHandoffUrl(
+        {
+          authorizationUrl: authorizationUrl.toString(),
+          returnUrl: "https://app.t3.codes/welcome",
+          environmentId: EnvironmentId.make("remote-one"),
+          instanceId: ProviderInstanceId.make("work"),
+          flowId: "cancelled-flow",
+        },
+        true,
+      );
+      const finishBrowser = yield* Deferred.make<void>();
+      yield* Effect.addFinalizer(() =>
+        Deferred.succeed(finishBrowser, undefined).pipe(
+          Effect.andThen(Effect.sync(() => cancelCodexAuthCallback(authorizationUrl.toString()))),
+        ),
+      );
+      const browserOpened = yield* Deferred.make<void>();
+      const browserClosed = yield* Deferred.make<void>();
+      const socketClosed = Promise.withResolvers<void>();
+      let socket: NodeNet.Socket | undefined;
+      yield* Effect.addFinalizer(() => Effect.sync(() => socket?.destroy()));
+      const shell = ElectronShell.ElectronShell.of({
+        openExternal: () =>
+          Deferred.succeed(browserOpened, undefined).pipe(
+            Effect.andThen(Deferred.await(finishBrowser)),
+            Effect.as(true),
+            Effect.ensuring(Deferred.succeed(browserClosed, undefined)),
+          ),
+        openSystemSettings: () => Effect.succeed(false),
+        copyText: () => Effect.void,
+      });
+      yield* Effect.gen(function* () {
+        const clerk = yield* DesktopClerk.DesktopClerk;
+        yield* clerk.configure;
+        yield* Deferred.await(browserOpened);
+        yield* Effect.promise(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              socket = NodeNet.connect(port, "127.0.0.1");
+              socket.once("connect", resolve);
+              socket.once("error", reject);
+              socket.once("close", () => socketClosed.resolve());
+            }),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell)),
+        Effect.provideService(HostProcess.Arguments, ["t3", link]),
+        Effect.provideService(ElectronApp.ElectronApp, {
+          whenReady: Effect.void,
+        } as unknown as ElectronApp.ElectronApp["Service"]),
+        Effect.provideService(
+          ElectronWindow.ElectronWindow,
+          {} as ElectronWindow.ElectronWindow["Service"],
+        ),
+        Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+      );
+      assert.isTrue(yield* Deferred.isDone(browserClosed));
+      yield* Effect.promise(() => socketClosed.promise);
+      yield* Effect.promise(async () => {
+        const server = NodeHttp.createServer();
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(port, "127.0.0.1", resolve);
+        });
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      });
+    }).pipe(Effect.scoped),
+);
+
+it.effect("serializes auth returns and avoids revealing a replaced window", () =>
+  Effect.gen(function* () {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn() });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const firstStarted = yield* Deferred.make<void>();
+    const finishFirst = Promise.withResolvers<void>();
+    const inspectedBoth = Promise.withResolvers<void>();
+    const loaded: string[] = [];
+    const revealed: Electron.BrowserWindow[] = [];
+    const first = {
+      isDestroyed: () => false,
+      loadURL: (url: string) => {
+        loaded.push(`first:${url}`);
+        Deferred.doneUnsafe(firstStarted, Effect.void);
+        return finishFirst.promise;
+      },
+    } as unknown as Electron.BrowserWindow;
+    const replacement = {
+      isDestroyed: () => false,
+      loadURL: async (url: string) => {
+        loaded.push(`replacement:${url}`);
+      },
+    } as unknown as Electron.BrowserWindow;
+    let current = first;
+    let inspections = 0;
+    const electronWindow = {
+      waitForMain: Effect.sync(() => current),
+      main: Effect.sync(() => {
+        if (++inspections === 2) inspectedBoth.resolve();
+        return Option.some(current);
+      }),
+      reveal: (window: Electron.BrowserWindow) =>
+        Effect.sync(() => {
+          revealed.push(window);
+        }),
+    } as unknown as ElectronWindow.ElectronWindow["Service"];
+    yield* Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      yield* clerk.configure;
+      listeners.get("open-url")!({ preventDefault: () => {} }, "t3code-dev://app/welcome");
+      yield* Deferred.await(firstStarted);
+      listeners.get("open-url")!(
+        { preventDefault: () => {} },
+        "t3code-dev://app/settings/providers?instanceId=second",
+      );
+      yield* Effect.yieldNow;
+      assert.deepEqual(loaded, ["first:t3code-dev://app/welcome"]);
+      current = replacement;
+      finishFirst.resolve();
+      yield* Effect.promise(() => inspectedBoth.promise);
+      assert.deepEqual(loaded, [
+        "first:t3code-dev://app/welcome",
+        "replacement:t3code-dev://app/settings/providers?instanceId=second",
+      ]);
+      assert.deepEqual(revealed, [replacement]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
+      Effect.provideService(HostProcess.Arguments, ["t3"]),
+      Effect.provideService(ElectronApp.ElectronApp, {} as ElectronApp.ElectronApp["Service"]),
+      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+    );
+  }),
 );

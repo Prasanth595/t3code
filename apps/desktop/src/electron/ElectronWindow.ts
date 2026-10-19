@@ -114,7 +114,6 @@ export class ElectronWindow extends Context.Service<
       options: Electron.BrowserWindowConstructorOptions,
     ) => Effect.Effect<Electron.BrowserWindow, ElectronWindowCreateError>;
     readonly main: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
-    /** Waits for a live main window, including one created later during startup. */
     readonly waitForMain: Effect.Effect<Electron.BrowserWindow>;
     readonly currentMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly focusedMainOrFirst: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
@@ -247,7 +246,7 @@ export const make = Effect.gen(function* () {
       Stream.filter(Option.isSome),
       Stream.map((window) => window.value),
       Stream.filterEffect((window) =>
-        isWindowDestroyed(window).pipe(Effect.map((destroyed) => !destroyed)),
+        liveMain.pipe(Effect.map((main) => Option.isSome(main) && main.value === window)),
       ),
       Stream.runHead,
       Effect.map(Option.getOrThrow),

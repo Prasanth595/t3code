@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 
 import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/codexAuthHandoff";
@@ -143,8 +144,7 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.orDie),
   );
 
-  // macOS can deliver the link or file that launched the app while runtime
-  // acquisition or shell probing is still in progress. Register before either can yield.
+  // macOS delivers launch events before shell probing and configure finish.
   const pendingLinks: string[] = [];
   let receiveLink = (url: string) => {
     pendingLinks.push(url);
@@ -154,24 +154,22 @@ export const make = Effect.gen(function* () {
     const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
     return destination?.startsWith(`${expectedOrigin}/`) ? destination : undefined;
   };
-  if (bridge.isPrimaryInstance) {
-    yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-      if (
-        !readCodexAuthHandoff(url, environment.isDevelopment) &&
-        !providerAuthDestination(url) &&
-        !DesktopWebLinks.isWebLink(url) &&
-        promptLinkAppPath(url) === null
-      )
-        return;
-      event.preventDefault();
-      receiveLink(url);
-    });
-    yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
-      if (!DesktopWebLinks.isWebPageFile(path)) return;
-      event.preventDefault();
-      receiveLink(NodeURL.pathToFileURL(path).href);
-    });
-  }
+  yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
+    if (
+      !readCodexAuthHandoff(url, environment.isDevelopment) &&
+      !providerAuthDestination(url) &&
+      !DesktopWebLinks.isWebLink(url) &&
+      promptLinkAppPath(url) === null
+    )
+      return;
+    event.preventDefault();
+    receiveLink(url);
+  });
+  yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
+    if (!DesktopWebLinks.isWebPageFile(path)) return;
+    event.preventDefault();
+    receiveLink(NodeURL.pathToFileURL(path).href);
+  });
 
   return DesktopClerk.of({
     configure: Effect.gen(function* () {
@@ -181,6 +179,8 @@ export const make = Effect.gen(function* () {
       const scope = yield* Scope.Scope;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
+      // Concurrent loadURL calls abort each other on the same window.
+      const authNavigation = yield* Semaphore.make(1);
 
       const startProviderAuthHandoff = (value: string | undefined) => {
         if (!value) return false;
@@ -190,11 +190,12 @@ export const make = Effect.gen(function* () {
           Effect.gen(function* () {
             yield* electronApp.whenReady;
             yield* Effect.tryPromise({
-              try: () =>
+              try: (signal) =>
                 receiveCodexAuthCallback(
                   request.authorizationUrl,
-                  (url) => runPromise(shell.openExternal(url)),
+                  (url) => runPromise(shell.openExternal(url), { signal }),
                   (callbackUrl) => codexAuthDeliveryUrl(request, callbackUrl),
+                  signal,
                 ),
               catch: () =>
                 new CodexAuthCallbackError({
@@ -204,6 +205,7 @@ export const make = Effect.gen(function* () {
             });
           }).pipe(
             Effect.catch(() => Effect.logWarning("Could not complete ChatGPT desktop handoff.")),
+            Effect.forkIn(scope),
           ),
         );
         return true;
@@ -213,15 +215,15 @@ export const make = Effect.gen(function* () {
         if (!destination) return false;
         void runPromise(
           Effect.gen(function* () {
-            const currentWindow = yield* electronWindow.currentMainOrFirst;
-            // configure runs before Electron is ready and before the main window
-            // exists. Keep cold auth returns alive until startup creates it.
-            const mainWindow = Option.isSome(currentWindow)
-              ? currentWindow.value
-              : yield* electronWindow.waitForMain;
+            const mainWindow = yield* electronWindow.waitForMain;
+            if (mainWindow.isDestroyed()) return;
             yield* Effect.promise(() => mainWindow.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow);
+            const currentWindow = yield* electronWindow.main;
+            if (Option.isSome(currentWindow) && currentWindow.value === mainWindow) {
+              yield* electronWindow.reveal(mainWindow);
+            }
           }).pipe(
+            authNavigation.withPermit,
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),
             ),
