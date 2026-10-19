@@ -1,15 +1,10 @@
 import { type ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 
-import { useMemo } from "react";
-
 import { useComposerPathSearch as useComposerPathSearchQuery } from "../state/queries";
 
 export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const state = useComposerPathSearchQuery(target);
-  const entries = useMemo(
-    () => state.entries.map((entry) => ({ path: entry.path, kind: entry.kind })),
-    [state.entries],
-  );
+  const entries = state.entries.map((entry) => ({ path: entry.path, kind: entry.kind }));
   return {
     entries,
     error: state.error,
