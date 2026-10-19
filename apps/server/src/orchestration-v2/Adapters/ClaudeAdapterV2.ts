@@ -110,6 +110,8 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
@@ -145,6 +147,7 @@ import {
 } from "../../provider/claudeUsageLimits.ts";
 import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapshot";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -517,6 +520,7 @@ export interface ClaudeAgentSdkSubagentLookupInput {
   readonly dir: string | null;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  readonly environment?: NodeJS.ProcessEnv;
 }
 
 const isClaudeAgentSdkQueryRunnerError = Schema.is(ClaudeAgentSdkQueryRunnerError);
@@ -532,6 +536,13 @@ function queryRunnerError(cause: unknown, method: string): ClaudeAgentSdkQueryRu
     ? cause
     : new ClaudeAgentSdkQueryRunnerError({ cause, method });
 }
+
+const encodeClaudeHistoryOptions = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeClaudeSubagentMessages = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Array(Schema.Struct({ parent_tool_use_id: Schema.NullOr(Schema.String) })),
+  ),
+);
 
 function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   return Effect.try({
@@ -743,14 +754,75 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
 export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   never,
-  Crypto.Crypto | ProviderEventLoggers.ProviderEventLoggers
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | Path.Path
+  | ProviderEventLoggers.ProviderEventLoggers
 > = Layer.effect(
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const path = yield* Path.Path;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
     const platform = yield* HostProcess.Platform;
+
+    const readSubagentMessages = Effect.fn("ClaudeAgentSdkQueryRunner.readSubagentMessages")(
+      function* (input: ClaudeAgentSdkSubagentLookupInput) {
+        const options = { ...(input.dir === null ? {} : { dir: input.dir }), limit: 1 };
+        const hostEnvironment = yield* HostProcess.Environment;
+        if (
+          input.environment === undefined ||
+          input.environment.CLAUDE_CONFIG_DIR === hostEnvironment.CLAUDE_CONFIG_DIR
+        ) {
+          return yield* Effect.tryPromise(() =>
+            getSubagentMessages(input.sessionId, input.agentId, options),
+          );
+        }
+
+        // SDK history reads process.env. Isolate the instance home in the existing worker.
+        const executablePath = yield* HostProcess.ExecutablePath;
+        const workerArguments = (yield* HostProcess.IsExecutable)
+          ? ["__claude-history"]
+          : [
+              yield* path.fromFileUrl(
+                new URL(
+                  import.meta.url.endsWith(".ts")
+                    ? "../../claude-history-worker.ts"
+                    : "./claude-history-worker.mjs",
+                  import.meta.url,
+                ),
+              ),
+            ];
+        const result = yield* spawnAndCollect(
+          executablePath,
+          ChildProcess.make(
+            executablePath,
+            [
+              ...workerArguments,
+              "getSubagentMessages",
+              input.sessionId,
+              encodeClaudeHistoryOptions({ ...options, agentId: input.agentId }),
+            ],
+            { env: { ...input.environment, ELECTRON_RUN_AS_NODE: "1" } },
+          ),
+        ).pipe(
+          Effect.timeout("30 seconds"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        if (result.code !== 0) {
+          return yield* new ClaudeAgentSdkQueryRunnerError({
+            method: "getSubagentMessages",
+            cause:
+              result.stderr.trim() ||
+              new Error(`Claude history worker exited with ${result.code}.`),
+          });
+        }
+        return yield* decodeClaudeSubagentMessages(result.stdout);
+      },
+      Effect.mapError((cause) => queryRunnerError(cause, "getSubagentMessages")),
+    );
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto
@@ -1046,14 +1118,7 @@ export const layerQueryRunner: Layer.Layer<
               agentId: input.agentId,
             },
           });
-          const messages = yield* Effect.tryPromise({
-            try: () =>
-              getSubagentMessages(input.sessionId, input.agentId, {
-                ...(input.dir === null ? {} : { dir: input.dir }),
-                limit: 1,
-              }),
-            catch: (cause) => queryRunnerError(cause, "getSubagentMessages"),
-          });
+          const messages = yield* readSubagentMessages(input);
           const toolUseId = messages[0]?.parent_tool_use_id ?? null;
           yield* logProtocolEvent({
             direction: "incoming",
@@ -4484,6 +4549,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               dir: resume.context.input.runtimePolicy.cwd,
               threadId: resume.context.input.threadId,
               providerSessionId: input.providerSessionId,
+              environment: adapterOptions.environment,
             })
             .pipe(
               Effect.catch(() =>
