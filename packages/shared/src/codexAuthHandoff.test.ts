@@ -86,6 +86,12 @@ describe("pasted Codex callback", () => {
   it("accepts a callback copied without its scheme", () => {
     expect(codexCallbackUrl(copied, redirectUri, state).toString()).toBe(callbackUrl);
   });
+  it("accepts leading whitespace with or without a scheme", () => {
+    expect(codexCallbackUrl(` \t\n${callbackUrl}`, redirectUri, state).toString()).toBe(
+      callbackUrl,
+    );
+    expect(codexCallbackUrl(` \t\n${copied}`, redirectUri, state).toString()).toBe(callbackUrl);
+  });
   it("still rejects a scheme-less callback for another address or sign-in", () => {
     expect(() =>
       codexCallbackUrl(copied.replace("127.0.0.1", "localhost"), redirectUri, state),
