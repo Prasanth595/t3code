@@ -560,6 +560,17 @@ it.live("keeps nested submodule files protected by the current keep rule", () =>
           ? yield* fs.readFileString(`${child}/.env`)
           : null,
       }).toEqual({ outcome: "kept", contents: "secret after deinit\n" });
+
+      yield* fs.remove(`${child}/.env`);
+      setPolicy("uncommitted-changes");
+      yield* fs.writeFileString(`${child}/notes.txt`, "notes after deinit\n");
+      const untrackedReport = yield* service.runNow;
+      expect({
+        outcome: untrackedReport.entries.find((entry) => entry.path === worktree)?.outcome,
+        contents: (yield* fs.exists(`${child}/notes.txt`))
+          ? yield* fs.readFileString(`${child}/notes.txt`)
+          : null,
+      }).toEqual({ outcome: "kept", contents: "notes after deinit\n" });
     }),
   ),
 );
