@@ -981,74 +981,35 @@ describe("providerMaintenanceRunner", () => {
   });
 });
 
-it.effect("verifies a targeted OpenCode update against the installed version", () => {
-  const calls: string[] = [];
-  const manifest: ModelManifest.ModelManifestData = {
-    version: 1,
-    currentModels: {},
-    compatibility: [
-      {
-        driver: OPENCODE_DRIVER,
-        t3CodeRange: ">=0.0.42",
-        recommendedVersion: "2.0.0",
-        ranges: [{ range: "=2.0.0", status: "supported" }],
-      },
-    ],
-  };
-  return Effect.gen(function* () {
-    const { registry, providersRef } = yield* makeRegistry({
-      ...baseOpenCodeProvider,
-      version: "1.14.19",
-    });
-    const capabilities = lifecycleFor(OPENCODE_DRIVER);
-    const updater = yield* makeTestRunner(
-      {
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed({
-            ...capabilities,
-            update: { ...capabilities.update!, lockKey: "npm-global:/fixture" },
-          }),
-      },
-      manifest,
-    );
-    yield* Ref.update(providersRef, (providers) =>
-      providers.map((entry) => ({
-        ...entry,
-        version: "1.14.19",
-        installedVersion: "2.0.0",
-      })),
-    );
-
-    const result = yield* updater.updateProvider({
-      provider: OPENCODE_DRIVER,
-      targetVersion: "2.0.0",
-    });
-
-    assert.deepStrictEqual(calls, ["npm install -g opencode-ai@2.0.0"]);
-    assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-    assert.strictEqual(result.providers[0]?.version, "1.14.19");
-    assert.strictEqual(result.providers[0]?.installedVersion, "2.0.0");
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        layerNonWindowsPlatform,
-        layerLatestVersionHttpClient("0.0.0"),
-        layerMockSpawner((command, args) => {
-          calls.push([command, ...args].join(" "));
-          return { stdout: "installed" };
-        }),
-      ),
-    ),
-  );
-});
-
-it.effect(
-  "succeeds for the default update when the installed CLI is current but the server is older",
-  () => {
+it.effect.each([
+  {
+    mode: "default",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
+    mode: "targeted",
+    version: "1.14.19",
+    installation: { installedVersion: "1.14.20" },
+    status: "succeeded",
+  },
+  {
+    mode: "unknown",
+    version: "1.14.20",
+    installation: { installedVersion: null },
+    status: "unchanged",
+  },
+  { mode: "legacy", version: "1.14.20", installation: {}, status: "succeeded" },
+] as const)(
+  "verifies the $mode OpenCode update using the refreshed installation",
+  ({ mode, version, installation, status }) => {
     const calls: string[] = [];
-    const installedVersion = "1.14.20";
     const capabilities = lifecycleFor(OPENCODE_DRIVER);
+    const pinnedCapabilities = {
+      ...capabilities,
+      update: { ...capabilities.update!, lockKey: "npm-global:/fixture" },
+    };
     const manifest: ModelManifest.ModelManifestData = {
       version: 1,
       currentModels: {},
@@ -1056,50 +1017,67 @@ it.effect(
         {
           driver: OPENCODE_DRIVER,
           t3CodeRange: ">=0.0.42",
-          recommendedVersion: installedVersion,
-          ranges: [{ range: `=${installedVersion}`, status: "supported" }],
+          recommendedVersion: "1.14.20",
+          ranges: [{ range: "=1.14.20", status: "supported" }],
         },
       ],
     };
-    const enrichedSnapshot = enrichProviderSnapshotWithVersionAdvisory(
-      {
-        ...baseOpenCodeProvider,
-        version: "1.14.19",
-        installedVersion,
-      },
-      capabilities,
-      { enableProviderUpdateChecks: true },
-    ).pipe(
-      Effect.provideServiceEffect(
-        ProviderLatestVersions.ProviderLatestVersions,
-        ProviderLatestVersions.make([["opencode-ai", installedVersion]]),
-      ),
-      Effect.provideService(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("seeded latest version should avoid HTTP")),
-      ),
-    );
-
     return Effect.gen(function* () {
-      const provider = yield* enrichedSnapshot;
-      assert.strictEqual(provider.version, "1.14.19");
+      const { registry, providersRef } = yield* makeRegistry({ ...baseOpenCodeProvider, version });
+      const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+      const updater = yield* makeTestRunner(
+        {
+          ...registry,
+          getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
+          refreshInstance: () =>
+            Effect.gen(function* () {
+              assert.strictEqual(calls.length, 1);
+              const refreshed = yield* enrichProviderSnapshotWithVersionAdvisory(
+                { ...baseOpenCodeProvider, version, ...installation },
+                pinnedCapabilities,
+              ).pipe(
+                Effect.provideService(HttpClient.HttpClient, httpClient),
+                Effect.provideService(
+                  ProviderLatestVersions.ProviderLatestVersions,
+                  latestVersions,
+                ),
+              );
+              return yield* Ref.updateAndGet(providersRef, (providers) =>
+                providers.map((provider) => ({ ...provider, ...refreshed })),
+              );
+            }),
+        },
+        manifest,
+      );
 
-      const { registry } = yield* makeRegistry(provider);
-      const updater = yield* makeTestRunner(registry, manifest);
-      const result = yield* updater.updateProvider(OPENCODE_DRIVER);
+      const result = yield* updater.updateProvider({
+        provider: OPENCODE_DRIVER,
+        ...(mode === "default" ? {} : { targetVersion: "1.14.20" }),
+      });
 
-      assert.deepStrictEqual(calls, ["npm install -g opencode-ai@latest"]);
-      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
-      assert.strictEqual(result.providers[0]?.version, "1.14.19");
-      assert.strictEqual(result.providers[0]?.installedVersion, installedVersion);
-      assert.strictEqual(result.providers[0]?.versionAdvisory?.status, "current");
-      assert.strictEqual(result.providers[0]?.versionAdvisory?.currentVersion, installedVersion);
-      assert.strictEqual(result.providers[0]?.versionAdvisory?.status, "current");
+      assert.deepStrictEqual(calls, [
+        `npm install -g opencode-ai@${mode === "default" ? "latest" : "1.14.20"}`,
+      ]);
+      const provider = result.providers[0];
+      assert.ok(provider);
+      assert.strictEqual(provider.updateState?.status, status);
+      assert.strictEqual(provider.version, version);
+      assert.strictEqual("installedVersion" in provider, mode !== "legacy");
+      assert.strictEqual(
+        provider.versionAdvisory?.status,
+        mode === "unknown" ? "unknown" : "current",
+      );
+      assert.strictEqual(
+        provider.versionAdvisory?.currentVersion,
+        mode === "unknown" ? null : "1.14.20",
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           layerNonWindowsPlatform,
-          layerLatestVersionHttpClient(installedVersion),
+          ProviderLatestVersions.layer,
+          layerLatestVersionHttpClient("1.14.20"),
           layerMockSpawner((command, args) => {
             calls.push([command, ...args].join(" "));
             return { stdout: "installed" };
@@ -1109,55 +1087,6 @@ it.effect(
     );
   },
 );
-
-it.effect("does not use runtime version when installed version is explicitly unknown", () => {
-  const manifest: ModelManifest.ModelManifestData = {
-    version: 1,
-    currentModels: {},
-    compatibility: [
-      {
-        driver: OPENCODE_DRIVER,
-        t3CodeRange: ">=0.0.42",
-        recommendedVersion: "2.0.0",
-        ranges: [{ range: "=2.0.0", status: "supported" }],
-      },
-    ],
-  };
-  return Effect.gen(function* () {
-    const { registry } = yield* makeRegistry({
-      ...baseOpenCodeProvider,
-      version: "2.0.0",
-      installedVersion: null,
-    });
-    const capabilities = lifecycleFor(OPENCODE_DRIVER);
-    const updater = yield* makeTestRunner(
-      {
-        ...registry,
-        getProviderMaintenanceCapabilitiesForInstance: () =>
-          Effect.succeed({
-            ...capabilities,
-            update: { ...capabilities.update!, lockKey: "npm-global:/fixture" },
-          }),
-      },
-      manifest,
-    );
-
-    const result = yield* updater.updateProvider({
-      provider: OPENCODE_DRIVER,
-      targetVersion: "2.0.0",
-    });
-
-    assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
-  }).pipe(
-    Effect.provide(
-      Layer.mergeAll(
-        layerNonWindowsPlatform,
-        layerLatestVersionHttpClient("0.0.0"),
-        layerMockSpawner(() => ({ stdout: "installed" })),
-      ),
-    ),
-  );
-});
 
 it.effect("refuses incompatible latest versions and unapproved or unpinnable targets", () => {
   const calls: string[] = [];
