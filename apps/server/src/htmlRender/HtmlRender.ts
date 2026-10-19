@@ -347,7 +347,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const executable = yield* previewBrowser.installed;
       if (Option.isNone(executable)) return undefined;
-      const { heights, outline } = yield* launching(executable.value, (noSandbox) =>
+      const heights = yield* launching(executable.value, (noSandbox) =>
         HeadlessChrome.measureHtmlHeights({
           executable: executable.value,
           noSandbox,
@@ -366,7 +366,7 @@ const make = Effect.gen(function* () {
             ),
         }),
       );
-      return { heights: heights.toSorted(([left], [right]) => left - right), outline };
+      return heights.toSorted(([left], [right]) => left - right);
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("Could not measure an HTML render; publishing it without heights.", {
@@ -416,11 +416,10 @@ const make = Effect.gen(function* () {
       Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
       Effect.uninterruptible,
       Effect.andThen(measure(html)),
-      Effect.andThen((measured) => {
+      Effect.andThen((heights) => {
         const reference: HtmlRenderReference = {
           ...baseReference,
-          ...(measured === undefined ? {} : { heights: measured.heights }),
-          ...(measured?.outline === undefined ? {} : { outline: measured.outline }),
+          ...(heights === undefined ? {} : { heights }),
         };
         return mcpSessions
           .recordHtmlRender(input.threadId, input, reference)
