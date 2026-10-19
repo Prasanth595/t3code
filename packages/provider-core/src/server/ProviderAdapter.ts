@@ -360,11 +360,8 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   }
 }
 
-/**
- * Why a turn could not start, for the user. `detail` stays in the logs, since
- * it can carry provider or configuration text.
- */
-export const ProviderAdapterFailureReason = Schema.Literals([
+// Only fixed reasons reach failure messages; detail can contain private configuration.
+const ProviderAdapterFailureReason = Schema.Literals([
   "previous_turn_active",
   "attachment_unreadable",
 ]);

@@ -326,13 +326,11 @@ export const CodexProviderCapabilitiesV2 = {
 function toProtocolError(
   detail: string,
   payload?: unknown,
-  reason?: ProviderAdapter.ProviderAdapterFailureReason,
 ): ProviderAdapter.ProviderAdapterProtocolError {
   return new ProviderAdapter.ProviderAdapterProtocolError({
     driver: CODEX_PROVIDER,
     detail,
     ...(payload === undefined ? {} : { payload }),
-    ...(reason === undefined ? {} : { reason }),
   });
 }
 
@@ -3128,17 +3126,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (attachmentPath === null) {
               return yield* toProtocolError(`Invalid attachment id '${attachment.id}'`);
             }
-            const bytes = yield* fileSystem
-              .readFile(attachmentPath)
-              .pipe(
-                Effect.mapError((cause) =>
-                  toProtocolError(
-                    `Failed to read attachment '${attachment.id}'.`,
-                    cause,
-                    "attachment_unreadable",
-                  ),
-                ),
-              );
+            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CODEX_PROVIDER,
+                    detail: `Failed to read attachment '${attachment.id}'.`,
+                    reason: "attachment_unreadable",
+                    payload: cause,
+                  }),
+              ),
+            );
             return {
               type: "image" as const,
               url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
