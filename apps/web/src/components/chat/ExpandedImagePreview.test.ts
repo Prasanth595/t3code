@@ -48,6 +48,26 @@ describe("resolveMarkdownMediaPreview", () => {
     });
   });
 
+  it("opens public Bitbucket media links when an older server rejects signing", async () => {
+    const source = "https://bitbucket.org/acme/web/downloads/demo.mp4?download=1#t=2";
+    const unsupported = new Error("Unsupported asset resource: bitbucket-media");
+    const createAssetUrl = vi.fn().mockRejectedValue(unsupported);
+    const preview = await resolveMarkdownMediaPreview({
+      source,
+      cwd: "/repo",
+      environmentId: EnvironmentId.make("old-server"),
+      pullRequestMedia: true,
+      httpBaseUrl: "https://remote.example",
+      createAssetUrl,
+    });
+    expect(preview?.images[0]).toMatchObject({
+      src: source,
+      originalUrl: source,
+      type: "video",
+    });
+    expect(preview?.images[0]?.actionsSource?.asset).toBeUndefined();
+  });
+
   it.each([
     ["t3code:", "https:"],
     ["t3code-dev:", "https:"],

@@ -44,23 +44,31 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
   const asset = item.actionsSource?.asset;
   const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
   const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
-  const src = asset
-    ? assetUrl._tag === "Success"
-      ? assetUrl.url + (item.srcFragment ?? "")
-      : null
-    : item.src;
+  const src =
+    asset && assetUrl._tag === "Success" ? assetUrl.url + (item.srcFragment ?? "") : item.src;
   return (
     <MediaVideoPlayer
       src={src}
       label={item.name}
-      sourceFailed={assetUrl._tag === "Failure"}
+      sourceFailed={src === null && assetUrl._tag === "Failure"}
       originalUrl={item.originalUrl}
       preload="metadata"
       autoPlay={item.autoPlay ?? true}
       className="block max-h-[var(--media-height)] max-w-[var(--media-width)] text-center"
       videoClassName="aspect-auto max-h-[var(--media-height)] w-auto max-w-[var(--media-width)] rounded-lg border border-border/70 shadow-2xl"
       stateClassName={EXPANDED_MEDIA_STATE_CLASS_NAME}
-      onRetry={asset ? refreshAssetUrl : undefined}
+      onRetry={
+        asset
+          ? async () => {
+              try {
+                return (await refreshAssetUrl()) ?? item.src;
+              } catch (error) {
+                if (item.src !== null) return item.src;
+                throw error;
+              }
+            }
+          : undefined
+      }
     />
   );
 }
@@ -96,11 +104,16 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     imageAsset && imageAssetUrl._tag === "Success"
       ? imageAssetUrl.url + (item?.srcFragment ?? "")
       : (item?.src ?? null);
-  const source: MediaActionSource = item?.actionsSource ?? {
+  const originalSource: MediaActionSource = item?.actionsSource ?? {
     kind: item?.type === "video" ? "video" : "image",
     name: item?.name ?? "Media",
     src: item?.src ?? null,
   };
+  const { asset: sourceAsset, ...directSource } = originalSource;
+  const source =
+    sourceAsset?.resource._tag === "bitbucket-media" && imageAssetUrl._tag === "Failure"
+      ? { ...directSource, src: imageSrc }
+      : originalSource;
   const openFile = source.onOpenFile;
   const actionsSource: MediaActionSource = openFile
     ? {

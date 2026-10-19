@@ -3250,7 +3250,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
           srcFragment={markdownImageSourceFragment(classifiedSrc)}
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           framed={false}
-          fallbackSrc={mediaResource.url}
+          fallbackSrc={
+            mediaResource._tag === "bitbucket-media"
+              ? resolveProtocolRelativeMediaUrl(directUri)
+              : mediaResource.url
+          }
           onImageExpand={imageExpand}
         />
       );

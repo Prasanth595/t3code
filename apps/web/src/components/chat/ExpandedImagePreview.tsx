@@ -78,18 +78,24 @@ export async function resolveMarkdownMediaPreview(input: {
     const environmentId = input.environmentId ?? input.threadRef?.environmentId;
     const resource =
       pullRequestResource ?? (media.access === "environment" ? media.resource : null);
-    if (resource === null || environmentId === undefined || !input.httpBaseUrl) {
-      throw new Error("Reconnect to this environment and open the media again.");
+    try {
+      if (resource === null || environmentId === undefined || !input.httpBaseUrl) {
+        throw new Error("Reconnect to this environment and open the media again.");
+      }
+      asset = { environmentId, resource };
+      const result = await input.createAssetUrl({
+        environmentId: asset.environmentId,
+        input: { resource: asset.resource },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      const assetUrl = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
+      if (assetUrl === null) throw new Error("The environment returned an invalid media URL.");
+      src = assetUrl + media.srcFragment;
+    } catch (error) {
+      if (pullRequestResource?._tag !== "bitbucket-media" || media.access !== "direct") throw error;
+      asset = undefined;
+      src = resolveProtocolRelativeMediaUrl(media.uri);
     }
-    asset = { environmentId, resource };
-    const result = await input.createAssetUrl({
-      environmentId: asset.environmentId,
-      input: { resource: asset.resource },
-    });
-    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    const assetUrl = resolveAssetUrl(input.httpBaseUrl, result.value.relativeUrl);
-    if (assetUrl === null) throw new Error("The environment returned an invalid media URL.");
-    src = assetUrl + media.srcFragment;
   }
   return {
     images: [

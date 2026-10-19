@@ -33,7 +33,13 @@ function PullRequestAssetVideo({
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
-    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? resource.url : null;
+    assetUrl._tag === "Success"
+      ? assetUrl.url
+      : assetUrl._tag === "Failure"
+        ? resource._tag === "bitbucket-media"
+          ? (url.split("#", 1)[0] ?? url)
+          : resource.url
+        : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
