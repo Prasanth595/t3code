@@ -1,4 +1,4 @@
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
@@ -10,7 +10,11 @@ import {
 import { Minus, Plus } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
-import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import {
+  findProjectForChangeRequest,
+  findProjectOnChangeRequestHost,
+  parseChangeRequestUrl,
+} from "~/lib/openPullRequestLink";
 
 import { useProjects } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -20,7 +24,12 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
-import { threadPullRequestLabel } from "./threadPullRequestLabel";
+
+function threadPullRequestLabel(link: ThreadPullRequestLink, project: EnvironmentProject | null) {
+  return project !== null && findProjectForChangeRequest([project], link) !== undefined
+    ? `#${link.number}`
+    : `${link.repository}#${link.number}`;
+}
 
 function ThreadDetailsPrLinkRow({
   environmentId,
