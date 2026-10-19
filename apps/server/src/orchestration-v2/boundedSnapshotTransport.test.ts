@@ -43,6 +43,10 @@ import { subscribeOrchestrationV2Thread } from "../ws.ts";
 import * as OrchestrationHttp from "./http.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const decodeBounded = Schema.decodeUnknownSync(
@@ -66,11 +70,22 @@ const store = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
   SqlitePersistence.layerMemory,
 );
+const threadManagementLayer = (overrides: Partial<Orchestrator.OrchestratorV2["Service"]>) =>
+  Layer.fresh(ThreadManagementService.layer).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)(overrides),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+        Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+        Layer.mock(ServerSettings.ServerSettingsService)({}),
+      ),
+    ),
+  );
+
 const management = Layer.unwrap(
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
-    return Layer.mock(ThreadManagementService.ThreadManagementService)({
-      ensureLegacyTranscript: () => Effect.void,
+    return threadManagementLayer({
       getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
       getThreadSnapshotWindow: (id, options) =>
         projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
@@ -278,7 +293,226 @@ function itemIds(projection: OrchestrationV2ThreadProjection): string[] {
   return projection.turnItems.map((item) => String(item.id));
 }
 
+it.effect.each(["thread.visit-recorded", "thread.pull-request-link-synced"] as const)(
+  "resumes persisted %s with a current legacy snapshot or opted-in replay",
+  (type) =>
+    Effect.gen(function* () {
+      const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const persist = Effect.fnUntraced(function* (event: OrchestrationV2DomainEvent) {
+        const [stored] = yield* events.appendAgentEvents({ events: [event] });
+        yield* projections.apply(event);
+        return stored!;
+      });
+      const at = yield* DateTime.now;
+      const refreshedAt = DateTime.add(at, { seconds: 1 });
+      const renamedAt = DateTime.add(at, { seconds: 2 });
+      yield* persist(threadCreated(PARENT, at));
+      const thread = yield* projections.getThread(PARENT);
+      const link = {
+        host: "github.com",
+        repository: "acme/app",
+        number: 1,
+        url: "https://github.com/acme/app/pull/1",
+        source: "manual" as const,
+        linkedAt: DateTime.formatIso(at),
+        snapshot: null,
+        stack: null,
+      };
+      const before = yield* persist({
+        id: EventId.make("resume:link"),
+        type: "thread.pull-request-synced",
+        threadId: PARENT,
+        occurredAt: at,
+        payload: { ...thread, pullRequests: [link] },
+      });
+      const snapshot = {
+        state: "merged" as const,
+        title: "Merged",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: DateTime.formatIso(refreshedAt),
+        syncedAt: DateTime.formatIso(refreshedAt),
+      };
+      const compact = yield* persist({
+        id: EventId.make("resume:compact"),
+        threadId: PARENT,
+        occurredAt: refreshedAt,
+        ...(type === "thread.visit-recorded"
+          ? { type, payload: { lastVisitedAt: refreshedAt } }
+          : {
+              type,
+              payload: {
+                host: link.host,
+                repository: link.repository,
+                number: link.number,
+                snapshot,
+                stack: null,
+              },
+            }),
+      });
+      const refreshed = yield* projections.getThread(PARENT);
+      const expected = {
+        ...thread,
+        title: "Renamed after refresh",
+        updatedAt: renamedAt,
+        lastVisitedAt: type === "thread.visit-recorded" ? refreshedAt : null,
+        pullRequests: [type === "thread.pull-request-link-synced" ? { ...link, snapshot } : link],
+      };
+      const renamed = yield* persist({
+        id: EventId.make("resume:rename"),
+        type: "thread.metadata-updated",
+        threadId: PARENT,
+        occurredAt: renamedAt,
+        payload: { ...refreshed, title: expected.title, updatedAt: renamedAt },
+      });
+
+      for (const acceptThreadFieldEvents of [undefined, false, true]) {
+        const items = yield* subscribeOrchestrationV2Thread({
+          threadId: PARENT,
+          afterSequence: before.sequence,
+          requestCompletionMarker: true,
+          ...(acceptThreadFieldEvents === undefined ? {} : { acceptThreadFieldEvents }),
+        }).pipe(
+          Effect.flatMap((stream) =>
+            stream.pipe(
+              Stream.takeUntil((item) => item.kind === "synchronized"),
+              Stream.runCollect,
+            ),
+          ),
+          Effect.map((items) =>
+            items.map((item) =>
+              decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(item)))),
+            ),
+          ),
+        );
+        if (acceptThreadFieldEvents === true) {
+          assert.deepEqual(items, [
+            { kind: "event", sequence: compact.sequence, event: compact.event },
+            { kind: "event", sequence: renamed.sequence, event: renamed.event },
+            { kind: "synchronized" },
+          ]);
+        } else {
+          assert.deepEqual(
+            items.map((item) => item.kind),
+            ["snapshot", "synchronized"],
+          );
+          const first = items[0];
+          if (first?.kind !== "snapshot") return assert.fail("missing reconnect snapshot");
+          assert.strictEqual(first.snapshotSequence, renamed.sequence);
+          assert.deepEqual(first.projection.thread, expected);
+        }
+      }
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(management, OrchestrationEventStore.layer).pipe(Layer.provideMerge(store)),
+      ),
+    ),
+);
+
 it.layer(TestLayer)("compact bounded snapshot transport", (it) => {
+  it.effect("delivers compact visits and PR refreshes to current and legacy subscribers", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const at = yield* DateTime.now;
+      const thread = yield* projections.getThread(PARENT);
+      const link = {
+        host: "github.com",
+        repository: "acme/app",
+        number: 1,
+        url: "https://github.com/acme/app/pull/1",
+        source: "manual" as const,
+        linkedAt: DateTime.formatIso(at),
+        snapshot: null,
+        stack: null,
+      };
+      yield* projections.apply({
+        id: EventId.make("compat:link"),
+        type: "thread.pull-request-synced",
+        threadId: PARENT,
+        occurredAt: at,
+        payload: { ...thread, pullRequests: [link] },
+      });
+      const snapshot = {
+        state: "merged" as const,
+        title: "Merged",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: DateTime.formatIso(at),
+        syncedAt: DateTime.formatIso(at),
+      };
+      const events: OrchestrationV2DomainEvent[] = [
+        {
+          id: EventId.make("compat:visit"),
+          type: "thread.visit-recorded",
+          threadId: PARENT,
+          occurredAt: at,
+          payload: { lastVisitedAt: at },
+        },
+        {
+          id: EventId.make("compat:sync"),
+          type: "thread.pull-request-link-synced",
+          threadId: PARENT,
+          occurredAt: at,
+          payload: {
+            host: link.host,
+            repository: link.repository,
+            number: link.number,
+            snapshot,
+            stack: null,
+          },
+        },
+      ];
+      for (const event of events) yield* projections.apply(event);
+      const expected = yield* projections.getThread(PARENT);
+      assert.deepEqual(expected.lastVisitedAt, at);
+      assert.deepEqual(expected.pullRequests, [{ ...link, snapshot }]);
+      assert.deepEqual(expected.updatedAt, thread.updatedAt);
+
+      const liveManagement = threadManagementLayer({
+        getThreadSnapshot: (id) => projections.getThreadSnapshot(id).pipe(Effect.orDie),
+        getThreadSnapshotWindow: (id, options) =>
+          projections.getThreadSnapshotWindow(id, options).pipe(Effect.orDie),
+        getThreadRecords: (id, fields, filter) =>
+          projections.getThreadRecords(id, fields, filter).pipe(Effect.orDie),
+        streamStoredEventsFrom: () =>
+          Stream.fromIterable(
+            events.map((event, index) => ({
+              sequence: index + 1,
+              commandId: null,
+              event,
+            })),
+          ),
+      });
+      for (const acceptThreadFieldEvents of [false, true]) {
+        const items = yield* subscribeOrchestrationV2Thread({
+          threadId: PARENT,
+          acceptThreadFieldEvents,
+        }).pipe(
+          Effect.flatMap((stream) => Stream.take(stream, 3).pipe(Stream.runCollect)),
+          Effect.provide(liveManagement),
+        );
+        const decoded = items
+          .slice(1)
+          .map((item) => decodeStreamItem(JSON.parse(JSON.stringify(encodeStreamItem(item)))));
+        assert.deepEqual(
+          decoded.map((item) => (item.kind === "event" ? item.event.type : item.kind)),
+          acceptThreadFieldEvents
+            ? ["thread.visit-recorded", "thread.pull-request-link-synced"]
+            : ["thread.visited", "thread.pull-request-synced"],
+        );
+        if (!acceptThreadFieldEvents) {
+          for (const item of decoded) {
+            if (item.kind !== "event") return assert.fail("missing event");
+            assert.deepEqual(item.event.payload, expected);
+          }
+        }
+      }
+    }),
+  );
+
   describe.each([
     ["fork", FORK],
     ["long run with a retained interrupt request", LONG],
