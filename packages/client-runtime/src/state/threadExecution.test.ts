@@ -464,13 +464,10 @@ describe("formatModelSelectionEffort", () => {
     },
   ];
 
-  it("names a stored effort the way the catalog does", () => {
+  it("names stored and matching reported effort, preferring the stored choice", () => {
     expect(
       formatModelSelectionEffort(selection([{ id: "effort", value: "xhigh" }]), catalog({})),
     ).toBe("Extra High");
-  });
-
-  it("names a reported effort when no stored one overrides it", () => {
     const reported = selection([{ id: "effort", value: "xhigh" }]);
     expect(formatModelSelectionEffort(selection(), catalog({}), reported)).toBe("Extra High");
     expect(
@@ -489,6 +486,12 @@ describe("formatModelSelectionEffort", () => {
       formatModelSelectionEffort(selection(), catalog({}), {
         ...selection([{ id: "effort", value: "xhigh" }]),
         model: "claude-opus-5-5",
+      }),
+    ).toBeNull();
+    expect(
+      formatModelSelectionEffort(selection(), catalog({}), {
+        ...selection([{ id: "effort", value: "xhigh" }]),
+        instanceId: ProviderInstanceId.make("claudeAgent-other"),
       }),
     ).toBeNull();
   });
