@@ -166,7 +166,7 @@ export function useRemoteConnections() {
         text: "Remove",
         style: "destructive",
         onPress: () => {
-          forgetFactorySession(environmentId);
+          void forgetFactorySession(environmentId);
           void controller.removeEnvironment(environmentId);
         },
       } as const;

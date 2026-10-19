@@ -112,7 +112,7 @@ A version from before #93 requires `model_instance` and `model` in `~/.config/t3
 
 The Factory pages work on a phone. They run in the fork's own web, so open the fork server from the phone and sign in like any T3 browser. The T3 mobile app from the App Store is upstream's build and has no Factory screen.
 
-The fork's own mobile app has a Factory screen (Settings, then Factory, or the `t3code-factory://factory` link). It opens these pages signed in with the app's direct pairing, so there is no link to paste. It needs a direct (tailnet) connection, not T3 Connect. The sign-in is a browser session named `T3 Code Mobile · Factory` with only the scopes the Factory pages use. Removing the environment from the phone revokes that session on the server; if the server cannot be reached at that moment, revoke it under the server's Connections settings. The browser and home-screen steps below are for phones without the app.
+The fork's own mobile app has a Factory screen (Settings, then Factory, or the `t3code-factory://factory` link). It opens these pages signed in with the app's direct pairing, so there is no link to paste. It needs a direct (tailnet) connection, not T3 Connect. The sign-in is a browser session named `T3 Code Mobile · Factory` with only the scopes the Factory pages use. Removing the environment from the phone revokes that session on the server. When the app cannot do that, because the server is out of reach at that moment, it says so: revoke the session under the server's Connections settings. The browser and home-screen steps below are for phones without the app.
 
 1. Join the Mac and the phone to the same tailnet.
 2. On the Mac, pair with the fork's binary and base dir (the LaunchAgent already serves on port 3876):

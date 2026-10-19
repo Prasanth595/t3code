@@ -229,15 +229,18 @@ export async function mintPairingToken(
   );
 }
 
+export type RevokeOutcome = FactoryResult<{ readonly revoked: number; readonly left: number }>;
+
 /**
  * Revokes every browser session this app's Factory screen created on the server, so removing
- * the environment from the phone leaves no signed-in cookie behind. Best effort: the caller
- * removes the environment either way.
+ * the environment from the phone leaves no signed-in cookie behind. Each session is revoked
+ * on its own: one refusal does not skip the rest, and `left` counts the sessions still signed
+ * in. ok is false only when the list itself could not be read.
  */
 export async function revokeFactorySessions(
   server: FactoryServer,
   fetchFn: FactoryFetch,
-): Promise<FactoryResult<{ readonly revoked: number }>> {
+): Promise<RevokeOutcome> {
   if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
   const headers = { authorization: `Bearer ${server.bearerToken}` };
   const revoke = Effect.gen(function* () {
@@ -248,15 +251,14 @@ export async function revokeFactorySessions(
         session.method === "browser-session-cookie" &&
         session.client.label === FACTORY_SESSION_LABEL,
     );
-    let revoked = 0;
-    for (const session of factorySessions) {
-      const result = yield* auth.revokeClient({
-        headers,
-        payload: { sessionId: session.sessionId },
-      });
-      if (result.revoked) revoked += 1;
-    }
-    return revoked;
+    const results = yield* Effect.forEach(factorySessions, (session) =>
+      auth.revokeClient({ headers, payload: { sessionId: session.sessionId } }).pipe(
+        Effect.map((result) => result.revoked),
+        Effect.catch(() => Effect.succeed(false)),
+      ),
+    );
+    const revoked = results.filter(Boolean).length;
+    return { ok: true, revoked, left: results.length - revoked } as const;
   });
   const timedFetch: typeof fetch = (input, init) =>
     request(fetchFn, input instanceof Request ? input.url : String(input), init ?? {});
@@ -266,13 +268,20 @@ export async function revokeFactorySessions(
       REQUEST_TIMEOUT_MS,
       revoke,
     ).pipe(
-      Effect.map((revoked) => ({ ok: true, revoked }) as const),
       Effect.catch((error) =>
         Effect.succeed({ ok: false, reason: mintFailureReason(error) } as const),
       ),
       Effect.provide(layerRemoteHttpClient(timedFetch)),
     ),
   );
+}
+
+/**
+ * Whether the user has to revoke the Factory session by hand: the app could not reach the
+ * server's session list (or had no bearer to try with), or a session refused to go.
+ */
+export function factorySessionsMayRemain(outcome: RevokeOutcome | null): boolean {
+  return outcome === null || !outcome.ok || outcome.left > 0;
 }
 
 /**

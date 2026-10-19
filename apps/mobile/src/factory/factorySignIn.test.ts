@@ -14,6 +14,7 @@ import {
   mintPairingToken,
   parseFactoryMessage,
   probeFactory,
+  factorySessionsMayRemain,
   revokeFactorySessions,
   nextSignIn,
   type FactoryFetch,
@@ -389,7 +390,10 @@ describe("revokeFactorySessions", () => {
     session("s-factory-2", "browser-session-cookie", FACTORY_SESSION_LABEL),
   ];
 
-  function serverWith(sessions: unknown[]) {
+  function serverWith(
+    sessions: unknown[],
+    answer: (sessionId: string) => Response = () => json(200, { revoked: true }),
+  ) {
     const revoked: string[] = [];
     const authorizations: string[] = [];
     const fetchFn: FactoryFetch = async (url, init) => {
@@ -398,7 +402,7 @@ describe("revokeFactorySessions", () => {
       if (url === `${BASE}/api/auth/clients/revoke`) {
         const body = JSON.parse(String(init?.body)) as { sessionId: string };
         revoked.push(body.sessionId);
-        return json(200, { revoked: true });
+        return answer(body.sessionId);
       }
       return json(404, "");
     };
@@ -407,15 +411,46 @@ describe("revokeFactorySessions", () => {
 
   it("revokes only the browser sessions this screen labelled, with the bearer", async () => {
     const { fetchFn, revoked, authorizations } = serverWith(clients);
-    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({ ok: true, revoked: 2 });
+    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({
+      ok: true,
+      revoked: 2,
+      left: 0,
+    });
     expect(revoked).toEqual(["s-factory-1", "s-factory-2"]);
     expect(new Set(authorizations)).toEqual(new Set([`Bearer ${BEARER}`]));
   });
 
   it("revokes nothing when the screen never signed in", async () => {
     const { fetchFn, revoked } = serverWith([clients[0]!, clients[2]!]);
-    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({ ok: true, revoked: 0 });
+    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({
+      ok: true,
+      revoked: 0,
+      left: 0,
+    });
     expect(revoked).toEqual([]);
+  });
+
+  it("keeps revoking after one session fails, and counts what is left", async () => {
+    const { fetchFn, revoked } = serverWith(clients, (sessionId) =>
+      sessionId === "s-factory-1" ? json(500, "boom") : json(200, { revoked: true }),
+    );
+    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({
+      ok: true,
+      revoked: 1,
+      left: 1,
+    });
+    expect(revoked).toEqual(["s-factory-1", "s-factory-2"]);
+  });
+
+  it("counts a session the server declined to revoke as left", async () => {
+    const { fetchFn } = serverWith(clients, (sessionId) =>
+      json(200, { revoked: sessionId === "s-factory-2" }),
+    );
+    await expect(revokeFactorySessions(server, fetchFn)).resolves.toEqual({
+      ok: true,
+      revoked: 1,
+      left: 1,
+    });
   });
 
   it("reports an unreachable server without touching the bearer", async () => {
@@ -440,6 +475,18 @@ describe("revokeFactorySessions", () => {
     );
     expect(called).toBe(false);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("factorySessionsMayRemain", () => {
+  it("is false only when every labelled session was revoked", () => {
+    expect(factorySessionsMayRemain({ ok: true, revoked: 2, left: 0 })).toBe(false);
+    expect(factorySessionsMayRemain({ ok: true, revoked: 0, left: 0 })).toBe(false);
+    expect(factorySessionsMayRemain({ ok: true, revoked: 1, left: 1 })).toBe(true);
+    expect(factorySessionsMayRemain({ ok: false, reason: "The server is unreachable." })).toBe(
+      true,
+    );
+    expect(factorySessionsMayRemain(null)).toBe(true);
   });
 });
 
