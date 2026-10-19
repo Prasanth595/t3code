@@ -86,25 +86,23 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual({ overageIncluded: "Fable" });
   });
 
-  it("reports API key and Bedrock accounts as unsupported", () => {
-    expect(
-      claudeUsageResponseToLimits({
-        checkedAt,
-        response: { rate_limits_available: false, rate_limits: null },
-      }).limits,
-    ).toEqual({ checkedAt, windows: [], unavailable: { reason: "unsupported" } });
-  });
-
-  it("reports a subscription account whose usage read came back empty as a failed probe", () => {
-    // The CLI sets `rate_limits` to null when its own usage fetch fails, while
-    // `rate_limits_available` stays true for an account that has limits.
-    const { limits, names } = claudeUsageResponseToLimits({
-      checkedAt,
-      response: { rate_limits_available: true, rate_limits: null },
-    });
-    expect(limits).toEqual({ checkedAt, windows: [], unavailable: { reason: "probeFailed" } });
-    expect(names).toEqual(noNames);
-  });
+  it.each([
+    { rateLimitsAvailable: false, reason: "unsupported" },
+    { rateLimitsAvailable: true, reason: "probeFailed" },
+  ])(
+    "reports null usage as $reason when availability is $rateLimitsAvailable",
+    ({ rateLimitsAvailable, reason }) => {
+      expect(
+        claudeUsageResponseToLimits({
+          checkedAt,
+          response: { rate_limits_available: rateLimitsAvailable, rate_limits: null },
+        }),
+      ).toEqual({
+        limits: { checkedAt, windows: [], unavailable: { reason } },
+        names: noNames,
+      });
+    },
+  );
 
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
