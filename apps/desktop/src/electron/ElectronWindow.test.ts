@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -115,9 +116,9 @@ describe("ElectronWindow", () => {
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const first = makeBrowserWindow({ id: 1, destroyed: false });
       const destroyed = makeBrowserWindow({ id: 2, destroyed: true });
-      const inspectedDestroyed = Promise.withResolvers<void>();
+      const inspectedDestroyed = yield* Deferred.make<void>();
       vi.spyOn(destroyed, "isDestroyed").mockImplementation(() => {
-        inspectedDestroyed.resolve();
+        Deferred.doneUnsafe(inspectedDestroyed, Effect.void);
         return true;
       });
       const replacement = makeBrowserWindow({ id: 3, destroyed: false });
@@ -128,7 +129,7 @@ describe("ElectronWindow", () => {
       yield* electronWindow.clearMain(Option.some(first));
       yield* electronWindow.setMain(destroyed);
       const next = yield* electronWindow.waitForMain.pipe(Effect.forkChild);
-      yield* Effect.promise(() => inspectedDestroyed.promise);
+      yield* Deferred.await(inspectedDestroyed);
       yield* electronWindow.setMain(replacement);
       assert.strictEqual(yield* Fiber.join(next), replacement);
     }).pipe(Effect.provide(layerTest)),

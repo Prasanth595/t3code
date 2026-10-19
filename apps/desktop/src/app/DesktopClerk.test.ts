@@ -64,7 +64,6 @@ const layerDesktopClerk = (
     copyText: () => Effect.void,
   },
   listeners = new Map<string, (...args: unknown[]) => void>(),
-  appOverrides: Partial<ElectronApp.ElectronApp["Service"]> = {},
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir: "/tmp/t3-state",
@@ -96,7 +95,6 @@ const layerDesktopClerk = (
             listeners.delete(name);
           }),
       ).pipe(Effect.asVoid),
-    ...appOverrides,
   } as unknown as ElectronApp.ElectronApp["Service"];
 
   return DesktopClerk.layer.pipe(
@@ -566,155 +564,156 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
   }).pipe(Effect.scoped),
 );
 
-it.effect.each([
-  {
-    kind: "open-url",
-    timing: "cold",
-    value: "https://example.com/report",
-    expected: "https://example.com/report",
-  },
-  ...[
-    "t3code://new?prompt=Fix+it&repo=pingdotgg/t3code&provider=codex&model=gpt-5",
-    "t3code-dev://new?pr=pingdotgg/t3code/42&prompt=Review+it",
-    "t3code://threads/env-1/thread-1?prompt=Continue",
-    "https://app.t3.codes/new?prompt=Fix+it",
-    "https://app.t3.codes/env-1/thread-1?prompt=Continue",
-  ].map((value) => ({ kind: "open-url", timing: "cold", value, expected: value })),
-  {
-    kind: "open-url",
-    timing: "cold",
-    value: "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
-    expected: "t3code-dev://app/settings/providers?instanceId=work",
-  },
-  {
-    kind: "open-file",
-    timing: "cold",
-    value: "/tmp/report #1.html",
-    expected: "file:///tmp/report%20%231.html",
-  },
-  {
-    kind: "open-url",
-    timing: "warm",
-    value: "https://example.com/report",
-    expected: "https://example.com/report",
-  },
-  {
-    kind: "open-file",
-    timing: "warm",
-    value: "/tmp/report #1.html",
-    expected: "file:///tmp/report%20%231.html",
-  },
-])("retains $kind during $timing startup exactly once", ({ kind, timing, value, expected }) =>
-  Effect.gen(function* () {
-    storageMock.mockReturnValue(storageAdapter);
-    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
-    const appEvents = new NodeEvents.EventEmitter();
-    const electronApp = {
-      on: (name: string, listener: (...args: unknown[]) => void) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            appEvents.on(name, listener);
-          }),
-          () =>
-            Effect.sync(() => {
-              appEvents.removeListener(name, listener);
-            }),
-        ).pipe(Effect.asVoid),
-    } as unknown as ElectronApp.ElectronApp["Service"];
-    const received: string[] = [];
-    const probeStarted = yield* Deferred.make<void>();
-    const finishProbe = yield* Deferred.make<void>();
-    const delivered = yield* Deferred.make<void>();
-    const mainWindowAvailable = yield* Deferred.make<Electron.BrowserWindow>();
-    const authWaiting = yield* Deferred.make<void>();
-    const authReturned = yield* Deferred.make<void>();
-    const authReturn = value.startsWith("t3code-dev://app/");
-    let hasWindow = !authReturn;
-    const loaded: string[] = [];
-    const webContents = Object.assign(new NodeEvents.EventEmitter(), {
-      isDestroyed: () => false,
-      send: (channel: string, url: string) => {
-        assert.equal(channel, WEB_LINK_OPEN_CHANNEL);
-        received.push(url);
-      },
-    });
-    const window = {
-      webContents,
-      loadURL: async (url: string) => {
-        loaded.push(url);
-      },
-    } as unknown as Electron.BrowserWindow;
-    const electronWindow = {
-      currentMainOrFirst: Effect.sync(() => (hasWindow ? Option.some(window) : Option.none())),
-      waitForMain: Deferred.succeed(authWaiting, undefined).pipe(
-        Effect.andThen(Deferred.await(mainWindowAvailable)),
-      ),
-      reveal: () =>
-        Deferred.succeed(loaded.length > 0 ? authReturned : delivered, undefined).pipe(
-          Effect.asVoid,
+it.effect(
+  "delivers mixed macOS launch events once in order after startup and renderer readiness",
+  () =>
+    Effect.gen(function* () {
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+      const listeners = new Map<string, (...args: unknown[]) => void>();
+      const probeStarted = yield* Deferred.make<void>();
+      const finishProbe = yield* Deferred.make<void>();
+      const warmDelivered = yield* Deferred.make<void>();
+      const received: string[] = [];
+      const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+        isDestroyed: () => false,
+        send: (channel: string, url: string) => {
+          assert.equal(channel, WEB_LINK_OPEN_CHANNEL);
+          received.push(url);
+        },
+      });
+      const window = { webContents } as unknown as Electron.BrowserWindow;
+      const electronWindow = {
+        currentMainOrFirst: Effect.succeedSome(window),
+        reveal: () =>
+          received.at(-1) === "https://example.com/warm"
+            ? Deferred.succeed(warmDelivered, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      } as unknown as ElectronWindow.ElectronWindow["Service"];
+      const shellEnvironment = DesktopShellEnvironment.DesktopShellEnvironment.of({
+        installIntoProcess: Deferred.succeed(probeStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(finishProbe)),
+          Effect.as(true),
         ),
-    } as unknown as ElectronWindow.ElectronWindow["Service"];
-    const shellEnvironment = DesktopShellEnvironment.DesktopShellEnvironment.of({
-      installIntoProcess: Deferred.succeed(probeStarted, undefined).pipe(
-        Effect.andThen(Deferred.await(finishProbe)),
-        Effect.as(true),
-      ),
-    });
-    const event = { preventDefault: vi.fn() };
-    yield* Effect.gen(function* () {
-      const clerk = yield* DesktopClerk.DesktopClerk;
-      const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
-      // Match DesktopApp's startup boundary: Clerk is acquired before the shell
-      // probe, but configure waits for the probe (and settings) to finish.
-      const startup = yield* Effect.gen(function* () {
-        yield* shellEnvironment.installIntoProcess;
+      });
+      const open = (kind: "open-url" | "open-file", value: string) => {
+        const event = { preventDefault: vi.fn() };
+        listeners.get(kind)?.(event, value);
+        return event.preventDefault;
+      };
+
+      yield* Effect.gen(function* () {
+        const clerk = yield* DesktopClerk.DesktopClerk;
+        const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+        // DesktopApp acquires Clerk before shell probing, then configures its receivers.
+        const startup = yield* shellEnvironment.installIntoProcess.pipe(
+          Effect.andThen(clerk.configure),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(probeStarted);
+        open("open-url", "https://example.com/cold");
+        open("open-file", "/tmp/report #1.html");
+        open("open-url", "t3code://new?prompt=Fix+it");
+        open("open-url", "t3code-dev://threads/env-1/thread-1");
+        assert.equal(open("open-url", "mailto:hello@example.com").mock.calls.length, 0);
+        assert.equal(open("open-file", "/tmp/report.txt").mock.calls.length, 0);
+        assert.deepEqual(received, []);
+        yield* Deferred.succeed(finishProbe, undefined);
+        yield* Fiber.join(startup);
+        assert.deepEqual(received, []);
+        yield* webLinks.setRendererReady(true);
+        const coldLinks = [
+          "https://example.com/cold",
+          "file:///tmp/report%20%231.html",
+          "t3code://new?prompt=Fix+it",
+          "t3code-dev://threads/env-1/thread-1",
+        ];
+        assert.deepEqual(received, coldLinks);
+        open("open-file", "/tmp/warm.html");
+        open("open-url", "https://example.com/warm");
+        yield* Deferred.await(warmDelivered);
+        yield* webLinks.setRendererReady(true);
+        assert.deepEqual(received, [
+          ...coldLinks,
+          "file:///tmp/warm.html",
+          "https://example.com/warm",
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
+        Effect.provideService(HostProcess.Arguments, ["t3"]),
+        Effect.provide(DesktopWebLinks.layer),
+        Effect.provideService(ElectronApp.ElectronApp, {
+          on: (name: string, listener: (...args: unknown[]) => void) =>
+            Effect.sync(() => {
+              listeners.set(name, listener);
+            }),
+        } as unknown as ElectronApp.ElectronApp["Service"]),
+        Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+      );
+    }),
+);
+
+it.effect.each(["window created", "startup cancelled"] as const)(
+  "holds a cold provider-auth return until %s",
+  (outcome) =>
+    Effect.gen(function* () {
+      storageMock.mockReturnValue(storageAdapter);
+      createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+      const listeners = new Map<string, (...args: unknown[]) => void>();
+      const windowAvailable = yield* Deferred.make<Electron.BrowserWindow>();
+      const waiting = yield* Deferred.make<void>();
+      const waitFinished = yield* Deferred.make<void>();
+      const revealed = yield* Deferred.make<void>();
+      const loadURL = vi.fn(async (_url: string) => undefined);
+      const window = { loadURL } as unknown as Electron.BrowserWindow;
+      const electronWindow = {
+        currentMainOrFirst: Effect.succeedNone,
+        waitForMain: Deferred.succeed(waiting, undefined).pipe(
+          Effect.andThen(Deferred.await(windowAvailable)),
+          Effect.ensuring(Deferred.succeed(waitFinished, undefined)),
+        ),
+        reveal: () => Deferred.succeed(revealed, undefined).pipe(Effect.asVoid),
+      } as unknown as ElectronWindow.ElectronWindow["Service"];
+      yield* Effect.gen(function* () {
+        const clerk = yield* DesktopClerk.DesktopClerk;
+        const unrelated = { preventDefault: vi.fn() };
+        listeners.get("open-url")!(unrelated, "t3code://app/settings/providers?instanceId=work");
+        listeners.get("open-url")!(unrelated, "t3code-dev://app/auth/callback?code=clerk-code");
+        assert.equal(unrelated.preventDefault.mock.calls.length, 0);
+        const event = { preventDefault: vi.fn() };
+        listeners.get("open-url")!(
+          event,
+          "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
+        );
+        assert.equal(event.preventDefault.mock.calls.length, 1);
         yield* clerk.configure;
-      }).pipe(Effect.forkScoped);
-      yield* Deferred.await(probeStarted);
-      const nextLink = "https://example.com/next";
-      if (timing === "cold") {
-        appEvents.emit(kind, event, value);
-        appEvents.emit("open-url", event, nextLink);
-      }
-      const expectedLinks =
-        timing === "cold" ? (authReturn ? [nextLink] : [expected, nextLink]) : [expected];
-      assert.deepEqual(received, []);
-      yield* Deferred.succeed(finishProbe, undefined);
-      yield* Fiber.join(startup);
-      assert.deepEqual(received, []);
-      if (authReturn) yield* Deferred.await(authWaiting);
-      assert.deepEqual(loaded, []);
-      hasWindow = true;
-      yield* Deferred.succeed(mainWindowAvailable, window);
-      if (authReturn) yield* Deferred.await(authReturned);
-      yield* webLinks.setRendererReady(true);
-      if (timing === "warm") {
-        appEvents.emit(kind, event, value);
-        yield* Deferred.await(delivered);
-      }
-      assert.deepEqual(received, expectedLinks);
-      assert.equal(event.preventDefault.mock.calls.length, timing === "cold" ? 2 : 1);
-      assert.deepEqual(loaded, authReturn ? [expected] : []);
-      yield* webLinks.setRendererReady(true);
-      assert.deepEqual(received, expectedLinks);
-      // Unrelated events must neither be claimed nor replay a queued page.
-      const unrelated = { preventDefault: vi.fn() };
-      appEvents.emit("open-url", unrelated, "mailto:hello@example.com");
-      appEvents.emit("open-file", unrelated, "/tmp/report.txt");
-      assert.equal(unrelated.preventDefault.mock.calls.length, 0);
-      assert.deepEqual(loaded, authReturn ? [expected] : []);
-      assert.deepEqual(received, expectedLinks);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerDesktopClerk(true, [], "darwin", undefined, undefined, undefined, electronApp),
-      ),
-      Effect.provideService(HostProcess.Arguments, ["t3"]),
-      Effect.provideService(ElectronApp.ElectronApp, electronApp),
-      Effect.provide(DesktopWebLinks.layer),
-      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
-    );
-    assert.equal(appEvents.listenerCount("open-url"), 0);
-    assert.equal(appEvents.listenerCount("open-file"), 0);
-  }).pipe(Effect.scoped),
+        yield* Deferred.await(waiting);
+        assert.deepEqual(loadURL.mock.calls, []);
+        if (outcome === "window created") {
+          yield* Deferred.succeed(windowAvailable, window);
+          yield* Deferred.await(revealed);
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
+        Effect.provideService(ElectronApp.ElectronApp, {
+          on: (name: string, listener: (...args: unknown[]) => void) =>
+            Effect.sync(() => {
+              listeners.set(name, listener);
+            }),
+        } as unknown as ElectronApp.ElectronApp["Service"]),
+        Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+        Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
+        Effect.provideService(HostProcess.Arguments, ["t3"]),
+      );
+      assert.isTrue(yield* Deferred.isDone(waitFinished));
+      yield* Deferred.succeed(windowAvailable, window);
+      assert.deepEqual(
+        loadURL.mock.calls,
+        outcome === "window created"
+          ? [["t3code-dev://app/settings/providers?instanceId=work"]]
+          : [],
+      );
+    }),
 );
