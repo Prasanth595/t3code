@@ -37,7 +37,6 @@ function serializedSize(value: object): number {
   return bytes;
 }
 
-/** One budget covers one subscription and its delivery stream, including the batch waiting for an RPC ACK. */
 export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* (limits?: {
   readonly maxItems?: number;
   readonly maxSerializedBytes?: number;
@@ -102,8 +101,6 @@ export const makeLiveStreamBudget = Effect.fn("makeLiveStreamBudget")(function* 
       return Effect.succeed(item);
     });
 
-  // Replace one coalescing batch atomically. Queued and coalesced payloads
-  // count against the same budget, and discarded updates release their charge.
   const replace = <A extends object>(
     previous: ReadonlyArray<RetainedLiveItem<unknown>>,
     values: ReadonlyArray<A>,
@@ -251,7 +248,6 @@ const retainLiveStream = <A extends object, E, R>(
     return Stream.fromQueue(queue);
   });
 
-/** Drain live events while RPC delivery waits for an ACK, with a bounded retained tail. */
 export const bufferLiveStream = <A extends object, E, R>(
   source: Stream.Stream<A, E, R>,
   limits?: LiveStreamLimits,
@@ -344,9 +340,7 @@ export const bufferLatestLiveStream = <A extends { readonly sequence: number }, 
 /**
  * Subscribe and start draining before reading the high-water mark. A blocked
  * catch-up query or an unacknowledged replay batch must not strand an unbounded
- * PubSub subscription. Raw replay/live events share one budget here; projected
- * RPC delivery has its own budget, so the two stages retain at most twice the
- * configured item and byte limits.
+ * PubSub subscription.
  */
 type ReplayLiveInput<A extends { readonly sequence: number }, E, R> = {
   readonly subscribe: Effect.Effect<PubSub.Subscription<A>, never, Scope.Scope>;
@@ -361,7 +355,6 @@ export const replayAndBufferLiveEvents = <A extends { readonly sequence: number 
   limits?: LiveStreamLimits,
 ) => replayAndBufferProjectedLiveEvents({ ...input, project: (event: A) => event }, limits);
 
-/** Reduce transport payloads before either replay or live retention charges the byte budget. */
 export const replayAndBufferProjectedLiveEvents = <
   A extends { readonly sequence: number },
   B extends { readonly sequence: number },
@@ -409,8 +402,6 @@ export const replayAndBufferProjectedLiveEvents = <
           live.pipe(
             Stream.filter((item) => {
               if (item.value.sequence > throughSequence) return true;
-              // An event published between subscribe and the high-water read
-              // is already present in replay.
               budget.release([item]);
               return false;
             }),
