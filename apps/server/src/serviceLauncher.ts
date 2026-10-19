@@ -611,8 +611,8 @@ export class Launcher {
     this.#backupStopController.abort();
     this.#clearTimer();
     this.#enqueue(async () => {
-      // Active replacements observe the stop marker for tunnel cleanup. A stopped
-      // backup leaves the update pending without starting a trial to release it.
+      // A backup stop starts no replacement to release a managed tunnel the old
+      // child kept for the update handoff.
       this.#stopping = true;
       this.#clearTimer();
       const child = this.#child?.process;
