@@ -1761,8 +1761,6 @@ export default function ChatView(props: ChatViewProps) {
   }
   const latestRunSettled = isLatestRunSettled(activeLatestRun, activeRuntime);
   const activePlan = deriveActivePlanState(serverProjection, activeActivityRun?.runId);
-  // deriveActivePlanState falls back to older runs' plans; only the running
-  // turn's own list, or a Claude session's open list, belongs in the drawer.
   const activeActivityRunSettled = isLatestRunSettled(activeActivityRun, activeRuntime);
   const composerTasksPlan = selectComposerTasksPlan(
     serverProjection,
@@ -1772,8 +1770,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const activeComposerTasksProgress = (() => {
     if (!composerTasksPlan) return null;
-    const live =
-      !activeActivityRunSettled && composerTasksPlan.runId === (activeActivityRun?.runId ?? null);
+    const live = !activeActivityRunSettled && composerTasksPlan.runId === activeActivityRun?.runId;
     const totalSteps = composerTasksPlan.steps.length;
     if (totalSteps === 0) return null;
     const completedSteps = composerTasksPlan.steps.filter(

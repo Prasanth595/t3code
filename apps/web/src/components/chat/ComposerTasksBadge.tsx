@@ -9,7 +9,6 @@ export interface ComposerTasksProgress {
   readonly step: string;
   readonly completedSteps: number;
   readonly totalSteps: number;
-  /** False when the list is shown from a turn that is no longer running. */
   readonly live: boolean;
 }
 

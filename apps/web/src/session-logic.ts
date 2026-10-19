@@ -254,11 +254,22 @@ export function deriveActivePlanState(
   latestRunId: RunId | undefined,
 ): ActivePlanState | null {
   if (projection === null) return null;
-  const plans = projection.plans.filter((plan) => plan.kind === "todo_list");
+  const plans = projection.plans
+    .filter((plan) => plan.kind === "todo_list")
+    .filter((plan) => plan.status !== "superseded");
+  const runOrdinals = new Map<RunId | null, number>(
+    projection.runs.map((run) => [run.id, run.ordinal]),
+  );
   const plan =
-    [...plans].toReversed().find((candidate) => candidate.runId === latestRunId) ??
-    plans.at(-1) ??
-    null;
+    plans.findLast((candidate) => candidate.runId === latestRunId) ??
+    plans.reduce<(typeof plans)[number] | null>(
+      (latest, candidate) =>
+        latest === null ||
+        (runOrdinals.get(candidate.runId) ?? -1) >= (runOrdinals.get(latest.runId) ?? -1)
+          ? candidate
+          : latest,
+      null,
+    );
   if (plan === null || plan.steps.length === 0) return null;
   return {
     createdAt: planItemTime(projection, plan.id),
@@ -272,13 +283,7 @@ export function deriveActivePlanState(
   };
 }
 
-/**
- * Picks the todo list the composer tasks drawer shows, given the plan from
- * deriveActivePlanState. Every provider shows the running turn's own list.
- * Claude keeps one task list (TaskCreate/TaskUpdate) for its whole session, so
- * a Claude list with open steps also stays visible after its run settles and
- * during later runs on that same Claude session.
- */
+// Claude's unfinished tasks belong to the provider session, not just the turn.
 export function selectComposerTasksPlan(
   projection: OrchestrationV2ThreadProjection | null,
   plan: ActivePlanState | null,
@@ -296,11 +301,10 @@ export function selectComposerTasksPlan(
     (providerThread) => providerThread.id === planProviderThreadId,
   )?.driver;
   if (planDriver !== "claudeAgent") return null;
-  // A later run on another provider thread (provider switch, fresh session)
-  // does not own this list.
   let latestStartedRun: OrchestrationV2ThreadProjection["runs"][number] | null = null;
   for (const run of projection.runs) {
     if (
+      run.startedAt !== null &&
       run.providerThreadId !== null &&
       (latestStartedRun === null || run.ordinal > latestStartedRun.ordinal)
     ) {
