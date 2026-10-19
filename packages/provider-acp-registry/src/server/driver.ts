@@ -90,10 +90,6 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
   };
 };
 
-/**
- * Gives each listed model the session options last observed for it. Models
- * without an observation, including custom models, keep their capabilities.
- */
 function withModelOptions(
   models: ReadonlyArray<ServerProviderModel>,
   modelOptions: AcpRegistryModelOptions,
@@ -111,15 +107,8 @@ function withModelOptions(
   });
 }
 
-/**
- * Lists a session's models. Its config options describe only its current
- * model, so every other model starts without options until a probe or live
- * session observes it.
- */
 function modelsFromDiscovery(
-  discovery:
-    | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
-    | undefined,
+  discovery: AcpRegistryLiveConfiguration | undefined,
   customModels: ReadonlyArray<string>,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
@@ -286,19 +275,7 @@ export function applyAcpRegistryAvailableCommands(
   });
 }
 
-/** Gives each listed model the session options last observed for it. */
-export function applyAcpRegistryModelOptions(
-  provider: ServerProvider,
-  modelOptions: AcpRegistryModelOptions,
-): ServerProvider {
-  return { ...provider, models: withModelOptions(provider.models, modelOptions) };
-}
-
-/**
- * Overlays live sessions on a snapshot. The newest session owns the model
- * list; each model keeps the options its newest live session reported, or
- * else the options the snapshot already knew for it.
- */
+// Live observations take precedence over disposable probes, even an empty option list.
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryRuntimeCoordinator.AcpRegistryLiveConfigurationState,
@@ -581,9 +558,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           environment,
           processEnvironment,
         });
-      // `probedModelOptions` keeps the options each discovery probe observed
-      // for its session's model. Agents such as Devin start probes on the
-      // last used model, so successive probes can describe different models.
       const enrichmentCache = yield* Ref.make<{
         readonly generation: number;
         readonly entry: {
@@ -598,6 +572,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         entry: null,
         probedModelOptions: new Map(),
       }));
+      const refreshEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
+        ...current,
+        generation: current.generation + 1,
+        entry: null,
+      }));
       const withLiveRuntimeState = (input: ServerProvider) =>
         Effect.gen(function* () {
           if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
@@ -608,10 +587,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             (yield* confirmedAuthentication.get)
               ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
               : input;
-          const provider = applyAcpRegistryModelOptions(
-            authenticated,
-            (yield* Ref.get(enrichmentCache)).probedModelOptions,
-          );
+          const provider = {
+            ...authenticated,
+            models: withModelOptions(
+              authenticated.models,
+              (yield* Ref.get(enrichmentCache)).probedModelOptions,
+            ),
+          };
           return yield* Option.isNone(runtimeCoordinator)
             ? Effect.succeed(provider)
             : Effect.all({
@@ -638,7 +620,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.flatMap(withLiveRuntimeState),
       );
-      /** Probes the agent, recording its observed model options unless `generation` was invalidated. */
       const enrichProvider = (generation: number) =>
         checkAcpRegistryProviderStatus(
           {
@@ -754,18 +735,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           );
           const publishLiveConfiguration = runtimeCoordinator.value.watchLiveConfiguration(
             instanceId,
-            (configuration) =>
+            () =>
               liveSnapshotSemaphore.withPermit(
                 getSnapshot.pipe(
-                  Effect.flatMap((current) =>
-                    publishSnapshot(
-                      applyAcpRegistryLiveConfiguration(
-                        current,
-                        configuration,
-                        effectiveConfig.customModels,
-                      ),
-                    ),
-                  ),
+                  Effect.flatMap(withLiveRuntimeState),
+                  Effect.flatMap(publishSnapshot),
                 ),
               ),
           );
@@ -876,7 +850,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         auth,
         snapshot: {
           ...snapshot,
-          refresh: snapshot.refresh.pipe(
+          refresh: liveSnapshotSemaphore.withPermit(refreshEnrichmentCache).pipe(
+            Effect.andThen(snapshot.refresh),
             Effect.tap(() => controller.refreshMethods ?? Effect.void),
           ),
         },
@@ -948,19 +923,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Effect.tap(() => confirmedAuthentication.set(false)),
               Effect.tap(() =>
                 liveSnapshotSemaphore.withPermit(
-                  invalidateEnrichmentCache.pipe(
-                    Effect.andThen(
-                      Option.isSome(runtimeCoordinator)
-                        ? Effect.all(
-                            [
-                              runtimeCoordinator.value.clearAvailableCommands(instanceId),
-                              runtimeCoordinator.value.clearLiveConfiguration(instanceId),
-                            ],
-                            { concurrency: "unbounded", discard: true },
-                          )
-                        : Effect.void,
-                    ),
-                  ),
+                  invalidateEnrichmentCache.pipe(Effect.andThen(clearLiveState)),
                 ),
               ),
             );

@@ -5,14 +5,28 @@ import {
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { vi } from "vite-plus/test";
 
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as AcpRegistryAuth from "./auth.ts";
+import * as AcpRegistryProbe from "./probe.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import type { AcpRegistryLiveConfiguration } from "./probe.ts";
 import {
+  AcpRegistryDriver,
   acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
@@ -71,6 +85,122 @@ function catalogWithInspection(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
+  it.effect("reprobes on explicit refresh while retaining other models' probe observations", () =>
+    Effect.gen(function* () {
+      const probes = yield* Queue.unbounded<AcpRegistryLiveConfiguration>();
+      const probe = vi
+        .spyOn(AcpRegistryProbe, "probeAcpRegistryConfiguration")
+        .mockImplementation(() =>
+          Queue.take(probes).pipe(
+            Effect.map((configuration) => ({
+              probe: {
+                ...configuration,
+                instanceId: identity.instanceId,
+                ready: true,
+                icon: null,
+                authMethods: [],
+                sessionManagement: noSessionManagement,
+              },
+              slashCommands: [],
+              skills: [],
+            })),
+          ),
+        );
+      const auth = vi.spyOn(AcpRegistryAuth, "makeAcpRegistryAuth").mockImplementation((input) =>
+        ProviderAuthFlow.make({
+          instanceId: input.instanceId,
+          credentialBinding: { owner: "provider", key: input.instanceId },
+          methods: Effect.succeed([]),
+          authenticate: () => Effect.die("unused authentication"),
+          logout: Effect.void,
+        }),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          probe.mockRestore();
+          auth.mockRestore();
+        }),
+      );
+      const models = [
+        { id: "opus", name: "Opus", description: null },
+        { id: "glm", name: "GLM", description: null },
+      ];
+      const observed = (currentModelId: string, levels: ReadonlyArray<string>) => ({
+        models,
+        currentModelId,
+        configOptions:
+          levels.length === 0
+            ? []
+            : [
+                {
+                  id: "thought_level",
+                  label: "Thinking",
+                  type: "select" as const,
+                  options: levels.map((id) => ({ id, label: id })),
+                },
+              ],
+      });
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      });
+      const receive = Effect.fn(function* (configuration: AcpRegistryLiveConfiguration) {
+        const updated = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Queue.offer(probes, configuration);
+        return Option.getOrThrow(yield* Fiber.join(updated));
+      });
+      expect(thinkingChoices(yield* receive(observed("opus", ["low", "high"])))).toEqual({
+        opus: ["low", "high"],
+        glm: [],
+      });
+      yield* instance.snapshot.refresh;
+      expect(thinkingChoices(yield* receive(observed("glm", ["max"])))).toEqual({
+        opus: ["low", "high"],
+        glm: ["max"],
+      });
+      yield* instance.snapshot.refresh;
+      expect(thinkingChoices(yield* receive(observed("opus", [])))).toEqual({
+        opus: [],
+        glm: ["max"],
+      });
+      yield* instance.auth!.invalidate!;
+      expect(thinkingChoices(yield* receive(observed("opus", ["high"])))).toEqual({
+        opus: ["high"],
+        glm: [],
+      });
+    }).pipe(
+      Effect.provideService(
+        AcpRegistrySupport.AcpRegistryCatalog,
+        catalogWithInspection({
+          status: "ready",
+          agentId: "test-agent",
+          version: "1.0.0",
+          distribution: "binary",
+        }),
+      ),
+      Effect.provide(
+        Layer.mergeAll(
+          TestProviderHost.layer({ runBackgroundWork: false }),
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          AcpRegistryRuntimeCoordinator.layer,
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ).pipe(Layer.provideMerge(NodeServices.layer)),
+      ),
+      Effect.scoped,
+    ),
+  );
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,

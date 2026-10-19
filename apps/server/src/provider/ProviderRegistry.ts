@@ -204,19 +204,22 @@ const mergeProviderModels = (
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
+  // ACP observations belong to the running driver; saved snapshots can contain
+  // options copied across models by older servers.
+  const carriesPreviousCapabilities = provider.driver !== ProviderDriverKind.make("acpRegistry");
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
-  const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
-  );
+  const retainablePreviousModels = previousModels
+    .filter((model) => !model.isCustom && !updateRequiredSlugs.has(model.slug))
+    .map((model) =>
+      carriesPreviousCapabilities || model.capabilities === null
+        ? model
+        : { ...model, capabilities: null },
+    );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
     return retainablePreviousModels;
   }
 
-  // ACP Registry snapshots already carry the options last observed for each
-  // model. A model without options has not been observed yet, and copying an
-  // older snapshot's options onto it would show another model's choices.
-  const carriesPreviousCapabilities = provider.driver !== ProviderDriverKind.make("acpRegistry");
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);

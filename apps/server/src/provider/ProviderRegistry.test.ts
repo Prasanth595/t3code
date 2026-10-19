@@ -996,6 +996,18 @@ it.layer(
         ProviderRegistry.mergeProviderSnapshot(cachedProvider, refreshedProvider).models,
         [...refreshedProvider.models],
       );
+      const checkingProvider = {
+        ...refreshedProvider,
+        status: "warning",
+        models: [{ slug: "default", name: "Default", isCustom: false, capabilities: null }],
+      } satisfies ServerProvider;
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(cachedProvider, checkingProvider).models,
+        [
+          ...checkingProvider.models,
+          ...cachedProvider.models.map((model) => ({ ...model, capabilities: null })),
+        ],
+      );
     });
 
     it("drops stale OpenCode models missing from a successful refresh", () => {
