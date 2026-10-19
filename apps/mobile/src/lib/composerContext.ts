@@ -10,6 +10,7 @@ import {
   type PullRequestContextMetadata,
   type ReviewCommentContextRecord,
   type ScopedThreadRef,
+  type ServerProviderSkill,
   type ThreadContextRecord,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -50,6 +51,27 @@ export function composerMentionPath(source: string, context?: OrchestrationMessa
   }
   const token = collectComposerInlineTokens(`${source} `)[0];
   return token?.type === "mention" && token.source === source ? token.value : null;
+}
+
+export function composerSkill(
+  source: string,
+  skills?: ReadonlyArray<
+    Pick<ServerProviderSkill, "name" | "displayName" | "description"> &
+      Partial<Pick<ServerProviderSkill, "path">>
+  >,
+) {
+  const token = collectComposerInlineTokens(`${source} `)[0];
+  if (token?.type !== "skill" || token.source !== source) return undefined;
+  const skill = skills?.find((entry) =>
+    token.path ? entry.path === token.path : entry.name === token.value,
+  );
+  if (!skill && !token.path) return undefined;
+  return {
+    name: token.value,
+    path: skill?.path ?? token.path,
+    displayName: skill?.displayName,
+    description: skill?.description,
+  };
 }
 
 export interface ComposerDocumentAttachment {
