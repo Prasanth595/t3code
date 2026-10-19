@@ -192,25 +192,26 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
-  const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fn(
-    "managedProvider.applyUsageLimits",
-  )(function* (update) {
-    const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-      const usageLimits = applyUsageLimitsUpdate({
-        previous: state.snapshot.usageLimits,
-        update,
-        checkedAt: update.checkedAt,
+  // Providers call this on every token-usage tick, usually without changing the snapshot.
+  const applyUsageLimits: ManagedServerProvider["applyUsageLimits"] = Effect.fnUntraced(
+    function* (update) {
+      const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
+        const usageLimits = applyUsageLimitsUpdate({
+          previous: state.snapshot.usageLimits,
+          update,
+          checkedAt: update.checkedAt,
+        });
+        if (usageLimits === state.snapshot.usageLimits) {
+          return [null, state] as const;
+        }
+        const snapshot = withUsageLimits(state.snapshot, usageLimits);
+        return [snapshot, { ...state, snapshot }] as const;
       });
-      if (usageLimits === state.snapshot.usageLimits) {
-        return [null, state] as const;
+      if (snapshotToPublish !== null) {
+        yield* PubSub.publish(changesPubSub, snapshotToPublish);
       }
-      const snapshot = withUsageLimits(state.snapshot, usageLimits);
-      return [snapshot, { ...state, snapshot }] as const;
-    });
-    if (snapshotToPublish !== null) {
-      yield* PubSub.publish(changesPubSub, snapshotToPublish);
-    }
-  });
+    },
+  );
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;

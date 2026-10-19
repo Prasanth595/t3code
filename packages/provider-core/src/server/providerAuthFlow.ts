@@ -281,22 +281,21 @@ export const make = Effect.fn("ProviderAuthFlow.make")(function* (options: {
               expiresAt: flow.expiresAt,
               ...(returnUrl ? { returnUrl } : {}),
               ...(callbackMode ? { callbackMode } : {}),
-              setInteraction: Effect.fn("providerAuthFlow.setInteraction")(
-                function* (interaction, respond, complete) {
-                  if (active !== flow) return;
-                  flow.respond = respond;
-                  flow.complete = complete;
-                  yield* publish(flow, {
-                    phase: "waiting",
-                    interaction,
-                    authorizationUrl:
-                      interaction.type === "browser" || interaction.type === "deviceCode"
-                        ? interaction.url
-                        : null,
-                    message: "Complete sign-in to continue.",
-                  });
-                },
-              ),
+              // Terminal sign-in updates this for every output chunk within the auth operation.
+              setInteraction: Effect.fnUntraced(function* (interaction, respond, complete) {
+                if (active !== flow) return;
+                flow.respond = respond;
+                flow.complete = complete;
+                yield* publish(flow, {
+                  phase: "waiting",
+                  interaction,
+                  authorizationUrl:
+                    interaction.type === "browser" || interaction.type === "deviceCode"
+                      ? interaction.url
+                      : null,
+                  message: "Complete sign-in to continue.",
+                });
+              }),
               verifying: Effect.gen(function* () {
                 flow.respond = undefined;
                 flow.complete = undefined;
