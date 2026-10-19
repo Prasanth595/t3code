@@ -61,11 +61,7 @@ import {
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import {
-  partitionLegacyModels,
-  providerModelKey,
-  sortProviderModelItems,
-} from "../../modelOrdering";
+import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
 
 type ModelPickerItem = {
   slug: string;
@@ -434,22 +430,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     },
   );
   const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(() => {
-    // Auto-expand the legacy group only when the active model actually lives
-    // there. A favorited legacy model is hoisted into the main list, so
-    // expanding the group for it would open an unrelated section.
-    const activeIsFavorite = favoritesSet.has(
-      providerModelKey(props.activeInstanceId, activeModelSlug),
-    );
-    return new Set<ProviderInstanceId>(
-      !activeIsFavorite &&
-        modelOptionsByInstance
-          .get(props.activeInstanceId)
-          ?.some((model) => model.slug === activeModelSlug && model.isLegacy)
-        ? [props.activeInstanceId]
-        : [],
-    );
-  });
+  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
+    () =>
+      new Set<ProviderInstanceId>(
+        activeModel?.isLegacy &&
+          !favoritesSet.has(providerModelKey(props.activeInstanceId, activeModelSlug))
+          ? [props.activeInstanceId]
+          : [],
+      ),
+  );
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
@@ -668,14 +657,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     if (isSearching || selectedInstanceId === "favorites") {
       return null;
     }
-    // Favorited models are hoisted to the top, and that hoist has to win over
-    // the legacy split: a favorited legacy model stays in the main list rather
-    // than being buried in the collapsed legacy group. Unfavoriting it drops it
-    // back into the legacy section on the next render.
-    const { current: currentModels, legacy: legacyModels } = partitionLegacyModels(
-      filteredModels,
-      (model) => favoritesSet.has(providerModelKey(model.instanceId, model.slug)),
-    );
+    const currentModels: ModelPickerItem[] = [];
+    const legacyModels: ModelPickerItem[] = [];
+    for (const model of filteredModels) {
+      const isLegacy =
+        model.isLegacy && !favoritesSet.has(providerModelKey(model.instanceId, model.slug));
+      (isLegacy ? legacyModels : currentModels).push(model);
+    }
     if (legacyModels.length === 0) {
       return null;
     }
