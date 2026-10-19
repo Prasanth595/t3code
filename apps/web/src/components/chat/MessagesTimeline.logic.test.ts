@@ -11,6 +11,7 @@ import {
   RuntimeRequestId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import {
@@ -1324,6 +1325,10 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
+      runs: [
+        { id: RunId.make("discarded-run"), ordinal: 1, status: "rolled_back" },
+        { id: RunId.make("turn-1"), ordinal: 2, status: "completed" },
+      ] satisfies ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [assistantTurnDiffSummary],
