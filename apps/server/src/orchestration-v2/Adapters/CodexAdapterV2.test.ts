@@ -9104,12 +9104,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             { stage: "stopped", ownership: "adopted", cleanup: "completes-during-pause" },
             { stage: "stopped", ownership: "adopted", cleanup: "continues-during-pause" },
             { stage: "pending-stop", ownership: "unclaimed", cleanup: "ok" },
+            { stage: "activated-stop", ownership: "held", cleanup: "ok" },
+            { stage: "activated-stop", ownership: "adopted", cleanup: "ok" },
+            { stage: "activated-stop", ownership: "continued", cleanup: "ok" },
+            { stage: "activated-stop", ownership: "adopted", cleanup: "completes-during-pause" },
+            { stage: "activated-stop", ownership: "adopted", cleanup: "continues-during-pause" },
           ]) {
             yield* Effect.gen(function* () {
               const requests: Array<string> = [];
               const activationPending = yield* Deferred.make<void>();
               const stopping =
-                stage === "post-stop-pause" || stage === "stopped" || stage === "pending-stop";
+                stage === "post-stop-pause" ||
+                stage === "stopped" ||
+                stage === "pending-stop" ||
+                stage === "activated-stop";
               const rejected = (id: number, message = "Resume rejected") =>
                 ({
                   type: "emit_inbound",
@@ -9153,19 +9161,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               if (ownership === "unclaimed" || ownership === "adopted") {
                 entries.push(goalUpdated("active", nativeId), turnStarted(nativeId));
               }
-              entries.push(...resume.slice(0, stage === "prepare" ? 2 : (failureId - 3) * 2 + 1));
+              if (stage === "activated-stop") entries.push(...resume);
+              else
+                entries.push(...resume.slice(0, stage === "prepare" ? 2 : (failureId - 3) * 2 + 1));
               if (ownership === "continued") {
                 entries.push(goalUpdated("active", nativeId), turnStarted(nativeId));
               }
               if (stopping) {
-                entries.push(
-                  notification("activation pending", "thread/goal/updated", {
-                    threadId: nativeThreadId,
-                    turnId: null,
-                    goal: codexGoal("active", 11),
-                  }),
-                  ...pause.slice(0, 1),
-                );
+                if (stage !== "activated-stop")
+                  entries.push(
+                    notification("activation pending", "thread/goal/updated", {
+                      threadId: nativeThreadId,
+                      turnId: null,
+                      goal: codexGoal("active", 11),
+                    }),
+                  );
+                entries.push(...pause.slice(0, 1));
                 if (cleanup === "completes-during-pause" || cleanup === "continues-during-pause") {
                   entries.push(goalUpdated("paused", nativeId), turnCompleted(nativeId));
                 }
@@ -9174,7 +9185,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 entries.push(...pause.slice(1), ...interrupt);
                 if (stage === "pending-stop") {
                   entries.push(...resume.slice(1, 2));
-                } else {
+                } else if (stage !== "activated-stop") {
                   entries.push(
                     ...resume.slice(5),
                     ...withReplayRequestId(pause.slice(0, 1), postStopPauseId),
@@ -9229,7 +9240,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 })
                 .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
               if (stopping) {
-                yield* Deferred.await(activationPending);
+                // Leave ingestion out of target selection: production can still name
+                // earlier background work after startTurn has successfully returned.
+                if (stage === "activated-stop") yield* Fiber.join(start);
+                else yield* Deferred.await(activationPending);
                 yield* harness.runtime.interruptTurn({
                   providerThread: harness.providerThread,
                   providerTurnId:

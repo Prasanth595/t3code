@@ -6186,18 +6186,38 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             // The run can settle while the pause is in flight, which drops its record.
             const activation = goalActivations.get(goalThreadId);
             if (activation !== undefined) activation.stopped = true;
-            // Resume owns Stop throughout activation, even before its turn is projected.
             const resumeInput = activation?.resumeInput;
+            // Thread-wide Stop can name earlier background work before ingestion
+            // catches up, including after activation has finished.
+            const currentGoalTurn =
+              turnInput.requestRuntimeRestart === true &&
+              goalsByNativeThread.get(goalThreadId) != null
+                ? (goalHolds.get(goalThreadId)?.context ??
+                  (yield* findActiveTurnByNativeThreadId(goalThreadId)))
+                : undefined;
             const requestedTurnId =
               resumeInput === undefined
-                ? latestGoalTurnId(turnInput.providerTurnId)
+                ? latestGoalTurnId(
+                    currentGoalTurn?.subagent === null &&
+                      currentGoalTurn.providerThread.id === turnInput.providerThread.id
+                      ? currentGoalTurn.providerTurnId
+                      : turnInput.providerTurnId,
+                  )
                 : ((yield* claimGoalTurn(resumeInput, true)) ?? turnInput.providerTurnId);
             const heldBefore = goalHolds.get(goalThreadId)?.context;
             const turnsBefore = [
+              ...(goalRuns.get(turnInput.providerTurnId) ?? []),
               ...(goalRuns.get(requestedTurnId) ?? []),
               ...Array.from((yield* Ref.get(activeTurns)).values()).filter(
-                (context) => context.providerTurnId === requestedTurnId,
+                (context) =>
+                  context.providerTurnId === requestedTurnId ||
+                  context.providerTurnId === turnInput.providerTurnId,
               ),
+              ...(turnInput.requestRuntimeRestart === true
+                ? Array.from((yield* Ref.get(settledTurns)).values()).filter(
+                    (context) => context.providerTurnId === turnInput.providerTurnId,
+                  )
+                : []),
               ...(heldBefore?.providerTurnId === requestedTurnId ? [heldBefore] : []),
             ];
             if (
