@@ -189,6 +189,7 @@ import {
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
+  resolveDisclosureRevealScrollDelta,
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
@@ -693,10 +694,43 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const disclosurePinsEndRef = useRef(false);
   const disclosureCollapsedRef = useRef(false);
+  const disclosureRevealsRowRef = useRef(false);
   const pinDisclosureToEnd = () => {
     if (!disclosurePinsEndRef.current) return;
     const element = listRef.current?.getScrollableNode();
     if (element) element.scrollTop = element.scrollHeight;
+  };
+
+  // Visible-position anchoring keeps the toggled row still, so content that
+  // expands below it near the bottom would otherwise land under the composer.
+  const revealExpandedDisclosure = () => {
+    const anchorKey = disclosureAnchorKeyRef.current;
+    if (
+      disclosurePinsEndRef.current ||
+      disclosureCollapsedRef.current ||
+      !disclosureRevealsRowRef.current ||
+      anchorKey === null
+    ) {
+      return;
+    }
+    const state = listRef.current?.getState();
+    const element = listRef.current?.getScrollableNode();
+    const index = state?.indexByKey(anchorKey);
+    const row = index === undefined ? undefined : state?.elementAtIndex(index);
+    if (!element || !row) return;
+    const viewport = element.getBoundingClientRect();
+    const bounds = row.getBoundingClientRect();
+    const delta = resolveDisclosureRevealScrollDelta({
+      rowTop: bounds.top,
+      rowBottom: bounds.bottom,
+      viewportTop: viewport.top,
+      viewportBottom: viewport.bottom,
+      composerOverlayHeight,
+      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+    });
+    if (delta > 0) {
+      element.scrollBy({ top: delta, behavior: prefersReducedMotion ? "auto" : "smooth" });
+    }
   };
 
   const scheduleDisclosureSettle = () => {
@@ -710,6 +744,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       pinDisclosureToEnd();
       disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
         pinDisclosureToEnd();
+        revealExpandedDisclosure();
         disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
         setDisclosureToggleSettling(false);
@@ -725,9 +760,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, collapsed = false) => {
+  // Turn and attempt folds reveal later rows rather than growing their own row.
+  const suspendEndScrollMaintenanceForDisclosure = (
+    anchorKey: string,
+    collapsed = false,
+    revealsRow = true,
+  ) => {
     disclosureAnchorKeyRef.current = anchorKey;
     disclosureCollapsedRef.current = collapsed;
+    disclosureRevealsRowRef.current = revealsRow;
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
@@ -740,7 +781,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
+    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`, false, false);
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
       if (next.has(runId)) {
@@ -764,7 +805,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
-    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
+    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`, false, false);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
       if (next.has(attemptId)) {
