@@ -57,6 +57,16 @@ export const readFactoryServerBearer = Effect.gen(function* () {
   Effect.withSpan("desktop.factoryServer.readBearer"),
 );
 
+const wrap = (cause: unknown) => new FactoryServerCredentialStoreError({ cause });
+
+/** Fails when a bearer could not be kept, so pairing can stop before it spends a one-time link. */
+export const ensureFactoryServerBearerStorable = Effect.gen(function* () {
+  const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  if (!(yield* safeStorage.isEncryptionAvailable.pipe(Effect.mapError(wrap)))) {
+    return yield* wrap("Secure storage is unavailable.");
+  }
+});
+
 export const writeFactoryServerBearer = Effect.fn("desktop.factoryServer.writeBearer")(function* (
   bearer: string,
 ) {
@@ -64,10 +74,7 @@ export const writeFactoryServerBearer = Effect.fn("desktop.factoryServer.writeBe
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const file = yield* credentialPath;
-  const wrap = (cause: unknown) => new FactoryServerCredentialStoreError({ cause });
-  if (!(yield* safeStorage.isEncryptionAvailable.pipe(Effect.mapError(wrap)))) {
-    return yield* wrap("Secure storage is unavailable.");
-  }
+  yield* ensureFactoryServerBearerStorable;
   yield* Effect.gen(function* () {
     const encryptedBearer = Base64.encode(yield* safeStorage.encryptString(bearer));
     const encoded = yield* encodeDocument({ version: 1, encryptedBearer });

@@ -360,3 +360,6 @@ const scopedProgram = Effect.scoped(
 );
 
 export const program = scopedProgram.pipe(Effect.withSpan("desktop.app"));
+
+// For apps/desktop/src/factory/bootstrapHook.test.ts, which runs the openOnFactoryServer hook.
+export { bootstrap };

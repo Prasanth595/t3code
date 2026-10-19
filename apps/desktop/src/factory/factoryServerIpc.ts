@@ -1,7 +1,10 @@
 // Pairing the factory server from the web UI's pairing page, and the bearer it leaves behind.
 // Upstream's pairing exchange sets a cookie session, which cannot work from the desktop's
 // custom-scheme origin to 127.0.0.1, so the exchange runs here and the page reloads.
-import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import {
+  bootstrapRemoteBearerSession,
+  type RemoteEnvironmentAuthError,
+} from "@t3tools/client-runtime/authorization";
 import { FORK_FACTORY_SERVER_URL } from "@t3tools/shared/forkIdentity";
 import { getPairingTokenFromUrl } from "@t3tools/shared/remote";
 import * as Effect from "effect/Effect";
@@ -10,10 +13,18 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import { PAIR_FACTORY_SERVER_CHANNEL } from "./factoryServerChannel.ts";
-import { usesFactoryServer } from "./factoryServer.ts";
-import { readFactoryServerBearer, writeFactoryServerBearer } from "./factoryServerCredential.ts";
+import { factoryServerIsLocalEnvironment, usesFactoryServer } from "./factoryServer.ts";
+import {
+  ensureFactoryServerBearerStorable,
+  type FactoryServerCredentialStoreError,
+  readFactoryServerBearer,
+  writeFactoryServerBearer,
+} from "./factoryServerCredential.ts";
+
+const { logWarning } = makeComponentLogger("desktop-factory-server");
 
 export class FactoryServerPairingError extends Schema.TaggedError<FactoryServerPairingError>()(
   "FactoryServerPairingError",
@@ -33,12 +44,51 @@ const credentialFromInput = (input: string): string | null => {
 };
 
 /**
- * The stored bearer, `""` before pairing, and `null` when this build does not use the factory
- * server, so upstream's local-backend token applies.
+ * What the pairing page shows for a failed exchange. Only the server turning the credential
+ * down says "rejected"; an unreachable server and any other failure each get their own reason.
+ * The token endpoint answers a bad or stale credential with 401 auth_invalid. A 400 is an
+ * invalid request, not a rejected link. A foreign server may send an undeclared 401 or 403.
+ */
+const pairingFailureReason = (error: RemoteEnvironmentAuthError): string => {
+  switch (error._tag) {
+    case "RemoteEnvironmentAuthFetchError":
+    case "RemoteEnvironmentAuthTimeoutError":
+      return `Could not reach the factory server at ${FORK_FACTORY_SERVER_URL}. Is it running?`;
+    case "EnvironmentAuthInvalidError":
+      return REJECTED_REASON;
+    case "RemoteEnvironmentAuthUndeclaredStatusError":
+      return error.status === 401 || error.status === 403
+        ? REJECTED_REASON
+        : COULD_NOT_COMPLETE_REASON;
+    case "RemoteEnvironmentAuthInvalidJsonError":
+    case "EnvironmentRequestInvalidError":
+    case "EnvironmentScopeRequiredError":
+    case "EnvironmentOperationForbiddenError":
+    case "EnvironmentResourceNotFoundError":
+    case "EnvironmentInternalError":
+      return COULD_NOT_COMPLETE_REASON;
+  }
+};
+
+const storeFailure = <A, R>(effect: Effect.Effect<A, FactoryServerCredentialStoreError, R>) =>
+  effect.pipe(
+    Effect.tapError((error) =>
+      logWarning("could not store the factory server credential", { error }),
+    ),
+    Effect.mapError((error) => new FactoryServerPairingError({ reason: error.message })),
+  );
+
+const REJECTED_REASON = "The factory server rejected this pairing link.";
+const COULD_NOT_COMPLETE_REASON =
+  "The factory server could not complete the pairing. Check its logs and try again.";
+
+/**
+ * The stored bearer, `""` before pairing, and `null` when the factory server is not the local
+ * environment (not a packaged build, or "local environment" is off), so upstream's
+ * local-backend token applies.
  */
 export const factoryServerBearerToken = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (!usesFactoryServer(environment)) return null;
+  if (!(yield* factoryServerIsLocalEnvironment)) return null;
   return Option.getOrElse(yield* readFactoryServerBearer, () => "");
 });
 
@@ -59,6 +109,8 @@ export const pairFactoryServer = DesktopIpc.makeIpcMethod({
         reason: "Paste a pairing link from `t3 pair`.",
       });
     }
+    // The exchange spends the one-time link, so check first that its bearer can be kept.
+    yield* storeFailure(ensureFactoryServerBearerStorable);
     const httpClient = yield* HttpClient.HttpClient;
     const session = yield* bootstrapRemoteBearerSession({
       httpBaseUrl: FORK_FACTORY_SERVER_URL,
@@ -66,19 +118,11 @@ export const pairFactoryServer = DesktopIpc.makeIpcMethod({
       clientMetadata: { label: "T3 Code Factory Desktop", deviceType: "desktop" },
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.tapError((error) => logWarning("factory server pairing failed", { error })),
       Effect.mapError(
-        (error) =>
-          new FactoryServerPairingError({
-            reason:
-              error._tag === "RemoteEnvironmentAuthFetchError" ||
-              error._tag === "RemoteEnvironmentAuthTimeoutError"
-                ? `Could not reach the factory server at ${FORK_FACTORY_SERVER_URL}. Is it running?`
-                : "The factory server rejected this pairing link.",
-          }),
+        (error) => new FactoryServerPairingError({ reason: pairingFailureReason(error) }),
       ),
     );
-    yield* writeFactoryServerBearer(session.access_token).pipe(
-      Effect.mapError((error) => new FactoryServerPairingError({ reason: error.message })),
-    );
+    yield* storeFailure(writeFactoryServerBearer(session.access_token));
   }),
 });

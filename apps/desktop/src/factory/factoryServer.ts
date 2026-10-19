@@ -11,6 +11,7 @@ import * as DesktopAppActivation from "../app/DesktopAppActivation.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const { logInfo, logWarning } = makeComponentLogger("desktop-factory-server");
@@ -36,14 +37,21 @@ export const factoryServerBootstraps = (): DesktopEnvironmentBootstrap[] => {
 };
 
 /**
- * `null` when upstream's bootstraps apply. Reads the environment as an optional service so
- * upstream's handler tests, which provide none, keep working unchanged.
+ * Whether the web UI should treat the factory server as its local environment. Bootstrap opens
+ * the window on it only while "local environment" is on in desktop settings, so the handlers
+ * follow. Reads both services as optional so upstream's handler tests, which provide none,
+ * keep working unchanged: absent settings count as on.
  */
-export const factoryServerBootstrapsWhenPackaged = Effect.gen(function* () {
+export const factoryServerIsLocalEnvironment = Effect.gen(function* () {
   const environment = yield* Effect.serviceOption(DesktopEnvironment.DesktopEnvironment);
-  return Option.isSome(environment) && usesFactoryServer(environment.value)
-    ? factoryServerBootstraps()
-    : null;
+  if (Option.isNone(environment) || !usesFactoryServer(environment.value)) return false;
+  const settings = yield* Effect.serviceOption(DesktopAppSettings.DesktopAppSettings);
+  return Option.isNone(settings) || (yield* settings.value.get).localEnvironmentEnabled;
+});
+
+/** `null` when upstream's bootstraps apply. */
+export const factoryServerBootstrapsWhenPackaged = Effect.gen(function* () {
+  return (yield* factoryServerIsLocalEnvironment) ? factoryServerBootstraps() : null;
 });
 
 /**
