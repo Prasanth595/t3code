@@ -161,9 +161,24 @@ This removes the selected message and later conversation from the active thread
 and provider history. It does not undo external actions or separate provider
 memory. The action is available only when the provider supports rewind.
 
-Agents can inspect durable file checkpoints with `t3_checkpoint_list` and page through
-their patches with `t3_checkpoint_diff`. Checkpoints report whether their stored files
-are still available and whether the current provider can restore the conversation.
+Agents can inspect checkpoints with `t3_checkpoint_list` and page through complete
+patches with `t3_checkpoint_diff`. To restore an idle thread in an isolated worktree,
+use `t3_checkpoint_restore` with the exact checkpoint and scope IDs,
+`discardChanges: true`, and a stable `clientRequestId`. This discards current file
+changes and requires provider support for conversation rollback.
+
+Repeat the same request key to read its outcome. `REQUESTED` means accepted;
+`APPLIED` means completed. `FAILED` means the restore did not complete. `PARTIAL`
+means the provider or files may have changed and need inspection; the request will
+not run again. If the server cannot durably record completion, it conservatively
+reports `PARTIAL` even when the restore may have finished. A rejected key stays
+rejected; use a new key for a new attempt.
+Edits or queued work between acceptance and execution stop the restore, and the
+request reports `FAILED` without changing files. Stop
+external editors and other processes that write to the worktree before restoring:
+T3 serializes its own work, but cannot prevent external writes during restoration.
+T3 hashes every tracked and untracked non-ignored file at admission and again
+before execution, which can be slow in large worktrees.
 
 ## Prompt stash
 
