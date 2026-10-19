@@ -38,7 +38,6 @@ const isCredentialedHost = (url: string) => {
 const MAX_REDIRECTS = 3;
 /** Following the redirect here, rather than in `fetch`, is what keeps the token on its host. */
 const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
-/** Passed through so a seek in a long video costs one upstream range request, not a full download. */
 const FORWARDED_REQUEST_HEADERS = ["range", "if-range"] as const;
 const FORWARDED_RESPONSE_HEADERS = [
   "content-type",
@@ -48,17 +47,12 @@ const FORWARDED_RESPONSE_HEADERS = [
   "etag",
   "last-modified",
 ] as const;
-/** A pull request embeds pictures and recordings. Anything else is not served from our origin. */
 const MEDIA_CONTENT_TYPE_PATTERN = /^(?:image|video|audio)\/[\w!#$&^.+-]+$/i;
 const SVG_CONTENT_TYPE = "image/svg+xml";
 // An SVG is a document: same policy the asset route gives a workspace SVG, so one embedded in a
 // body cannot run script against this origin.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-/**
- * The github.com credential, or null without one: a public asset still loads, and a private one
- * fails the way it does in a browser that is not signed in.
- */
 const githubToken = GitHubCredentials.GitHubCredentials.pipe(
   Effect.flatMap((credentials) => credentials.get("github.com")),
   Effect.map((credential) => credential.token),
@@ -126,7 +120,6 @@ const mediaResponse = Effect.fn("PullRequestMediaFetch.mediaResponse")(function*
     "x-content-type-options": "nosniff",
   };
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });
-  // An upstream refusal is the client's answer, not this server's fault; only a broken hop is.
   // It carries none of the upstream entity headers: a `content-length` with no body behind it
   // holds the connection open until the browser gives up on it.
   if (response.status >= 400) {
