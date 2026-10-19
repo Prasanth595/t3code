@@ -1,6 +1,6 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { createEnvironmentThreadShellAtoms } from "../../../../packages/client-runtime/src/state/threadShell";
-import { applyShellStreamEvent } from "../../../../packages/client-runtime/src/state/shellReducer";
+import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
+import { applyShellStreamEvent } from "@t3tools/client-runtime/state/shell";
 import {
   v2ShellSnapshot,
   v2ThreadShell,
@@ -17,6 +17,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2ShellSnapshot,
   type ModelSelection,
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
@@ -265,7 +266,7 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
     for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
   };
   const selectedThreadId = ThreadId.make("another-selected-thread");
-  const snapshotAtom = Atom.make({
+  const snapshotAtom = Atom.make<OrchestrationV2ShellSnapshot>({
     ...v2ShellSnapshot,
     threads: [
       { ...v2ThreadShell, id: threadId },
@@ -299,7 +300,8 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
   onTestFinished(
     subscribeComposerDraftModelReconciliation({
       registry,
-      threadShellsAtom: shells.threadShellsAtom,
+      threadShellAtom: shells.threadShellAtom,
+      threadRefsAtom: shells.threadRefsAtom,
     }),
   );
   flush();

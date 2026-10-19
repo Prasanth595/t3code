@@ -36,7 +36,6 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
-import { draftModelPickMatchesThread } from "@t3tools/shared/model";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 
@@ -73,7 +72,6 @@ import {
   insertComposerDraftText,
   insertComposerDraftContext,
   clearComposerDraftContent,
-  clearComposerDraftModelSelection,
   composerContextImportsAtom,
   ensureComposerDraftsLoaded,
   getComposerDraftSnapshot,
@@ -300,15 +298,6 @@ export function useThreadComposerState() {
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
-  const draftModelPickInUse =
-    selectedDraft.modelSelection !== undefined &&
-    selectedThread?.modelSelection !== undefined &&
-    draftModelPickMatchesThread(selectedDraft.modelSelection, selectedThread.modelSelection);
-  useEffect(() => {
-    if (draftModelPickInUse && selectedThreadKey) {
-      clearComposerDraftModelSelection(selectedThreadKey);
-    }
-  }, [draftModelPickInUse, selectedThreadKey]);
   const pendingHandoff = resolvePendingHandoff(
     selectedThreadProjection?.projection,
     modelSelection,

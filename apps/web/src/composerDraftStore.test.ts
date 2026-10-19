@@ -1,10 +1,7 @@
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
-import { createEnvironmentThreadShellAtoms } from "../../../packages/client-runtime/src/state/threadShell";
-import { applyShellStreamEvent } from "../../../packages/client-runtime/src/state/shellReducer";
-import {
-  v2ShellSnapshot,
-  v2ThreadShell,
-} from "../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
+import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
+import { applyShellStreamEvent } from "@t3tools/client-runtime/state/shell";
+import { makeThreadProjectionFixture } from "./test-fixtures";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import {
@@ -27,6 +24,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2ShellSnapshot,
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
@@ -1937,11 +1935,26 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
     for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
   };
   const selectedThreadId = ThreadId.make("another-selected-thread");
-  const snapshotAtom = Atom.make({
-    ...v2ShellSnapshot,
+  const thread: OrchestrationV2ThreadShell = {
+    ...makeThreadProjectionFixture().thread,
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+  };
+  const snapshotAtom = Atom.make<OrchestrationV2ShellSnapshot>({
+    schemaVersion: 1,
+    snapshotSequence: 0,
+    projects: [],
+    archivedThreads: [],
     threads: [
-      { ...v2ThreadShell, id: threadId },
-      { ...v2ThreadShell, id: selectedThreadId },
+      { ...thread, id: threadId },
+      { ...thread, id: selectedThreadId },
     ],
   });
   const catalogValueAtom = Atom.make({
@@ -1971,7 +1984,8 @@ function modelReconciliationHarness(environmentId: EnvironmentId, threadId: Thre
   onTestFinished(
     subscribeComposerDraftModelReconciliation({
       registry,
-      threadShellsAtom: shells.threadShellsAtom,
+      threadShellAtom: shells.threadShellAtom,
+      threadRefsAtom: shells.threadRefsAtom,
     }),
   );
   flush();
@@ -2052,7 +2066,21 @@ describe("composerDraftStore modelSelection", () => {
     h.update({ modelSelection: modelSelection(CLAUDE_AGENT_DRIVER, remoteModel) });
     const effective = deriveEffectiveComposerModelState({
       draft: draftFor(threadId, TEST_ENVIRONMENT_ID),
-      providers: [],
+      providers: [
+        {
+          instanceId: CLAUDE_AGENT_INSTANCE,
+          driver: CLAUDE_AGENT_DRIVER,
+          enabled: true,
+          installed: true,
+          version: null,
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00.000Z",
+          models: [{ slug: remoteModel, name: remoteModel, isCustom: false, capabilities: {} }],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
       selectedProvider: CLAUDE_AGENT_DRIVER,
       selectedInstanceId: CLAUDE_AGENT_INSTANCE,
       threadModelSelection: h.model(),
