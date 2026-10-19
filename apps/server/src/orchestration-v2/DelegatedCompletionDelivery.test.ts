@@ -921,6 +921,339 @@ const seedRestartCancelledChild = (input: {
     return { taskId, childThreadId, childRunId };
   });
 
+// The run-update subscriber handles events in order. A separate child completion
+// marks that it has finished the preceding settlement, even when no wake was offered.
+const collectSettlementWakes = (name: string) =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make(`thread:${name}:barrier`);
+    const projectId = ProjectId.make(`project:${name}:barrier`);
+    const runId = RunId.make(`run:${name}:barrier`);
+    const rootNodeId = NodeId.make(`node:${name}:barrier`);
+    yield* seedParentWithTerminalTask({
+      threadId,
+      projectId,
+      runId,
+      rootNodeId,
+      taskId: NodeId.make(`node:${name}:barrier-delivered`),
+      deliveryState: "delivered",
+      now,
+    });
+    const child = yield* seedRestartCancelledChild({
+      parentThreadId: threadId,
+      projectId,
+      parentRunId: runId,
+      rootNodeId,
+      name: `${name}:barrier-child`,
+      completionWake: "always",
+      continuationPending: false,
+      now,
+    });
+    yield* sink.write({
+      events: [
+        runEvent({
+          threadId: child.childThreadId,
+          runId: child.childRunId,
+          ordinal: 1,
+          status: "completed",
+          now,
+        }),
+      ],
+    });
+    const wakes: ProviderContinuationRequests.ProviderContinuationRequest[] = [];
+    while (true) {
+      const request = yield* requests.take;
+      if (request.threadId === threadId) return wakes;
+      wakes.push(request);
+    }
+  });
+
+it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
+  "delegated steer settlement",
+  (it) => {
+    it.effect.each([
+      { name: "rejected", acknowledged: false, queued: false, discard: null },
+      { name: "acknowledged", acknowledged: true, queued: false, discard: null },
+      { name: "acknowledged-queued", acknowledged: true, queued: true, discard: null },
+      { name: "rolled-back-parent", acknowledged: false, queued: false, discard: "parent" },
+      { name: "rolled-back-receiver", acknowledged: false, queued: false, discard: "receiver" },
+      { name: "stopped", acknowledged: false, queued: false, discard: "stop" },
+      {
+        name: "acknowledged-restart",
+        acknowledged: true,
+        queued: false,
+        discard: null,
+        restart: true,
+      },
+      {
+        name: "acknowledged-restart-rolled-back-receiver",
+        acknowledged: true,
+        queued: false,
+        discard: "receiver",
+        restart: true,
+      },
+    ] as const)(
+      "$name: delivers only surviving results after the receiving run settles",
+      (scenario) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          const name = `steer-settlement:${scenario.name}`;
+          const restart = "restart" in scenario;
+          const threadId = ThreadId.make(`thread:${name}`);
+          const runId = RunId.make(`run:${name}`);
+          const taskId = NodeId.make(`node:${name}:first`);
+          const siblingId = NodeId.make(`node:${name}:sibling`);
+          const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+          yield* seedParentWithTerminalTask({
+            threadId,
+            projectId: ProjectId.make(`project:${name}`),
+            runId,
+            rootNodeId: NodeId.make(`node:${name}:root`),
+            taskId,
+            deliveryState: "claimed",
+            completionWake: "always",
+            deliveryTaskIds: [taskId],
+            now,
+          });
+          const seeded = yield* orchestrator.getThreadProjection(threadId);
+          const parent = seeded.runs[0]!;
+          const receiver = {
+            ...parent,
+            id: RunId.make(`run:${name}:receiver`),
+            ordinal: 2,
+            userMessageId: MessageId.make(`message:${name}:receiver`),
+            delegatedCompletion: undefined,
+          };
+          // This is the durable state after the provider rejected the steer: its
+          // message belongs to the receiving run, but the reservation is still claimed.
+          yield* sink.write({
+            commandId: reconcileCommandId(name),
+            events: [
+              {
+                ...runEvent({ threadId, runId, ordinal: 1, status: "completed", now }),
+                payload: { ...parent, status: "completed", completedAt: now },
+              },
+              {
+                ...runEvent({ threadId, runId: receiver.id, ordinal: 2, status: "running", now }),
+                payload: receiver,
+              },
+              {
+                id: EventId.make(`event:${name}:steer`),
+                type: "message.updated",
+                threadId,
+                runId: receiver.id,
+                occurredAt: now,
+                payload: {
+                  id: messageId,
+                  threadId,
+                  runId: receiver.id,
+                  nodeId: null,
+                  role: "user",
+                  text: `Delegated task ${taskId} finished`,
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "agent",
+                  creationSource: "server",
+                  createdAt: now,
+                  updatedAt: now,
+                  delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+                },
+              },
+              {
+                id: EventId.make(`event:${name}:sibling`),
+                type: "subagent.updated",
+                threadId,
+                runId,
+                occurredAt: now,
+                payload: {
+                  ...seeded.subagents[0]!,
+                  id: siblingId,
+                  completionWake: scenario.queued || restart ? "settled_only" : "always",
+                  completionDelivery: { state: "pending", observedByRunId: null },
+                },
+              },
+            ],
+          });
+          if (scenario.acknowledged) {
+            yield* orchestrator.dispatch({
+              type: "delegated_task.completion-delivery.acknowledge",
+              commandId: CommandId.make(`command:${name}:read`),
+              parentThreadId: threadId,
+              taskId,
+              observedByRunId: receiver.id,
+            });
+          }
+          const queuedMessageId = MessageId.make(`message:${name}:queued`);
+          if (scenario.queued) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:${name}:queue`),
+              threadId,
+              messageId: queuedMessageId,
+              text: "Follow up after the active turn",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          }
+          if (scenario.discard === "stop") {
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make(`command:${name}:stop`),
+              threadId,
+            });
+          }
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          if (scenario.discard !== "stop") {
+            assert.deepEqual(
+              before.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery?.taskIds,
+              scenario.acknowledged ? [] : [taskId],
+            );
+          }
+          yield* sink.write({
+            // Simulate a crash after the terminal commit but before live finalization.
+            ...(restart ? { commandId: reconcileCommandId(`${name}:terminal`) } : {}),
+            events: [
+              ...(scenario.discard === "parent"
+                ? [
+                    {
+                      ...runEvent({ threadId, runId, ordinal: 1, status: "rolled_back", now }),
+                      payload: {
+                        ...before.runs.find((run) => run.id === runId)!,
+                        status: "rolled_back" as const,
+                      },
+                    },
+                  ]
+                : []),
+              {
+                ...runEvent({ threadId, runId: receiver.id, ordinal: 2, status: "completed", now }),
+                payload: {
+                  ...before.runs.find((run) => run.id === receiver.id)!,
+                  status: scenario.discard === "receiver" ? "rolled_back" : "completed",
+                  completedAt: now,
+                },
+              },
+            ],
+          });
+          if (restart) {
+            yield* orchestrator.recoverDelegatedTasks;
+          }
+          const wakes = (yield* collectSettlementWakes(name)).filter(
+            (request) => request.threadId === threadId,
+          );
+          const settled = yield* orchestrator.getThreadProjection(threadId);
+          if (scenario.queued) {
+            assert.equal(
+              settled.runs.find((run) => run.userMessageId === queuedMessageId)?.status,
+              "starting",
+              "the queued user message must actually promote before checking sibling delivery",
+            );
+          }
+          if (scenario.discard !== null) {
+            assert.isEmpty(wakes, "discarded work must not offer a wake");
+            if (scenario.discard === "receiver") {
+              assert.isNull(
+                settled.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery,
+                "rollback must release the surviving parent's obsolete reservation",
+              );
+              assert.deepEqual(
+                settled.subagents.find((task) => task.id === taskId)?.completionDelivery,
+                {
+                  state: scenario.acknowledged ? "acknowledged" : "pending",
+                  observedByRunId: scenario.acknowledged ? receiver.id : null,
+                },
+                "rollback must preserve read results and return unread results to pending",
+              );
+            }
+            // A continuation may already have been taken before Stop or rollback.
+            // Dispatching that stale request must not create another run either.
+            const dispatch = yield* orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:${name}:late-wake`),
+                threadId,
+                messageId,
+                text: "Late delegated completion",
+                attachments: [],
+                dispatchMode: { type: "queue_after_active" },
+                createdBy: "agent",
+                creationSource: "server",
+                delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
+              })
+              .pipe(Effect.exit);
+            if (scenario.discard !== "stop") {
+              assert.equal(
+                dispatch._tag,
+                "Success",
+                "rollback must accept a stale wake as a no-op",
+              );
+            }
+            const after = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(
+              after.runs,
+              settled.runs,
+              "a stale wake must not revive discarded work",
+            );
+            assert.deepEqual(
+              after.thread,
+              settled.thread,
+              "a stale wake must preserve thread state",
+            );
+            return;
+          }
+          assert.isNotEmpty(
+            wakes,
+            restart
+              ? "startup recovery must release the empty reservation and offer its pending sibling"
+              : "settlement must offer the stranded delegated result",
+          );
+          const delivery = settled.runs.find((run) => run.id === runId)?.delegatedCompletion
+            ?.delivery;
+          assert.ok(delivery);
+          assert.deepEqual(delivery.taskIds, scenario.acknowledged ? [siblingId] : [taskId]);
+          assert.deepEqual(wakes[0]?.delegatedCompletion, {
+            parentRunId: runId,
+            generation: delivery.generation,
+            messageId: delivery.messageId,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`command:${name}:wake`),
+            threadId,
+            messageId: delivery.messageId,
+            text: "Delegated completion",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+            delegatedCompletion: {
+              parentRunId: runId,
+              generation: delivery.generation,
+              taskIds: delivery.taskIds,
+            },
+          });
+          const delivered = yield* orchestrator.getThreadProjection(threadId);
+          const wake = delivered.runs.find((run) => run.userMessageId === delivery.messageId);
+          assert.equal(wake?.status, scenario.queued ? "queued" : "starting");
+          const message = delivered.messages.find((row) => row.id === delivery.messageId);
+          assert.include(message?.text ?? "", scenario.acknowledged ? siblingId : taskId);
+          if (scenario.acknowledged) {
+            assert.notInclude(message?.text ?? "", taskId);
+            assert.equal(
+              delivered.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+              "acknowledged",
+            );
+          }
+        }),
+    );
+  },
+);
+
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
