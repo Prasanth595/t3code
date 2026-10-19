@@ -68,13 +68,14 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   };
 }
 
-// ghe.com avatar URLs carry a `token` query that changes on every read, so a stored snapshot would
-// never equal a fresh one. The origin and path still tell avatars apart.
+// Rotating ghe.com avatar tokens should not make otherwise identical snapshots differ.
 function avatarIdentity(avatarUrl: string | null | undefined): string | null {
   if (avatarUrl === null || avatarUrl === undefined) return null;
   const url = URL.parse(avatarUrl);
-  if (url === null) return avatarUrl;
-  url.search = "";
+  if (url === null || (url.hostname !== "ghe.com" && !url.hostname.endsWith(".ghe.com"))) {
+    return avatarUrl;
+  }
+  url.searchParams.delete("token");
   return url.href;
 }
 
