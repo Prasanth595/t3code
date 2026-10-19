@@ -12,7 +12,9 @@ namespace {
 
 constexpr uint32_t kSnapshotMagic = 0x54563354;  // "T3VT" in little endian.
 constexpr uint16_t kSnapshotVersion = 1;
-constexpr size_t kMaxScrollbackBytes = 32 * 1024 * 1024;
+// The pinned libghostty-vt counts max_scrollback in bytes despite its header saying lines.
+// Ghostty's own default: roughly 9k rows at 80 columns.
+constexpr size_t kMaxScrollbackBytes = 10'000'000;
 
 enum CellFlag : uint16_t {
   kBold = 1 << 0,
