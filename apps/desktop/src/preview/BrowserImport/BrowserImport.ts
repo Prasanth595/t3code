@@ -84,13 +84,7 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
 > {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
-  // POSIX Chromium imports use a consistent SQLite snapshot of the live database.
-  const mustBeClosed =
-    definition.engine === "firefox" ||
-    (definition.engine === "chromium" && context.platform === "win32");
-  if (mustBeClosed && (yield* isSourceRunning(definition, context))) {
-    return "browserRunning";
-  }
+  if (yield* isSourceRunning(definition, context)) return "browserRunning";
   // Safari's jar is found by `stat`, which TCC permits without Full Disk Access
   // — so a Safari that lists as ready may still refuse the read.
   if (definition.engine === "safari") {
