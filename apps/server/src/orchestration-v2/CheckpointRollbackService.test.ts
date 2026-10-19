@@ -28,7 +28,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { revertCodexThread } from "../provider/CodexThreadRevert.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { resolveCodexRollbackTurnIds } from "./Adapters/CodexAdapterV2.ts";
+import { resolveCodexRollbackBoundary } from "./Adapters/CodexAdapterV2.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
@@ -849,8 +849,8 @@ it.effect.each([
     open: () =>
       Effect.succeed({
         rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
-          resolveCodexRollbackTurnIds(input).pipe(
-            Effect.flatMap((turnIds) => revertCodexThread(codex, "native-thread", turnIds)),
+          resolveCodexRollbackBoundary(input).pipe(
+            Effect.flatMap((boundary) => revertCodexThread(codex, "native-thread", boundary)),
             Effect.as({ providerThread }),
           ),
       } as never),
