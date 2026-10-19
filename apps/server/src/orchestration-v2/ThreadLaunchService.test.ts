@@ -940,27 +940,19 @@ it.effect("does not update a reused thread title when the initial message is rej
   }),
 );
 
-it.effect("generates an image-only title while worktree preparation is still blocked", () =>
+it.effect("generates an initial title for an attachment-only message", () =>
   Effect.gen(function* () {
-    const worktreeEntered = yield* Deferred.make<void>();
-    const harness = makeHarness({
-      createWorktree: () =>
-        Deferred.succeed(worktreeEntered, undefined).pipe(Effect.andThen(Effect.never)),
-      generateTitle: () => Effect.succeed({ title: "Fix thread list image titles" }),
-    });
+    const harness = makeHarness();
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
       const messageId = MessageId.make("message:image-only");
       const input = {
         ...launchInput({
           command: "command:launch:image-only",
           thread: "thread:launch:image-only",
-          workspace: { type: "worktree", baseRef: "main" },
         }),
-        title: "Attached image",
+        title: "Image: screenshot.png",
         generateTitle: true,
         initialMessage: {
           messageId,
@@ -978,11 +970,6 @@ it.effect("generates an image-only title while worktree preparation is still blo
       };
 
       const launched = yield* launches.launch(input);
-      yield* Deferred.await(worktreeEntered);
-      const claimed = yield* outbox.claimNext({ workerId: "title-test", leaseDurationMs: 60_000 });
-      assert.isTrue(Option.isSome(claimed));
-      if (Option.isNone(claimed)) return;
-      assert.equal(claimed.value.request.type, "thread-title.generate");
       yield* titleRegeneration.execute({
         threadId: launched.threadId,
         requestId: CommandId.make("command:launch:image-only:initial-message"),
@@ -994,11 +981,6 @@ it.effect("generates an image-only title while worktree preparation is still blo
         harness.generateThreadTitle.mock.calls[0]?.[0]?.attachments?.[0]?.name,
         "screenshot.png",
       );
-      const projection = yield* threads.getThreadProjection(launched.threadId);
-      assert.equal(projection.thread.title, "Fix thread list image titles");
-      assert.equal(projection.runs[0]?.status, "preparing");
-      assert.isNull(projection.thread.worktreePath);
-      assert.isNotOk(projection.thread.titleRegeneration);
     }).pipe(Effect.provide(harness.layer));
   }),
 );

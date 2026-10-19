@@ -8,19 +8,20 @@ import {
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
+import { serializeComposerMessageForServer } from "./composerContext";
+
 import {
   buildProjectThreadStartTurnInput,
   deriveThreadTitleFromPrompt,
 } from "./projectThreadStartTurn";
 
 describe("project thread title", () => {
-  it.each([
-    ["![pasted-image.png](t3-context://v1/image/image-1)", "Attached image"],
-    ["![pasted-image.png](t3-context://v1/image/image-1) Fix the spacing", "Fix the spacing"],
-    ["Fix [src/app.ts](t3-context://v1/mention/source)", "Fix src/app.ts"],
-    ["x".repeat(80), `${"x".repeat(69)}...`],
-  ])("uses readable draft and queued titles for %s", (text, title) => {
-    expect(deriveThreadTitleFromPrompt(text)).toBe(title);
+  it("normalizes draft and queued titles while keeping the mobile length limit", () => {
+    expect(
+      deriveThreadTitleFromPrompt(
+        "![photo.png](t3-context://v1/image/photo) Fix [src/app.ts](t3-context://v1/mention/source) so the sidebar remains readable when a thread starts with an image",
+      ),
+    ).toBe("Fix src/app.ts so the sidebar remains readable when a thread starts w...");
   });
 
   it("keeps ordinary titles and the empty-prompt fallback", () => {
@@ -28,43 +29,56 @@ describe("project thread title", () => {
     expect(deriveThreadTitleFromPrompt(" \n ")).toBe("New thread");
   });
 
-  it.each(["", "![photo.png](t3-context://v1/image/photo)"])(
-    "derives attachment-only titles from prepared image metadata for %s",
-    (text) => {
-      const uploadedAttachments = [
-        {
-          type: "image" as const,
-          id: "prepared-photo",
-          name: "photo.png",
-          mimeType: "image/png",
-          sizeBytes: 3,
-        },
-      ];
-      const input = buildProjectThreadStartTurnInput({
-        projectId: ProjectId.make("project"),
-        projectCwd: "/workspace",
-        threadId: "image-thread",
-        commandId: "image-command",
-        messageId: "image-message",
-        createdAt: "2026-09-04T00:00:00Z",
-        text,
-        uploadedAttachments,
-        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        workspaceMode: "local",
-        branch: null,
-        worktreePath: null,
-        startFromOrigin: false,
-        worktreeBranchName: "unused",
-      });
-
-      expect(input.titleSeed).toBe("Attached image");
-      expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
-      expect(input.message.attachments).toEqual(uploadedAttachments);
-      expect(input.message.text).toBe(text);
+  it.each([
+    {
+      type: "image" as const,
+      name: "photo.png",
+      mimeType: "image/png",
+      text: "![photo.png](t3-context://v1/image/photo)",
+      title: "Attached image",
     },
-  );
+    {
+      type: "file" as const,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      text: "",
+      title: "File: report.pdf",
+    },
+    {
+      type: "file" as const,
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      text: "[report.pdf](t3-context://v1/file/report)",
+      title: "report.pdf",
+    },
+  ])("titles a $type-only message without changing its data", ({ text, title, ...attachment }) => {
+    const uploadedAttachments = [{ ...attachment, id: "prepared-attachment", sizeBytes: 3 }];
+    const wire = serializeComposerMessageForServer(text, undefined, true);
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "image-thread",
+      commandId: "image-command",
+      messageId: "image-message",
+      createdAt: "2026-09-04T00:00:00Z",
+      ...wire,
+      titleText: text,
+      uploadedAttachments,
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+      startFromOrigin: false,
+      worktreeBranchName: "unused",
+    });
+
+    expect(input.titleSeed).toBe(title);
+    expect(input.bootstrap.createThread.title).toBe(input.titleSeed);
+    expect(input.message.attachments).toEqual(uploadedAttachments);
+    expect(input.message.text).toBe(wire.text);
+  });
 
   it.each([
     {

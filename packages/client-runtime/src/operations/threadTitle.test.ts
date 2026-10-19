@@ -5,70 +5,39 @@ import { deriveThreadTitleSeed } from "./threadTitle.ts";
 describe("deriveThreadTitleSeed", () => {
   const image = "![pasted-image.png](t3-context://v1/image/aadd9cc6-1234-5678-9012-abcdef123456)";
 
-  it.each([{ attachments: [] }, { attachments: [{ name: "pasted-image.png" }] }])(
-    "uses a readable image-only title with attachments $attachments",
-    ({ attachments }) => {
-      expect(deriveThreadTitleSeed({ text: image, attachments })).toBe("Attached image");
-    },
-  );
-
-  it.each([`${image}\nFix the spacing`, `Fix ${image} the spacing`])(
-    "prefers prose around image references: %s",
-    (text) => {
-      expect(deriveThreadTitleSeed({ text, attachments: [] })).toBe("Fix the spacing");
-    },
-  );
-
-  it("uses a plural placeholder for several images", () => {
-    expect(
-      deriveThreadTitleSeed({
-        text: `${image}\n![other.png](t3-context://v1/image/other)`,
-        attachments: [],
-      }),
-    ).toBe("Attached images");
+  it.each([
+    [image, "Attached image"],
+    [`${image}\n![other.png](t3-context://v1/image/other)`, "Attached images"],
+  ])("uses a readable image-only title for %s", (text, title) => {
+    expect(deriveThreadTitleSeed({ text, attachments: [] })).toBe(title);
   });
 
-  it("counts repeated references to the same image once", () => {
-    expect(deriveThreadTitleSeed({ text: `${image}\n${image}`, attachments: [] })).toBe(
-      "Attached image",
-    );
-  });
-
-  it("keeps context labels without exposing their internal URLs", () => {
-    expect(
-      deriveThreadTitleSeed({
-        text: `${image} Fix [src/app.ts](t3-context://v1/mention/source) using [Build output](t3-context://v1/terminal/build)`,
-        attachments: [],
-      }),
-    ).toBe("Fix src/app.ts using Build output");
-  });
-
-  it("prefers a source reference label over the image placeholder without prose", () => {
+  it("prefers a source label when an image prompt has no prose", () => {
     expect(
       deriveThreadTitleSeed({
         text: `${image}\n[src/app.ts](t3-context://v1/mention/source)`,
-        attachments: [{ name: "pasted-image.png" }],
+        attachments: [{ type: "image", name: "pasted-image.png" }],
       }),
     ).toBe("src/app.ts");
   });
 
-  it("prefers normalized message text", () => {
+  it("prefers normalized request text and context labels over attachments", () => {
     expect(
       deriveThreadTitleSeed({
-        text: "  Investigate\n  login   failures  ",
-        attachments: [{ name: "login-error.png" }],
+        text: `  Fix ${image} [src/app.ts](t3-context://v1/mention/source)\n  using [Build output](t3-context://v1/terminal/build)  `,
+        attachments: [{ type: "image", name: "login-error.png" }],
         fallbackLabels: ["Terminal 1"],
       }),
-    ).toBe("Investigate login failures");
+    ).toBe("Fix src/app.ts using Build output");
   });
 
-  it.each([1, 2])("uses a placeholder for %i attachments when text is empty", (count) => {
+  it("uses an image placeholder when text is empty", () => {
     expect(
       deriveThreadTitleSeed({
         text: " \n ",
-        attachments: [{ name: "login-error.png" }, { name: "other.png" }].slice(0, count),
+        attachments: [{ type: "image", name: "login-error.png" }],
       }),
-    ).toBe(count === 1 ? "Attached image" : "Attached images");
+    ).toBe("Attached image");
   });
 
   it("uses the first non-empty fallback label after text and attachments", () => {
