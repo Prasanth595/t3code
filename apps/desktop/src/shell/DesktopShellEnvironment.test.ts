@@ -260,6 +260,29 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(env.https_proxy, "http://127.0.0.1:2080");
       assert.equal(env.no_proxy, "localhost,127.0.0.1");
+
+      // Node reads the lowercase alias first, so a blank inherited alias must
+      // not survive next to the uppercase settings the shell exports.
+      const blankAlias: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        https_proxy: "",
+        no_proxy: " ",
+      };
+      yield* runShellEnvironment({
+        env: blankAlias,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/opt/homebrew/bin:/usr/bin",
+            HTTPS_PROXY: "http://127.0.0.1:2080",
+            NO_PROXY: "localhost,127.0.0.1",
+          }),
+      });
+      assert.equal(blankAlias.HTTPS_PROXY, "http://127.0.0.1:2080");
+      assert.equal(blankAlias.NO_PROXY, "localhost,127.0.0.1");
+      assert.isUndefined(blankAlias.https_proxy);
+      assert.isUndefined(blankAlias.no_proxy);
     }),
   );
 
@@ -276,9 +299,13 @@ describe("DesktopShellEnvironment", () => {
         SHELL: "/bin/zsh",
         PATH: "/usr/bin",
         HTTPS_PROXY: "http://inherited:8080",
+        https_proxy: "",
+        NO_PROXY: "inherited.example.test",
+        no_proxy: " ",
       };
       yield* runShellEnvironment({ env: inheritedEndpoint, platform: "darwin", handler });
       assert.equal(inheritedEndpoint.HTTPS_PROXY, "http://inherited:8080");
+      assert.equal(inheritedEndpoint.NO_PROXY, "inherited.example.test");
       assert.isUndefined(inheritedEndpoint.https_proxy);
       assert.isUndefined(inheritedEndpoint.no_proxy);
 

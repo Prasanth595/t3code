@@ -500,6 +500,13 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       }
     }
 
+    // Node's own proxy support reads the lowercase alias before the uppercase
+    // name and treats a blank value as set, so an inherited `https_proxy=""`
+    // would hide a populated HTTPS_PROXY. Blank means unset here, so drop it.
+    for (const name of [...PROXY_ENDPOINT_ENV_NAMES, ...PROXY_BYPASS_ENV_NAMES]) {
+      if (Option.isNone(trimNonEmpty(config.env[name]))) delete config.env[name];
+    }
+
     // Provider CLIs reach their APIs through the shell's proxy, which a Dock
     // launch never sees. An inherited endpoint keeps its own bypass list rather
     // than mixing in the shell's, but an inherited bypass list alone is not a
