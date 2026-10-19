@@ -11,8 +11,6 @@ import {
   resolveWorkspaceRelativeFilePath,
 } from "../files/filePath";
 
-export type FileChipAction = "copy-full-path" | "copy-relative-path" | "open-file" | "save";
-
 export interface FileChipTarget {
   readonly fullPath?: string;
   readonly relativePath?: string;
@@ -20,14 +18,9 @@ export interface FileChipTarget {
 
 export function fileChipClipboardPath(
   target: FileChipTarget,
-  action: FileChipAction,
+  action: "copy-full-path" | "copy-relative-path",
 ): string | undefined {
-  const path =
-    action === "copy-full-path"
-      ? target.fullPath
-      : action === "copy-relative-path"
-        ? target.relativePath
-        : undefined;
+  const path = action === "copy-full-path" ? target.fullPath : target.relativePath;
   return path === undefined ? undefined : formatFilePathForClipboard(path, target.fullPath);
 }
 

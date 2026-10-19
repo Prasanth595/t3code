@@ -228,12 +228,7 @@ import {
 } from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import {
-  fileChipMenu,
-  fileChipClipboardPath,
-  resolveFileChipTarget,
-  type FileChipAction,
-} from "./fileChipMenu";
+import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
   MarkdownImageAvailableWidthContext,
@@ -1867,10 +1862,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     onFileContextMenuAction: (href, actionId) => {
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       if (!target) return;
-      switch (actionId as FileChipAction) {
+      switch (actionId) {
         case "copy-full-path":
         case "copy-relative-path": {
-          const clipboardPath = fileChipClipboardPath(target, actionId as FileChipAction);
+          const clipboardPath = fileChipClipboardPath(target, actionId);
           if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
           return;
         }

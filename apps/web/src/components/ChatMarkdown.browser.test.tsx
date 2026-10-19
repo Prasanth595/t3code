@@ -894,7 +894,7 @@ it.each([
   for (const [action, expected] of [
     ["copy-full", full],
     ["copy-relative", relative],
-  ]) {
+  ] as const) {
     choose.mockResolvedValue(action);
     await act(async () => {
       link.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
