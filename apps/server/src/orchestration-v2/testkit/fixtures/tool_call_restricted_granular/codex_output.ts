@@ -35,12 +35,9 @@ export function assertToolCallRestrictedGranularOutput(
   assertAllRuntimeRequestsResolved(projection);
   assertUserMessagesInclude(projection, [TOOL_CALL_WRITE_PROMPT]);
 
-  // Codex sends the file change's item/started before its approval request,
-  // so the approval names the recorded file even though its reason is null.
   const approval = projection.turnItems.find((item) => item.type === "approval_request");
-  if (approval?.type !== "approval_request") throw new Error("expected an approval item");
   assert.equal(
-    approval.prompt,
+    approval?.prompt,
     "add /home/replay-user/t3code/packages/effect-codex-app-server/.codex-probe-write-action.txt",
   );
 }

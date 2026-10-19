@@ -9548,11 +9548,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       kind: { type: "update", move_path: null },
       diff: "@@",
     };
-    const renameB: FileUpdateChange = {
-      path: "/w/b.ts",
-      kind: { type: "update", move_path: "/w/c.ts" },
+    const renameC: FileUpdateChange = {
+      path: "/w/c.ts",
+      kind: { type: "update", move_path: "/w/d.ts" },
       diff: "@@",
     };
+
+    const deleteE: FileUpdateChange = { path: "/w/e.ts", kind: { type: "delete" }, diff: "gone" };
 
     const fileChange = (
       phase: "started" | "completed",
@@ -9578,14 +9580,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       },
     });
 
-    // The next frame waits for the answer, so frame order never depends on
-    // how the adapter schedules its request handlers.
     const approval = (input: {
       readonly id: number;
       readonly turnId: string;
       readonly itemId: string;
-      readonly reason?: string;
-      readonly grantRoot?: string;
     }): Array<CodexReplay.CodexAppServerReplayEntry> => [
       {
         type: "emit_inbound",
@@ -9598,8 +9596,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             turnId: input.turnId,
             itemId: input.itemId,
             startedAtMs: 2,
-            reason: input.reason ?? null,
-            grantRoot: input.grantRoot ?? null,
+            reason: null,
+            grantRoot: null,
           },
         },
       },
@@ -9628,7 +9626,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ) =>
       Effect.gen(function* () {
         const pending = yield* Queue.unbounded<OrchestrationV2RuntimeRequest>();
-        const terminals = yield* Queue.unbounded<void>();
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario,
@@ -9637,9 +9634,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           (event) =>
             event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
               ? Queue.offer(pending, event.runtimeRequest)
-              : event.type === "turn.terminal"
-                ? Queue.offer(terminals, undefined)
-                : Effect.void,
+              : Effect.void,
         );
         yield* harness.runtime.startTurn(
           makeCodexTestTurnInput({
@@ -9660,7 +9655,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               }),
             ),
           ),
-          nextTerminal: Queue.take(terminals),
         };
       });
 
@@ -9676,41 +9670,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           : [],
       )[0];
 
-    it.effect("lists the started item's paths in the approval prompt", () =>
-      Effect.gen(function* () {
-        const { harness, answerNext } = yield* startApprovalTurn("file-approval-before", [
-          fileChange("started", nativeTurnId, "patch-a", [renameB, addA]),
-          ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-a" }),
-          fileChange("completed", nativeTurnId, "patch-a", [renameB, addA]),
-          turnCompleted(nativeTurnId),
-        ]);
-        const request = yield* answerNext;
-        yield* harness.firstTerminal;
-
-        assert.equal(
-          approvalItem(harness.events, request)?.prompt,
-          "add /w/a.ts\nupdate /w/b.ts -> /w/c.ts",
-        );
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    );
-
-    it.effect("keeps the approval without a prompt when the item starts after it", () =>
+    it.effect("answers without waiting for late paths or borrowing another item's paths", () =>
       Effect.gen(function* () {
         const { harness, answerNext } = yield* startApprovalTurn("file-approval-after", [
+          fileChange("started", nativeTurnId, "other-patch", [updateB]),
+          // Late details cannot arrive until the approval response has been sent.
           ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-a" }),
           fileChange("started", nativeTurnId, "patch-a", [addA]),
           fileChange("completed", nativeTurnId, "patch-a", [addA]),
+          fileChange("completed", nativeTurnId, "other-patch", [updateB]),
           turnCompleted(nativeTurnId),
         ]);
         const request = yield* answerNext;
         yield* harness.firstTerminal;
 
-        // Every update counts: late details must not re-emit the approval with a prompt.
         const items = harness.events.flatMap((event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.type === "approval_request" &&
@@ -9718,10 +9691,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ? [event.turnItem]
             : [],
         );
+        assert.equal(request.nativeRequestRef?.nativeId, "patch-a");
         assert.isNotEmpty(items);
         for (const item of items) {
           assert.equal(item.requestKind, "file-change");
-          assert.notProperty(item, "prompt");
+          assert.isUndefined(item.prompt);
         }
         assert.deepEqual(
           harness.terminalEvents().map((event) => event.status),
@@ -9735,133 +9709,35 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect("falls back to the grant root when the item never starts", () =>
+    it.effect("matches file paths to items approved out of order", () =>
       Effect.gen(function* () {
-        const { harness, answerNext } = yield* startApprovalTurn("file-approval-never", [
-          ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-a", grantRoot: "/w" }),
-          ...approval({ id: 1, turnId: nativeTurnId, itemId: "patch-b" }),
+        const { harness, answerNext } = yield* startApprovalTurn("file-approval-concurrent", [
+          fileChange("started", nativeTurnId, "patch-a", [renameC, deleteE, addA]),
+          fileChange("started", nativeTurnId, "patch-b", [updateB]),
+          ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-b" }),
+          fileChange("completed", nativeTurnId, "patch-b", [updateB]),
+          ...approval({ id: 1, turnId: nativeTurnId, itemId: "patch-a" }),
+          fileChange("completed", nativeTurnId, "patch-a", [renameC, deleteE, addA]),
           turnCompleted(nativeTurnId),
         ]);
-        const withRoot = yield* answerNext;
-        const withoutRoot = yield* answerNext;
+        const first = yield* answerNext;
+        const second = yield* answerNext;
         yield* harness.firstTerminal;
 
-        assert.equal(approvalItem(harness.events, withRoot)?.prompt, "/w");
-        const bare = approvalItem(harness.events, withoutRoot);
-        assert.equal(bare?.requestKind, "file-change");
-        assert.notProperty(bare, "prompt");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    );
-
-    it.effect(
-      "names only each concurrent item's own paths when approvals arrive out of order",
-      () =>
-        Effect.gen(function* () {
-          const { harness, answerNext } = yield* startApprovalTurn("file-approval-concurrent", [
-            fileChange("started", nativeTurnId, "patch-a", [addA]),
-            fileChange("started", nativeTurnId, "patch-b", [updateB]),
-            ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-b" }),
-            ...approval({ id: 1, turnId: nativeTurnId, itemId: "patch-a" }),
-            fileChange("completed", nativeTurnId, "patch-b", [updateB]),
-            fileChange("completed", nativeTurnId, "patch-a", [addA]),
-            turnCompleted(nativeTurnId),
-          ]);
-          const first = yield* answerNext;
-          const second = yield* answerNext;
-          yield* harness.firstTerminal;
-
-          assert.deepEqual(
-            [first, second].map((request) => [
-              request.nativeRequestRef?.nativeId,
-              approvalItem(harness.events, request)?.prompt,
-            ]),
-            [
-              ["patch-b", "update /w/b.ts"],
-              ["patch-a", "add /w/a.ts"],
-            ],
-          );
-        }).pipe(
-          Effect.scoped,
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
-    );
-
-    it.effect("prefers the approval reason over the item's paths", () =>
-      Effect.gen(function* () {
-        const { harness, answerNext } = yield* startApprovalTurn("file-approval-reason", [
-          fileChange("started", nativeTurnId, "patch-a", [renameB, addA]),
-          ...approval({
-            id: 0,
-            turnId: nativeTurnId,
-            itemId: "patch-a",
-            reason: "Need to edit config",
-          }),
-          fileChange("completed", nativeTurnId, "patch-a", [renameB, addA]),
-          turnCompleted(nativeTurnId),
-        ]);
-        const request = yield* answerNext;
-        yield* harness.firstTerminal;
-
-        assert.equal(approvalItem(harness.events, request)?.prompt, "Need to edit config");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-        ),
-      ),
-    );
-
-    it.effect("drops a turn's cached paths when the turn ends", () =>
-      Effect.gen(function* () {
-        const secondPrompt = "Edit again.";
-        // turn/start request, its response and turn/started, reusing the first native turn id.
-        // Codex never reuses a turn id; reusing it here makes the turn-end cleanup observable.
-        const secondTurnStart = codexReplayPreamble({
-          nativeThreadId,
-          nativeTurnId,
-          prompt: secondPrompt,
-        }).slice(-3);
-        const { harness, answerNext, nextTerminal } = yield* startApprovalTurn(
-          "file-approval-reused-id",
+        assert.deepEqual(
+          [first, second].map((request) => [
+            request.nativeRequestRef?.nativeId,
+            approvalItem(harness.events, request)?.prompt,
+          ]),
           [
-            // The first turn ends without completing its file change item.
-            fileChange("started", nativeTurnId, "patch-a", [addA]),
-            ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-a" }),
-            turnCompleted(nativeTurnId),
-            // The turn/start request and response carry the next JSON-RPC id.
-            ...secondTurnStart.slice(0, 2).map((entry) => withReplayRequestId(entry, 4)),
-            ...secondTurnStart.slice(2),
-            ...approval({ id: 1, turnId: nativeTurnId, itemId: "patch-a" }),
-            turnCompleted(nativeTurnId),
+            ["patch-b", "update /w/b.ts"],
+            ["patch-a", "add /w/a.ts\nupdate /w/c.ts -> /w/d.ts\ndelete /w/e.ts"],
           ],
         );
-        const first = yield* answerNext;
-        yield* nextTerminal;
-        yield* harness.runtime.startTurn({
-          ...makeCodexTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("file-approval-reused-id-second"),
-            text: secondPrompt,
-          }),
-          runOrdinal: 2,
-          providerTurnOrdinal: 2,
-        });
-        const second = yield* answerNext;
-        yield* nextTerminal;
-
-        assert.equal(approvalItem(harness.events, first)?.prompt, "add /w/a.ts");
-        const reused = approvalItem(harness.events, second);
-        assert.equal(reused?.requestKind, "file-change");
-        assert.notProperty(reused, "prompt");
+        assert.deepEqual(
+          harness.terminalEvents().map((event) => event.status),
+          ["completed"],
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
