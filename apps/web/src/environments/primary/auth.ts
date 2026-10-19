@@ -21,6 +21,7 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { submitFactoryServerPairing } from "../../factory/desktopFactoryServer";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -337,6 +338,7 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
 }
 
 export async function submitServerAuthCredential(credential: string): Promise<void> {
+  if (await submitFactoryServerPairing(credential)) return;
   const trimmedCredential = credential.trim();
   if (!trimmedCredential) {
     throw new PrimaryEnvironmentPairingCredentialRequiredError({

@@ -71,6 +71,7 @@ apps/server/src/factory/
   http.ts           /api/factory/status, /runs, /runs/:id, /runs/:id/stop, /claims/pause
 apps/web/src/routes/factory.tsx, factory_.$runId.tsx   the underscore keeps the run route out of the runs list's tree
 apps/web/src/factory/               page components
+apps/desktop/src/factory/           packaged desktop app: opens onto the LaunchAgent server
 factory/                            repo root: SEAMS, sync/build/install scripts, docs
 .github/workflows/factory-*.yml     the fork's own CI, sync and release
 ```

@@ -48,15 +48,17 @@ Every merge to `main` publishes a signed, notarized build for Apple silicon as a
 2. Open the dmg and drag `T3 Code Factory (Nightly)` to Applications.
 3. Open the app from Applications.
 
-You install it once. When a newer build is published, the app shows "Update available"; choose "Restart to update" to install it. The app installs beside upstream T3 Code and shares no data with it or with the LaunchAgent server.
+You install it once. When a newer build is published, the app shows "Update available"; choose "Restart to update" to install it. The app installs beside upstream T3 Code and shares no data with it.
 
 To build it yourself instead, run `vp run dist:desktop:dmg:arm64`. That dmg lands under `release/` and is unsigned, so the first time you open the app, right-click it and choose Open. It has no update feed.
 
-The app's built-in server has no machine config, so its factory stays idle. Keep it that way: before you save Settings → Factory in the app, pick the LaunchAgent server's environment. Saving the form for the built-in server would start a second factory on this Mac that claims the same issues. To see the factory in the app, pair the LaunchAgent server as an environment in Settings → Connections, with a pairing link from:
+The app runs no server of its own. It opens onto the LaunchAgent server on port 3876, so install the server first and keep it running. The first time you open the app it asks for a pairing link. Make one with:
 
 ```sh
 ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac
 ```
+
+Paste the link into the app. It remembers the pairing, so later launches open straight onto the server. If the server is down, the app can't load until it's back; use Try again, or wait for it to reconnect. The Factory pages in the app show that server directly.
 
 Add `--tailscale` for a link that works over your tailnet, for example from a phone's browser. The Factory pages are part of the fork's web app, so any browser paired with the server can open them. A connection through T3 Connect (the relay) doesn't reach them yet. [Remote access](https://github.com/pingdotgg/t3code/tree/main/docs/user/remote-access.md) covers pairing in general.
 

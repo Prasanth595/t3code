@@ -45,6 +45,8 @@ import {
   resolveWslPickFolderDefaultPath,
   wslUncPathToLinuxPath,
 } from "../../wsl/wslPathParsing.ts";
+import { factoryServerBootstrapsWhenPackaged } from "../../factory/factoryServer.ts";
+import { factoryServerBearerToken } from "../../factory/factoryServerIpc.ts";
 
 const ContextMenuPosition = Schema.Struct({
   x: Schema.Number,
@@ -94,6 +96,8 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
   result: Schema.Array(DesktopEnvironmentBootstrapSchema),
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
+    const factoryBootstraps = yield* factoryServerBootstrapsWhenPackaged;
+    if (factoryBootstraps !== null) return factoryBootstraps;
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const instances = yield* pool.list;
@@ -156,6 +160,8 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   payload: Schema.Void,
   result: Schema.String,
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(function* () {
+    const factoryToken = yield* factoryServerBearerToken;
+    if (factoryToken !== null) return factoryToken;
     const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
     return yield* localAuth.getBearerToken;
   }),
