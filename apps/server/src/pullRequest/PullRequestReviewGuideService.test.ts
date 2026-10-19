@@ -848,17 +848,28 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     });
 
   it.effect.each([
-    { reason: "host_key_unverified" as const, diagnosis: /(?:trust|verif).*SSH host key/i },
-    { reason: "authentication_failed" as const, diagnosis: /credentials|SSH key/i },
-  ])("explains $reason and requires a successful fetch before retrying", ({ reason, diagnosis }) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const detail = yield* failedFetchDetail(reason);
-        assert.match(detail, diagnosis);
-        assert.match(detail, /(?:once|after).*git fetch origin.*(?:works|succeeds)/i);
-        assert.match(detail, /(?:write|generate|retry).*guide/i);
-      }),
-    ),
+    {
+      reason: "host_key_unverified" as const,
+      diagnosis: /(?:trust|verif).*SSH host key/i,
+      repair: /fingerprint.*trusted source.*known_hosts/i,
+    },
+    {
+      reason: "authentication_failed" as const,
+      diagnosis: /(?:could not sign in)/i,
+      repair: /credentials|SSH key/i,
+    },
+  ])(
+    "explains $reason and requires a successful fetch before retrying",
+    ({ reason, diagnosis, repair }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const detail = yield* failedFetchDetail(reason);
+          assert.match(detail, diagnosis);
+          assert.match(detail, repair);
+          assert.match(detail, /(?:once|after).*git fetch origin.*(?:works|succeeds)/i);
+          assert.match(detail, /(?:write|generate|retry).*guide/i);
+        }),
+      ),
   );
 
   it.effect("keeps long or unsafe remote names out of actionable fetch failures", () =>

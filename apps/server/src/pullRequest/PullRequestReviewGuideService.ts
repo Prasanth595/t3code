@@ -67,11 +67,11 @@ const fetchFailure = (remote: string, cause: GitCommandError) => {
   const remoteLabel = safeRemote ? `"${remote}"` : "configured";
   const diagnosis =
     cause.reason === "host_key_unverified"
-      ? `Git does not trust the SSH host key of the project's ${remoteLabel} remote.`
+      ? `Git does not trust the SSH host key of the project's ${remoteLabel} remote. Verify the host fingerprint against a trusted source and update the SSH known_hosts entry used by Git.`
       : `Git could not sign in to the project's ${remoteLabel} remote. Check the Git credentials or SSH key it uses.`;
   const retry = safeRemote
-    ? `Once "git fetch ${remote}" works in the project, write the guide again.`
-    : "Once fetching from that remote works in the project, write the guide again.";
+    ? `Once "git fetch ${remote}" works in the project on the server, write the guide again.`
+    : "Once fetching from that remote works in the project on the server, write the guide again.";
   return new PullRequestOperationError({
     operation: "generateReviewGuide",
     detail: `${diagnosis} ${retry}`,
