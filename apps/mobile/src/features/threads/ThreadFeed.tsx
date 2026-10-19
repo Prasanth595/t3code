@@ -1101,6 +1101,7 @@ function renderFeedEntry(
         environmentId={props.environmentId}
         projectedItem={entry.activities[0]!.projectedItem}
         iconColor={iconSubtleColor}
+        surfaceColor={props.screenColor}
       />
     );
   }
@@ -1302,9 +1303,7 @@ function renderFeedEntry(
                 accessibilityLabel={intentBadge.accessibilityLabel}
                 className="flex-row items-center gap-1"
               >
-                {intentBadge.icon ? (
-                  <SymbolView name={intentBadge.icon} size={12} tintColor={iconSubtleColor} />
-                ) : null}
+                <SymbolView name="arrow.uturn.forward" size={12} tintColor={iconSubtleColor} />
                 <Text className="font-t3-medium text-xs text-foreground-secondary">
                   {intentBadge.label}
                 </Text>
@@ -2548,6 +2547,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
                   environmentId={props.environmentId}
                   endpoints={props.pendingHandoff}
                   iconColor={iconSubtleColor}
+                  surfaceColor={screenColor}
                   label="Context handoff pending"
                 />
               ) : null
