@@ -111,6 +111,7 @@ afterEach(async () => {
 });
 
 async function setup(h264 = false, platform: "ios" | "android" = "ios") {
+  const touches: unknown[] = [];
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let videoBody: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -170,8 +171,12 @@ async function setup(h264 = false, platform: "ios" | "android" = "ios") {
         sockets.push(this);
       }
       onmessage?: (event: { data: ArrayBuffer }) => void;
-      send(message: unknown) {
-        sent.push(message);
+      send(message: string | Uint8Array) {
+        if (typeof message === "string") {
+          sent.push(message);
+        } else if (message[0] === 0x03) {
+          touches.push(JSON.parse(new TextDecoder().decode(message.subarray(1))));
+        }
       }
       close() {}
     },
@@ -191,6 +196,7 @@ async function setup(h264 = false, platform: "ios" | "android" = "ios") {
     images,
     sent,
     view,
+    touches,
     configure() {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait" }),
@@ -217,6 +223,51 @@ const reconnect = () =>
       .find((button) => button.textContent?.includes("Reconnect"))!
       .click(),
   );
+
+it.each([
+  { name: "middle", button: 1, buttons: 4 },
+  { name: "right", button: 2, buttons: 2 },
+])("ignores $name-button drags and forwards the next primary drag", async ({ button, buttons }) => {
+  const { touches, configure } = await setup();
+  await act(async () => configure());
+  const viewport = container.querySelector("canvas")!.parentElement!;
+  viewport.style.width = "400px";
+  viewport.style.height = "800px";
+  // Synthetic pointer events do not register an active browser pointer to capture.
+  viewport.setPointerCapture = () => {};
+  const rect = viewport.getBoundingClientRect();
+  const pointer = (type: string, button: number, buttons: number, y: number) =>
+    viewport.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        button,
+        buttons,
+        clientX: rect.left + 100,
+        clientY: rect.top + y,
+      }),
+    );
+
+  await act(async () => {
+    pointer("pointerdown", button, buttons, 600);
+    pointer("pointermove", -1, buttons, 200);
+    pointer("pointerup", button, 0, 200);
+  });
+  expect(touches).toEqual([]);
+
+  await act(async () => {
+    pointer("pointerdown", 0, 1, 600);
+    pointer("pointermove", -1, 1, 200);
+    pointer("pointerup", 0, 0, 200);
+    pointer("pointermove", -1, 0, 400);
+  });
+  expect(touches).toEqual([
+    { type: "begin", x: 0.25, y: 0.75 },
+    { type: "move", x: 0.25, y: 0.25 },
+    { type: "end", x: 0.25, y: 0.25 },
+  ]);
+});
 
 it("removes MJPEG requests while hidden and reconnects when shown", async () => {
   const { images, view } = await setup();
