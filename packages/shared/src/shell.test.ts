@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -298,28 +297,32 @@ describe("readEnvironmentFromWindowsShell", () => {
     }),
   );
 
-  effectIt.effect("interrupts a pending probe without trying the next shell", () =>
-    Effect.gen(function* () {
-      const started = yield* Deferred.make<void>();
-      let interrupted = false;
-      const execFile = vi.fn(() =>
-        Deferred.succeed(started, undefined).pipe(
-          Effect.andThen(Effect.never),
-          Effect.onInterrupt(() =>
-            Effect.sync(() => {
-              interrupted = true;
-            }),
-          ),
-        ),
-      );
-      const fiber = yield* readEnvironmentFromWindowsShell(["PATH"], {}, execFile).pipe(
-        Effect.forkChild,
-      );
-      yield* Deferred.await(started);
-      yield* Fiber.interrupt(fiber);
-      expect(interrupted).toBe(true);
-      expect(execFile).toHaveBeenCalledTimes(1);
-    }),
+  effectIt.effect(
+    "kills the native probe child on interruption without trying the next shell",
+    () =>
+      Effect.gen(function* () {
+        const started = Promise.withResolvers<void>();
+        const kill = vi.fn(() => true);
+        const child = { kill } as unknown as ReturnType<
+          typeof import("node:child_process").execFile
+        >;
+        const execFile = nativeProbe.execFile;
+        execFile.mockClear();
+        execFile.mockImplementationOnce(() => {
+          started.resolve();
+          return child;
+        });
+        try {
+          const fiber = yield* readEnvironmentFromWindowsShell(["PATH"]).pipe(Effect.forkChild);
+          yield* Effect.promise(() => started.promise);
+          yield* Fiber.interrupt(fiber);
+          expect(kill).toHaveBeenCalledTimes(1);
+          expect(execFile).toHaveBeenCalledTimes(1);
+          expect(execFile.mock.calls[0]?.[0]).toBe("pwsh.exe");
+        } finally {
+          execFile.mockClear();
+        }
+      }),
   );
 
   effectIt.effect("extracts environment variables from a PowerShell command", () =>
