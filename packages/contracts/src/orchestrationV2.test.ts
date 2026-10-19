@@ -21,6 +21,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
+  UnknownUnionMember,
 } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
@@ -43,6 +44,8 @@ import {
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  knownThreadHistoryPage,
+  knownThreadProjection,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
@@ -220,7 +223,7 @@ describe("orchestration V2 contracts", () => {
     ).toThrow();
   });
 
-  it("skips turn item types from a newer server in snapshots and turn-item events", () => {
+  it("keeps turn item types from a newer server in snapshots until readers drop them", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
     );
@@ -313,8 +316,11 @@ describe("orchestration V2 contracts", () => {
 
     expect(snapshot).toMatchObject({ kind: "snapshot" });
     if (snapshot?.kind !== "snapshot") throw new Error("expected a snapshot");
-    expect(snapshot.projection.turnItems.map((turnItem) => turnItem.id)).toEqual(["item-known"]);
-    expect(snapshot.projection.visibleTurnItems.map((row) => row.item.id)).toEqual(["item-known"]);
+    expect(snapshot.projection.turnItems[0]).toEqual(new UnknownUnionMember("type", "hologram"));
+    expect(snapshot.projection.visibleTurnItems[0]?.item).toBeInstanceOf(UnknownUnionMember);
+    const kept = knownThreadProjection(snapshot.projection);
+    expect(kept.turnItems.map((turnItem) => turnItem.id)).toEqual(["item-known"]);
+    expect(kept.visibleTurnItems.map((row) => row.item.id)).toEqual(["item-known"]);
     expect(futureEvent).toEqual({
       kind: "unknown-event",
       sequence: 2,
@@ -325,12 +331,14 @@ describe("orchestration V2 contracts", () => {
       event: { type: "turn-item.updated", payload: { id: "item-known", type: "system_notice" } },
     });
     expect(
-      decodeHistoryPage({
-        snapshotSequence: 1,
-        items: [projected(0, future), projected(1, known)],
-        nextCursor: null,
-        hasMoreHistory: false,
-      }).items.map((row) => row.item.id),
+      knownThreadHistoryPage(
+        decodeHistoryPage({
+          snapshotSequence: 1,
+          items: [projected(0, future), projected(1, known)],
+          nextCursor: null,
+          hasMoreHistory: false,
+        }),
+      ).items.map((row) => row.item.id),
     ).toEqual(["item-known"]);
 
     const broken = item("item-broken", "system_notice", {});
@@ -1108,7 +1116,9 @@ describe("orchestration V2 contracts", () => {
       updatedAt: now,
     });
 
-    expect(projection.turnItems.map((item) => item.type)).toEqual(["command_execution"]);
+    expect(knownThreadProjection(projection).turnItems.map((item) => item.type)).toEqual([
+      "command_execution",
+    ]);
 
     const boundedSnapshot = decodeOrchestrationV2ThreadStreamItem({
       kind: "snapshot",

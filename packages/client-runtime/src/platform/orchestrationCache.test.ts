@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   MessageId,
   EventId,
+  knownThreadProjection,
   TurnItemId,
   RuntimeRequestId,
   type OrchestrationV2ShellSnapshot,
@@ -108,7 +109,9 @@ describe("orchestration cache envelopes", () => {
       threadId: v2ThreadId,
       snapshot: { snapshotSequence: 5, projection },
     });
-    const decoded = decodeStoredThreadSnapshotJson(encoded).snapshot.projection;
+    const decoded = knownThreadProjection(
+      decodeStoredThreadSnapshotJson(encoded).snapshot.projection,
+    );
     expect(decoded.turnItems.find((entry) => entry.id === item.id)).toEqual(item);
     expect(decoded.visibleTurnItems.find((entry) => entry.item.id === item.id)?.item).toEqual(item);
   });
