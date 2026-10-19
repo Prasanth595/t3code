@@ -70,7 +70,7 @@ export function DiffFileTree({
     revealRequestId: number;
     modelPath: string;
   } | null>(null);
-  const mountedPathsRef = useRef<ReadonlyArray<string> | null>(null);
+  const mountedPresentationRef = useRef<ReturnType<typeof diffFileTreeModel> | null>(null);
 
   // The tree model keeps the first selection handler it was given.
   const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
@@ -102,29 +102,39 @@ export function DiffFileTree({
 
   useEffect(() => {
     ordering.update(positions);
-    const mountedPaths = mountedPathsRef.current;
-    if (mountedPaths === modelPaths) return;
-    mountedPathsRef.current = modelPaths;
-    if (mountedPaths === null) {
+    const mounted = mountedPresentationRef.current;
+    if (mounted?.paths === modelPaths) return;
+    mountedPresentationRef.current = presented;
+    if (mounted === null) {
       model.resetPaths(modelPaths);
-    } else if (mountedPaths.every((path, index) => modelPaths[index] === path)) {
-      const updates = buildDiffFileTreeUpdates(mountedPaths, modelPaths);
+    } else if (mounted.paths.every((path, index) => modelPaths[index] === path)) {
+      const updates = buildDiffFileTreeUpdates(mounted.paths, modelPaths);
       if (updates.length > 0) model.batch(updates);
     } else {
-      // Refreshes can reorder siblings or change collision aliases. Rebuild while
-      // carrying the reader's folder expansion forward.
+      // A reset can turn a selected file path into a directory. Carry selection
+      // through real paths so paging keeps the same file without revealing it again.
+      const selectedPaths = model
+        .getSelectedPaths()
+        .map((path) => presented.modelPath(mounted.selectionPath(path)))
+        .filter((path) => path.endsWith("/") || modelPaths.includes(path));
       const collapsedDirectories = directoryPaths.filter((path) => {
         const directory = model.getItem(path);
         return directory !== null && "isExpanded" in directory && !directory.isExpanded();
       });
+      syncingSelectionRef.current = true;
       model.resetPaths(modelPaths);
+      for (const path of model.getSelectedPaths()) model.getItem(path)?.deselect();
+      for (const path of selectedPaths) model.getItem(path)?.select();
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
       for (const path of collapsedDirectories) {
         const directory = model.getItem(path);
         if (directory !== null && "collapse" in directory) directory.collapse();
       }
     }
     model.setGitStatus(gitStatus);
-  }, [directoryPaths, gitStatus, model, modelPaths, ordering, positions]);
+  }, [directoryPaths, gitStatus, model, modelPaths, ordering, positions, presented]);
 
   useEffect(() => {
     if (selectedPath === null) {

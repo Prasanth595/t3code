@@ -240,25 +240,30 @@ describe("diff tree file activation", () => {
       { path: "office", status: "deleted" },
       { path: "src/route.ts", status: "modified" },
     ];
-    await mount({ files, selectedPath: "office" });
+    await mount({ files });
     await activate("src/");
+    await activate("office");
+    expect(row("office").getAttribute("aria-selected")).toBe("true");
     const appended: DiffFileTreeEntry[] = [...files, { path: "office/config.ts", status: "added" }];
-    await mount({ files: appended, selectedPath: "office" });
+    await mount({ files: appended });
     expect(row("src/").getAttribute("aria-expanded")).toBe("false");
     expect(fileRows()[0]!.getAttribute("aria-selected")).toBe("true");
+    expect(row("office/").getAttribute("aria-selected")).toBe("false");
+    expect(targets).toEqual([{ type: "item", id: "office\0office", align: "start" }]);
     await activate(fileRows()[0]!);
     await activate(fileRows()[1]!);
     expect(targets).toEqual([
       { type: "item", id: "office\0office", align: "start" },
+      { type: "item", id: "office\0office", align: "start" },
       { type: "item", id: "office/config.ts\0office/config.ts", align: "start" },
     ]);
     await activate("office/");
-    await mount({ files: appended.map((file) => ({ ...file })), selectedPath: "office" });
+    await mount({ files: appended.map((file) => ({ ...file })) });
     expect(row("src/").getAttribute("aria-expanded")).toBe("false");
     expect(row("office/").getAttribute("aria-expanded")).toBe("false");
     await activate(fileRows()[0]!);
     expect(targets.at(-1)).toEqual({ type: "item", id: "office\0office", align: "start" });
-    expect(targets).toHaveLength(3);
+    expect(targets).toHaveLength(4);
   });
 
   it("preserves filename and extension icons when files become directory prefixes", async () => {
