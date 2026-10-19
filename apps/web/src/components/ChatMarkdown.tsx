@@ -160,6 +160,7 @@ import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
 import { useTheme } from "../hooks/useTheme";
+import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
@@ -236,7 +237,6 @@ interface ChatMarkdownProps {
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
   imageBaseDir?: string | undefined;
-  /** File previews refresh embedded host assets when opened or after workspace edits. */
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
@@ -1584,38 +1584,17 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
-  const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
-  const handledRefreshToken = useRef<string | null>(null);
-  const assetLoading = assetUrl._tag === "Loading" || assetUrl.waiting === true;
-  useEffect(() => {
-    if (
-      props.workspaceMutationId === undefined ||
-      !connectionReady ||
-      (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
-      handledRefreshToken.current === refreshToken
-    ) {
-      return;
-    }
-    // A first request already reads the current file. Cached URLs and failures
-    // need a new signature after a file is created or atomically replaced.
-    if (assetLoading) {
-      // Only the initial token is covered by that request. Later edits stay
-      // pending until it settles, then refresh the latest file state.
-      if (handledRefreshToken.current === null) {
-        handledRefreshToken.current = refreshToken;
-      }
-      return;
-    }
-    handledRefreshToken.current = refreshToken;
-    void refreshAssetUrl().catch(() => undefined);
-  }, [
-    assetLoading,
-    connectionReady,
-    props.workspaceMutationId,
-    refreshAssetUrl,
-    refreshToken,
-    resource._tag,
-  ]);
+  // Only file previews pass a mutation id. Chat markdown must not re-mint URLs,
+  // and a preview must refresh once the connection is ready, so an edit made
+  // while offline still replaces a cached failure or stale signed URL.
+  useWorkspaceMutationRefresh({
+    enabled: props.workspaceMutationId !== undefined && connectionReady,
+    mutationId: props.workspaceMutationId ?? null,
+    resourceKey: JSON.stringify([props.environmentId, resource]),
+    refresh: () => {
+      void refreshAssetUrl().catch(() => undefined);
+    },
+  });
   const path =
     resource._tag === "media-file"
       ? resource.path
