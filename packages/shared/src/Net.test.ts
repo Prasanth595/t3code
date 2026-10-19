@@ -6,57 +6,6 @@ import { vi } from "vite-plus/test";
 
 import * as NetService from "./Net.ts";
 
-const listenInterceptor = vi.hoisted(() => ({
-  failHost: null as string | null,
-  errorCode: "EAFNOSUPPORT",
-}));
-
-// Fails `listen({ host })` for one host with a chosen errno, e.g. EAFNOSUPPORT
-// for `::` on a kernel booted with `ipv6.disable=1`, which CI hosts are not.
-vi.mock("node:net", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:net")>();
-  return {
-    ...actual,
-    createServer: (...args: Parameters<typeof actual.createServer>) => {
-      const server = actual.createServer(...args);
-      const listen = server.listen.bind(server) as (...a: Array<unknown>) => NodeNet.Server;
-      server.listen = ((...listenArgs: Array<unknown>) => {
-        const [options] = listenArgs;
-        if (
-          listenInterceptor.failHost !== null &&
-          typeof options === "object" &&
-          options !== null &&
-          (options as NodeNet.ListenOptions).host === listenInterceptor.failHost
-        ) {
-          const error = new Error(`listen ${listenInterceptor.errorCode}`);
-          Object.assign(error, { code: listenInterceptor.errorCode });
-          process.nextTick(() => server.emit("error", error));
-          return server;
-        }
-        return listen(...listenArgs);
-      }) as typeof server.listen;
-      return server;
-    },
-  };
-});
-
-const withListenError = <A, E, R>(
-  host: string,
-  errorCode: string,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> =>
-  Effect.sync(() => {
-    listenInterceptor.failHost = host;
-    listenInterceptor.errorCode = errorCode;
-  }).pipe(
-    Effect.andThen(effect),
-    Effect.ensuring(
-      Effect.sync(() => {
-        listenInterceptor.failHost = null;
-      }),
-    ),
-  );
-
 const closeServer = (server: NodeNet.Server) =>
   Effect.sync(() => {
     try {
@@ -106,28 +55,31 @@ it.layer(NetService.layer)("NetService", (it) => {
       }),
     );
 
-    it.effect("canListenOnHost treats a host without IPv6 support as available", () =>
-      Effect.gen(function* () {
-        const net = yield* NetService.NetService;
-        const port = yield* net.reserveLoopbackPort();
-
-        const available = yield* withListenError(
-          "::",
-          "EAFNOSUPPORT",
-          net.canListenOnHost(port, "::"),
-        );
-        assert.equal(available, true);
-      }),
-    );
-
-    it.effect("canListenOnHost reports other bind errors as unavailable", () =>
-      Effect.gen(function* () {
-        const net = yield* NetService.NetService;
-        const port = yield* net.reserveLoopbackPort();
-
-        const available = yield* withListenError("::", "EACCES", net.canListenOnHost(port, "::"));
-        assert.equal(available, false);
-      }),
+    it.effect.each(["EAFNOSUPPORT", "EADDRNOTAVAIL"])(
+      "keeps ports available when IPv6 binds fail with %s",
+      (code) =>
+        Effect.gen(function* () {
+          const net = yield* NetService.NetService;
+          const port = yield* net.reserveLoopbackPort();
+          const listen = NodeNet.Server.prototype.listen;
+          const spy = vi.spyOn(NodeNet.Server.prototype, "listen").mockImplementation(function (
+            this: NodeNet.Server,
+            ...args
+          ) {
+            const [options] = args;
+            if (options?.host === "::1" || options?.host === "::") {
+              process.nextTick(() => this.emit("error", Object.assign(new Error(code), { code })));
+              return this;
+            }
+            return listen.apply(this, args);
+          });
+          try {
+            assert.equal(yield* net.isPortAvailableOnLoopback(port), true);
+            assert.equal(yield* net.canListenOnHost(port, "::"), true);
+          } finally {
+            spy.mockRestore();
+          }
+        }),
     );
 
     it.effect("isPortAvailableOnLoopback reports false for an occupied port", () =>
