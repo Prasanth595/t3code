@@ -1497,11 +1497,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
-        // Per-session count of context compactions since the last instruction injection. A
-        // nonzero generation marks the session to re-inject the T3 instruction block on its
-        // next prompt. A generation (rather than a flag) lets the post-prompt tap tell a
-        // compaction that completed while the prompt was running apart from the one the
-        // prompt already re-injected for.
+        // Generations keep an older prompt from clearing a newer compaction.
         const compactionGenerations = yield* Ref.make(new Map<string, number>());
         const runtimeRestartRequired = yield* Ref.make(false);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
@@ -6341,10 +6337,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
-            ...(previousInstructionState === undefined
+            ...(previousInstructionState === undefined || compactionGeneration > 0
               ? {}
               : { previousState: previousInstructionState }),
-            ...(compactionGeneration > 0 ? { compactedSinceLastInjection: true } : {}),
           });
           if (text.length > 0) {
             prompt.push({ type: "text", text });
@@ -6696,9 +6691,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Ref.update(compactionGenerations, (current) => {
                   if (promptParts?.instructionState === undefined) return current;
                   const observed = promptParts.compactionGeneration;
-                  // A compaction that completed while the prompt was running bumped the
-                  // generation after prompt construction; keep it so the next prompt
-                  // re-injects the T3 instruction block.
                   if (observed === 0 || current.get(requestedSessionId) !== observed)
                     return current;
                   const updated = new Map(current);
