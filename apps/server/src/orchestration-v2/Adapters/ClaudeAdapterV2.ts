@@ -1030,9 +1030,8 @@ export const layerQueryRunner: Layer.Layer<
             sessionId: result.sessionId,
           },
         });
-        // forkSession gives every copied message a new uuid, and the first run
-        // appends to this transcript, so right now is the only time its inherited
-        // head can be read.
+        // The SDK remaps copied UUIDs. Capture the inherited head before the
+        // fork's first run appends messages.
         const headMessageId = yield* Effect.tryPromise({
           try: () =>
             getSessionMessages(
@@ -9470,11 +9469,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const nativeThreadId = yield* getNativeThreadId(rollbackInput.providerThread);
               yield* closeLiveQueryForNativeThread(nativeThreadId);
               const now = yield* DateTime.now;
+              const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
 
-              if (
-                rollbackInput.target.type === "thread_start" &&
-                rollbackInput.providerThread.nativeMetadata?.forkHeadMessageId === undefined
-              ) {
+              if (rollbackInput.target.type === "thread_start" && resumeSessionAt === null) {
                 const resetNativeThreadId = yield* queryRunner.allocateSessionId;
                 return {
                   providerThread: {
@@ -9500,7 +9497,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 };
               }
 
-              const resumeSessionAt = yield* resolveClaudeRollbackResumeSessionAt(rollbackInput);
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,
