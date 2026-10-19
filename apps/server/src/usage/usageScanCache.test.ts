@@ -253,15 +253,31 @@ describe("pruneScanCache", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
+  it("keeps each channel's maximum for a repeated key in the first record's place", () => {
     const kept = dedupeWithinFile([
-      record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
+      record({
+        speed: "fast",
+        reportedCostUsd: 2,
+        totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 1 },
+      }),
       record({ dedupeKey: "msg_2:" }),
+      record({
+        timestampMs: 1_786_000_009_000,
+        sessionId: "fork",
+        reportedCostUsd: 3,
+        totals: { ...record().totals, outputTokens: 999 },
+      }),
+      record({ reportedCostUsd: 1 }),
     ]);
 
-    expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept).toEqual([
+      record({
+        speed: "fast",
+        reportedCostUsd: 3,
+        totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 999 },
+      }),
+      record({ dedupeKey: "msg_2:" }),
+    ]);
   });
 
   it("keeps every record that has no dedupe key", () => {

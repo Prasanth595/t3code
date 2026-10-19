@@ -98,7 +98,7 @@ describe("UsageAggregator", () => {
     expect(bucket).not.toHaveProperty("ultrafastCostUsd");
   });
 
-  it("keeps only the first record for a repeated dedupe key", () => {
+  it("counts identical copies of a dedupe key once", () => {
     const result = aggregate([
       record({ dedupeKey: "msg_1:" }),
       record({ dedupeKey: "msg_1:" }),
@@ -109,6 +109,85 @@ describe("UsageAggregator", () => {
     expect(result.buckets).toHaveLength(1);
     expect(result.buckets[0]?.records).toBe(1);
     expect(result.buckets[0]?.totals.outputTokens).toBe(50);
+  });
+
+  it("merges partial and zeroed copies in either order without moving the first copy's bucket", () => {
+    const partial = record({
+      dedupeKey: "msg_1:",
+      speed: "fast",
+      totals: { ...record().totals, cachedInputTokens: 1200, outputTokens: 3, reasoningTokens: 5 },
+    });
+    const complete = record({
+      dedupeKey: "msg_1:",
+      model: "claude-fable-5[1m]",
+      timestampMs: Date.parse("2026-08-08T12:00:00Z"),
+      sessionId: "session-fork",
+      totals: {
+        uncachedInputTokens: 2,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 40,
+        outputTokens: 264,
+        reasoningTokens: 135,
+      },
+    });
+    const zero = {
+      ...partial,
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+    };
+    const totals = { ...complete.totals, uncachedInputTokens: 100, cachedInputTokens: 1200 };
+
+    for (const copies of [
+      [zero, partial, complete, complete],
+      [complete, partial, zero, zero],
+    ]) {
+      const aggregator = new UsageAggregator({
+        timeZone: "UTC",
+        sinceDay: "2026-08-01",
+        untilDay: "2026-08-31",
+        rates,
+      });
+      copies.forEach((copy, index) => aggregator.add(copy, String(index) + ".jsonl"));
+      const result = aggregator.finish();
+      const expected = aggregate([{ ...copies[0]!, totals }]).buckets[0];
+
+      expect(result.duplicatesDropped).toBe(3);
+      expect(result.buckets).toEqual([{ ...expected, sourcePath: "0.jsonl" }]);
+    }
+  });
+
+  it("replaces cost-source counts and removes the last category breakdown when copies report a cost", () => {
+    const zero = record({
+      dedupeKey: "msg_1:",
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+    });
+    const unpriced = record({ provider: "grok", model: "unknown", dedupeKey: "msg_2:" });
+    const result = aggregate([
+      zero,
+      unpriced,
+      { ...zero, reportedCostUsd: 1 },
+      { ...zero, reportedCostUsd: 2 },
+      { ...zero, reportedCostUsd: 1 },
+      { ...unpriced, reportedCostUsd: 3 },
+    ]);
+
+    expect(result.buckets).toEqual(
+      aggregate([
+        { ...zero, reportedCostUsd: 2 },
+        { ...unpriced, reportedCostUsd: 3 },
+      ]).buckets,
+    );
   });
 
   it("still sums records that carry no dedupe key", () => {
@@ -228,8 +307,12 @@ describe("UsageAggregator", () => {
     expect(result.buckets[0]?.costSource).toBe("providerReported");
   });
 
-  it("drops records outside the window", () => {
-    const result = aggregate([record({ timestampMs: Date.parse("2026-07-01T12:00:00Z") })]);
+  it("keeps a key outside the window when only its later copy falls inside", () => {
+    const result = aggregate([
+      record({ dedupeKey: "msg_1:", timestampMs: Date.parse("2026-07-01T12:00:00Z") }),
+      record({ dedupeKey: "msg_1:", totals: { ...record().totals, outputTokens: 500 } }),
+    ]);
+    expect(result.duplicatesDropped).toBe(1);
 
     expect(result.outOfWindow).toBe(1);
     expect(result.buckets).toHaveLength(0);

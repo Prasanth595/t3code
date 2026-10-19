@@ -101,13 +101,53 @@ export interface AggregateResult {
 }
 
 /**
- * De-duplication is global across the whole scan, not per file: Claude Code
- * copies a message's records forward when a session is resumed or forked, so
- * the same `dedupeKey` legitimately appears in several transcripts.
+ * Partial copies share a billed message's key. Keep each token channel's maximum
+ * and the larger reported cost; retain the first copy's time, model, session
+ * and speed so usage stays in its original bucket.
+ */
+export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.max(held.reportedCostUsd, copy.reportedCostUsd);
+  if (
+    b.uncachedInputTokens <= a.uncachedInputTokens &&
+    b.cachedInputTokens <= a.cachedInputTokens &&
+    b.cacheCreationTokens <= a.cacheCreationTokens &&
+    b.outputTokens <= a.outputTokens &&
+    b.reasoningTokens <= a.reasoningTokens &&
+    reportedCostUsd === held.reportedCostUsd
+  ) {
+    return held;
+  }
+  return {
+    ...held,
+    totals: {
+      uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.max(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+interface Contribution {
+  record: UsageRecord;
+  /** Null when the first copy fell outside the window. */
+  readonly bucket: MutableBucket | null;
+}
+
+/**
+ * Claude Code copies messages across resumed and forked transcripts. Keep each
+ * key across the whole scan so a richer copy updates the original contribution.
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #seen = new Map<string, Contribution>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -141,20 +181,33 @@ export class UsageAggregator {
   add(input: UsageRecord, sourcePath?: string): boolean {
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
+      const held = this.#seen.get(record.dedupeKey);
+      if (held !== undefined) {
         this.#duplicatesDropped += 1;
+        if (held.bucket !== null) held.record = mergeUsageCopies(held.record, record);
         return false;
       }
-      this.#seen.add(record.dedupeKey);
     }
 
+    const bucket = this.#placeInWindow(record, sourcePath ?? "");
+    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket });
+    if (bucket === null) {
+      this.#outOfWindow += 1;
+      return false;
+    }
+    // Keyed usage is counted in finish(), once its copies are merged.
+    if (record.dedupeKey === null) this.#accumulate(bucket, record);
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    return true;
+  }
+
+  #placeInWindow(record: UsageRecord, source: string): MutableBucket | null {
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const day = this.#toDay(record.timestampMs);
@@ -162,16 +215,17 @@ export class UsageAggregator {
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const hourIndex =
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
+    return this.#bucketFor(day, hourIndex, record.provider, record.model, source);
+  }
 
+  #accumulate(bucket: MutableBucket, record: UsageRecord): void {
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;
@@ -205,8 +259,6 @@ export class UsageAggregator {
     bucket.records += 1;
     if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
-    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
-    return true;
   }
 
   /** The target's own rate applies, so a provider-specific `rateModel` is dropped. */
@@ -266,8 +318,19 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
+    // Accumulate into snapshots so repeated finish() calls do not count keys again.
+    const snapshots = new Map(
+      Array.from(this.#buckets.values(), (bucket) => [
+        bucket,
+        { ...bucket, totals: { ...bucket.totals } },
+      ]),
+    );
+    for (const { record, bucket } of this.#seen.values()) {
+      if (bucket !== null) this.#accumulate(snapshots.get(bucket)!, record);
+    }
     const buckets: UsageBucket[] = [];
-    for (const [key, bucket] of this.#buckets) {
+    for (const [key, original] of this.#buckets) {
+      const bucket = snapshots.get(original)!;
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
         key.split("\u0000");
       const category = bucket.categoryCostUsd;
