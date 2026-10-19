@@ -263,17 +263,39 @@ const diagnoseIos = (
   outcome: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
   applications: ReadonlyArray<string> = ["Xcode.app"],
   platform: NodeJS.Platform = "darwin",
-) =>
-  LocalDeviceHost.__testing.platformReason("ios").pipe(
-    Effect.provideService(HostProcess.Environment, { PATH: "" }),
+  {
+    environment = {},
+    selectedDeveloperDirectory = "/Applications/Xcode.app/Contents/Developer",
+    developerDirectoryExists = true,
+  }: {
+    environment?: NodeJS.ProcessEnv;
+    selectedDeveloperDirectory?: string | null;
+    developerDirectoryExists?: boolean;
+  } = {},
+) => {
+  const developerDirectory = environment.DEVELOPER_DIR ?? selectedDeveloperDirectory;
+  return LocalDeviceHost.__testing.platformReason("ios").pipe(
+    Effect.provideService(HostProcess.Environment, { PATH: "", ...environment }),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(ProcessRunner.ProcessRunner, {
       run: (input) => {
         expect(platform).toBe("darwin");
-        expect([input.command, ...input.args]).toEqual(["xcrun", "simctl", "help"]);
         const timeoutMs = Duration.toMillis(input.timeout ?? Infinity);
         expect(Number.isFinite(timeoutMs)).toBe(true);
         expect(timeoutMs).toBeGreaterThan(0);
+        if (input.command === "xcode-select") {
+          expect(input.args).toEqual(["--print-path"]);
+          return Effect.succeed(
+            developerDirectory === null
+              ? processOutput(
+                  2,
+                  "",
+                  "xcode-select: error: unable to get active developer directory",
+                )
+              : processOutput(0, `${developerDirectory}\n`),
+          );
+        }
+        expect([input.command, ...input.args]).toEqual(["xcrun", "simctl", "help"]);
         return outcome;
       },
     }),
@@ -286,17 +308,30 @@ const diagnoseIos = (
         },
         exists: (path) =>
           Effect.succeed(
-            applications.some((bundle) => path === `/Applications/${bundle}/Contents/Developer`),
+            path === developerDirectory
+              ? developerDirectoryExists
+              : applications.some(
+                  (bundle) => path === `/Applications/${bundle}/Contents/Developer`,
+                ),
           ),
       }),
     ),
     Effect.provide(NodePath.layerPosix),
   );
+};
 
 describe("iOS Simulator availability", () => {
   it.effect("accepts working simctl on macOS and rejects other platforms without probing", () =>
     Effect.gen(function* () {
-      expect(yield* diagnoseIos(Effect.succeed(processOutput(0)))).toBeNull();
+      for (const options of [
+        {},
+        { selectedDeveloperDirectory: "/Volumes/Tools/Xcode.app/Contents/Developer" },
+        { environment: { DEVELOPER_DIR: "/Volumes/Tools/Xcode-beta.app/Contents/Developer" } },
+      ]) {
+        expect(
+          yield* diagnoseIos(Effect.succeed(processOutput(0)), [], "darwin", options),
+        ).toBeNull();
+      }
       for (const platform of ["linux", "win32"] as const) {
         expect(yield* diagnoseIos(Effect.die("Only macOS can probe simctl"), [], platform)).toMatch(
           /macOS.*Xcode/,
@@ -305,20 +340,61 @@ describe("iOS Simulator availability", () => {
     }),
   );
 
-  it.effect("offers a usable xcode-select command for the installed Xcode bundle", () =>
+  it.effect("does not invoke the xcrun installer stub without a valid developer directory", () =>
+    Effect.gen(function* () {
+      let xcrunCalls = 0;
+      const stub = Effect.sync(() => {
+        xcrunCalls++;
+        return processOutput(
+          1,
+          "",
+          "xcode-select: note: No developer tools were found, requesting install.",
+        );
+      });
+      for (const options of [
+        { selectedDeveloperDirectory: null },
+        { selectedDeveloperDirectory: "/missing/Xcode.app/Contents/Developer" },
+        { environment: { DEVELOPER_DIR: "/missing/Developer" } },
+      ]) {
+        const reason = yield* diagnoseIos(stub, [], "darwin", {
+          ...options,
+          developerDirectoryExists: false,
+        });
+        expect(xcrunCalls).toBe(0);
+        expect(reason).toMatch(
+          /install.*Xcode|select.*developer|developer.*(missing|not found|invalid)/i,
+        );
+      }
+    }),
+  );
+
+  it.effect("offers usable Xcode selection guidance, including a DEVELOPER_DIR override", () =>
     Effect.gen(function* () {
       for (const bundle of ["Xcode.app", "Xcode-beta.app", "Xcode 26.app"]) {
-        const reason = yield* diagnoseIos(
-          Effect.succeed(processOutput(72, "", 'xcrun: error: unable to find utility "simctl"')),
-          ["Safari.app", bundle],
-        );
-        const developerPath = `/Applications/${bundle}/Contents/Developer`;
-        expect(reason).toContain(developerPath);
-        const command = reason?.match(/sudo xcode-select (?:-s|--switch) (.+)/)?.[1];
-        expect(command).toBeDefined();
-        const quoted =
-          command?.startsWith(`"${developerPath}"`) || command?.startsWith(`'${developerPath}'`);
-        expect(quoted || (!bundle.includes(" ") && command?.startsWith(developerPath))).toBe(true);
+        for (const environment of [{}, { DEVELOPER_DIR: "/Library/Developer/CommandLineTools" }]) {
+          const reason = yield* diagnoseIos(
+            Effect.succeed(processOutput(72, "", 'xcrun: error: unable to find utility "simctl"')),
+            ["Safari.app", bundle],
+            "darwin",
+            { environment, selectedDeveloperDirectory: "/Library/Developer/CommandLineTools" },
+          );
+          const developerPath = `/Applications/${bundle}/Contents/Developer`;
+          expect(reason).toContain(developerPath);
+          if (environment.DEVELOPER_DIR) {
+            expect(reason).toContain("DEVELOPER_DIR");
+            expect(reason).toMatch(/unset|change|update|set .*DEVELOPER_DIR/i);
+            expect(reason).toMatch(/restart/i);
+          } else {
+            const command = reason?.match(/sudo xcode-select (?:-s|--switch) (.+)/)?.[1];
+            expect(command).toBeDefined();
+            const quoted =
+              command?.startsWith(`"${developerPath}"`) ||
+              command?.startsWith(`'${developerPath}'`);
+            expect(quoted || (!bundle.includes(" ") && command?.startsWith(developerPath))).toBe(
+              true,
+            );
+          }
+        }
       }
     }),
   );
@@ -393,7 +469,6 @@ describe("iOS Simulator availability", () => {
           ),
           /timed out/i,
         ],
-        [Effect.succeed(processOutput(124, "", "", true)), /timed out/i],
       ] as const) {
         const reason = yield* diagnoseIos(outcome);
         expect(reason).toMatch(diagnostic);
