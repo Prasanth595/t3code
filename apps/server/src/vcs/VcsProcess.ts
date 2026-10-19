@@ -113,10 +113,8 @@ export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: Node
   gitConfigEnv(env, "safe.bareRepository", "explicit", platform);
 
 /**
- * Git on Windows cannot create, read or delete a path longer than MAX_PATH (260)
- * unless `core.longpaths` is set. The OS-level LongPathsEnabled setting does not
- * cover it, and git leaves it off by default, so deep worktrees fail to check
- * out and remove, and checkpoints skip, fail on or cannot restore deep files.
+ * Git for Windows needs core.longpaths for deep paths even when the OS enables
+ * long paths. Set it per process so worktrees and checkpoints need no user config.
  */
 export const windowsLongPathConfigEnv = (
   platform: NodeJS.Platform,

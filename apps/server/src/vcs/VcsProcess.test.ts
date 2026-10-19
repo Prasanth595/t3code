@@ -321,16 +321,24 @@ describe("VcsProcess.run", () => {
       const peak = yield* Ref.make(0);
       const total = yield* Ref.make(0);
       const service = yield* VcsProcess.make.pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(
           ProcessRunner.ProcessRunner,
           ProcessRunner.ProcessRunner.of({
-            run: () =>
+            run: (input) =>
               Effect.gen(function* () {
                 const count = yield* Ref.updateAndGet(active, (held) => held + 1);
                 yield* Ref.update(peak, (held) => Math.max(held, count));
                 yield* Ref.update(total, (held) => held + 1);
                 yield* Queue.offer(starts, count);
                 yield* Deferred.await(gate);
+                expect(input.env).toMatchObject({
+                  GIT_CONFIG_COUNT: "2",
+                  GIT_CONFIG_KEY_0: "core.longpaths",
+                  GIT_CONFIG_VALUE_0: "false",
+                  GIT_CONFIG_KEY_1: "safe.bareRepository",
+                  GIT_CONFIG_VALUE_1: "explicit",
+                });
                 return {
                   stdout: "",
                   stderr: "",
@@ -353,6 +361,11 @@ describe("VcsProcess.run", () => {
             command: "gh",
             args: ["api", "user"],
             cwd: "/workspace",
+            env: {
+              GIT_CONFIG_COUNT: "1",
+              GIT_CONFIG_KEY_0: "core.longpaths",
+              GIT_CONFIG_VALUE_0: "false",
+            },
           }),
         ),
         { concurrency: "unbounded" },
@@ -384,6 +397,36 @@ describe("VcsProcess.run", () => {
       expect(result.stdoutTruncated).toBe(false);
       expect(result.stderrTruncated).toBe(false);
     }).pipe(provideLive),
+  );
+
+  it.effect.each(["win32", "linux", "darwin"] as const)(
+    "applies Git process config on %s without losing caller entries",
+    (platform) =>
+      Effect.gen(function* () {
+        const result = yield* run({
+          operation: VcsProcess.CHECKPOINT_CAPTURE_OPERATION,
+          command: "git",
+          args: ["config", "--list", "--show-scope"],
+          cwd: process.cwd(),
+          env: {
+            GIT_CONFIG_COUNT: "3",
+            GIT_CONFIG_KEY_0: "core.longpaths",
+            GIT_CONFIG_VALUE_0: "false",
+            GIT_CONFIG_KEY_1: "t3.caller",
+            GIT_CONFIG_VALUE_1: "preserved",
+            GIT_CONFIG_KEY_2: "safe.bareRepository",
+            GIT_CONFIG_VALUE_2: "all",
+          },
+        });
+
+        expect(result.stdout.split("\n").filter((line) => line.startsWith("command\t"))).toEqual([
+          "command\tcore.longpaths=false",
+          "command\tt3.caller=preserved",
+          "command\tsafe.barerepository=all",
+          "command\tsafe.barerepository=explicit",
+          ...(platform === "win32" ? ["command\tcore.longpaths=true"] : []),
+        ]);
+      }).pipe(provideLive, Effect.provideService(HostProcess.Platform, platform)),
   );
 
   it.effect("keeps git from opening a folder laid out as a bare repository", () =>
