@@ -5384,6 +5384,84 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("generates PR content from the created worktree's selected remote base", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const originDir = yield* createBareRemote();
+      const upstreamDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
+      yield* runGit(repoDir, ["remote", "add", "upstream", upstreamDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "fork-release"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fork.txt"), "fork-only work\n");
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".github/pull_request_template.md"),
+        "Fork template",
+      );
+      yield* runGit(repoDir, ["add", "."]);
+      yield* runGit(repoDir, ["commit", "-m", "Fork release commit"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/heads/release"]);
+      yield* runGit(repoDir, ["checkout", "-b", "stable", "main"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "upstream.txt"), "upstream-only work\n");
+      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
+      NodeFS.writeFileSync(
+        NodePath.join(repoDir, ".github/pull_request_template.md"),
+        "Upstream template",
+      );
+      yield* runGit(repoDir, ["add", "."]);
+      yield* runGit(repoDir, ["commit", "-m", "Upstream release commit"]);
+      yield* runGit(repoDir, ["push", "-u", "upstream", "stable:release"]);
+
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fetched = yield* driver.fetchWorktreeBaseCommit({ cwd: repoDir, refName: "stable" });
+      expect(fetched).not.toBeNull();
+      const worktreePath = NodePath.join(yield* makeTempDir("t3code-git-worktrees-"), "feature");
+      yield* driver.createWorktree({
+        cwd: repoDir,
+        path: worktreePath,
+        refName: fetched!.commitSha,
+        newRefName: "feature/from-upstream",
+        baseRefName: `refs/remotes/${fetched!.remoteRefName}`,
+      });
+      NodeFS.writeFileSync(NodePath.join(worktreePath, "feature.txt"), "feature work\n");
+      yield* runGit(worktreePath, ["add", "feature.txt"]);
+      yield* runGit(worktreePath, ["commit", "-m", "Feature commit"]);
+      yield* runGit(worktreePath, ["push", "-u", "origin", "feature/from-upstream"]);
+
+      const generatedInputs: TextGeneration.PrContentGenerationInput[] = [];
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: { prListSequence: ["[]", "[]"] },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedInputs.push(input);
+            return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+          },
+        },
+      });
+      const result = yield* runStackedAction(manager, { cwd: worktreePath, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(generatedInputs).toHaveLength(1);
+      const generated = generatedInputs[0]!;
+      expect.soft(generated.commitSummary).toContain("Feature commit");
+      expect.soft(generated.commitSummary).not.toContain("Upstream release commit");
+      expect.soft(generated.commitSummary).not.toContain("Fork release commit");
+      expect.soft(generated.diffSummary).toContain("feature.txt");
+      expect.soft(generated.diffSummary).not.toContain("upstream.txt");
+      expect.soft(generated.diffSummary).not.toContain("fork.txt");
+      expect.soft(generated.diffPatch).toContain("+feature work");
+      expect.soft(generated.diffPatch).not.toContain("upstream-only work");
+      expect.soft(generated.diffPatch).not.toContain("fork-only work");
+      expect.soft(generated.changeRequestTemplate).toBe("Upstream template");
+      expect(
+        ghCalls.some((call) =>
+          call.includes("pr create --base release --head feature/from-upstream"),
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect("generates PR content from branch changes when the remote base advances", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");

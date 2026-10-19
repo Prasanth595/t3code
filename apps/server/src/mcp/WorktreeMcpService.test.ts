@@ -526,9 +526,13 @@ describe("t3_worktree_handoff", () => {
       expect(result.startedFromOrigin).toBe(true);
       expect(result.setupScript).toEqual({ status: "skipped" });
       expect((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(remoteHead);
+      const preview = yield* git.getReviewDiffPreview({ cwd: worktreePath });
+      const comparisonBase = preview.sources.find(
+        (source) => source.kind === "branch-range",
+      )!.baseRef;
       expect(
-        yield* git.readConfigValue(worktreePath, "branch.feature/from-remote.gh-merge-base"),
-      ).toBe("release");
+        (yield* command(worktreePath, ["rev-parse", `${comparisonBase}^{commit}`])).stdout.trim(),
+      ).toBe(remoteHead);
     }).pipe(
       Effect.provide(
         GitVcsDriver.layer.pipe(
