@@ -3841,6 +3841,31 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           },
         );
 
+        // Shared by interrupt and lost app-server paths. Persistent dynamic tools
+        // end too, because the turn itself is ending.
+        const terminalizeTrackedTurnWork = Effect.fn("CodexAdapterV2.terminalizeTrackedTurnWork")(
+          function* (
+            context: ActiveCodexTurnContext,
+            status: "interrupted" | "failed",
+            completedAt: DateTime.Utc,
+          ) {
+            yield* terminalizeRunningCommandItems(
+              context,
+              context.nativeTurnId,
+              status,
+              completedAt,
+            );
+            yield* terminalizeRunningDynamicTools(
+              context,
+              context.nativeTurnId,
+              status,
+              completedAt,
+              true,
+            );
+            yield* terminalizeMcpAppCaptures(context, context.nativeTurnId);
+          },
+        );
+
         // The plan coalescer builds these artifacts on every streamed update.
         const buildProposedPlanArtifacts = Effect.fnUntraced(function* (input: {
           readonly context: ActiveCodexTurnContext;
@@ -6744,11 +6769,25 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
           }
         });
+        // No item/completed will arrive for work the process took with it,
+        // including background commands of turns that already completed.
+        const failLostTurnWork = turnTerminalizationPermit.withPermits(1)(
+          Effect.gen(function* () {
+            const completedAt = yield* DateTime.now;
+            for (const context of [
+              ...(yield* Ref.get(activeTurns)).values(),
+              ...(yield* Ref.get(settledTurns)).values(),
+            ]) {
+              yield* terminalizeTrackedTurnWork(context, "failed", completedAt);
+            }
+          }),
+        );
         yield* Effect.raceFirst(
           client.terminated,
           // A probe that fails with a transport error is the termination above.
           unresponsive.pipe(Effect.catch(() => Effect.never)),
         ).pipe(
+          Effect.tap(() => failLostTurnWork),
           Effect.flatMap((cause) =>
             Queue.fail(
               events,
@@ -7436,20 +7475,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       const context = target.context;
                       if ((yield* Ref.get(settledTurns)).get(context.nativeTurnId) !== context)
                         continue;
-                      yield* terminalizeRunningCommandItems(
-                        context,
-                        context.nativeTurnId,
-                        "interrupted",
-                        completedAt,
-                      );
-                      yield* terminalizeRunningDynamicTools(
-                        context,
-                        context.nativeTurnId,
-                        "interrupted",
-                        completedAt,
-                        true,
-                      );
-                      yield* terminalizeMcpAppCaptures(context, context.nativeTurnId);
+                      yield* terminalizeTrackedTurnWork(context, "interrupted", completedAt);
                       yield* Ref.update(runningCommandItemsByTurn, (current) => {
                         const updated = new Map(current);
                         updated.delete(context.nativeTurnId);

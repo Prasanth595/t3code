@@ -963,6 +963,23 @@ NodeReadline.createInterface({ input: process.stdin }).on("line", (line) => {
       };
       write({ id, result: { turn } });
       write({ method: "turn/started", params: { threadId: params.threadId, turn } });
+      write({
+        method: "item/started",
+        params: {
+          threadId: params.threadId,
+          turnId: turn.id,
+          startedAtMs: Date.now(),
+          item: {
+            type: "commandExecution",
+            id: \`command-\${turn.id}\`,
+            command: "sleep 600",
+            cwd: process.cwd(),
+            status: "inProgress",
+            commandActions: [],
+            aggregatedOutput: null,
+          },
+        },
+      });
       break;
     }
     case "thread/loaded/list":
@@ -1116,6 +1133,13 @@ NodeReadline.createInterface({ input: process.stdin }).on("line", (line) => {
             const projection = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(projection.runs.at(-1)?.status, "failed");
             assert.equal(projection.providerSessions.at(-1)?.status, "error");
+            // Nothing will complete the command the process took with it.
+            const command = projection.turnItems.find((item) => item.type === "command_execution");
+            assert.equal(command?.status, "failed");
+            assert.equal(
+              projection.nodes.find((node) => node.id === command?.nodeId)?.status,
+              "failed",
+            );
           }
 
           yield* createAndStart(ThreadId.make("thread:codex-recovery-new"));
@@ -3842,7 +3866,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 
-  it.effect("Stop ends a background command no Codex process tracks any more", () =>
+  it.effect("fails a background command its exited Codex process never finished", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -3904,6 +3928,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Stream.runHead,
             Effect.forkChild({ startImmediately: true }),
           );
+          const commandFailed = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "turn-item.updated" &&
+                event.payload.type === "command_execution" &&
+                event.payload.status === "failed",
+            ),
+            Stream.runHead,
+            Effect.forkChild({ startImmediately: true }),
+          );
           yield* orchestrator.dispatch({
             type: "message.dispatch",
             commandId: CommandId.make("start-background-stop-untracked"),
@@ -3917,28 +3951,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           });
           yield* worker.drain();
           yield* Fiber.join(settled);
-          yield* worker.drain();
-          const before = yield* orchestrator.getThreadShell(threadId);
-          assert.deepEqual(
-            before?.pendingBackgroundTasks?.map((task) => task.kind),
-            ["command"],
-            "the thread still shows the command the gone process never finished",
-          );
-          const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
-          yield* orchestrator.dispatch({
-            type: "run.interrupt",
-            commandId: CommandId.make("stop-background-untracked"),
-            threadId,
-            runId: run.id,
-            holdQueue: true,
-          });
+          yield* Fiber.join(commandFailed);
           yield* worker.drain();
           const projection = yield* orchestrator.getThreadProjection(threadId);
           assert.deepEqual(
             projection.turnItems.flatMap((item) =>
               item.type === "command_execution" ? [item.status] : [],
             ),
-            ["interrupted"],
+            ["failed"],
           );
           assert.equal(projection.runs.at(-1)?.status, "completed");
           assert.deepEqual(
