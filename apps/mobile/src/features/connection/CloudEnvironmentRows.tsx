@@ -13,6 +13,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useRef, useState } from "react";
@@ -110,24 +111,23 @@ function CloudEnvironmentRowsContent(
 
       mutationPendingRef.current = true;
       const { environmentId } = entry.environment;
-      try {
-        const result = await deregisterEnvironment({ accountId: session.accountId, environmentId });
-        if (result._tag === "Success") {
-          refreshManagedRelayEnvironments(session.accountId);
-          if (appAtomRegistry.get(managedRelaySessionAtom) === session) {
-            await controller.refreshRelayEnvironmentsAfterMutation();
-          }
-          return;
+      const result = await settlePromise(async () => {
+        const deregistration = await deregisterEnvironment({
+          accountId: session.accountId,
+          environmentId,
+        });
+        if (deregistration._tag === "Failure") {
+          if (isAtomCommandInterrupted(deregistration)) return;
+          throw squashAtomCommandFailure(deregistration);
         }
-        if (
-          appAtomRegistry.get(managedRelaySessionAtom) !== session ||
-          isAtomCommandInterrupted(result)
-        )
-          return;
-
+        refreshManagedRelayEnvironments(session.accountId);
+        if (appAtomRegistry.get(managedRelaySessionAtom) === session) {
+          await controller.refreshRelayEnvironmentsAfterMutation();
+        }
+      });
+      mutationPendingRef.current = false;
+      if (result._tag === "Failure" && appAtomRegistry.get(managedRelaySessionAtom) === session) {
         alertDeregisterFailure(environmentId, squashAtomCommandFailure(result));
-      } finally {
-        mutationPendingRef.current = false;
       }
     });
   };
