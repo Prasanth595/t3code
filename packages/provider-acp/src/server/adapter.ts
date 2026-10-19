@@ -3,7 +3,7 @@
 import {
   type ChatAttachment,
   type ModelSelection,
-  type MessageId,
+  MessageId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
@@ -1807,6 +1807,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         const continuationRequested = yield* Ref.make(false);
         const continuationGeneration = yield* Ref.make(0);
+        // The namespace survives owner invalidation so durably queued stale text stays recognizable.
+        const textContinuationMessageIdPrefix = `message:acp-text-continuation:${encodeURIComponent(input.providerSessionId)}:`;
         // Native frames can arrive after a text wake is offered; its message owns their drain.
         const textContinuationMessageId = yield* Ref.make<MessageId | null>(null);
         const continuationPermit = yield* Semaphore.make(1);
@@ -3506,7 +3508,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         threadId: route.threadId,
                         ordinal: (yield* Ref.get(snapshot)).order.length + 1,
                       })
-                      .pipe(Effect.orDie);
+                      .pipe(
+                        Effect.map((id) =>
+                          MessageId.make(`${textContinuationMessageIdPrefix}${id}`),
+                        ),
+                        Effect.orDie,
+                      );
               yield* Ref.set(textContinuationMessageId, messageId);
               return Option.some({ route, generation, reports, detail, messageId });
             }),
@@ -6589,20 +6596,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!isAppOwnedWakeTurn) {
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
             }
-            const { continuationWasRequested, isTextContinuationTurn } =
+            const { continuationWasRequested, isTextContinuationTurn, isStaleTextTurn } =
               yield* continuationPermit.withPermit(
                 Effect.gen(function* () {
                   const wasRequested = yield* Ref.get(continuationRequested);
                   const textMessageId = yield* Ref.get(textContinuationMessageId);
                   const isTextContinuationTurn =
                     isAppOwnedWakeTurn && textMessageId === turnInput.message.messageId;
+                  const isStaleTextTurn =
+                    isAppOwnedWakeTurn &&
+                    turnInput.message.messageId.startsWith(textContinuationMessageIdPrefix) &&
+                    !isTextContinuationTurn;
+                  if (isStaleTextTurn) {
+                    return {
+                      continuationWasRequested: wasRequested,
+                      isTextContinuationTurn,
+                      isStaleTextTurn,
+                    };
+                  }
                   const isUserTurn = !isContinuationTurn && !isAppOwnedWakeTurn;
                   const invalidatesTextContinuation = isUserTurn && textMessageId !== null;
-                  const preserveBufferedContinuation = acpTurnStartShouldPreserveContinuation({
-                    continuationRequested: wasRequested,
-                    isContinuationTurn: isContinuationTurn || isTextContinuationTurn,
-                    wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
-                  });
+                  const preserveBufferedContinuation =
+                    (isAppOwnedWakeTurn && !isTextContinuationTurn && textMessageId !== null) ||
+                    acpTurnStartShouldPreserveContinuation({
+                      continuationRequested: wasRequested,
+                      isContinuationTurn: isContinuationTurn || isTextContinuationTurn,
+                      wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
+                    });
                   if (isUserTurn) {
                     yield* Ref.set(pendingWillWakeSubagents, new Map());
                     if (!preserveBufferedContinuation) {
@@ -6620,12 +6640,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(continuationRequested, false);
                     yield* Ref.set(textContinuationMessageId, null);
                   }
-                  return { continuationWasRequested: wasRequested, isTextContinuationTurn };
+                  return {
+                    continuationWasRequested: wasRequested,
+                    isTextContinuationTurn,
+                    isStaleTextTurn,
+                  };
                 }),
               );
-            const promptParts = isContinuationTurn
-              ? null
-              : yield* resolvePromptParts(turnInput, requestedSessionId);
+            const promptParts =
+              isContinuationTurn || isStaleTextTurn
+                ? null
+                : yield* resolvePromptParts(turnInput, requestedSessionId);
             const startedAt = yield* DateTime.now;
             const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
             const providerTurnId = deriveProviderTurnId(nativeTurnId);
@@ -6751,11 +6776,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* projectDeferredCarryoverTerminals(rehydratedCarryoverSubagents);
             // Keep projected terminals addressable through the wake drain so
             // emitSubagent's monotonic guard can reject replayed spawn frames.
+            if (isStaleTextTurn) {
+              yield* finalizeTurn(context, "completed");
+              return;
+            }
             if (isContinuationTurn || isTextContinuationTurn) {
-              yield* Ref.update(wakeReports, ({ reports, offered }) => ({
-                reports: new Map([...reports].filter(([key]) => !offered.has(key))),
-                offered: noWakeReports.offered,
-              }));
+              yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+              yield* continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  // Cancel native offers made during setup; a newer text offer owns separate detail.
+                  if ((yield* Ref.get(textContinuationMessageId)) !== null) return;
+                  yield* Ref.update(continuationGeneration, (value) => value + 1);
+                  yield* Ref.set(continuationRequested, false);
+                  yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+                    reports: new Map([...reports].filter(([key]) => !offered.has(key))),
+                    offered: noWakeReports.offered,
+                  }));
+                }),
+              );
               const drainedWakeCount = yield* Ref.modify(wakeBuffer, (current) => {
                 const next: Array<EffectAcpSchema.SessionNotification> = [];
                 return [

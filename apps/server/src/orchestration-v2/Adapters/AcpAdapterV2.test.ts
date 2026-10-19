@@ -900,7 +900,7 @@ describe("Grok child results", () => {
           message: {
             createdBy: "agent",
             creationSource: "server",
-            messageId: MessageId.make("message-grok-child-continuation"),
+            messageId: request.messageId!,
             text: request.detail!,
             attachments: [],
           },
