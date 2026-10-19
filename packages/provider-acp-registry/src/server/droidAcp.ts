@@ -1,56 +1,55 @@
+import type { OrchestrationV2UserInputQuestion } from "@t3tools/contracts";
 import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
+import * as Predicate from "effect/Predicate";
+import * as Schema from "effect/Schema";
 
-type Form = NonNullable<ReturnType<NonNullable<AcpAdapterV2Flavor["extractElicitationForm"]>>>;
+const isDroidForm = Schema.is(
+  Schema.Struct({
+    properties: Schema.Record(Schema.String, Schema.Unknown),
+    required: Schema.Array(Schema.String),
+  }),
+);
+const isDroidQuestion = Schema.is(
+  Schema.Struct({
+    type: Schema.Literal("string"),
+    title: Schema.String,
+    description: Schema.String,
+    oneOf: Schema.Array(
+      Schema.Struct({
+        const: Schema.String.check(Schema.isPattern(/^(?:option_\d+|other)$/)),
+        title: Schema.String,
+      }),
+    ),
+  }),
+);
+const isDroidCompanion = Schema.is(Schema.Struct({ type: Schema.Literal("string") }));
 
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-// Droid 0.243.0 pairs each choice with an optional *_other field. T3's
-// question already has a custom-answer input; restore the pair on the wire.
+// Droid pairs each choice with an optional *_other field. The client already
+// offers custom answers, so hide the companion and restore it in the response.
 export const extractDroidElicitationForm: NonNullable<
   AcpAdapterV2Flavor["extractElicitationForm"]
 > = (request) => {
-  if (request.mode !== "form") return undefined;
-  const schema = record(request.requestedSchema);
-  const properties = record(schema?.properties);
-  if (properties === undefined || !Array.isArray(schema?.required)) return undefined;
-  const questions: Array<Form["questions"][number]> = [];
-  const consumed = new Set<string>();
-  for (const [id, value] of Object.entries(properties)) {
+  if (request.mode !== "form" || !isDroidForm(request.requestedSchema)) return undefined;
+  const { properties, required } = request.requestedSchema;
+  const questions: Array<OrchestrationV2UserInputQuestion> = [];
+  for (const [id, field] of Object.entries(properties)) {
     if (!/^question_[1-9]\d*$/.test(id)) continue;
-    const field = record(value);
-    const other = record(properties[`${id}_other`]);
-    if (
-      field?.type !== "string" ||
-      !Array.isArray(field.oneOf) ||
-      typeof field.title !== "string" ||
-      typeof field.description !== "string" ||
-      other?.type !== "string"
-    )
+    if (!isDroidQuestion(field) || !isDroidCompanion(properties[`${id}_other`])) return undefined;
+    const options = field.oneOf
+      .filter((option) => option.const !== "other")
+      .map((option) => ({ label: option.title, description: option.title, value: option.const }));
+    if (options.length === 0 || !field.oneOf.some((option) => option.const === "other")) {
       return undefined;
-    const options: Array<Form["questions"][number]["options"][number]> = [];
-    let hasOther = false;
-    for (const entry of field.oneOf) {
-      const option = record(entry);
-      if (typeof option?.const !== "string" || typeof option.title !== "string") return undefined;
-      if (option.const === "other") hasOther = true;
-      else options.push({ label: option.title, description: option.title, value: option.const });
     }
-    if (!hasOther || options.length === 0) return undefined;
     questions.push({ id, header: field.title, question: field.description, options });
-    consumed.add(id);
-    consumed.add(`${id}_other`);
   }
-  // A changed or unrelated form must retain its standard ACP interpretation.
-  const required = new Set(schema.required);
+  // Recognize only complete forms; leave every other schema to the ACP fallback.
+  const requiredIds = new Set(required);
   if (
     questions.length === 0 ||
-    consumed.size !== Object.keys(properties).length ||
-    required.size !== questions.length ||
-    questions.some((question) => !required.has(question.id))
+    Object.keys(properties).length !== questions.length * 2 ||
+    requiredIds.size !== questions.length ||
+    questions.some((question) => !requiredIds.has(question.id))
   ) {
     return undefined;
   }
@@ -60,7 +59,7 @@ export const extractDroidElicitationForm: NonNullable<
       const entries: Array<[string, string]> = [];
       for (const question of questions) {
         const answer = Object.hasOwn(answers, question.id) ? answers[question.id] : undefined;
-        if (typeof answer !== "string" || answer.trim().length === 0) return { action: "cancel" };
+        if (!Predicate.isString(answer) || answer.trim().length === 0) return { action: "cancel" };
         if (question.options.some((option) => option.value === answer)) {
           entries.push([question.id, answer]);
         } else {
