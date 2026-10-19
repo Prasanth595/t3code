@@ -194,6 +194,12 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
         yield* discoverClaudeSkills({ homePath: configDir }, worktree),
         localSettings,
       );
+      const linkedWorktree = path.join(tempDir, "linked-worktree");
+      yield* fs.symlink(worktree, linkedWorktree);
+      assert.deepEqual(
+        yield* discoverClaudeSkills({ homePath: configDir }, linkedWorktree),
+        localSettings,
+      );
     }),
   );
 

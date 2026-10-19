@@ -186,9 +186,16 @@ const findPluginRepositoryRoot = Effect.fn("findPluginRepositoryRoot")(function*
     .pipe(Effect.orElseSucceed(() => ""));
   if (!commonFile.trim() || !worktreeFile.trim()) return root;
   const commonDirectory = path.resolve(gitDirectory, commonFile.trim());
+  const backlinkPath = yield* fileSystem
+    .realPath(path.resolve(gitDirectory, worktreeFile.trim()))
+    .pipe(Effect.orElseSucceed(() => undefined));
+  const worktreeGitPath = yield* fileSystem
+    .realPath(path.join(root, ".git"))
+    .pipe(Effect.orElseSucceed(() => undefined));
   if (
     path.dirname(gitDirectory) !== path.join(commonDirectory, "worktrees") ||
-    path.resolve(gitDirectory, worktreeFile.trim()) !== path.join(root, ".git")
+    backlinkPath === undefined ||
+    backlinkPath !== worktreeGitPath
   ) {
     return root;
   }
