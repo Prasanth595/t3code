@@ -19,6 +19,7 @@ import {
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "./status.ts";
+import { grokUsageReader } from "./usage.ts";
 import { readGrokAccount } from "./usageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import {
@@ -49,8 +50,7 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 const GROK_NPM_PACKAGE = "@xai-official/grok";
 // `grok update` finds the installer that owns the binary itself, so the
 // resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. No executable means nothing to update,
-// not "whatever is on PATH".
+// runs with the instance's environment.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: (context) =>
     Effect.succeed(
@@ -82,7 +82,7 @@ export type GrokDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
+export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
   metadata: {
     displayName: "Grok",
@@ -90,6 +90,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
   },
   configSchema: GrokSettings,
   defaultConfig: (): GrokSettings => decodeGrokSettings({}),
+  usage: grokUsageReader,
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const crypto = yield* Crypto.Crypto;
@@ -100,7 +101,7 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
       const path = yield* Path.Path;
       const host = yield* ProviderHost.ProviderHost;
       const { cwd } = host.paths;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
