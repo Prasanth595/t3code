@@ -57,7 +57,7 @@ interface MutableBucket {
   costUsd: number;
   cacheSavingsUsd: number;
   categoryCostUsd: UsageCategoryCost | null;
-  /** Retracting the last split contribution must leave no breakdown, not a zero one. */
+  /** A zero-cost record can still supply a category breakdown. */
   categorizedRecords: number;
   fastCostUsd: number;
   ultrafastCostUsd: number;
@@ -103,11 +103,9 @@ export interface AggregateResult {
 }
 
 /**
- * Copies sharing a `dedupeKey` are one billed message, but an early copy can
- * carry partial counts on any channel, so each channel's maximum is the
- * complete count whichever copy is read first. Every other field (time,
- * model, session, speed) stays with the held copy, so merging never moves
- * usage to another bucket. Returns `held` itself when `copy` adds nothing.
+ * Partial copies share a billed message's key. Keep each token channel's maximum
+ * and the larger reported cost; retain the first copy's time, model, session
+ * and speed so usage stays in its original bucket.
  */
 export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRecord {
   const a = held.totals;
@@ -139,8 +137,6 @@ export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRec
   };
 }
 
-const ZERO_CATEGORY_COST: UsageCategoryCost = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
-
 interface Contribution {
   record: UsageRecord;
   /** Null when the first copy fell outside the window. */
@@ -148,11 +144,8 @@ interface Contribution {
 }
 
 /**
- * De-duplication is global across the whole scan, not per file: Claude Code
- * copies a message's records forward when a session is resumed or forked, so
- * the same `dedupeKey` legitimately appears in several transcripts. A replayed
- * copy can be partial or zeroed, so a richer copy read later replaces the held
- * copy's contribution instead of being dropped.
+ * Claude Code copies messages across resumed and forked transcripts. Keep each
+ * key across the whole scan so a richer copy updates the original contribution.
  */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
@@ -193,12 +186,11 @@ export class UsageAggregator {
       const held = this.#seen.get(record.dedupeKey);
       if (held !== undefined) {
         this.#duplicatesDropped += 1;
+        if (held.bucket === null) return false;
         const merged = mergeUsageCopies(held.record, record);
         if (merged !== held.record) {
-          if (held.bucket !== null) {
-            this.#accumulate(held.bucket, held.record, -1);
-            this.#accumulate(held.bucket, merged, 1);
-          }
+          this.#accumulate(held.bucket, held.record, -1);
+          this.#accumulate(held.bucket, merged, 1);
           held.record = merged;
         }
         return false;
@@ -252,17 +244,19 @@ export class UsageAggregator {
     bucket.costUsd += sign * priced.costUsd;
     if (priced.categoryCostUsd !== null) {
       bucket.categorizedRecords += sign;
-      const sum = bucket.categoryCostUsd ?? ZERO_CATEGORY_COST;
+      const sum = bucket.categoryCostUsd;
       const add = priced.categoryCostUsd;
       bucket.categoryCostUsd =
         bucket.categorizedRecords === 0
           ? null
-          : {
-              input: sum.input + sign * add.input,
-              cacheRead: sum.cacheRead + sign * add.cacheRead,
-              cacheWrite: sum.cacheWrite + sign * add.cacheWrite,
-              output: sum.output + sign * add.output,
-            };
+          : sum === null
+            ? add
+            : {
+                input: sum.input + sign * add.input,
+                cacheRead: sum.cacheRead + sign * add.cacheRead,
+                cacheWrite: sum.cacheWrite + sign * add.cacheWrite,
+                output: sum.output + sign * add.output,
+              };
     }
     if (record.speed === "fast") bucket.fastCostUsd += sign * priced.costUsd;
     if (record.speed === "ultrafast") bucket.ultrafastCostUsd += sign * priced.costUsd;
