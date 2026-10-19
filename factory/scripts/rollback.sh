@@ -17,6 +17,7 @@ fi
 target=$(readlink "$root/previous")
 # `current` can be missing after a hand repair; the rollback still restores `previous`.
 from=$(readlink "$root/current" || true)
+hold_autodeploy
 ln -sfn "$target" "$root/current"
 
 restart_timer_jobs_or_warn

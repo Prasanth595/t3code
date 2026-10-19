@@ -51,6 +51,7 @@ let deployLog: string;
 
 const root = () => NodePath.join(home, ".local/share/t3fac");
 const failedFile = () => NodePath.join(root(), "autodeploy.failed");
+const holdFile = () => NodePath.join(root(), "autodeploy.hold");
 
 const git = (cwd: string, ...args: Array<string>) => {
   const result = NodeChildProcess.spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -59,8 +60,11 @@ const git = (cwd: string, ...args: Array<string>) => {
 };
 
 // A deploy.sh that records each call with the commit it ran at, whether it was told to leave the
-// autodeploy job loaded and whether it was told it already holds the deploy lock, fails when
-// DEPLOY_FAIL is set, and on an install points `current` at the commit as install.sh would.
+// autodeploy job loaded and whether it was told it already holds the deploy lock, and on an
+// install points `current` at the commit as install.sh would. DEPLOY_FAIL fails the build,
+// INSTALL_FAIL the install (as a health check that rolled back would), BUILD_HANG makes the build
+// hang on a child whose pid it writes there, and HOLD_DURING_BUILD leaves autodeploy.hold as a
+// deploy by hand during the build would.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -69,7 +73,10 @@ const FAKE_DEPLOY = [
   'locked=no-lock; [[ -n $held && $held == "${T3FAC_DEPLOY_LOCK:-}" ]] && locked=lock',
   'echo "${1:-install} $sha ${T3FAC_SKIP_RELOAD:-} $locked" >> "$DEPLOY_LOG"',
   '[[ -z ${DEPLOY_FAIL:-} ]] || { echo "build: boom" >&2; exit 1; }',
+  'if [[ -n ${BUILD_HANG:-} ]]; then sleep 30 & echo $! > "$BUILD_HANG"; wait; fi',
+  '[[ -z ${HOLD_DURING_BUILD:-} ]] || : > "$HOME/.local/share/t3fac/autodeploy.hold"',
   "[[ ${1:-} == --build-only ]] && exit 0",
+  '[[ -z ${INSTALL_FAIL:-} ]] || { echo "health check failed; rolled back" >&2; exit 1; }',
   'mkdir -p "$HOME/.local/share/t3fac/versions"',
   'ln -sfn "versions/0.0.1+fac.$sha" "$HOME/.local/share/t3fac/current"',
   "",
@@ -312,6 +319,92 @@ describe("autodeploy.sh", () => {
   };
   const deadPid = () =>
     NodeChildProcess.spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim();
+
+  it("records a sha whose install fails, releases both locks and does not retry it", async () => {
+    const before = current();
+    const bad = commitToOrigin("bad");
+    const badShort = git(clone, "rev-parse", "--short", bad);
+    const failed = await runAutodeploy({ INSTALL_FAIL: "1" });
+    expect(failed.status).not.toBe(0);
+    expect(failed.deploys).toHaveLength(2);
+    expect(lines(failed.output)).toHaveLength(1);
+    expect(failed.output).toContain(`deploy of ${badShort} failed`);
+    expect(NodeFS.readFileSync(failedFile(), "utf8").trim()).toBe(bad);
+    expect(current()).toBe(before);
+    expect(lockExists()).toBe(false);
+    expect(lockExists("autodeploy.lock")).toBe(false);
+
+    const again = await runAutodeploy();
+    expect(again.status).toBe(0);
+    expect(again.output).toBe("");
+    expect(again.deploys).toEqual([]);
+  });
+
+  it("stops a build that runs past its limit, with every process it started, and retries next tick", async () => {
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    const hung = NodePath.join(tmp, "hung.pid");
+    const result = await runAutodeploy({ BUILD_HANG: hung, T3FAC_BUILD_LIMIT: "1" });
+    expect(result.status).toBe(1);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain(`build of ${short} took over 1s`);
+    expect(() => process.kill(Number(NodeFS.readFileSync(hung, "utf8")), 0)).toThrow();
+    expect(NodeFS.existsSync(failedFile())).toBe(false);
+    expect(lockExists("autodeploy.lock")).toBe(false);
+
+    const next = await runAutodeploy();
+    expect(next.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+  });
+
+  it("leaves a deploy or rollback by hand in place until main moves", async () => {
+    const before = current();
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    NodeFS.writeFileSync(holdFile(), "");
+    const held = await runAutodeploy();
+    expect(held.status).toBe(0);
+    expect(held.deploys).toEqual([]);
+    expect(lines(held.output)).toHaveLength(1);
+    expect(held.output).toContain(`not deploying ${short} until main moves`);
+    expect(NodeFS.existsSync(holdFile())).toBe(false);
+    expect(current()).toBe(before);
+
+    const again = await runAutodeploy();
+    expect(again.status).toBe(0);
+    expect(again.output).toBe("");
+    expect(again.deploys).toEqual([]);
+
+    const moved = commitToOrigin("third");
+    const next = await runAutodeploy();
+    expect(next.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", moved)}`);
+  });
+
+  it("does not install over a deploy by hand made during its build", async () => {
+    const before = current();
+    commitToOrigin("second");
+    const result = await runAutodeploy({ HOLD_DURING_BUILD: "1" });
+    expect(result.status).toBe(0);
+    expect(result.deploys).toHaveLength(1);
+    expect(lines(result.output)).toHaveLength(1);
+    expect(result.output).toContain("until main moves");
+    expect(current()).toBe(before);
+    expect(lockExists()).toBe(false);
+  });
+
+  it("drops the hold silently when the version by hand is already origin/main", async () => {
+    NodeFS.writeFileSync(holdFile(), "");
+    const result = await runAutodeploy();
+    expect(result.status).toBe(0);
+    expect(result.output).toBe("");
+    expect(NodeFS.existsSync(holdFile())).toBe(false);
+
+    const sha = commitToOrigin("second");
+    const next = await runAutodeploy();
+    expect(next.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${git(clone, "rev-parse", "--short", sha)}`);
+  });
 
   it("does nothing while another autodeploy holds its lock", async () => {
     commitToOrigin("second");

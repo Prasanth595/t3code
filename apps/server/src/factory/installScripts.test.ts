@@ -288,6 +288,10 @@ describe("install.sh and rollback.sh", () => {
       NodeFS.readFileSync(NodePath.join(scripts, "autodeploy.sh"), "utf8"),
     );
     expect(NodeFS.statSync(installed).mode & 0o111).not.toBe(0);
+    // autodeploy.sh sources it from beside itself.
+    expect(NodeFS.readFileSync(NodePath.join(root(), "lib/lock.sh"), "utf8")).toBe(
+      NodeFS.readFileSync(NodePath.join(scripts, "lib/lock.sh"), "utf8"),
+    );
 
     expect(autodeployCalls(result.calls)).toEqual([
       `print gui/${uid}/${autodeployLabel}`,
@@ -491,6 +495,7 @@ describe("install.sh and rollback.sh when the logrotate job cannot be reloaded",
 describe("install.sh and rollback.sh and the deploy lock", () => {
   // A symlink to its holder's pid, shared with autodeploy.sh.
   const lockPath = () => NodePath.join(root(), "deploy.lock");
+  const holdPath = () => NodePath.join(root(), "autodeploy.hold");
   const lockExists = () => {
     try {
       NodeFS.readlinkSync(lockPath());
@@ -503,6 +508,8 @@ describe("install.sh and rollback.sh and the deploy lock", () => {
   beforeEach(() => {
     setupInstalledSandbox();
     archives[v3] = makeArchive(v3);
+    // The sandbox's own installs ran by hand.
+    NodeFS.rmSync(holdPath(), { force: true });
   });
 
   afterEach(() => {
@@ -536,6 +543,34 @@ describe("install.sh and rollback.sh and the deploy lock", () => {
     const result = run("install.sh", archives[v3]!);
     expect(result.status).toBe(0);
     expect(lockExists()).toBe(false);
+  });
+
+  it("rolls back autodeploy's unhealthy install without touching its job or holding it off", () => {
+    const result = runWith(
+      { T3FAC_SKIP_RELOAD: autodeployLabel, LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2}` },
+      "install.sh",
+      archives[v3]!,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rolled back to ${v2}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(autodeployCalls(result.calls)).toEqual([]);
+    expect(NodeFS.existsSync(holdPath())).toBe(false);
+  });
+
+  it.each([
+    ["install.sh", () => [archives[v3]!]],
+    ["rollback.sh", () => []],
+  ])("%s run by hand holds autodeploy off", (script, args) => {
+    const result = run(script, ...args());
+    expect(result.status).toBe(0);
+    expect(NodeFS.existsSync(holdPath())).toBe(true);
+  });
+
+  it("install.sh run by autodeploy does not hold it off", () => {
+    const result = runWith({ T3FAC_SKIP_RELOAD: autodeployLabel }, "install.sh", archives[v3]!);
+    expect(result.status).toBe(0);
+    expect(NodeFS.existsSync(holdPath())).toBe(false);
   });
 
   it("install.sh rolls back under its own lock when the new version is unhealthy", () => {

@@ -52,6 +52,7 @@ if [[ -L $root/current ]]; then
     ln -sfn "$old" "$root/previous"
   fi
 fi
+hold_autodeploy
 ln -sfn "versions/$version" "$root/current"
 
 restart_timer_jobs_or_warn

@@ -14,37 +14,34 @@ log="$HOME/Library/Logs/t3fac/t3fac.log"
 # exists only so tests can point the health check at a stub listener; the plist still says 3876.
 port=${T3FAC_PORT:-3876}
 
-# One deploy at a time: a symlink whose target is its holder's pid, so it is never seen half made.
+source "$(dirname "${BASH_SOURCE[0]}")/lock.sh"
+
+# One deploy at a time.
 deploy_lock="$root/deploy.lock"
 
 # Takes $deploy_lock for this script and the scripts it runs; release_deploy_lock, run on exit,
-# gives it back. Returns 1 naming the holder when another live process has it, and takes over one
-# whose holder has gone. A script whose caller holds it (T3FAC_DEPLOY_LOCK is the pid the lock
-# points at, which the taker exports) runs under the caller's lock and leaves it alone, so
-# install.sh can run rollback.sh and autodeploy.sh can run install.sh. autodeploy.sh carries its
-# own copy of this, as it runs without the lib.
+# gives it back. Returns 1 naming the holder when another live process has it. A script whose
+# caller holds it (T3FAC_DEPLOY_LOCK is the pid the lock points at, which the taker exports) runs
+# under the caller's lock and leaves it alone, so install.sh can run rollback.sh and
+# autodeploy.sh can run install.sh.
 take_deploy_lock() {
   local holder
   holder=$(readlink "$deploy_lock" 2> /dev/null || true)
   if [[ -n $holder && $holder == "${T3FAC_DEPLOY_LOCK:-}" ]]; then return 0; fi
   mkdir -p "$root"
-  if ! ln -s "$$" "$deploy_lock" 2> /dev/null; then
-    holder=$(readlink "$deploy_lock" 2> /dev/null || true)
-    if [[ -n $holder ]] && kill -0 "$holder" 2> /dev/null; then
-      echo "another deploy is running (pid $holder)" >&2
-      return 1
-    fi
-    rm -f "$deploy_lock"
-    if ! ln -s "$$" "$deploy_lock" 2> /dev/null; then
-      echo "another deploy is running" >&2
-      return 1
-    fi
-  fi
+  take_lock "$deploy_lock" deploy >&2 || return 1
   export T3FAC_DEPLOY_LOCK=$$
 }
 
 release_deploy_lock() {
-  if [[ $(readlink "$deploy_lock" 2> /dev/null || true) == "$$" ]]; then rm -f "$deploy_lock"; fi
+  release_lock "$deploy_lock"
+}
+
+# A deploy or rollback run by hand leaves autodeploy.hold, so autodeploy.sh does not undo it on its
+# next tick: that tick holds off until main moves. autodeploy.sh sets T3FAC_SKIP_RELOAD to its own
+# job, which is how its own deploys, and the rollback of one, are told apart.
+hold_autodeploy() {
+  [[ ${T3FAC_SKIP_RELOAD:-} == "$autodeploy_label" ]] || : > "$root/autodeploy.hold"
 }
 
 # Waits for launchd to report job $2 unloaded, up to T3FAC_UNLOAD_WAIT seconds (10).
@@ -93,41 +90,52 @@ restart_job() {
   reload_job "$label" "$plist"
 }
 
-# Copies script $1 from this directory to $root, which outlives any checkout or release archive
-# the plist could otherwise point at, writes job $2's plist from its template and reloads that job
-# the way restart_job does the server's. Call it before restart_job so the server's restart stays
-# the last launchd action before wait_healthy. A timer job is best effort: callers run it through
-# restart_timer_jobs_or_warn, so a failure must never stop the server restart. set -e is off for
-# the whole body in that context, hence the && chain: any failing step makes the function return
-# non-zero. The script is replaced by rename, never overwritten in place, because bash reads a
-# script incrementally and a copy running now would see a mix of old and new text.
+# Copies file $1, relative to this script directory, to the same path under $root, which outlives
+# any checkout or release archive the plists could otherwise point at. The file is replaced by
+# rename, never overwritten in place, because bash reads a script incrementally and a copy running
+# now would see a mix of old and new text. Returns non-zero on any failure, even where set -e is
+# off, and leaves no temporary file behind.
+install_script() {
+  local file=$1 dir tmp_file
+  dir=$(dirname "$root/$file")
+  mkdir -p "$dir" || return 1
+  tmp_file=$(mktemp "$dir/.$(basename "${file%.sh}").XXXXXX") || return 1
+  if ! {
+    cp "$(dirname "${BASH_SOURCE[0]}")/../$file" "$tmp_file" &&
+      chmod 755 "$tmp_file" &&
+      mv -f "$tmp_file" "$root/$file"
+  }; then
+    rm -f "$tmp_file"
+    return 1
+  fi
+}
+
+# Installs script $1 with install_script, writes job $2's plist from its template and reloads that
+# job the way restart_job does the server's. Call it before restart_job so the server's restart
+# stays the last launchd action before wait_healthy. A timer job is best effort: callers run it
+# through restart_timer_jobs_or_warn, so a failure must never stop the server restart. set -e is
+# off for the whole body in that context, hence the && chain: any failing step makes the function
+# return non-zero.
 # T3FAC_SKIP_RELOAD=<label> copies the script but leaves that job loaded as it is: autodeploy.sh
 # sets it for its own job, since booting it out would kill the deploy that called install.sh. The
 # new script takes effect on the job's next tick; a changed plist waits for the next install run
 # by hand.
 restart_timer_job() {
-  local script=$1 job=$2 tmp_script
+  local script=$1 job=$2
   local job_plist="$HOME/Library/LaunchAgents/$job.plist"
-  mkdir -p "$root" "$HOME/Library/Logs/t3fac" || return 1
-  tmp_script=$(mktemp "$root/.${script%.sh}.XXXXXX") || return 1
-  if ! {
-    cp "$(dirname "${BASH_SOURCE[0]}")/../$script" "$tmp_script" &&
-      chmod 755 "$tmp_script" &&
-      mv -f "$tmp_script" "$root/$script"
-  }; then
-    rm -f "$tmp_script"
-    return 1
-  fi
+  mkdir -p "$HOME/Library/Logs/t3fac" || return 1
+  install_script "$script" || return 1
   [[ ${T3FAC_SKIP_RELOAD:-} != "$job" ]] || return 0
   render_plist "$(dirname "$template")/$job.plist" "$job_plist" &&
     reload_job "$job" "$job_plist"
 }
 
-# The best-effort wrapper install.sh and rollback.sh call: the log rotator, then autodeploy.
+# The best-effort wrapper install.sh and rollback.sh call: the log rotator, then autodeploy, which
+# sources lib/lock.sh from beside it.
 restart_timer_jobs_or_warn() {
   restart_timer_job rotate-log.sh "$logrotate_label" ||
     echo "warning: could not reload $logrotate_label; log rotation is not running" >&2
-  restart_timer_job autodeploy.sh "$autodeploy_label" ||
+  { install_script lib/lock.sh && restart_timer_job autodeploy.sh "$autodeploy_label"; } ||
     echo "warning: could not reload $autodeploy_label; autodeploy is not running" >&2
 }
 
