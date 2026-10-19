@@ -22,14 +22,12 @@ const DEFAULT_SUCCESS_TTL = Duration.minutes(1);
 // A favicon scan checks about 20 files. Shell reads (and PR sync through them) ask for every
 // linked project about once a minute, and icons rarely change, so a resolved favicon is kept
 // longer than the identity, which is only a hit on RepositoryIdentityResolver's own cache.
-// Moving a project's workspace root, and deleting it, invalidate both at once.
 const DEFAULT_FAVICON_TTL = Duration.minutes(15);
 const DEFAULT_FAILURE_TTL = Duration.seconds(5);
 
 export interface ProjectEnrichment {
   readonly repositoryIdentity: RepositoryIdentity | null;
   readonly faviconPath: string | null;
-  /** True when identity resolution completed successfully, including cached null. */
   readonly repositoryIdentityResolved: boolean;
 }
 
@@ -41,9 +39,7 @@ export interface ProjectEnrichmentChange {
 
 export interface ProjectEnrichmentServiceOptions {
   readonly cacheCapacity?: number;
-  /** Maximum active and queued roots for each enrichment field. */
   readonly maxPending?: number;
-  /** Worker concurrency for each enrichment field. */
   readonly concurrency?: number;
   readonly successTtl?: Duration.Input;
   readonly faviconTtl?: Duration.Input;
@@ -53,20 +49,10 @@ export interface ProjectEnrichmentServiceOptions {
 export class ProjectEnrichmentService extends Context.Service<
   ProjectEnrichmentService,
   {
-    /** Read resolved metadata without starting or awaiting filesystem work. */
     readonly peek: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
-    /** Schedule missing metadata for bounded background resolution. */
     readonly request: (workspaceRoot: string) => Effect.Effect<void>;
-    /** Read immediately available metadata and schedule anything missing. */
     readonly getAvailable: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
-    /** Invalidate workspace-derived metadata. */
     readonly invalidate: (workspaceRoots: Iterable<string>) => Effect.Effect<void>;
-    /**
-     * Re-resolve a root whose repository changed on disk, such as a finished
-     * clone, and publish the new identity.
-     */
-    readonly refresh: (workspaceRoot: string) => Effect.Effect<void>;
-    /** Subscribe to ephemeral completion notifications. */
     readonly subscribeChanges: Effect.Effect<
       PubSub.Subscription<ProjectEnrichmentChange>,
       never,
@@ -177,12 +163,9 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const resolveRepositoryIdentity = Effect.fn("ProjectEnrichmentService.resolveRepositoryIdentity")(
     function* (workspaceRoot: string) {
-      yield* Cache.get(repositoryIdentityCache, workspaceRoot);
-      const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
-      // A refresh can replace the entry while this lookup runs. Reading it again
-      // returns the refreshed identity, so the older one is not published last.
       const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
       yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
+      const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
       yield* PubSub.publish(changes, {
         workspaceRoot,
@@ -307,22 +290,11 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     );
   });
 
-  const refresh: ProjectEnrichmentService["Service"]["refresh"] = Effect.fn(
-    "ProjectEnrichmentService.refresh",
-  )(function* (workspaceRoot) {
-    // Both caches hold the old repository: the resolver's, keyed by Git root,
-    // and this one, keyed by workspace root.
-    yield* repositoryIdentityResolver.resolve(workspaceRoot, { refresh: true });
-    yield* invalidate([workspaceRoot]);
-    yield* resolveRepositoryIdentity(workspaceRoot);
-  });
-
   return ProjectEnrichmentService.of({
     peek,
     request,
     getAvailable,
     invalidate,
-    refresh,
     subscribeChanges: PubSub.subscribe(changes),
   });
 });
