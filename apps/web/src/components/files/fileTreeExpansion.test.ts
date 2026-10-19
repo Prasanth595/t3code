@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 import { FileTree } from "@pierre/trees";
 
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import {
+  areAllDirectoriesExpanded,
+  setAllDirectoriesExpanded,
   readExpandedPaths,
   syncPersistedExpansion,
   writeExpandedPaths,
-} from "./fileTreeExpansionStorage";
+} from "./fileTreeExpansion";
 
 type FakeDirectoryItem = {
   isDirectory: () => true;

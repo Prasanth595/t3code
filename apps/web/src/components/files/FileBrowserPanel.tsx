@@ -29,13 +29,13 @@ import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
-import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import {
-  fileTreeExpansionStorageKey,
+  areAllDirectoriesExpanded,
+  setAllDirectoriesExpanded,
   readExpandedPaths,
   syncPersistedExpansion,
   writeExpandedPaths,
-} from "./fileTreeExpansionStorage";
+} from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { useDirectoryEntries } from "./useDirectoryEntries";
@@ -342,7 +342,7 @@ export default function FileBrowserPanel({
   const expandedPathsRef = useRef(new Set<string>());
   // The panel unmounts with its right-panel tab, so the remembered folders live
   // in storage. The panel is keyed by workspace, so these are read once.
-  const expansionStorageKey = fileTreeExpansionStorageKey(environmentId, cwd);
+  const expansionStorageKey = `t3code.fileTreeExpanded:${environmentId}:${cwd}`;
   const [persistedExpansion] = useState(() => {
     const persisted = readExpandedPaths(expansionStorageKey);
     return { persisted, pendingRestore: new Set(persisted) };
