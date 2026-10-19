@@ -37,7 +37,6 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2SwipeActions,
   sortThreadsForListV2,
-  threadIsWoke,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
@@ -2118,47 +2117,38 @@ describe("thread list v2 minute tick invalidation", () => {
 });
 
 describe("thread list Woke marker", () => {
-  // Snoozed an hour ago, timer wake a minute ago.
-  const wokeThread = (lastVisitedAt?: string | null) =>
-    makeThread({
-      id: ThreadId.make("woke"),
-      title: "Woke",
-      latestUserMessageAt: isoAt(BASE_MS - 90 * MINUTE_MS),
-      snoozedAt: isoAt(BASE_MS - 60 * MINUTE_MS),
-      snoozedUntil: isoAt(BASE_MS - MINUTE_MS),
-      ...(lastVisitedAt === undefined ? {} : { lastVisitedAt }),
-    });
+  const wakeAt = isoAt(BASE_MS + 30_000);
+  const thread = makeThread({
+    id: ThreadId.make("woke"),
+    title: "Woke",
+    latestUserMessageAt: isoAt(BASE_MS - 90 * MINUTE_MS),
+    snoozedAt: isoAt(BASE_MS - 60 * MINUTE_MS),
+    snoozedUntil: wakeAt,
+    lastVisitedAt: null,
+  });
+  const rowAt = (value: EnvironmentThreadShell, clockMs = BASE_MS + 37_500) =>
+    buildTickList([value], clockMs, [], { snoozeLabelNow: NOW }).find(
+      (item) => item.type === "v2-thread",
+    )!;
 
-  it("keeps a timer wake through a plain visit until the wake is acknowledged", () => {
-    // Never visited, and a visit stamped before the wake (opening the thread
-    // records its last activity, which predates a timer wake), both show Woke.
-    expect(threadIsWoke(wokeThread(null), { now: NOW })).toBe(true);
-    expect(threadIsWoke(wokeThread(isoAt(BASE_MS - 30 * MINUTE_MS)), { now: NOW })).toBe(true);
-    // Dismiss Woke stamps the wake time itself.
-    expect(threadIsWoke(wokeThread(isoAt(BASE_MS - MINUTE_MS)), { now: NOW })).toBe(false);
+  it("shows a timer wake immediately and keeps it until the wake time is acknowledged", () => {
+    expect(rowAt(thread, BASE_MS).item).toMatchObject({ snoozed: true, woke: false });
+
+    // The wake falls between minute ticks, while the relative-time clock is still behind it.
+    expect(rowAt(thread)).toMatchObject({
+      item: { snoozed: false, woke: true },
+      timeLabel: "",
+    });
+    expect(rowAt({ ...thread, lastVisitedAt: thread.latestUserMessageAt }).item.woke).toBe(true);
+
+    const dismissed = rowAt({ ...thread, lastVisitedAt: wakeAt });
+    expect(dismissed.item.woke).toBe(false);
+    expect(dismissed.timeLabel).not.toBe("");
   });
 
-  it("stays off while still snoozed, once settled, and without visited tracking", () => {
-    expect(threadIsWoke(wokeThread(null), { now: isoAt(BASE_MS - 2 * MINUTE_MS) })).toBe(false);
-    expect(threadIsWoke({ ...wokeThread(null), settledOverride: "settled" }, { now: NOW })).toBe(
-      false,
-    );
-    // Nothing could clear it on a server that does not track visits.
-    expect(threadIsWoke(wokeThread(), { now: NOW })).toBe(false);
-  });
-
-  it("stamps the row with the precise clock and gives the time slot to the label", () => {
-    const justWoke = {
-      ...wokeThread(null),
-      snoozedUntil: isoAt(BASE_MS + 30_000),
-    };
-    // 7.5s after the wake, while the minute clock still reads before it.
-    const items = buildTickList([justWoke], BASE_MS + 37_500, [], {
-      snoozeLabelNow: isoAt(BASE_MS),
-    });
-    const row = items.find((item) => item.type === "v2-thread")!;
-    expect(row.type === "v2-thread" && row.item.woke).toBe(true);
-    expect(row.type === "v2-thread" && row.timeLabel).toBe("");
+  it("does not mark settled rows or rows from servers without visit tracking as Woke", () => {
+    expect(rowAt({ ...thread, settledOverride: "settled" }).item.woke).toBe(false);
+    expect(rowAt({ ...thread, lastVisitedAt: undefined }).item.woke).toBe(false);
   });
 });
 

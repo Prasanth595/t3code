@@ -119,6 +119,7 @@ vi.mock("../../state/threads", () => ({
       "unsettle",
       "snooze",
       "unsnooze",
+      "visit",
       "pin",
       "unpin",
       "reorderPin",
@@ -181,9 +182,43 @@ beforeEach(() => {
   state.afterRequest = undefined;
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 
 describe("thread list operation permissions", () => {
+  it("dismisses Woke at the wake time and rechecks the target permission on each attempt", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-02T00:00:37.500Z"));
+    const wakeAt = "2026-06-02T00:00:30.000Z";
+    const thread = makeThread({
+      environmentId: otherEnvironmentId,
+      latestUserMessageAt: "2026-06-01T22:30:00.000Z",
+      snoozedAt: "2026-06-01T23:00:00.000Z",
+      snoozedUntil: wakeAt,
+      lastVisitedAt: null,
+    });
+    const actions = useThreadListActions();
+
+    await actions.dismissThreadWoke(thread);
+    expect(state.requests).toEqual([]);
+
+    state.scopes.get(otherEnvironmentId)!.add(AuthOrchestrationOperateScope);
+    await actions.dismissThreadWoke(thread);
+    expect(state.requests).toEqual([
+      {
+        action: "visit",
+        environmentId: otherEnvironmentId,
+        input: { threadId: thread.id, visitedAt: wakeAt },
+      },
+    ]);
+
+    state.scopes.get(otherEnvironmentId)!.clear();
+    await actions.dismissThreadWoke(thread);
+    expect(state.requests).toHaveLength(1);
+  });
+
   it.each(mutationCases)(
     "%s rejects a retained callback after its environment loses permission",
     async (handler) => {
