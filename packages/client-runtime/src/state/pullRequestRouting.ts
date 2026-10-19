@@ -202,7 +202,7 @@ const invalidateTarget = Effect.fn("PullRequestRouting.invalidateTarget")(functi
     inputs,
     (input) =>
       registry.run(target, request(WS_METHODS.pullRequestsInvalidate, input)).pipe(
-        // Best effort and bounded: a stalled reader must not delay the write's answer.
+        // A stalled reader must not delay the write's answer.
         Effect.timeoutOption("1 second"),
         Effect.orElseSucceed(() => undefined),
       ),
@@ -300,8 +300,7 @@ export function createPullRequestRouter() {
         { concurrency: 4, discard: true },
       );
     });
-    // A failed viewed-files batch can still have applied some paths on the host, so its routed
-    // readers forget their marks either way. Other writes invalidate only after they succeed.
+    // A failed viewed-files batch may have applied some paths. Other writes invalidate on success.
     const finish = (operation: ReturnType<typeof request<T>>) =>
       tag === WS_METHODS.pullRequestsSetFilesViewed
         ? operation.pipe(Effect.ensuring(invalidateReaders))
