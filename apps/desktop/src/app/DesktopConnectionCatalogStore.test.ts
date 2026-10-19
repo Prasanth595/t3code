@@ -628,6 +628,8 @@ describe("Windows catalog key recovery", () => {
         assert.deepStrictEqual(yield* fixture.store.get, Option.some("saved connections"));
         const tampered = seal("saved connections", stableKey);
         tampered.writeUInt8(tampered.readUInt8(tampered.length - 1) ^ 1, tampered.length - 1);
+        const malformedHeader = seal("saved connections", stableKey);
+        malformedHeader.writeUInt8(malformedHeader.readUInt8(0) | 0x80, 0);
         for (const [document, errorTag] of [
           ["{not-json", "DesktopConnectionCatalogStoreDocumentDecodeError"],
           [
@@ -637,6 +639,7 @@ describe("Windows catalog key recovery", () => {
           ...[
             Buffer.alloc(0),
             Buffer.from("v10short"),
+            malformedHeader,
             seal("unknown key", Buffer.alloc(32, 9)),
             tampered,
           ].map(

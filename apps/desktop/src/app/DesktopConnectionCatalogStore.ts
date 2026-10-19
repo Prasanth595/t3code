@@ -390,40 +390,17 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
-  const recoverWindowsKey =
+  const decryptWindowsCatalog =
     environment.platform === "win32" && !environment.isDevelopment
       ? yield* DesktopWindowsCatalogKey.make(environment.appDataDirectory)
       : undefined;
-  const decryptCatalog = Effect.fn("desktop.connectionCatalogStore.decryptCatalog")(function* (
-    encrypted: Uint8Array,
-  ) {
-    // Windows safeStorage can abort the process on a truncated v10 payload.
-    const nativeDecryption =
-      recoverWindowsKey !== undefined && encrypted.length < 31
-        ? Effect.fail(
-            new ElectronSafeStorage.ElectronSafeStorageDecryptError({
-              cause: new Error("Truncated Windows catalog ciphertext."),
-            }),
-          )
-        : safeStorage.decryptString(encrypted);
-    return yield* nativeDecryption.pipe(
-      Effect.map((catalog) => ({ catalog, encrypt: safeStorage.encryptString })),
-      Effect.catch((error) =>
-        Effect.gen(function* () {
-          const recovered =
-            recoverWindowsKey === undefined ? undefined : yield* recoverWindowsKey(encrypted);
-          if (recovered === undefined) return yield* error;
-          return {
-            catalog: recovered.catalog,
-            encrypt: (value: string) =>
-              Effect.try({
-                try: () => recovered.encrypt(value),
-                catch: (cause) =>
-                  new ElectronSafeStorage.ElectronSafeStorageEncryptError({ cause }),
-              }),
-          };
-        }),
-      ),
+  const decryptCatalog = (encrypted: Uint8Array) =>
+    (decryptWindowsCatalog === undefined
+      ? safeStorage
+          .decryptString(encrypted)
+          .pipe(Effect.map((catalog) => ({ catalog, encrypt: safeStorage.encryptString })))
+      : decryptWindowsCatalog(encrypted)
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new DesktopConnectionCatalogStoreProtectionError({
@@ -433,7 +410,6 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
-  });
   const encryptionAvailable = safeStorage.isEncryptionAvailable.pipe(
     Effect.mapError(
       (cause) =>
@@ -448,10 +424,9 @@ export const make = Effect.gen(function* () {
   const writeCatalog = Effect.fn("desktop.connectionCatalogStore.writeCatalog")(function* (
     catalog: string,
   ) {
-    // Inspect the current document on every write, including writes before the first read.
-    // Re-encrypting a recovered shared catalog with V2's key would lock V1 out.
+    // V1 shares this file and must retain access after V2 writes, even after external replacement.
     const existing =
-      recoverWindowsKey === undefined
+      decryptWindowsCatalog === undefined
         ? Option.none<EncryptedConnectionCatalogDocument>()
         : yield* readDocument(fileSystem, catalogPath);
     const encrypt = Option.isSome(existing)
