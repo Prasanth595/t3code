@@ -42,8 +42,14 @@ describe("Enriched link presentation", () => {
     for (const path of paths) {
       expect(regex?.test(path), path).toBe(true);
     }
-    for (const text of [...excluded, "other.ts:49-74"]) {
+    for (const text of excluded) {
       expect(regex?.test(text) ?? false, text).toBe(false);
+    }
+    for (const prefix of ["Use \\` here then", "~~~\na ` b\n~~~\n\nsee"]) {
+      const regex = enrichedInlineFileLinkRegex(prefix + " `src/a.ts` and `src/a.ts:1-2`");
+      for (const path of ["src/a.ts", "src/a.ts:1-2"]) {
+        expect.soft(regex?.test(path) ?? false, `${prefix}: ${path}`).toBe(true);
+      }
     }
   });
 

@@ -35,8 +35,8 @@ export function enrichedLinkVariantPattern(url: string) {
 
 export function enrichedInlineFileLinkRegex(markdown: string) {
   const paths = new Set<string>();
-  for (const match of markdown.matchAll(/(`+)([\s\S]*?)\1/g)) {
-    const content = match[2]!.trim();
+  for (const piece of markdown.split(/`+/)) {
+    const content = piece.trim();
     if (resolveMarkdownInlineCodePresentation(content)) paths.add(content);
   }
   return paths.size > 0
