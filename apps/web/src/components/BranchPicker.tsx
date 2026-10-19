@@ -242,8 +242,9 @@ export function BranchPicker({
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Fetch the selected base branch's tracked remote, falling back to origin. Start the
-                worktree from its latest remote commit.
+                Use the selected remote ref or a tracked branch with the same name, falling back to
+                origin. Start from the latest remote commit when available, otherwise keep the local
+                base.
               </TooltipPopup>
             </Tooltip>
           ) : null}
