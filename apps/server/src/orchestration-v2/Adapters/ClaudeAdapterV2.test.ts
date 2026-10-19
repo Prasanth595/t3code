@@ -2919,7 +2919,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const subagent = harness.events.findLast((event) => event.type === "subagent.updated");
         assert.equal(
           subagent?.type === "subagent.updated"
-            ? subagent.subagent.modelSelection.model
+            ? subagent.subagent.modelSelection?.model
             : undefined,
           SYNTHETIC_CLAUDE_CAPABLE_MODEL,
         );

@@ -1091,7 +1091,7 @@ function claudeLiveSelectionFlagSettings(
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
-  readonly modelCatalog?: ClaudeModelCatalog;
+  readonly compiledSelection?: CompiledClaudeModelSelection;
   readonly nativeThreadId: string;
   readonly resume: boolean;
   readonly resumeSessionAt?: string;
@@ -1110,7 +1110,8 @@ export function makeClaudeQueryOptions(input: {
   readonly supportedDialogKinds?: ClaudeQueryOptions["supportedDialogKinds"];
   readonly allowDangerouslySkipPermissions?: boolean;
 }): ClaudeAgentSdkQueryOptions {
-  const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
+  const compiledSelection =
+    input.compiledSelection ?? compileClaudeModelSelection(input.modelSelection);
   const {
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
@@ -3003,9 +3004,8 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 interface ActiveClaudeTurnContext {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly nativeThreadId: string;
-  // The catalog this turn compiled against. Its steers and subagents reuse it.
   readonly modelCatalog: ClaudeModelCatalog;
-  // What the turn's process runs. A continuation keeps an older process's selection.
+  // Continuations inherit the retained process selection, even after a catalog refresh.
   readonly selection: CompiledClaudeModelSelection;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
@@ -3424,7 +3424,7 @@ export interface ClaudeAdapterV2Options {
   readonly crypto: Crypto.Crypto;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
-  /** The live model catalog the provider snapshot shows; defaults to the bundled one. */
+  /** Must read synchronously after its first load for getModelContextWindow. */
   readonly modelCatalog?: Effect.Effect<ClaudeModelCatalog>;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
@@ -3476,8 +3476,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
         const sessionScope = yield* Effect.scope;
         const now = yield* DateTime.now;
-        // The first read loads the manifest's disk cache. Later reads never
-        // suspend, so getModelContextWindow can run them synchronously.
+        // ModelManifest.current only suspends on its first disk-cache read.
+        // Warm it before exposing the synchronous context-window callback.
         yield* scopedModelCatalog;
         const session = providerSession({
           providerSessionId: input.providerSessionId,
@@ -3763,18 +3763,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
           Queue.offer(events, event).pipe(Effect.asVoid);
 
-        // Reports one root request's usage as the current context, measured
-        // against the window of the process that sent it. Usage without input
-        // is a placeholder, never a measurement.
+        // Usage without input is a placeholder, never a measurement.
         const emitContextUsage = Effect.fnUntraced(function* (
           context: ActiveClaudeTurnContext,
           usage: ClaudeMessageUsage,
-          selection: CompiledClaudeModelSelection,
         ) {
           const now = yield* DateTime.now;
           const tokenUsage = claudeProviderTurnTokenUsage(
             usage,
-            selection.contextWindowTokens ?? null,
+            context.selection.contextWindowTokens ?? null,
             DateTime.formatIso(now),
           );
           if (tokenUsage.inputTokens <= 0) return;
@@ -7006,13 +7003,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const usage: ClaudeMessageUsage | undefined = event.message.usage;
               context.streamUsage =
                 usage === undefined ? null : { messageId: event.message.id, usage };
-              if (usage !== undefined) yield* emitContextUsage(context, usage, liveQuery.selection);
+              if (usage !== undefined) yield* emitContextUsage(context, usage);
             } else if (event.type === "message_delta") {
               const usage: typeof event.usage | undefined = event.usage;
               const stream = context.streamUsage;
               if (stream?.usage && usage !== undefined) {
                 stream.usage = mergeClaudeStreamUsage(stream.usage, usage);
-                yield* emitContextUsage(context, stream.usage, liveQuery.selection);
+                yield* emitContextUsage(context, stream.usage);
               }
             } else if (
               event.type === "content_block_start" &&
@@ -7157,7 +7154,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   completedAt: null,
                   tokenUsage: {
                     usedTokens: afterTokenCount,
-                    maxTokens: liveQuery.selection.contextWindowTokens ?? null,
+                    maxTokens: context.selection.contextWindowTokens ?? null,
                     updatedAt: DateTime.formatIso(now),
                   },
                 },
@@ -7298,7 +7295,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (stream === null || stream.messageId !== message.message.id) {
                 // Remember the request so a compaction can mark its later snapshots stale.
                 context.streamUsage = { messageId: message.message.id, usage: snapshotUsage };
-                yield* emitContextUsage(context, snapshotUsage, liveQuery.selection);
+                yield* emitContextUsage(context, snapshotUsage);
               } else if (
                 stream.usage !== null &&
                 claudeMessageInputTokens(stream.usage) <= 0 &&
@@ -7308,7 +7305,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ...snapshotUsage,
                   output_tokens: Math.max(snapshotUsage.output_tokens, stream.usage.output_tokens),
                 };
-                yield* emitContextUsage(context, stream.usage, liveQuery.selection);
+                yield* emitContextUsage(context, stream.usage);
               }
             }
             const parentToolUseId = message.parent_tool_use_id;
@@ -8428,7 +8425,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
-          modelCatalog: ClaudeModelCatalog,
+          compiledSelection: CompiledClaudeModelSelection,
         ) {
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
           const mcpOverrides = claudeMcpQueryOverrides({
@@ -8440,10 +8437,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : { allowedTools: queryPolicy.allowedTools }),
           });
           const queryPolicyKey = claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides);
-          const compiledSelection = compileClaudeModelSelection(
-            turnInput.modelSelection,
-            modelCatalog,
-          );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           // A continuation prompts nothing: it drains output the live process
@@ -8482,8 +8475,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
-            // Same identity, but a refreshed catalog can still change the window.
-            existing.selection = compiledSelection;
             // Claude can switch its own mode mid-session (EnterPlanMode), and
             // a denied ExitPlanMode leaves it there. Put the live process back
             // in the thread's mode before the next prompt.
@@ -8491,6 +8482,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               yield* existing.query.setPermissionMode(existing.openedPermissionMode);
               existing.permissionMode = existing.openedPermissionMode;
             }
+            // Same identity, but a refreshed catalog can still change the window or prompt effort.
+            existing.selection = compiledSelection;
             return existing;
           }
 
@@ -8527,7 +8520,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
-            modelCatalog,
             nativeThreadId,
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
@@ -8551,6 +8543,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             canUseTool,
             onUserDialog,
             supportedDialogKinds: ["resume_return"],
+            compiledSelection,
           });
           const querySession = yield* queryRunner
             .open({
@@ -8712,7 +8705,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
                   });
-            const querySession = yield* openQuery(turnInput, nativeThreadId, modelCatalog);
+            const querySession = yield* openQuery(turnInput, nativeThreadId, selection);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               nativeThreadId,
