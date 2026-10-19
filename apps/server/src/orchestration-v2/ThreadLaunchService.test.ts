@@ -184,6 +184,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      remoteExists: () => Effect.succeed(true),
       resolveBaseRemote: ({ refName }) =>
         Effect.succeed({ remoteName: "origin", branchName: refName }),
       remoteBranchExists: () => Effect.succeed(true),
@@ -1490,33 +1491,44 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
   }),
 );
 
-it.effect("starts a worktree from the remote its base ref tracks", () =>
+it.effect("launches from the fetched commit of a differently named tracked branch", () =>
   Effect.gen(function* () {
-    const fetches: Array<{ remoteName: string; refName?: string | undefined }> = [];
+    const created =
+      yield* Deferred.make<
+        Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>[0]
+      >();
+    const fetchRemote = vi.fn(() => Effect.void);
+    const resolveRemoteTrackingCommit = vi.fn(() =>
+      Effect.succeed({ commitSha: "upstream-main-sha", remoteRefName: "upstream/main" }),
+    );
     const harness = makeHarness({
-      fetchRemote: ({ remoteName, refName }) =>
-        Effect.sync(() => {
-          fetches.push({ remoteName, refName });
-        }),
+      fetchRemote,
+      createWorktree: (input) =>
+        Deferred.succeed(created, input).pipe(
+          Effect.as({ worktree: { path: "/repo-worktrees/feature", refName: input.newRefName! } }),
+        ),
       git: {
         resolveBaseRemote: () => Effect.succeed({ remoteName: "upstream", branchName: "main" }),
-        resolveRemoteTrackingCommit: () =>
-          Effect.succeed({ commitSha: "upstream-main-sha", remoteRefName: "upstream/main" }),
+        resolveRemoteTrackingCommit,
       },
     });
     yield* Effect.gen(function* () {
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       yield* launches.launch(
         launchInput({
-          command: "command:launch:upstream-base",
-          thread: "thread:launch:upstream-base",
-          message: "Build the feature",
+          command: "command:launch:tracked-base",
+          thread: "thread:launch:tracked-base",
           workspace: { type: "worktree", baseRef: "work", startFromOrigin: true },
         }),
       );
-      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
-      assert.deepEqual(fetches, [{ remoteName: "upstream", refName: "upstream/main" }]);
-      assert.deepInclude(harness.createWorktree.mock.calls[0]?.[0], {
+      const worktree = yield* Deferred.await(created);
+      assert.deepEqual(fetchRemote.mock.calls, [
+        [{ cwd: "/repo", remoteName: "upstream", refName: "upstream/main" }],
+      ]);
+      assert.deepEqual(resolveRemoteTrackingCommit.mock.calls, [
+        [{ cwd: "/repo", refName: "upstream/main", fallbackRemoteName: "upstream" }],
+      ]);
+      assert.deepInclude(worktree, {
         refName: "upstream-main-sha",
         baseRefName: "upstream/main",
       });
@@ -2793,6 +2805,7 @@ it.effect.each([
     const harness = makeHarness({
       hasCommit: ({ refName }) => Effect.succeed(refName === "HEAD"),
       git: {
+        remoteExists: () => Effect.succeed(testCase.origin),
         resolveBaseRemote: ({ refName }) =>
           Effect.succeed(testCase.origin ? { remoteName: "origin", branchName: refName } : null),
         hasRefNamed: () => Effect.succeed(false),

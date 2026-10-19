@@ -4293,114 +4293,79 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    describe("resolveBaseRemote", () => {
-      const withForkRemotes = Effect.gen(function* () {
+    it.effect("creates worktrees from their own freshly fetched remote branch on a fork", () =>
+      Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["remote", "add", "origin", "/nowhere/fork.git"]);
-        yield* git(cwd, ["remote", "add", "upstream", "/nowhere/upstream.git"]);
+        const upstream = yield* makeTmpDir("git-upstream-");
+        const fork = yield* makeTmpDir("git-fork-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "work"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(fork, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", fork]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* git(cwd, ["push", "-u", "upstream", "work:main"]);
+        yield* git(cwd, ["push", "origin", "HEAD:main", "HEAD:origin/main"]);
+        const stale = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "advance upstream"]);
+        const upstreamHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        // Pushing by path leaves the remote-tracking refs stale until the driver fetches.
+        yield* git(cwd, ["push", upstream, "HEAD:main"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "advance fork branch"]);
+        const forkHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["push", fork, "HEAD:origin/main"]);
+        assert.equal(yield* git(cwd, ["rev-parse", "upstream/main"]), stale);
+        assert.equal(yield* git(cwd, ["rev-parse", "origin/origin/main"]), stale);
+
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        return { cwd, initialBranch, driver };
-      });
+        const base = yield* driver.resolveBaseRemote({ cwd, refName: "work" });
+        assert.deepEqual(base, { remoteName: "upstream", branchName: "main" });
+        const refName = `${base!.remoteName}/${base!.branchName}`;
+        yield* driver.fetchRemote({ cwd, remoteName: base!.remoteName, refName });
+        const resolved = yield* driver.resolveRemoteTrackingCommit({
+          cwd,
+          refName,
+          fallbackRemoteName: base!.remoteName,
+        });
+        assert.deepEqual(resolved, { commitSha: upstreamHead, remoteRefName: "upstream/main" });
+        assert.equal(yield* git(cwd, ["rev-parse", "origin/main"]), stale);
+        const path = yield* Path.Path;
+        const worktreePath = path.join(yield* makeTmpDir(), "tracked-base");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: resolved.commitSha,
+          newRefName: "feature/tracked-base",
+          baseRefName: resolved.remoteRefName,
+        });
+        assert.equal(yield* git(worktreePath, ["rev-parse", "HEAD"]), upstreamHead);
+        assert.equal(
+          yield* driver.readConfigValue(worktreePath, "branch.feature/tracked-base.gh-merge-base"),
+          "main",
+        );
 
-      it.effect("uses the remote named by a remote-qualified ref", () =>
-        Effect.gen(function* () {
-          const { cwd, driver } = yield* withForkRemotes;
-          assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "upstream/main" }), {
-            remoteName: "upstream",
-            branchName: "main",
-          });
-        }),
-      );
-
-      it.effect("uses the remote a local base branch tracks", () =>
-        Effect.gen(function* () {
-          const { cwd, initialBranch, driver } = yield* withForkRemotes;
-          yield* git(cwd, ["config", `branch.${initialBranch}.remote`, "upstream"]);
-          yield* git(cwd, ["config", `branch.${initialBranch}.merge`, "refs/heads/main"]);
-          assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: initialBranch }), {
-            remoteName: "upstream",
-            branchName: "main",
-          });
-        }),
-      );
-
-      it.effect("follows the tracked branch name of a differently named local branch", () =>
-        Effect.gen(function* () {
-          const { cwd, driver } = yield* withForkRemotes;
-          yield* git(cwd, ["branch", "work"]);
-          yield* git(cwd, ["config", "branch.work.remote", "upstream"]);
-          yield* git(cwd, ["config", "branch.work.merge", "refs/heads/main"]);
-          assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "work" }), {
-            remoteName: "upstream",
-            branchName: "main",
-          });
-        }),
-      );
-
-      it.effect("falls back to origin when the branch tracks nothing usable", () =>
-        Effect.gen(function* () {
-          const { cwd, initialBranch, driver } = yield* withForkRemotes;
-          assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: initialBranch }), {
-            remoteName: "origin",
-            branchName: initialBranch,
-          });
-          // `.` is local tracking and `gone` is not a configured remote.
-          yield* git(cwd, ["config", `branch.${initialBranch}.remote`, "."]);
-          assert.equal(
-            (yield* driver.resolveBaseRemote({ cwd, refName: initialBranch }))?.remoteName,
-            "origin",
-          );
-          yield* git(cwd, ["config", `branch.${initialBranch}.remote`, "gone"]);
-          assert.equal(
-            (yield* driver.resolveBaseRemote({ cwd, refName: initialBranch }))?.remoteName,
-            "origin",
-          );
-        }),
-      );
-
-      it.effect("fetches a base branch whose name starts with its remote's name", () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const remote = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          yield* git(remote, ["init", "--bare"]);
-          yield* git(cwd, ["remote", "add", "origin", remote]);
-          yield* git(cwd, [
-            "push",
-            "origin",
-            "HEAD:refs/heads/main",
-            "HEAD:refs/heads/origin/main",
-          ]);
-          yield* git(cwd, ["commit", "--allow-empty", "-m", "advance"]);
-          const advanced = yield* git(cwd, ["rev-parse", "HEAD"]);
-          // Pushing by path leaves `refs/remotes/origin/*` stale until a fetch.
-          yield* git(cwd, ["push", remote, "HEAD:refs/heads/origin/main"]);
-
-          const base = yield* driver.resolveBaseRemote({ cwd, refName: "origin/origin/main" });
-          assert.deepEqual(base, { remoteName: "origin", branchName: "origin/main" });
-          yield* driver.fetchRemote({ cwd, remoteName: "origin", refName: "origin/origin/main" });
-          const resolved = yield* driver.resolveRemoteTrackingCommit({
+        const explicit = yield* driver.resolveBaseRemote({ cwd, refName: "origin/origin/main" });
+        assert.deepEqual(explicit, { remoteName: "origin", branchName: "origin/main" });
+        const explicitRef = `${explicit!.remoteName}/${explicit!.branchName}`;
+        yield* driver.fetchRemote({ cwd, remoteName: explicit!.remoteName, refName: explicitRef });
+        assert.deepEqual(
+          yield* driver.resolveRemoteTrackingCommit({
             cwd,
-            refName: "origin/origin/main",
-            fallbackRemoteName: "origin",
-          });
-          assert.equal(resolved.commitSha, advanced);
-        }),
-      );
+            refName: explicitRef,
+            fallbackRemoteName: explicit!.remoteName,
+          }),
+          { commitSha: forkHead, remoteRefName: "origin/origin/main" },
+        );
 
-      it.effect("returns null when there is no remote to use", () =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          assert.isNull(yield* driver.resolveBaseRemote({ cwd, refName: initialBranch }));
-          yield* git(cwd, ["remote", "add", "upstream", "/nowhere/upstream.git"]);
-          assert.isNull(yield* driver.resolveBaseRemote({ cwd, refName: initialBranch }));
-        }),
-      );
-    });
+        yield* git(cwd, ["config", "branch.work.remote", "."]);
+        assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "work" }), {
+          remoteName: "origin",
+          branchName: "work",
+        });
+        yield* git(cwd, ["remote", "remove", "origin"]);
+        assert.isNull(yield* driver.resolveBaseRemote({ cwd, refName: "work" }));
+      }),
+    );
 
     it.effect("pushes with upstream setup and skips when already up to date", () =>
       Effect.gen(function* () {
