@@ -1,15 +1,35 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as Layer from "effect/Layer";
+import * as HttpClient from "effect/http/HttpClient";
 import { vi } from "vite-plus/test";
 
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import type { MuseSdkHost } from "./sdk.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
 import { checkMuseProviderStatus } from "./status.ts";
+import { MuseDriver } from "./driver.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+
+const driverLayer = Layer.mergeAll(
+  IdAllocator.layer,
+  McpProviderSessions.layer,
+  ProviderLatestVersions.layer,
+  TestProviderHost.layer(),
+  Layer.succeed(
+    ProviderEventLoggers.ProviderEventLoggers,
+    ProviderEventLoggers.NoOpProviderEventLoggers,
+  ),
+).pipe(Layer.provideMerge(NodeServices.layer));
 
 const settings = Schema.decodeSync(MuseSettings);
 const makeHost = (catalog: Record<string, unknown>) => {
@@ -129,7 +149,7 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
     ),
   );
 
-  it.effect("includes CLI skills even when model discovery fails", () =>
+  it.effect("publishes normalized machine skills and their availability", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = {
@@ -138,32 +158,112 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
               name: "plugin:ai-ugc:ugc-mode",
               path: "plugin://ai-ugc/skills/ugc-mode/SKILL.md",
               scope: "plugin",
+              display_name: "UGC mode",
+              description: "  Route work. ",
               activation: "on",
+            },
+            {
+              name: "git",
+              path: "bundled://muse-core/skills/git/SKILL.md",
+              scope: "bundled",
+            },
+            {
+              name: "off",
+              path: "$HOME/.muse/skills/off/SKILL.md",
+              scope: "user",
+              activation: "off",
             },
           ],
         };
         const binaryPath = yield* fakeCli(
           `process.stdout.write(process.argv.includes("skills") ? ${JSON.stringify(JSON.stringify(fixture))} : "muse 1.4.6\\n");`,
         );
-        for (const catalog of [metaCatalog, { providerId: "meta", models: [{ modelId: 1 }] }]) {
-          const snapshot = yield* checkMuseProviderStatus(
-            settings({ enabled: true, binaryPath }),
-            undefined,
-            undefined,
-            async () => makeHost(catalog),
-          );
-          expect(snapshot.skills).toEqual([
-            {
-              name: "ai-ugc:ugc-mode",
-              path: "plugin://ai-ugc/skills/ugc-mode/SKILL.md",
-              scope: "plugin",
-              enabled: true,
-            },
-          ]);
-          expect(snapshot.status).toBe(catalog === metaCatalog ? "ready" : "error");
-        }
+        const snapshot = yield* checkMuseProviderStatus(
+          settings({ enabled: true, binaryPath }),
+          { HOME: "/home/muse-test" },
+          undefined,
+          async () => makeHost(metaCatalog),
+        );
+        expect(snapshot.status).toBe("ready");
+        expect(snapshot.skills).toEqual([
+          {
+            name: "ai-ugc:ugc-mode",
+            path: "plugin://ai-ugc/skills/ugc-mode/SKILL.md",
+            scope: "plugin",
+            displayName: "UGC mode",
+            description: "Route work.",
+            enabled: true,
+          },
+          {
+            name: "git",
+            path: "bundled://muse-core/skills/git/SKILL.md",
+            scope: "bundled",
+            enabled: true,
+          },
+          {
+            name: "off",
+            path: "/home/muse-test/.muse/skills/off/SKILL.md",
+            scope: "user",
+            enabled: false,
+          },
+        ]);
       }),
     ),
+  );
+
+  it.effect("discovers skills for each workspace and reports failed refreshes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "muse-workspace-test-" });
+      const first = `${directory}/first`;
+      const second = `${directory}/second`;
+      const failed = `${directory}/failed`;
+      for (const cwd of [first, second, failed]) yield* fs.makeDirectory(cwd);
+      const fixture = {
+        skills: [
+          {
+            name: "local",
+            path: ".agents/skills/local/SKILL.md",
+            scope: "project",
+            activation: "user-invocable-only",
+          },
+        ],
+      };
+      // Version probes fail so this fixture never opens a real SDK host.
+      const binaryPath = yield* fakeCli(`
+        if (!process.argv.includes("--workspace")) process.exit(1);
+        const workspace = process.argv[process.argv.indexOf("--workspace") + 1];
+        if (workspace === ${JSON.stringify(failed)}) process.exit(1);
+        process.stdout.write(${JSON.stringify(JSON.stringify(fixture))});
+      `);
+      const driver = yield* MuseDriver.create({
+        instanceId: ProviderInstanceId.make("muse-test"),
+        displayName: undefined,
+        environment: [],
+        enabled: true,
+        config: { ...MuseDriver.defaultConfig(), binaryPath },
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("No HTTP expected")),
+        ),
+      );
+      expect(driver.snapshotForCwd).toBeDefined();
+      for (const cwd of [first, second]) {
+        const snapshot = yield* driver.snapshotForCwd!(cwd);
+        expect(snapshot.skills).toEqual([
+          {
+            name: "local",
+            path: `${cwd}/.agents/skills/local/SKILL.md`,
+            scope: "project",
+            enabled: true,
+            userInvocationOnly: true,
+          },
+        ]);
+      }
+      const failure = yield* driver.snapshotForCwd!(failed).pipe(Effect.flip);
+      expect(failure).toMatchObject({ _tag: "ProviderDriverError", driver: "muse" });
+    }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 
   it.effect("closes the host after malformed metadata and reports unavailable", () =>
