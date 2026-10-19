@@ -9594,6 +9594,121 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return undefined;
     });
 
+  const cancelIdleOrphans = (input: {
+    readonly command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "run.interrupt" | "thread.stop" }
+    >;
+    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+    readonly projection: Pick<OrchestrationV2ThreadProjection, "subagents" | "turnItems">;
+  }) =>
+    Effect.gen(function* () {
+      const { command, events, projection } = input;
+      const pending = yield* Ref.get(events);
+      const children = new Map<
+        ThreadId,
+        ProjectionRecords<"runs" | "providerThreads" | "runtimeRequests" | "turnItems"> | null
+      >();
+      const idleChildren = new Map<ThreadId, boolean>();
+      let nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
+      for (const recorded of projection.subagents) {
+        const updated = pending.findLast(
+          (event) => event.type === "subagent.updated" && event.payload.id === recorded.id,
+        );
+        const task = updated?.type === "subagent.updated" ? updated.payload : recorded;
+        if (
+          task.origin !== "app_owned" ||
+          task.childThreadId === null ||
+          !isOrchestrationV2WorkActive(task.status)
+        )
+          continue;
+        const childThreadId = task.childThreadId;
+        const child = children.has(childThreadId)
+          ? (children.get(childThreadId) ?? null)
+          : yield* projectionStore
+              .getThreadRecords(
+                childThreadId,
+                ["runs", "providerThreads", "runtimeRequests", "turnItems"],
+                {
+                  turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+                  turnItemStatuses: ["pending", "running", "waiting"],
+                },
+              )
+              .pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
+                ),
+              );
+        children.set(childThreadId, child);
+        if (child === null) continue;
+        if (
+          child.thread.lineage.parentThreadId !== command.threadId ||
+          child.thread.lineage.relationshipToParent !== "subagent" ||
+          (child.thread.forkedFrom?.type === "node" &&
+            child.thread.forkedFrom.nodeId === task.id) ||
+          child.runs.some((run) => run.delegatedTaskId === task.id)
+        )
+          continue;
+        const idle =
+          idleChildren.get(task.childThreadId) ??
+          (!child.runs.some((run) => run.status === "queued" || isBlockingRun(run)) &&
+            !child.providerThreads.some(
+              (thread) =>
+                thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
+            ) &&
+            !child.runtimeRequests.some((request) => request.status === "pending") &&
+            child.turnItems.length === 0 &&
+            Option.isNone(yield* Effect.findFirst(child.runs, awaitsRestartContinuation)));
+        idleChildren.set(task.childThreadId, idle);
+        if (!idle) continue;
+        // Stop can cancel an idle orphan without guessing which completed run owned its result.
+        const now = yield* DateTime.now;
+        const emitEvent = emit(events, command);
+        yield* emitEvent({
+          type: "subagent.updated",
+          threadId: command.threadId,
+          nodeId: task.id,
+          occurredAt: now,
+          payload: {
+            ...task,
+            status: "cancelled",
+            completedAt: now,
+            updatedAt: now,
+            completionDelivery: { state: "disposed", observedByRunId: null },
+          },
+        });
+        nodes ??= (yield* projectionStore.getThreadRecords(command.threadId, ["nodes"])).nodes;
+        const node = nodes.find((candidate) => candidate.id === task.id);
+        if (node !== undefined)
+          yield* emitEvent({
+            type: "node.updated",
+            threadId: command.threadId,
+            nodeId: node.id,
+            occurredAt: now,
+            payload: { ...node, status: "cancelled", completedAt: now },
+          });
+        for (const item of projection.turnItems) {
+          if (item.type !== "subagent" || item.subagentId !== task.id) continue;
+          yield* emitEvent({
+            type: "turn-item.updated",
+            threadId: command.threadId,
+            nodeId: task.id,
+            occurredAt: now,
+            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          });
+        }
+      }
+    }).pipe(
+      Effect.mapError((cause) =>
+        Schema.is(OrchestratorProjectionError)(cause)
+          ? cause
+          : new OrchestratorProjectionError({ threadId: input.command.threadId, cause }),
+      ),
+    );
+
   const dispatchThreadStop = (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -9611,111 +9726,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         );
       if (projection.thread.deletedAt !== null) return undefined;
-      const cancelIdleOrphans = Effect.gen(function* () {
-        const pending = yield* Ref.get(events);
-        const children = new Map<
-          ThreadId,
-          ProjectionRecords<"runs" | "providerThreads" | "runtimeRequests" | "turnItems"> | null
-        >();
-        const idleChildren = new Map<ThreadId, boolean>();
-        let nodes: ReadonlyArray<OrchestrationV2ExecutionNode> | undefined;
-        for (const recorded of projection.subagents) {
-          const updated = pending.findLast(
-            (event) => event.type === "subagent.updated" && event.payload.id === recorded.id,
-          );
-          const task = updated?.type === "subagent.updated" ? updated.payload : recorded;
-          if (
-            task.origin !== "app_owned" ||
-            task.childThreadId === null ||
-            !isOrchestrationV2WorkActive(task.status)
-          )
-            continue;
-          const childThreadId = task.childThreadId;
-          const child = children.has(childThreadId)
-            ? (children.get(childThreadId) ?? null)
-            : yield* projectionStore
-                .getThreadRecords(
-                  childThreadId,
-                  ["runs", "providerThreads", "runtimeRequests", "turnItems"],
-                  {
-                    turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
-                    turnItemStatuses: ["pending", "running", "waiting"],
-                  },
-                )
-                .pipe(
-                  Effect.catchTags({
-                    ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                  }),
-                  Effect.mapError(
-                    (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
-                  ),
-                );
-          children.set(childThreadId, child);
-          if (child === null) continue;
-          if (
-            child.thread.lineage.parentThreadId !== command.threadId ||
-            child.thread.lineage.relationshipToParent !== "subagent" ||
-            (child.thread.forkedFrom?.type === "node" &&
-              child.thread.forkedFrom.nodeId === task.id) ||
-            child.runs.some((run) => run.delegatedTaskId === task.id)
-          )
-            continue;
-          const idle =
-            idleChildren.get(task.childThreadId) ??
-            (!child.runs.some((run) => run.status === "queued" || isBlockingRun(run)) &&
-              !child.providerThreads.some(
-                (thread) =>
-                  thread.status === "active" || (thread.pendingBackgroundTasks?.length ?? 0) > 0,
-              ) &&
-              !child.runtimeRequests.some((request) => request.status === "pending") &&
-              child.turnItems.length === 0 &&
-              Option.isNone(yield* Effect.findFirst(child.runs, awaitsRestartContinuation)));
-          idleChildren.set(task.childThreadId, idle);
-          if (!idle) continue;
-          // Stop can cancel an idle orphan without guessing which completed run owned its result.
-          const now = yield* DateTime.now;
-          const emitEvent = emit(events, command);
-          yield* emitEvent({
-            type: "subagent.updated",
-            threadId: command.threadId,
-            nodeId: task.id,
-            occurredAt: now,
-            payload: {
-              ...task,
-              status: "cancelled",
-              completedAt: now,
-              updatedAt: now,
-              completionDelivery: { state: "disposed", observedByRunId: null },
-            },
-          });
-          nodes ??= (yield* projectionStore.getThreadRecords(command.threadId, ["nodes"])).nodes;
-          const node = nodes.find((candidate) => candidate.id === task.id);
-          if (node !== undefined)
-            yield* emitEvent({
-              type: "node.updated",
-              threadId: command.threadId,
-              nodeId: node.id,
-              occurredAt: now,
-              payload: { ...node, status: "cancelled", completedAt: now },
-            });
-          for (const item of projection.turnItems) {
-            if (item.type !== "subagent" || item.subagentId !== task.id) continue;
-            yield* emitEvent({
-              type: "turn-item.updated",
-              threadId: command.threadId,
-              nodeId: task.id,
-              occurredAt: now,
-              payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
-            });
-          }
-        }
-      }).pipe(
-        Effect.mapError((cause) =>
-          Schema.is(OrchestratorProjectionError)(cause)
-            ? cause
-            : new OrchestratorProjectionError({ threadId: command.threadId, cause }),
-        ),
-      );
       const latestRun = projection.runs.findLast((run) => run.status !== "queued");
       const target =
         projection.runs.findLast(
@@ -9754,7 +9764,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           const enqueued = yield* Ref.get(interruptEffects);
           yield* Ref.update(events, (existing) => [...existing, ...written]);
           yield* Ref.update(effects, (existing) => [...existing, ...enqueued]);
-          yield* cancelIdleOrphans;
+          yield* cancelIdleOrphans({ command, events, projection });
           return interrupted.value;
         }
         yield* Effect.logWarning("thread.stop could not interrupt the running turn", {
@@ -9775,7 +9785,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* markStoppedRun({ command, events, thread: projection.thread, run, now });
       }
       yield* holdStoppedThread({ command, events, projection, cohortRunIds: [], now });
-      yield* cancelIdleOrphans;
+      yield* cancelIdleOrphans({ command, events, projection });
       return undefined;
     });
 
@@ -11100,6 +11110,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         if (command.holdQueue === true) {
+          // Stop must still commit when a child can't be read, so a failed repair's
+          // partial events are dropped.
+          const repairEvents = yield* Ref.make(yield* Ref.get(events));
+          const repaired = yield* Effect.exit(
+            loadProjectionForCommand(command, ["subagents", "turnItems"], {
+              turnItemTypes: ["subagent"],
+              turnItemStatuses: ["pending", "running", "waiting"],
+            }).pipe(
+              Effect.flatMap((projection) =>
+                cancelIdleOrphans({ command, events: repairEvents, projection }),
+              ),
+            ),
+          );
+          if (Exit.isSuccess(repaired)) yield* Ref.set(events, yield* Ref.get(repairEvents));
+          else
+            yield* Effect.logWarning("Stop could not cancel orphaned delegated follow-ups", {
+              threadId: command.threadId,
+              cause: repaired.cause,
+            });
           yield* Ref.update(effects, (existing) => [
             ...existing,
             {
