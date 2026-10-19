@@ -87,10 +87,6 @@ export function newlyTerminalRows(
   });
 }
 
-// Whether any row entered, left, or changed phase between two aggregates.
-// Throttling must never drop these: the environment publishes only on phase
-// changes and stays silent while a phase holds, so a dropped transition is
-// never retried and the card shows the previous phase until the next one.
 export function rowPhasesChanged(
   previousAggregate: RelayAgentActivityAggregateState,
   nextAggregate: RelayAgentActivityAggregateState,
