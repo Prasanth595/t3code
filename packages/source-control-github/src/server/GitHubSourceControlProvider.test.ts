@@ -272,9 +272,14 @@ const githubContext = (host: string) => ({
   remoteUrl: `git@${host}:acme/web.git`,
 });
 
-it.effect("discovers a configured enterprise installation without a CLI login", () => {
+it.effect("discovers enterprise authentication with and without a default host override", () => {
+  let cliAuth = processOutput("", 1);
   const { layer, graphqlCalls } = harness({
     remotes: "",
+    process: {
+      run: ({ args }) =>
+        Effect.succeed(args[0] === "--version" ? processOutput("gh version 2.80.0") : cliAuth),
+    },
     api: {
       credential: (host) =>
         Effect.succeed({ token: Redacted.make("app-token"), fingerprint: `${host}:app` }),
@@ -299,6 +304,67 @@ it.effect("discovers a configured enterprise installation without a CLI login", 
     assert.deepStrictEqual(result.auth.account, Option.some("example[bot]"));
     assert.deepStrictEqual(result.auth.host, Option.some("enterprise.example"));
     assert.strictEqual(graphqlCalls[0]?.host, "enterprise.example");
+
+    const withoutDefaultHost = yield* GitHubSourceControlProvider.makeDiscovery.pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    cliAuth = processOutput(
+      encodeJson({
+        hosts: {
+          "enterprise.example": [
+            {
+              state: "success",
+              active: true,
+              host: "enterprise.example",
+              login: "enterprise-user",
+            },
+          ],
+        },
+      }),
+    );
+    const cliOnly = yield* withoutDefaultHost.probe("/repo");
+    expect.soft(cliOnly).toMatchObject({
+      status: "available",
+      auth: {
+        status: "authenticated",
+        account: Option.some("enterprise-user"),
+        host: Option.some("enterprise.example"),
+      },
+    });
+    expect.soft(cliOnly.auth.accounts).toEqual([
+      expect.objectContaining({
+        host: "enterprise.example",
+        account: "enterprise-user",
+        active: true,
+        authenticated: true,
+      }),
+    ]);
+
+    cliAuth = processOutput("", 1);
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+    yield* settings.update({
+      sourceControlHosts: { github: { tokens: { "enterprise.example": "app-token" } } },
+    });
+    const savedApp = yield* withoutDefaultHost.probe("/repo");
+    expect.soft(savedApp).toMatchObject({
+      status: "available",
+      auth: {
+        status: "authenticated",
+        account: Option.some("example[bot]"),
+        host: Option.some("enterprise.example"),
+      },
+    });
+    expect.soft(savedApp.auth.accounts).toEqual([
+      expect.objectContaining({
+        host: "enterprise.example",
+        account: "example[bot]",
+        active: true,
+        authenticated: true,
+      }),
+    ]);
+    expect
+      .soft(graphqlCalls.map((call) => call.host))
+      .toEqual(["enterprise.example", "enterprise.example"]);
   }).pipe(
     Effect.provide(layer),
     Effect.provideService(HostProcess.Environment, {
