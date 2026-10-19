@@ -339,15 +339,8 @@ function isLocalProjectedRow(
 }
 
 /**
- * Turn items kept from the full projection even when they sit outside the
- * recent visible window:
- * - Every small `run_interrupt_request`. Visibility for superseded
- *   `run_interrupt_result` rows depends on a matching request, so a later
- *   history page that introduces the result still needs it for live
- *   attempt/run reducers.
- * - Background work that is still running. Stop and the Waiting strip derive
- *   it from `turnItems`, so an old dev server must not drop out of the
- *   snapshot while it runs.
+ * Stop needs pending work outside the visible window. Interrupt results also
+ * need their matching requests when a later history page introduces them.
  */
 function windowIndependentTurnItems(
   projection: OrchestrationV2ThreadProjection,
@@ -463,9 +456,8 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
-  // Reserve bytes for dependencies that may sit outside the recent window.
-  // Upper bound: every candidate in the full projection. Window selection uses
-  // this reserve so the final contribution stays under the cap.
+  // Reserve dependencies before selecting visible rows. Required control
+  // state is retained even when it exceeds the budget.
   const dependencyCandidates = windowIndependentTurnItems(controlProjection);
   let dependencyReserve = 0;
   for (const item of dependencyCandidates) {

@@ -5253,10 +5253,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
-            // Background work outlives its turn: a dev server started many turns
-            // ago still runs, and Stop finds it in turnItems. Carry the thread's
-            // unfinished background items into the recent window without making
-            // them visible rows; older history pages show them in place.
+            // Stop needs old background work in control state, without adding
+            // visible rows or changing the history cursor.
             const pendingBackgroundItems =
               historyAnchor === undefined
                 ? yield* selectShellPendingTurnItemRows([threadId]).pipe(
@@ -5530,8 +5528,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id IN ${sql.in(threadIds)}
           `;
 
-    // A dev server's output can grow for hours. Readers of pending work never
-    // need more of it than the wire keeps, so stop there instead of decoding it all.
+    // Bound command output before decoding; pending-work readers only need
+    // the prefix inspected by the wire projection.
     const pendingTurnItemPayloadJson = sql`
       CASE
         WHEN i.type = 'command_execution'
@@ -5563,7 +5561,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               -- Persistent monitors are never pending work; skip decoding them.
               AND NOT (
                 i.type = 'dynamic_tool'
-                AND COALESCE(json_type(i.payload_json, '$.input.persistent'), '') = 'true'
+                AND json_type(i.payload_json, '$.input.persistent') IS 'true'
               )
           `
         : sql<ShellPendingTurnItemRow>`
@@ -5578,7 +5576,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               AND (i.run_id IS NULL OR r.status <> 'rolled_back')
               AND NOT (
                 i.type = 'dynamic_tool'
-                AND COALESCE(json_type(i.payload_json, '$.input.persistent'), '') = 'true'
+                AND json_type(i.payload_json, '$.input.persistent') IS 'true'
               )
               AND i.thread_id IN ${sql.in(threadIds)}
           `;
