@@ -99,7 +99,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { useProject, useThreadProjection, useQuietThreadShell } from "~/state/entities";
+import { useThreadProjection, useQuietThreadShell } from "~/state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import { serverEnvironment } from "~/state/server";
@@ -998,12 +998,6 @@ export default function GitActionsControl({
   );
   const activeServerThread =
     activeServerThreadShell ?? activeServerThreadProjection?.projection.thread ?? null;
-  const activeProject = useProject(
-    activeServerThread && activeEnvironmentId
-      ? { environmentId: activeEnvironmentId, projectId: activeServerThread.projectId }
-      : null,
-  );
-  const repositoryKey = activeProject?.repositoryIdentity?.canonicalKey;
   const isLocalDraftThread = activeDraftThread !== null && activeServerThread === null;
   const canChangeThreadBranch = canWriteSourceControl && (isLocalDraftThread || canOperateThread);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
@@ -1094,11 +1088,7 @@ export default function GitActionsControl({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
-  const gitStatusForActions = resolveThreadGitStatus(
-    gitStatus,
-    activeServerThread?.pullRequests,
-    repositoryKey,
-  );
+  const gitStatusForActions = resolveThreadGitStatus(gitStatus, activeServerThread?.pullRequests);
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];

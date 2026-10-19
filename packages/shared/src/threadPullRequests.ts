@@ -435,10 +435,10 @@ export function pullRequestListLines(
 export function resolveThreadGitStatus(
   status: VcsStatusResult | null,
   links: ReadonlyArray<ThreadPullRequestLink> | undefined,
-  repositoryKey: string | null | undefined,
 ): VcsStatusResult | null {
-  if (!status || status.pr !== null || status.refName === null || !repositoryKey) return status;
-  const canonicalKey = canonicalRepositoryKey(repositoryKey.trim().toLowerCase());
+  if (!status || status.pr !== null || status.refName === null || !status.repositoryKey)
+    return status;
+  const canonicalKey = canonicalRepositoryKey(status.repositoryKey.trim().toLowerCase());
   for (const link of links ?? []) {
     const snapshot = link.snapshot;
     if (

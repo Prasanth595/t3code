@@ -1,7 +1,6 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
-import { useProject, useThreadShell } from "../../state/entities";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -10,6 +9,7 @@ import {
   EnvironmentId,
   type GitRunStackedActionResult,
   type ProjectScript,
+  type ThreadPullRequestLink,
   ThreadId,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -89,6 +89,7 @@ export type ThreadGitMenuProps = {
   readonly threadId: ThreadId | string;
   readonly currentBranch: string | null;
   readonly gitStatus: VcsStatusResult | null;
+  readonly pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
@@ -121,13 +122,7 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const threadId = ThreadId.make(props.threadId);
   const { gitOperationLabel, onPull, onRunAction } = props;
-  const thread = useThreadShell({ environmentId, threadId });
-  const project = useProject(thread ? { environmentId, projectId: thread.projectId } : null);
-  const repositoryKey = project?.repositoryIdentity?.canonicalKey;
-  const gitStatus = useMemo(
-    () => resolveThreadGitStatus(props.gitStatus, thread?.pullRequests, repositoryKey),
-    [props.gitStatus, thread?.pullRequests, repositoryKey],
-  );
+  const gitStatus = resolveThreadGitStatus(props.gitStatus, props.pullRequests);
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
   const busy = gitOperationLabel !== null;

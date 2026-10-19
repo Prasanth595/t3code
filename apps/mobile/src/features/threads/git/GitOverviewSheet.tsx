@@ -106,12 +106,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
-  const repositoryKey = selectedThreadProject?.repositoryIdentity?.canonicalKey;
-  const gitStatus = resolveThreadGitStatus(
-    gitStatusQuery.data,
-    selectedThread?.pullRequests,
-    repositoryKey,
-  );
+  const gitStatus = resolveThreadGitStatus(gitStatusQuery.data, selectedThread?.pullRequests);
 
   const currentBranchLabel = gitStatus?.refName ?? selectedThread?.branch ?? "Detached HEAD";
   const currentStatusSummary = statusSummary(gitStatus);

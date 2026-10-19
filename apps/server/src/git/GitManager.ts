@@ -256,6 +256,16 @@ interface BranchHeadContext {
   isCrossRepository: boolean;
 }
 
+function checkoutRepositoryKey(remoteUrl: string | null): string | null {
+  if (!remoteUrl || !detectSourceControlProviderFromGitRemoteUrl(remoteUrl)) return null;
+  let key = normalizeGitRemoteUrl(remoteUrl);
+  // HTTP ports distinguish repositories on separate servers; SSH ports do not identify web ports.
+  if (/^https?:\/\//iu.test(remoteUrl.trim())) {
+    key = key.replace(/^[^/]+/u, new URL(remoteUrl.trim()).host.toLowerCase());
+  }
+  return canonicalRepositoryKey(key);
+}
+
 export function pullRequestRepositoryKey(value: string): string | null {
   try {
     const url = new URL(value);
@@ -1126,13 +1136,13 @@ export const make = Effect.gen(function* () {
       .pipe(
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
-    const hostingProvider = details.isRepo
-      ? yield* resolveHostingProvider(cwd, details.branch)
-      : null;
+    const repositoryContext = details.isRepo
+      ? yield* resolveLocalRepositoryContext(cwd, details.branch)
+      : {};
 
     return {
       isRepo: details.isRepo,
-      ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
+      ...repositoryContext,
       hasPrimaryRemote: details.hasOriginRemote,
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
@@ -1463,27 +1473,45 @@ export const make = Effect.gen(function* () {
     return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === repository;
   });
 
-  const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
+  const resolveLocalRepositoryContext = Effect.fn("resolveLocalRepositoryContext")(function* (
     cwd: string,
     branch: string | null,
   ) {
+    const originUrl = yield* readConfigValueNullable(cwd, "remote.origin.url");
+    const primaryRemoteName = originUrl
+      ? "origin"
+      : yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(Effect.orElseSucceed(() => null));
+    const primaryRemoteUrl =
+      primaryRemoteName === "origin"
+        ? originUrl
+        : primaryRemoteName
+          ? yield* readConfigValueNullable(cwd, `remote.${primaryRemoteName}.url`)
+          : null;
+    const repositoryKey = checkoutRepositoryKey(primaryRemoteUrl);
     const preferredRemoteName =
       branch === null
         ? "origin"
         : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
     const remoteUrl =
-      (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
-      (yield* readConfigValueNullable(cwd, "remote.origin.url"));
+      preferredRemoteName === primaryRemoteName
+        ? primaryRemoteUrl
+        : ((yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ?? originUrl);
 
     const provider = remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
-    if (!remoteUrl || provider?.kind !== "unknown") return provider;
-    const handle = yield* sourceControlProviders
-      .resolveHandle({
-        cwd,
-        context: { provider, remoteName: preferredRemoteName, remoteUrl },
-      })
-      .pipe(Effect.orElseSucceed(() => null));
-    return handle?.context?.provider ?? provider;
+    const handle =
+      remoteUrl && provider?.kind === "unknown"
+        ? yield* sourceControlProviders
+            .resolveHandle({
+              cwd,
+              context: { provider, remoteName: preferredRemoteName, remoteUrl },
+            })
+            .pipe(Effect.orElseSucceed(() => null))
+        : null;
+    const sourceControlProvider = handle?.context?.provider ?? provider;
+    return {
+      ...(repositoryKey ? { repositoryKey } : {}),
+      ...(sourceControlProvider ? { sourceControlProvider } : {}),
+    };
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
