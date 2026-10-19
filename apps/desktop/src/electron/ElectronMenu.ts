@@ -193,8 +193,10 @@ export const make = Effect.gen(function* () {
   return ElectronMenu.of({
     pasteAndMatchStyle: Effect.sync(() => {
       const focused = Electron.webContents.getFocusedWebContents();
-      if (focused && !focused.isDestroyed()) {
-        focused.pasteAndMatchStyle();
+      // A mounted guest can report focus while the host owns the focused frame.
+      const target = focused?.hostWebContents ?? focused;
+      if (target && !target.isDestroyed()) {
+        target.pasteAndMatchStyle();
       }
     }),
     setApplicationMenu: (template) =>

@@ -315,15 +315,27 @@ describe("DesktopApplicationMenu", () => {
         assert.isUndefined(pasteAsTextItem.role);
 
         const windowPaste = vi.fn();
-        pasteAsTextItem.click(
-          {} as Electron.MenuItem,
-          { webContents: { pasteAndMatchStyle: windowPaste } } as unknown as Electron.BrowserWindow,
-          { triggeredByAccelerator: true } as unknown as KeyboardEvent,
-        );
-        // No yield before this assertion: the native dispatch must not wait for a renderer round trip.
-        assert.equal(pasteAndMatchStyleMock.mock.calls.length, 1);
-        assert.equal(windowPaste.mock.calls.length, 0);
-        assert.equal(dispatchMenuActionMock.mock.calls.length, 0);
+        const guestPaste = vi.fn();
+        const host = { isDestroyed: () => false, pasteAndMatchStyle: pasteAndMatchStyleMock };
+        for (const focused of [
+          host,
+          { ...host, hostWebContents: host, pasteAndMatchStyle: guestPaste },
+        ]) {
+          pasteAndMatchStyleMock.mockClear();
+          getFocusedWebContentsMock.mockReturnValue(focused);
+          pasteAsTextItem.click(
+            {} as Electron.MenuItem,
+            {
+              webContents: { pasteAndMatchStyle: windowPaste },
+            } as unknown as Electron.BrowserWindow,
+            { triggeredByAccelerator: true } as unknown as KeyboardEvent,
+          );
+          // No yield before this assertion: the native dispatch must not wait for a renderer round trip.
+          assert.equal(pasteAndMatchStyleMock.mock.calls.length, 1);
+          assert.equal(guestPaste.mock.calls.length, 0);
+          assert.equal(windowPaste.mock.calls.length, 0);
+          assert.equal(dispatchMenuActionMock.mock.calls.length, 0);
+        }
         assert.isFalse(yield* Deferred.isDone(selectedAction));
       }),
   );
