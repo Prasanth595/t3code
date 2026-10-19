@@ -11,7 +11,6 @@ import type {
   VcsSwitchRefResult,
 } from "@t3tools/contracts";
 import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
@@ -63,19 +62,16 @@ export async function checkoutNewTaskBranch<E>(input: {
       (local.current || local.worktreePath)
     ) {
       if (local.current) return AsyncResult.success({ ...local, worktreePath: null });
-      if (!refs.value.rootPath) {
+      if (refs.value.isAtRepositoryRoot === undefined) {
         return AsyncResult.failure(
           Cause.fail(
             new Error(
-              "The server did not report the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+              "The server did not report whether this project is at the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
             ),
           ),
         );
       }
-      if (
-        normalizeProjectPathForComparison(refs.value.rootPath) !==
-        normalizeProjectPathForComparison(input.project.workspaceRoot)
-      ) {
+      if (!refs.value.isAtRepositoryRoot) {
         return AsyncResult.failure(
           Cause.fail(
             new Error(

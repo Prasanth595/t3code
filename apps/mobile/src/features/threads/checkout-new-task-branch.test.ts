@@ -42,7 +42,7 @@ type CheckoutInput = Parameters<typeof checkoutNewTaskBranch>[0];
 const decodeListRefsInput = Schema.decodeUnknownSync(VcsListRefsInput);
 const REF_PAGE_SIZE = 2;
 
-const readRefs = (request: Parameters<CheckoutInput["readRefs"]>[0]) =>
+const readRefs: CheckoutInput["readRefs"] = (request) =>
   settlePromise(async () => {
     expect(request.environmentId).toBe(environmentId);
     const input = decodeListRefsInput(request.input);
