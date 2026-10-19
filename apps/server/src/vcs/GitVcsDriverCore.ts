@@ -2699,8 +2699,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       cwd,
       [
         ...tempIndexConfig,
-        // Avoid an extra tracked-index/pathspec matching pass for this disposable index.
-        // Normal status and diff commands keep their preload behavior.
+        // Avoid redundant tracked-entry pathspec matching in this disposable index.
         "-c",
         "core.preloadIndex=false",
         "--literal-pathspecs",
