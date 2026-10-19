@@ -199,7 +199,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         NodeFS.mkdirSync(stateDir, { recursive: true });
         let before = NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
         if (before === undefined) {
-          NodeFS.closeSync(NodeFS.openSync(lockPath, "a"));
+          NodeFS.closeSync(NodeFS.openSync(lockPath, "a", 0o644));
           before = NodeFS.statSync(lockPath, { bigint: true });
         }
         const db = new NodeSqlite.DatabaseSync(lockPath);
