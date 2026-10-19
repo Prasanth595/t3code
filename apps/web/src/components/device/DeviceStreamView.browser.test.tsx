@@ -35,6 +35,7 @@ vi.mock(import("./DevicePhoneViewport"), async (original) => ({
     return <></>;
   },
 }));
+import { pasteTextToFocusComposer } from "../chat/composerFocusRedirect";
 import { DeviceStreamView } from "./DeviceStreamView";
 
 // MJPEG frames come from the device hub, so images keep their src without loading it and a
@@ -280,6 +281,7 @@ it("types a paste on the Android screen into the device and lets Ctrl+V reach th
   const { sent } = await setup(true, "android");
   const screen = container.querySelector<HTMLElement>('[role="application"]')!;
   screen.focus();
+  expect(document.activeElement).toBe(screen);
   const chord = new KeyboardEvent("keydown", {
     key: "v",
     code: "KeyV",
@@ -290,11 +292,17 @@ it("types a paste on the Android screen into the device and lets Ctrl+V reach th
   screen.dispatchEvent(chord);
   expect(chord.defaultPrevented).toBe(false);
   const clipboardData = new DataTransfer();
-  clipboardData.setData("text/plain", "hunter2");
+  clipboardData.setData("text/plain", "pässwörd 1");
+  const composerPastes: Array<string | null> = [];
+  const capturePaste = (event: ClipboardEvent) =>
+    composerPastes.push(pasteTextToFocusComposer(event));
+  window.addEventListener("paste", capturePaste, true);
+  onTestFinished(() => window.removeEventListener("paste", capturePaste, true));
   const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
   screen.dispatchEvent(paste);
   expect(paste.defaultPrevented).toBe(true);
   expect(sent.map((message) => JSON.parse(message as string) as unknown)).toEqual([
-    { type: "text", text: "hunter2" },
+    { type: "text", text: "pässwörd 1" },
   ]);
+  expect(composerPastes).toEqual([null]);
 });

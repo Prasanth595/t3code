@@ -378,8 +378,8 @@ export function DeviceStreamView(props: {
         ref={hostRef}
         className={cn(
           "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none",
-          // An overlay, since an inset ring paints under the canvas and loading view.
-          "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus:after:ring-2 focus:after:ring-ring focus:after:ring-inset",
+          // Overlay the stream; focus (including pointer-driven focus) marks keyboard capture.
+          "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus:after:ring-2 focus:after:ring-inset focus:after:ring-ring",
           controlsInset && "pr-14",
         )}
         tabIndex={0}
@@ -388,7 +388,7 @@ export function DeviceStreamView(props: {
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
-          // Leave the paste chord alone so the browser fires the paste below.
+          // Preventing this keydown suppresses the browser's paste event.
           if (event.ctrlKey && (event.key === "v" || event.key === "V")) return;
           event.preventDefault();
           clientRef.current?.sendKey(event.nativeEvent, "down");
