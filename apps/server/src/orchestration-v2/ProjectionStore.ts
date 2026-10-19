@@ -88,8 +88,7 @@ import {
   threadHistoryTurnStarts,
   THREAD_HISTORY_MAX_RAW_TURNS,
   selectHistoryPageFromCursor,
-  selectRecentTimelineWindow,
-  THREAD_HISTORY_PAGE_POLICY,
+  projectedRowEncodedBytes,
 } from "./threadHistoryPaging.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
@@ -5072,14 +5071,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           FROM orchestration_events WHERE application_event_version = 2
           AND aggregate_kind = 'thread' AND stream_id = ${threadId}`;
             const snapshotSequence = revisions[0]?.sequence ?? 0;
+            const indexedItems = index.visible.map((row, position) => ({
+              ...row,
+              position,
+              canonicalPosition: position,
+            }));
             const page = yield* Effect.try({
               try: () =>
                 selectHistoryPageFromCursor({
-                  items: index.visible.map((row, position) => ({
-                    ...row,
-                    position,
-                    canonicalPosition: position,
-                  })),
+                  items: indexedItems,
                   cursor,
                   snapshotSequence,
                   rowEncodedBytes: () => 0,
@@ -5121,24 +5121,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 };
               }),
             );
-            const bounded = selectRecentTimelineWindow({
-              items,
+            const wireRowsByPosition = new Map(
+              items.map((row) => [
+                row.position,
+                { row, encodedBytes: projectedRowEncodedBytes(row) },
+              ]),
+            );
+            const bounded = selectHistoryPageFromCursor({
+              items: indexedItems,
+              cursor,
+              throughEntryId,
               snapshotSequence,
-              policy: {
-                ...THREAD_HISTORY_PAGE_POLICY,
-                // The index pass already applied the requested user-turn limit, including find jumps.
-                maxUserTurns: undefined,
-                maxItems:
-                  THREAD_HISTORY_PAGE_POLICY.maxItems * (throughEntryId === undefined ? 1 : 2),
-              },
+              rowEncodedBytes: (row) =>
+                wireRowsByPosition.get(row.canonicalPosition)?.encodedBytes ?? 0,
             });
+            // Non-negative wire costs can only trim the suffix materialized by the zero-cost pass.
+            const selected = bounded.items.map((row) => ({
+              ...wireRowsByPosition.get(row.canonicalPosition)!.row,
+              position: row.position,
+            }));
             return {
               snapshotSequence,
               items: conversationOnly
-                ? bounded.items.filter((row) => isConversationHistoryItem(row.item))
-                : bounded.items,
-              nextCursor: bounded.hasMoreHistory ? bounded.nextCursor : page.nextCursor,
-              hasMoreHistory: bounded.hasMoreHistory || page.hasMoreHistory,
+                ? selected.filter((row) => isConversationHistoryItem(row.item))
+                : selected,
+              nextCursor: bounded.nextCursor,
+              hasMoreHistory: bounded.hasMoreHistory,
             };
           }),
         )
