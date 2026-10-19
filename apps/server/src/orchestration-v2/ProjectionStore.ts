@@ -90,7 +90,6 @@ import {
   selectHistoryPageFromCursor,
   selectRecentTimelineWindow,
   THREAD_HISTORY_PAGE_POLICY,
-  OLDER_THREAD_USER_TURN_LIMIT,
 } from "./threadHistoryPaging.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
@@ -5088,16 +5087,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 }),
               catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
             });
-            const end = (page.items.at(-1)?.canonicalPosition ?? -1) + 1;
-            const hasUserTurns = index.visible
-              .slice(0, end)
-              .some((row) => isThreadHistoryUserTurn(row.item));
-            const materialized =
-              conversationOnly && hasUserTurns
-                ? page.items.filter((row) => isConversationHistoryItem(row.item))
-                : page.items;
             const sources = yield* encodeTimelineSources(
-              materialized
+              page.items
                 .filter((row) => !row.synthetic)
                 .map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
             );
@@ -5113,7 +5104,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             const byIdentity = new Map(
               payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
             );
-            const items = yield* Effect.forEach(materialized, (row) =>
+            const items = yield* Effect.forEach(page.items, (row) =>
               Effect.gen(function* () {
                 const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);
                 const item =
@@ -5130,18 +5121,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 };
               }),
             );
-            if (hasUserTurns)
-              return {
-                ...page,
-                snapshotSequence,
-                items: items.map((row, position) => ({ ...row, position })),
-              };
             const bounded = selectRecentTimelineWindow({
               items,
               snapshotSequence,
               policy: {
                 ...THREAD_HISTORY_PAGE_POLICY,
-                maxUserTurns: OLDER_THREAD_USER_TURN_LIMIT,
+                // The index pass already applied the requested user-turn limit, including find jumps.
+                maxUserTurns: undefined,
                 maxItems:
                   THREAD_HISTORY_PAGE_POLICY.maxItems * (throughEntryId === undefined ? 1 : 2),
               },

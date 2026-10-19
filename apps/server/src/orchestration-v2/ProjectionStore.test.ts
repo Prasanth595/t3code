@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
@@ -2138,10 +2139,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const queuedSuffixIds = cancelledSuffixPage.projection.visibleTurnItems.map((row) =>
         String(row.sourceItemId),
       );
-      let queuedCursor = cancelledSuffixPage.historyCursor;
+      let queuedCursor: string | null = cancelledSuffixPage.historyCursor;
       for (let pages = 0; queuedCursor !== null; pages += 1) {
         assert.isBelow(pages, 14);
-        const page = yield* projectionStore.getThreadHistoryPage(threadId, queuedCursor);
+        const page: OrchestrationV2ThreadHistoryPage = yield* projectionStore.getThreadHistoryPage(
+          threadId,
+          queuedCursor,
+        );
         queuedSuffixIds.unshift(...page.items.map((row) => String(row.sourceItemId)));
         queuedCursor = page.nextCursor;
       }
