@@ -53,6 +53,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -573,6 +574,7 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | McpAppModelContext.McpAppModelContext
   | TurnItemPositionStore.TurnItemPositionStoreV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -583,6 +585,7 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
@@ -1231,28 +1234,32 @@ export const layer: Layer.Layer<
             let threadDisposition: ProviderTerminalEvent["threadDisposition"] = "reusable";
             if (yield* Deferred.isDone(publicationFailed)) {
               const stopped = yield* Effect.exit(
-                Effect.gen(function* () {
-                  // The start guard checks both the original attempt and running status.
-                  const stillOwned = yield* (
-                    input.shouldStartProviderTurn ??
-                    input.shouldFinalizeRun ??
-                    (() => Effect.succeed(true))
-                  )();
-                  if (!stillOwned) {
-                    return "stale" as const;
-                  }
-                  if (rootProviderTurnId === null) {
-                    return "unknown" as const;
-                  }
-                  yield* input.session
-                    .interruptTurn({
-                      providerThread,
-                      providerTurnId: rootProviderTurnId,
-                      requestRuntimeRestart: true,
-                    })
-                    .pipe(Effect.timeout("10 seconds"));
-                  return "stopped" as const;
-                }),
+                threadCommands.withLock(
+                  input.run.threadId,
+                  Effect.gen(function* () {
+                    // Adapters can stop thread-wide work before matching the turn ID.
+                    // Keep Stop and queue advancement behind this ownership check and stop.
+                    const stillOwned = yield* (
+                      input.shouldStartProviderTurn ??
+                      input.shouldFinalizeRun ??
+                      (() => Effect.succeed(true))
+                    )();
+                    if (!stillOwned) {
+                      return "stale" as const;
+                    }
+                    if (rootProviderTurnId === null) {
+                      return "unknown" as const;
+                    }
+                    yield* input.session
+                      .interruptTurn({
+                        providerThread,
+                        providerTurnId: rootProviderTurnId,
+                        requestRuntimeRestart: true,
+                      })
+                      .pipe(Effect.timeout("30 seconds"));
+                    return "stopped" as const;
+                  }),
+                ),
               );
               if (Exit.isFailure(stopped)) {
                 if (Cause.hasInterruptsOnly(stopped.cause)) {
