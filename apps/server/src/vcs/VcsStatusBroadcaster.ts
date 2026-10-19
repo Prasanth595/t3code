@@ -233,6 +233,11 @@ export const make = Effect.gen(function* () {
   const remoteWriteLocks = yield* KeyedLock.make<string>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
+  // Hold through each local read and cache write so an older read cannot commit last.
+  // Nest remote → local, and keep network work outside the local lock.
+  const localWriteLocks = yield* KeyedLock.make<string>();
+  const withLocalWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+    localWriteLocks.withLock(cwd, effect);
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
@@ -346,8 +351,13 @@ export const make = Effect.gen(function* () {
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
   ) {
-    const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local);
+    return yield* withLocalWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        const local = yield* workflow.localStatus({ cwd });
+        return yield* updateCachedLocalStatus(cwd, local);
+      }),
+    );
   });
 
   const getOrLoadLocalStatus = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(function* (
@@ -374,23 +384,29 @@ export const make = Effect.gen(function* () {
       cwd,
       Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
-        const [local, remote] = yield* Effect.all(
-          [
-            latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
-            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
-          ],
-          { concurrency: "unbounded" },
+        const remote = latest?.remote ? latest.remote.value : yield* workflow.remoteStatus({ cwd });
+        return yield* withLocalWriteLock(
+          cwd,
+          Effect.gen(function* () {
+            const cachedLocal = (yield* getCachedStatus(cwd))?.local;
+            const local = cachedLocal ? cachedLocal.value : yield* workflow.localStatus({ cwd });
+            return yield* updateCachedStatus(cwd, local, remote);
+          }),
         );
-        return yield* updateCachedStatus(cwd, local, remote);
       }),
     );
   });
 
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
     function* (cwd: string) {
-      yield* workflow.invalidateLocalStatus(cwd);
-      const local = yield* workflow.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+      return yield* withLocalWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          yield* workflow.invalidateLocalStatus(cwd);
+          const local = yield* workflow.localStatus({ cwd });
+          return yield* updateCachedLocalStatus(cwd, local, { publish: true });
+        }),
+      );
     },
   );
 
@@ -428,12 +444,15 @@ export const make = Effect.gen(function* () {
       pullAttempted = true;
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
-      const [refreshedLocal, refreshedRemote] = yield* Effect.all(
-        [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream: false })],
-        { concurrency: "unbounded" },
+      const refreshedRemote = yield* workflow.remoteStatus({ cwd }, { refreshUpstream: false });
+      return yield* withLocalWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          const refreshedLocal = yield* workflow.localStatus({ cwd });
+          yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
+          return { local: refreshedLocal, remote: refreshedRemote };
+        }),
       );
-      yield* updateCachedStatus(cwd, refreshedLocal, refreshedRemote, { publish: true });
-      return { local: refreshedLocal, remote: refreshedRemote };
     }).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
@@ -444,10 +463,15 @@ export const make = Effect.gen(function* () {
           if (!pullAttempted) return null;
           // A pull or its follow-up reads can fail after local state has changed.
           // Let a failed reconciliation reach the caller instead of publishing old status.
-          yield* workflow.invalidateLocalStatus(cwd);
-          const local = yield* workflow.localStatus({ cwd });
-          yield* updateCachedStatus(cwd, local, remote, { publish: true });
-          return { local, remote };
+          return yield* withLocalWriteLock(
+            cwd,
+            Effect.gen(function* () {
+              yield* workflow.invalidateLocalStatus(cwd);
+              const local = yield* workflow.localStatus({ cwd });
+              yield* updateCachedStatus(cwd, local, remote, { publish: true });
+              return { local, remote };
+            }),
+          );
         }),
       ),
     );
@@ -488,18 +512,26 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    // invalidateStatus (not the two partial invalidations) so an explicit
-    // refresh also bypasses GitManager's slow PR-lookup cache.
+    // A checkout must reach clients before waiting on any remote work.
+    yield* refreshLocalStatusCore(cwd);
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
+        // invalidateStatus (not the two partial invalidations) so an explicit
+        // refresh also bypasses GitManager's slow PR-lookup cache.
         yield* workflow.invalidateStatus(cwd);
-        // Local after remote: the fetch can move the base that the Changes totals compare with.
         const remote = yield* workflow.remoteStatus({ cwd });
-        const local = yield* workflow.localStatus({ cwd });
         const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
-        return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+        // Local again after the fetch: it can move the base that the Changes
+        // totals compare with.
+        return yield* withLocalWriteLock(
+          cwd,
+          Effect.gen(function* () {
+            const local = yield* workflow.localStatus({ cwd });
+            return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+          }),
+        );
       }),
     );
   });
