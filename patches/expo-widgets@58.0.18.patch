@@ -179,3 +179,37 @@ index 690d069..ffab6f3 100644
    /**
     * Whether the activity is displayed in a context with reduced luminance.
     * @platform iOS 16+
+diff --git a/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationBuilder.kt b/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationBuilder.kt
+--- a/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationBuilder.kt
++++ b/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationBuilder.kt
+@@ -17,2 +17,2 @@
+-import io.github.jakex7.peek.notification.PeekNotificationViews
+-import io.github.jakex7.peek.notification.setPeekContent
++import io.github.expo.peek.notification.PeekNotificationViews
++import io.github.expo.peek.notification.setPeekContent
+diff --git a/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationRenderer.kt b/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationRenderer.kt
+--- a/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationRenderer.kt
++++ b/android/src/main/java/expo/modules/widgets/notifications/CustomNotificationRenderer.kt
+@@ -11,3 +11,3 @@
+-import io.github.jakex7.peek.emittables.peekEmittableNotificationViews
+-import io.github.jakex7.peek.notification.PeekNotificationSizes
+-import io.github.jakex7.peek.notification.PeekNotificationViews
++import io.github.expo.peek.emittables.peekEmittableNotificationViews
++import io.github.expo.peek.notification.PeekNotificationSizes
++import io.github.expo.peek.notification.PeekNotificationViews
+diff --git a/android/src/main/java/expo/modules/widgets/notifications/CustomNotifications.kt b/android/src/main/java/expo/modules/widgets/notifications/CustomNotifications.kt
+--- a/android/src/main/java/expo/modules/widgets/notifications/CustomNotifications.kt
++++ b/android/src/main/java/expo/modules/widgets/notifications/CustomNotifications.kt
+@@ -6 +6 @@
+-import io.github.jakex7.peek.notification.PeekNotificationViews
++import io.github.expo.peek.notification.PeekNotificationViews
+diff --git a/android/src/main/java/expo/modules/widgets/WidgetsModule.kt b/android/src/main/java/expo/modules/widgets/WidgetsModule.kt
+--- a/android/src/main/java/expo/modules/widgets/WidgetsModule.kt
++++ b/android/src/main/java/expo/modules/widgets/WidgetsModule.kt
+@@ -86,2 +86,6 @@
+     Class("CustomNotification", CustomNotification::class) {
++      Constructor {
++        throw IllegalStateException("Use CustomNotificationFactory to create notifications")
++      }
++
+       Function("getId") { notification: CustomNotification ->

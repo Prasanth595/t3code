@@ -6,7 +6,37 @@ import {
   normalizePreviewUrl,
   PreviewUrlNormalizationError,
   resolveAddressBarInput,
+  previewPdfAssetUrl,
 } from "./preview.ts";
+
+describe("previewPdfAssetUrl", () => {
+  it.each([
+    "http://localhost:6497",
+    "https://host.tailnet.test",
+    "https://environment.tunnel.test",
+  ])("loads PDF bytes through the client's connection at %s", (base) => {
+    expect(
+      previewPdfAssetUrl(
+        "http://127.0.0.1:14537/api/assets/signed-token/Study%20guide.PDF?revision=2#page=8",
+        base,
+      ),
+    ).toBe(`${base}/api/assets/signed-token/Study%20guide.PDF?revision=2#page=8`);
+  });
+
+  it.each([
+    "http://localhost:6497/api/assets/token/index.html",
+    "https://example.com/paper.pdf",
+    "file:///api/assets/token/paper.pdf",
+    "javascript:alert(1)",
+    "invalid",
+  ])("leaves non-asset documents on their browser session: %s", (url) => {
+    expect(previewPdfAssetUrl(url, "https://environment.test")).toBeNull();
+  });
+
+  it("waits for the environment connection", () => {
+    expect(previewPdfAssetUrl("http://localhost/api/assets/token/paper.pdf", null)).toBeNull();
+  });
+});
 
 describe("resolveAddressBarInput", () => {
   it("opens what users type as addresses", () => {

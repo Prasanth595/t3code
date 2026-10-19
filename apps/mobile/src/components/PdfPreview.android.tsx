@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 import Pdf from "react-native-pdf-jsi";
 
@@ -9,15 +9,17 @@ import { ControlPill } from "./ui/ControlPill";
 function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () => void }) {
   const [localUri, setLocalUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const cached = useRef<Awaited<ReturnType<typeof preparePdfPreview>>>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    let cached: Awaited<ReturnType<typeof preparePdfPreview>> = null;
     void preparePdfPreview(props.uri, controller.signal)
       .then((file) => {
-        cached = file;
         if (controller.signal.aborted) file?.dispose();
-        else setLocalUri(file?.uri ?? null);
+        else {
+          cached.current = file;
+          setLocalUri(file?.uri ?? null);
+        }
       })
       .catch((cause: unknown) => {
         if (!controller.signal.aborted) {
@@ -26,7 +28,8 @@ function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () =>
       });
     return () => {
       controller.abort();
-      cached?.dispose();
+      cached.current?.dispose();
+      cached.current = null;
     };
   }, [props.uri]);
 
@@ -50,9 +53,11 @@ function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () =>
       trustAllCerts={false}
       enableAnnotationRendering
       enableDoubleTapZoom
-      onError={() =>
-        setError("The PDF could not be rendered. It may be damaged or password protected.")
-      }
+      onError={() => {
+        cached.current?.dispose();
+        cached.current = null;
+        setError("The PDF could not be rendered. It may be damaged or password protected.");
+      }}
       style={{ flex: 1, width: "100%" }}
     />
   );

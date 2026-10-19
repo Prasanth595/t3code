@@ -63,7 +63,7 @@ export const isPdfPreviewFile = (path: string): boolean =>
 
 /**
  * HTML runs in a sandboxed frame with an opaque origin, so a page cannot reach
- * the app's session or storage. PDFs use the client's bundled renderer.
+ * the app's session or storage. PDFs use the browser's native viewer.
  */
 export function BrowserDocumentFrame(props: {
   readonly src: string;
@@ -73,14 +73,13 @@ export function BrowserDocumentFrame(props: {
   readonly threadRef?: ScopedThreadRef | undefined;
 }) {
   const className = "min-h-0 flex-1 border-0 bg-white";
-  const [pdfUrl, fragment] = props.src.split(/#(.*)/s);
   return props.pdf ? (
-    // oxlint-disable-next-line react/iframe-missing-sandbox -- trusted client code needs its origin to load modules and fetch signed PDF bytes.
-    <iframe
+    <embed
       key={props.src}
-      src={`/pdf-viewer.html?file=${encodeURIComponent(pdfUrl ?? props.src)}${fragment ? `#${fragment}` : ""}`}
+      src={props.src}
+      type="application/pdf"
       title={props.title}
-      className={className}
+      className="min-h-0 w-full flex-1 border-0"
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument

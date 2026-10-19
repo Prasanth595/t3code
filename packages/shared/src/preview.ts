@@ -3,6 +3,25 @@ import * as Schema from "effect/Schema";
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
 
+export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): string | null {
+  if (httpBaseUrl === null) return null;
+  try {
+    const url = new URL(rawUrl);
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      !url.pathname.startsWith("/api/assets/") ||
+      !/\.pdf$/i.test(url.pathname)
+    ) {
+      return null;
+    }
+    // The browser may run on the host's loopback address. Fetch signed bytes
+    // through this client's environment connection, including remote routes.
+    return new URL(`${url.pathname}${url.search}${url.hash}`, httpBaseUrl).href;
+  } catch {
+    return null;
+  }
+}
+
 export function newPreviewTabId(): string {
   nextPreviewTabSequence += 1;
   return `${TAB_ID_PREFIX}${nextPreviewTabSequence.toString(36)}`;
