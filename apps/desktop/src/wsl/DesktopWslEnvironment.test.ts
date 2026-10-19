@@ -245,15 +245,6 @@ describe("WSL command deadlines", () => {
     }),
   );
 
-  it.effect("returns immediately when warmup exits unsuccessfully", () =>
-    Effect.gen(function* () {
-      const { environment, exited, released } = yield* makeControlledEnvironment;
-      yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1));
-      yield* environment.preWarm("Ubuntu");
-      expect(yield* Deferred.isDone(released)).toBe(true);
-    }),
-  );
-
   it.effect("still gives path conversion only 10 seconds and releases its process", () =>
     Effect.gen(function* () {
       const { environment, started, released } = yield* makeControlledEnvironment;

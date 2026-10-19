@@ -17,8 +17,7 @@ import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
-// Pre-warm boots a stopped distro, and a cold systemd start can take 10 to 15
-// seconds. The calls after it find the distro running, so they keep 10 seconds.
+// Booting a stopped distro needs more time than converting paths in a running one.
 const PRE_WARM_TIMEOUT = Duration.seconds(30);
 const WSLPATH_TIMEOUT = Duration.seconds(10);
 const PROBE_TIMEOUT = Duration.seconds(10);
