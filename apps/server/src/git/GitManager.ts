@@ -1967,7 +1967,7 @@ export const make = Effect.gen(function* () {
     };
   });
 
-  const resolveBaseBranch = Effect.fn("resolveBaseBranch")(function* (
+  const resolvePrBase = Effect.fn("resolvePrBase")(function* (
     cwd: string,
     branch: string,
     upstreamRef: string | null,
@@ -1975,8 +1975,20 @@ export const make = Effect.gen(function* () {
   ) {
     const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
     if (configured) {
+      if (
+        configured.startsWith("refs/remotes/") ||
+        (configured.includes("/") && !configured.startsWith("refs/"))
+      ) {
+        const remoteRef = configured.startsWith("refs/remotes/")
+          ? configured
+          : `refs/remotes/${configured}`;
+        const remoteBranch = yield* gitCore.resolveBranchName(cwd, remoteRef);
+        if (remoteBranch) {
+          return { baseBranch: remoteBranch, baseRef: remoteRef.slice("refs/remotes/".length) };
+        }
+      }
       const configuredBranch = yield* gitCore.resolveBranchName(cwd, configured);
-      if (configuredBranch) return configuredBranch;
+      if (configuredBranch) return { baseBranch: configuredBranch, baseRef: configuredBranch };
     }
 
     if (upstreamRef && !headContext.isCrossRepository) {
@@ -1984,7 +1996,7 @@ export const make = Effect.gen(function* () {
         remoteName: headContext.remoteName,
       });
       if (upstreamBranch.length > 0 && upstreamBranch !== branch) {
-        return upstreamBranch;
+        return { baseBranch: upstreamBranch, baseRef: upstreamBranch };
       }
     }
 
@@ -1993,7 +2005,7 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
     if (defaultFromProvider) {
-      return defaultFromProvider;
+      return { baseBranch: defaultFromProvider, baseRef: defaultFromProvider };
     }
 
     const defaultFromRemote = yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
@@ -2001,10 +2013,10 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
     if (defaultFromRemote) {
-      return defaultFromRemote;
+      return { baseBranch: defaultFromRemote, baseRef: defaultFromRemote };
     }
 
-    return "main";
+    return { baseBranch: "main", baseRef: "main" };
   });
 
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
@@ -2235,13 +2247,18 @@ export const make = Effect.gen(function* () {
       };
     }
 
-    const baseBranch = yield* resolveBaseBranch(cwd, branch, details.upstreamRef, headContext);
+    const { baseBranch, baseRef } = yield* resolvePrBase(
+      cwd,
+      branch,
+      details.upstreamRef,
+      headContext,
+    );
     yield* emit({
       kind: "phase_started",
       phase: "pr",
       label: `Generating ${terms.shortLabel} content...`,
     });
-    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
+    const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =

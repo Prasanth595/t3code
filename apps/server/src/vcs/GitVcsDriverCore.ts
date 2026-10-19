@@ -3144,7 +3144,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
-  const resolveBranchName = Effect.fn("GitVcsDriver.resolveBranchName")(function* (
+  const resolveBranchBase = Effect.fn("GitVcsDriver.resolveBranchBase")(function* (
     cwd: string,
     refName: string,
   ) {
@@ -3159,19 +3159,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         Effect.orElseSucceed(() => null),
       );
       return remoteName && (yield* remoteBranchExists({ cwd, remoteName, refName }))
-        ? refName
+        ? { baseRef: `${remoteName}/${refName}`, branchName: refName }
         : null;
     }
     const ref = result.stdout.trim();
-    if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+    if (ref.startsWith("refs/heads/")) {
+      const branchName = ref.slice("refs/heads/".length);
+      return { baseRef: branchName, branchName };
+    }
     if (!ref.startsWith("refs/remotes/")) return null;
     const remoteNames = yield* listRemoteNames(cwd);
-    return (
-      parseRemoteRefWithRemoteNames(
-        ref.slice("refs/remotes/".length),
-        remoteNames.toSorted((left, right) => right.length - left.length),
-      )?.branchName ?? null
+    const remoteRef = parseRemoteRefWithRemoteNames(
+      ref.slice("refs/remotes/".length),
+      remoteNames.toSorted((left, right) => right.length - left.length),
     );
+    return remoteRef ? { baseRef: remoteRef.remoteRef, branchName: remoteRef.branchName } : null;
+  });
+
+  const resolveBranchName = Effect.fn("GitVcsDriver.resolveBranchName")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const base = yield* resolveBranchBase(cwd, refName);
+    return base?.branchName ?? null;
   });
 
   const readGitRefsSnapshot = Effect.fn("readGitRefsSnapshot")(function* (gitCommonDir: string) {
@@ -3597,12 +3607,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     if (input.newRefName && input.baseRefName) {
-      const baseBranch = yield* resolveBranchName(input.cwd, input.baseRefName);
-      if (baseBranch) {
+      const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
+      if (base) {
         yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
           "config",
           `branch.${input.newRefName}.gh-merge-base`,
-          baseBranch,
+          base.baseRef,
         ]);
       }
     }
