@@ -1491,7 +1491,7 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
   }),
 );
 
-it.effect("launches from the fetched commit of a differently named tracked branch", () =>
+it.effect("launches from the fetched commit of the same-named tracked branch", () =>
   Effect.gen(function* () {
     const created =
       yield* Deferred.make<
@@ -1518,7 +1518,7 @@ it.effect("launches from the fetched commit of a differently named tracked branc
         launchInput({
           command: "command:launch:tracked-base",
           thread: "thread:launch:tracked-base",
-          workspace: { type: "worktree", baseRef: "work", startFromOrigin: true },
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
         }),
       );
       const worktree = yield* Deferred.await(created);

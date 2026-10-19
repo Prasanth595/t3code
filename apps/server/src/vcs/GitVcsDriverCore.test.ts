@@ -4299,12 +4299,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const upstream = yield* makeTmpDir("git-upstream-");
         const fork = yield* makeTmpDir("git-fork-");
         yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["branch", "-M", "work"]);
+        yield* git(cwd, ["branch", "-M", "main"]);
         yield* git(upstream, ["init", "--bare"]);
         yield* git(fork, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", fork]);
         yield* git(cwd, ["remote", "add", "upstream", upstream]);
-        yield* git(cwd, ["push", "-u", "upstream", "work:main"]);
+        yield* git(cwd, ["push", "-u", "upstream", "main"]);
         yield* git(cwd, ["push", "origin", "HEAD:main", "HEAD:origin/main"]);
         const stale = yield* git(cwd, ["rev-parse", "HEAD"]);
         yield* git(cwd, ["commit", "--allow-empty", "-m", "advance upstream"]);
@@ -4318,7 +4318,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(yield* git(cwd, ["rev-parse", "origin/origin/main"]), stale);
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const base = yield* driver.resolveBaseRemote({ cwd, refName: "work" });
+        const base = yield* driver.resolveBaseRemote({ cwd, refName: "main" });
         assert.deepEqual(base, { remoteName: "upstream", branchName: "main" });
         const refName = `${base!.remoteName}/${base!.branchName}`;
         yield* driver.fetchRemote({ cwd, remoteName: base!.remoteName, refName });
@@ -4357,18 +4357,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           { commitSha: forkHead, remoteRefName: "origin/origin/main" },
         );
 
-        yield* git(cwd, ["config", "--unset", "branch.work.merge"]);
+        yield* git(cwd, ["config", "--unset", "branch.main.merge"]);
+        assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "main" }), {
+          remoteName: "origin",
+          branchName: "main",
+        });
+        yield* git(cwd, ["config", "branch.main.merge", "refs/heads/main"]);
+        yield* git(cwd, ["config", "branch.main.remote", "."]);
+        assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "main" }), {
+          remoteName: "origin",
+          branchName: "main",
+        });
+        yield* git(cwd, ["switch", "-c", "work", "upstream/main"]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "unpushed work"]);
+        assert.notEqual(yield* git(cwd, ["rev-parse", "work"]), upstreamHead);
         assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "work" }), {
           remoteName: "origin",
           branchName: "work",
         });
-        yield* git(cwd, ["config", "branch.work.merge", "refs/heads/main"]);
-        yield* git(cwd, ["config", "branch.work.remote", "."]);
-        assert.deepEqual(yield* driver.resolveBaseRemote({ cwd, refName: "work" }), {
-          remoteName: "origin",
-          branchName: "work",
-        });
+        assert.isFalse(
+          yield* driver.remoteBranchExists({ cwd, remoteName: "origin", refName: "work" }),
+        );
+
         yield* git(cwd, ["remote", "remove", "origin"]);
+        assert.isNull(yield* driver.resolveBaseRemote({ cwd, refName: "main" }));
         assert.isNull(yield* driver.resolveBaseRemote({ cwd, refName: "work" }));
       }),
     );

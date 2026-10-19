@@ -526,7 +526,7 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
-  it.effect("hands off from the fetched commit of a differently named tracked branch", () => {
+  it.effect("hands off from the fetched commit of the same-named tracked branch", () => {
     const resolveRemoteTrackingCommit = vi.fn(() =>
       Effect.succeed({ commitSha: "upstream-main-sha", remoteRefName: "upstream/main" }),
     );
@@ -539,7 +539,7 @@ describe("t3_worktree_handoff", () => {
     return Effect.gen(function* () {
       const result = yield* runHandoff(harness, {
         branch: "feature/tracked-base",
-        baseRef: "work",
+        baseRef: "main",
         startFromOrigin: true,
       });
       expect(harness.fetchRemote).toHaveBeenCalledWith({
