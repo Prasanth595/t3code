@@ -66,7 +66,6 @@ function recoveryHint(error: RelayProtectedError): string {
   }
 }
 
-/** Preserve relay diagnostics before converting permanent rejections into non-retryable errors. */
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
 ) {
@@ -105,6 +104,17 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
           clockSkewSeconds,
         });
 
+  // The only 401 that clears itself: a proof signed with a skewed clock (a host
+  // that booted before NTP) expires on arrival, and the next attempt signs a new
+  // one. It is recognized only from a schema-decoded relay body. Every other
+  // 401, including a revoked bearer or an undecodable body, stays permanent.
+  if (
+    response.status === 401 &&
+    Option.isSome(decoded) &&
+    decoded.value._tag === "RelayEnvironmentLinkProofExpiredError"
+  ) {
+    return yield* new RelayRequestError({ rejection: "unavailable", description });
+  }
   if (response.status === 401) {
     return yield* refusal("unauthorized");
   }
