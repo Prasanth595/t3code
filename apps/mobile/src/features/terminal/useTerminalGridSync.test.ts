@@ -104,7 +104,44 @@ it("checks the current target grant before dispatching a delayed resize", async 
 
 afterEach(async () => {
   await act(() => root.unmount());
+  vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("sends only the settled Android grid through repeated keyboard transitions", async () => {
+  vi.useFakeTimers();
+  const current = { ...input(), settleDelayMs: 120 };
+  await render(current);
+  for (const finalRows of [12, 40, 12, 40]) {
+    for (let rows = 20; rows !== finalRows; rows += finalRows > 20 ? 1 : -1) {
+      await render({ ...current, size: { cols: 80, rows } });
+      await act(() => vi.advanceTimersByTime(16));
+    }
+    const previousCalls = resize.mock.calls.length;
+    await render({ ...current, size: { cols: 80, rows: finalRows } });
+    await act(() => vi.advanceTimersByTime(119));
+    expect(resize).toHaveBeenCalledTimes(previousCalls);
+    await act(() => vi.advanceTimersByTime(1));
+    expect(resize).toHaveBeenCalledTimes(previousCalls + 1);
+    expect(resize).toHaveBeenLastCalledWith({
+      environmentId: "environment",
+      input: { threadId: "thread", terminalId: "term-1", cols: 80, rows: finalRows },
+    });
+  }
+  expect(resize).toHaveBeenCalledTimes(4);
+});
+
+it("cancels a settling grid for an old terminal and rechecks permission at dispatch", async () => {
+  vi.useFakeTimers();
+  const current = { ...input(), settleDelayMs: 120 };
+  await render(current);
+  await act(() => vi.advanceTimersByTime(100));
+  await render({ ...current, terminalId: "term-2", size: { cols: 120, rows: 40 } });
+  await act(() => vi.advanceTimersByTime(20));
+  expect(resize).not.toHaveBeenCalled();
+  access.environments.clear();
+  await act(() => vi.advanceTimersByTime(100));
+  expect(resize).not.toHaveBeenCalled();
 });
 
 it("replays an observer's measured grid once its writable attachment snapshot arrives", async () => {
