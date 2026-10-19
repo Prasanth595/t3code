@@ -3500,8 +3500,24 @@ it.layer(
       ),
     );
 
-    it.effect("waits for a healthy claude CLI that is slow to answer --version", () =>
+    it.effect.each([
+      {
+        name: "accepts a healthy claude --version response after 19 seconds",
+        answer: Effect.sleep("19 seconds"),
+        elapsed: 19_000,
+        status: "ready",
+        version: "1.0.0",
+      },
+      {
+        name: "bounds a hung claude --version probe",
+        answer: Effect.never,
+        elapsed: 21_000,
+        status: "error",
+        version: null,
+      },
+    ])("$name", ({ answer, elapsed, status: expectedStatus, version }) =>
       Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
         const statusFiber = yield* checkClaudeProviderStatus(
           defaultClaudeSettings,
           claudeCapabilities(),
@@ -3510,26 +3526,20 @@ it.layer(
             Layer.succeed(
               ChildProcessSpawner.ChildProcessSpawner,
               ChildProcessSpawner.make((command) => {
-                const joined = (command as unknown as { args: ReadonlyArray<string> }).args.join(
-                  " ",
+                assert.deepStrictEqual(
+                  (command as unknown as { args: ReadonlyArray<string> }).args,
+                  ["--version"],
                 );
-                if (joined !== "--version") throw new Error(`Unexpected args: ${joined}`);
-                // The native CLI can take several seconds to start on a busy Windows host.
-                const answer = Effect.sleep("19 seconds");
                 return Effect.succeed(
                   ChildProcessSpawner.makeHandle({
-                    pid: ChildProcessSpawner.ProcessId(1),
+                    ...mockHandle({ stdout: "", stderr: "", code: 0 }),
                     exitCode: answer.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-                    isRunning: Effect.succeed(true),
-                    kill: () => Effect.void,
-                    unref: Effect.succeed(Effect.void),
-                    stdin: Sink.drain,
-                    stdout: Stream.fromEffect(answer.pipe(Effect.as(encoder.encode("1.0.0
-")))),
-                    stderr: Stream.empty,
-                    all: Stream.empty,
-                    getInputFd: () => Sink.drain,
-                    getOutputFd: () => Stream.empty,
+                    stdout: Stream.fromEffect(
+                      Deferred.succeed(started, undefined).pipe(
+                        Effect.andThen(answer),
+                        Effect.as(encoder.encode("1.0.0\n")),
+                      ),
+                    ),
                   }),
                 );
               }),
@@ -3537,13 +3547,16 @@ it.layer(
           ),
           Effect.forkChild,
         );
-        for (let second = 0; second < 20; second++) {
-          yield* Effect.yieldNow;
-          yield* TestClock.adjust("1 second");
-        }
+        yield* Deferred.await(started);
+        yield* TestClock.adjust(elapsed);
+
         const status = yield* Fiber.join(statusFiber);
-        assert.strictEqual(status.status, "ready");
-        assert.strictEqual(status.version, "1.0.0");
+        assert.strictEqual(status.status, expectedStatus);
+        assert.strictEqual(status.installed, true);
+        assert.strictEqual(status.version, version);
+        if (expectedStatus === "error") {
+          assert.include(status.message, "Timed out while running command.");
+        }
       }),
     );
 
