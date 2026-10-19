@@ -33,6 +33,8 @@ import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
+import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -69,6 +71,10 @@ export class PreviewAutomationBroker extends Context.Service<
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
+    readonly handleRequest: <A, E, R>(
+      request: Pick<PreviewAutomationResponse, "clientId" | "connectionId" | "requestId">,
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A | undefined, E, R>;
     readonly invoke: <A = unknown>(
       request: PreviewAutomationInvokeInput,
     ) => Effect.Effect<A, PreviewAutomationError>;
@@ -88,6 +94,7 @@ interface ClientConnection {
 }
 
 interface PendingRequest {
+  readonly scope: Scope.Scope;
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
@@ -497,9 +504,26 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     }
   });
 
+  const handleRequest: PreviewAutomationBroker["Service"]["handleRequest"] = Effect.fn(
+    "PreviewAutomationBroker.handleRequest",
+  )(function* (request, effect) {
+    const current = yield* SynchronizedRef.get(state);
+    const pending = current.pending.get(request.requestId);
+    if (
+      !pending ||
+      pending.context.clientId !== request.clientId ||
+      pending.context.connectionId !== request.connectionId
+    )
+      return;
+    // In-process host work belongs to the caller, including interruption cleanup.
+    const fiber = yield* Effect.forkIn(effect, pending.scope);
+    return yield* Fiber.join(fiber);
+  });
+
   const invoke = Effect.fn("PreviewAutomationBroker.invoke")(function* <A = unknown>(
     input: Parameters<PreviewAutomationBroker["Service"]["invoke"]>[0],
-  ): Effect.fn.Return<A, PreviewAutomationError> {
+  ): Effect.fn.Return<A, PreviewAutomationError, Scope.Scope> {
+    const requestScope = yield* Effect.scope;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
     const route = yield* SynchronizedRef.modify(state, (current) => {
       const assignments = new Map(
@@ -586,7 +610,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
         ...selectorDiagnostics,
       };
       const pending = new Map(current.pending);
-      pending.set(requestId, { queue: connection.queue, deferred, context });
+      pending.set(requestId, { queue: connection.queue, deferred, context, scope: requestScope });
       return [
         { connection, requestId, requestContext: context, requestSequence },
         { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
@@ -692,9 +716,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       return { ...current, assignments };
     });
     return result;
-  });
+  }, Effect.scoped);
 
-  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke, handleRequest });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);
