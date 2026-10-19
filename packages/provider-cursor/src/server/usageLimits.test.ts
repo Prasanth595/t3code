@@ -340,7 +340,7 @@ describe("Cursor usage limits", () => {
     );
 
     it.effect(
-      "asks to sign in again for an expired or rejected login without using host logins",
+      "clears expired or rejected login usage and reports transient failures without using host logins",
       () =>
         Effect.gen(function* () {
           const expired = readWithLogin({ status: "expired" }, () => {
@@ -348,10 +348,21 @@ describe("Cursor usage limits", () => {
           });
           const rejected = readWithLogin(login, () => new Response("rejected", { status: 401 }));
           for (const { read } of [expired, rejected]) {
-            expect((yield* read).unavailable).toEqual({
-              reason: "probeFailed",
-              message: expect.stringContaining("Sign in again"),
+            expect(yield* read).toMatchObject({
+              windows: [],
+              unavailable: {
+                reason: "unsupported",
+                message: expect.stringContaining("Sign in again"),
+              },
             });
+          }
+          for (const failedUrl of [exchangeUrl, usageUrl]) {
+            const transient = readWithLogin(login, (request) =>
+              request.url === failedUrl
+                ? new Response(null, { status: 500 })
+                : Response.json({ accessToken: "exchanged-access-token" }),
+            );
+            expect((yield* transient.read).unavailable?.reason).toBe("probeFailed");
           }
           expect(expired.requests).toEqual([]);
           expect(rejected.requests.map((request) => request.url)).toEqual([exchangeUrl]);

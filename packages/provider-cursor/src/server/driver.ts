@@ -228,8 +228,7 @@ export const CursorDriver: ProviderDriver<
             Effect.flatMap((snapshot) =>
               effectiveConfig.enabled &&
               snapshot.installed &&
-              // An expired login still probes so the "sign in again" message reaches Usage.
-              (snapshot.auth.status === "authenticated" || storedLogin?.status === "expired")
+              snapshot.auth.status === "authenticated"
                 ? host.settings.get.pipe(
                     Effect.flatMap((settings) =>
                       readCursorUsageLimits(
@@ -239,20 +238,7 @@ export const CursorDriver: ProviderDriver<
                         storedLogin,
                       ),
                     ),
-                    Effect.map((usageLimits) => {
-                      const notice = usageLimits.unavailable;
-                      // Managed snapshots retain last good limits, so failures also need a provider message.
-                      return {
-                        ...snapshot,
-                        usageLimits,
-                        ...(notice?.reason === "probeFailed" && notice.message
-                          ? {
-                              status: snapshot.status === "ready" ? "warning" : snapshot.status,
-                              message: [snapshot.message, notice.message].filter(Boolean).join(" "),
-                            }
-                          : {}),
-                      };
-                    }),
+                    Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
                   )
                 : Effect.succeed(snapshot),
             ),

@@ -94,7 +94,8 @@ it.layer(layerTest)("CursorDriver", (it) => {
         const openedKeys: Array<string | undefined> = [];
         let closed = 0;
         const requests: string[] = [];
-        let rejectExchange = false;
+        let failureUrl: string | undefined;
+        let failureStatus = 500;
         const usageClient = HttpClient.make((request) => {
           requests.push(request.url);
           const exchange = request.url.endsWith("/auth/exchange_user_api_key");
@@ -104,8 +105,8 @@ it.layer(layerTest)("CursorDriver", (it) => {
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
-              exchange && rejectExchange
-                ? new Response(null, { status: 401 })
+              request.url === failureUrl
+                ? new Response(null, { status: failureStatus })
                 : Response.json(
                     exchange
                       ? { accessToken: "browser-access-token" }
@@ -175,12 +176,35 @@ it.layer(layerTest)("CursorDriver", (it) => {
           Effect.provideService(HttpClient.HttpClient, usageClient),
         );
         expect((yield* recreated.snapshot.refresh).auth.status).toBe("authenticated");
-        rejectExchange = true;
+        for (const url of requests.slice(0, 2)) {
+          failureUrl = url;
+          const snapshot = yield* instance.snapshot.refresh;
+          expect(snapshot).toMatchObject({
+            status: "ready",
+            auth: { status: "authenticated" },
+            usageLimits: { windows: [{ id: "totalPercentUsed", usedPercent: 23 }] },
+          });
+          expect(snapshot.message).toBeUndefined();
+        }
+        failureUrl = requests[0];
+        failureStatus = 401;
         expect(yield* instance.snapshot.refresh).toMatchObject({
-          status: "warning",
-          message: expect.stringContaining("Sign in again"),
-          usageLimits: { windows: [{ id: "totalPercentUsed", usedPercent: 23 }] },
+          status: "ready",
+          auth: { status: "authenticated" },
+          usageLimits: { windows: [], unavailable: { reason: "unsupported" } },
         });
+        failureUrl = undefined;
+        expect((yield* instance.snapshot.refresh).usageLimits?.windows[0]?.usedPercent).toBe(23);
+        const { store } = yield* makeCursorCredentialStore(input.instanceId);
+        yield* Effect.promise(async () => {
+          const credentials = await store.load();
+          await store.save({ ...credentials!, apiKeyExpiresAtMs: 0 });
+        });
+        const requestCount = requests.length;
+        const expired = yield* instance.snapshot.refresh;
+        expect(expired.auth.status).toBe("unauthenticated");
+        expect(expired.usageLimits).toBeUndefined();
+        expect(requests).toHaveLength(requestCount);
         yield* instance.auth!.logout(Effect.void);
         expect(closed).toBe(1);
         expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");

@@ -86,7 +86,7 @@ const requestUsage = (endpoint: string, token: string, clientType: "cli" | "sdk"
 const signInAgain = (checkedAt: string) =>
   makeUnavailableUsageLimits({
     checkedAt,
-    reason: "probeFailed",
+    reason: "unsupported",
     message: "Cursor sign-in expired or was rejected. Sign in again in provider settings.",
   });
 
