@@ -115,7 +115,7 @@ function CloudEnvironmentRowsContent(
         if (result._tag === "Success") {
           refreshManagedRelayEnvironments(session.accountId);
           if (appAtomRegistry.get(managedRelaySessionAtom) === session) {
-            await controller.refreshRelayEnvironments();
+            await controller.refreshRelayEnvironmentsAfterMutation();
           }
           return;
         }

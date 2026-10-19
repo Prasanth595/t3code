@@ -48,6 +48,11 @@ export function useConnectionController() {
     "relay environment refresh",
   );
 
+  const refreshRelayEnvironmentsAfterMutation = useAtomCommand(
+    relayEnvironmentDiscovery.refreshAfterMutation,
+    "relay environment refresh after mutation",
+  );
+
   const registeredIds = useMemo(
     () => relayManagedEnvironmentIds(connectedEnvironments),
     [connectedEnvironments],
@@ -131,5 +136,6 @@ export function useConnectionController() {
     setEnvironmentEnabled,
     updateEnvironment,
     refreshRelayEnvironments,
+    refreshRelayEnvironmentsAfterMutation,
   };
 }
