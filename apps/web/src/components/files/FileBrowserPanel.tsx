@@ -494,10 +494,11 @@ export default function FileBrowserPanel({
   }, [directoryPaths, expandAll, model, query]);
 
   useEffect(() => {
-    if (shouldSkipInitialReveal(selectedPath, selectedPathRevealId) || !selectedPath) {
+    if (!selectedPath) {
       handledRevealRef.current = null;
       return;
     }
+    const skipInitialReveal = shouldSkipInitialReveal(selectedPath, selectedPathRevealId);
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
     const handledReveal = handledRevealRef.current;
     const sameReveal =
@@ -516,9 +517,13 @@ export default function FileBrowserPanel({
     const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
     const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
-    if (sameReveal && model.isSearchOpen()) {
+    // A retained preview needs selection in the new model without replaying its reveal.
+    if (skipInitialReveal || (sameReveal && model.isSearchOpen())) {
       handledRevealRef.current = revealRequest;
       syncingSelectionRef.current = true;
+      for (const path of model.getSelectedPaths()) {
+        model.getItem(path)?.deselect();
+      }
       selectedItem.select();
       queueMicrotask(() => {
         syncingSelectionRef.current = false;
