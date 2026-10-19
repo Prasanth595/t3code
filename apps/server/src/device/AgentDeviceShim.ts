@@ -1,15 +1,4 @@
 // @effect-diagnostics preferSchemaOverJson:off - JSON string literals embed paths safely into generated JavaScript.
-/**
- * A directory holding an `agent-device` launcher that runs the pinned install
- * with a Node runtime. Prepended to provider subprocess PATHs so the agent
- * types `agent-device …` and gets the version the injected instructions were
- * written for, regardless of what is or is not globally installed.
- *
- * On desktop the runtime is the Electron app binary, which starts the desktop
- * app unless `ELECTRON_RUN_AS_NODE` is set. Provider shells can drop inherited
- * variables (Codex's `shell_environment_policy`), so the launchers set it
- * themselves.
- */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
