@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   getProviderSummary,
   getProviderVersionAdvisoryPresentation,
-  isAntigravitySignInUnchecked,
+  getProviderStatusKey,
 } from "./providerStatus";
 
 const provider: ServerProvider = {
@@ -84,39 +84,73 @@ describe("Antigravity with unchecked sign-in", () => {
     message: "Antigravity is installed. Google account access is not checked yet.",
   };
 
-  it("reads as installed instead of needing attention", () => {
-    expect(isAntigravitySignInUnchecked(unchecked)).toBe(true);
-    expect(getProviderSummary(unchecked).headline).toBe("Installed · Sign-in required");
+  it("presents an unchecked Google sign-in neutrally without claiming authentication is required", () => {
+    for (const auth of [unchecked.auth, { status: "unknown", type: "oauth-personal" }] as const) {
+      const candidate = { ...unchecked, auth };
+      expect.soft(getProviderSummary(candidate)).toEqual({
+        headline: "Installed · Sign-in not checked",
+        detail: unchecked.message,
+      });
+      expect(getProviderStatusKey(candidate)).toBe("neutral");
+    }
   });
 
-  it.each(["oauth-personal", "oauth-business"])("applies to the %s method", (type) => {
-    const withMethod = { ...unchecked, auth: { status: "unknown" as const, type } };
-    expect(isAntigravitySignInUnchecked(withMethod)).toBe(true);
-  });
-
-  it.each(["gemini-api-key", "agent-platform"])(
-    "keeps Needs attention for the %s method, which never signs in with Google",
-    (type) => {
-      const withMethod = { ...unchecked, auth: { status: "unknown" as const, type } };
-      expect(isAntigravitySignInUnchecked(withMethod)).toBe(false);
-      expect(getProviderSummary(withMethod).headline).toBe("Needs attention");
-    },
-  );
-
-  it("keeps confirmed sign-out, probe failures and a missing install as they were", () => {
-    expect(getProviderSummary({ ...unchecked, auth: { status: "unauthenticated" } }).headline).toBe(
-      "Not authenticated",
-    );
-    expect(getProviderSummary({ ...unchecked, status: "error" }).headline).toBe("Unavailable");
-    expect(getProviderSummary({ ...unchecked, installed: false }).headline).toBe("Not found");
-    expect(isAntigravitySignInUnchecked({ ...unchecked, status: "error" })).toBe(false);
-    expect(isAntigravitySignInUnchecked({ ...unchecked, installed: false })).toBe(false);
-  });
-
-  it("leaves other providers' unverified warnings as Needs attention", () => {
-    const codex = { ...provider, status: "warning" as const, auth: { status: "unknown" as const } };
-    expect(isAntigravitySignInUnchecked(codex)).toBe(false);
-    expect(getProviderSummary(codex).headline).toBe("Needs attention");
+  it("preserves actionable warnings, failures and disabled states outside unchecked Google sign-in", () => {
+    const cases = [
+      {
+        name: "confirmed sign-out",
+        change: { auth: { status: "unauthenticated" } },
+        headline: "Not authenticated",
+        status: "warning",
+      },
+      {
+        name: "warning despite known authentication",
+        change: { auth: { status: "authenticated" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "probe failure",
+        change: { status: "error" },
+        headline: "Unavailable",
+        status: "error",
+      },
+      {
+        name: "missing CLI",
+        change: { installed: false },
+        headline: "Not found",
+        status: "warning",
+      },
+      {
+        name: "API key authentication",
+        change: { auth: { status: "unknown", type: "gemini-api-key" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "Agent Platform authentication",
+        change: { auth: { status: "unknown", type: "agent-platform" } },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "another provider",
+        change: { driver: provider.driver },
+        headline: "Needs attention",
+        status: "warning",
+      },
+      {
+        name: "disabled provider",
+        change: { enabled: false },
+        headline: "Disabled",
+        status: "disabled",
+      },
+    ] as const;
+    for (const { name, change, headline, status } of cases) {
+      const candidate = { ...unchecked, ...change };
+      expect.soft(getProviderSummary(candidate).headline, name).toBe(headline);
+      expect.soft(getProviderStatusKey(candidate), name).toBe(status);
+    }
   });
 });
 

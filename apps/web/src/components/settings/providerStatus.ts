@@ -11,6 +11,9 @@ export const PROVIDER_STATUS_STYLES = {
   error: {
     dot: "bg-destructive",
   },
+  neutral: {
+    dot: "bg-muted-foreground",
+  },
   ready: {
     dot: "bg-success",
   },
@@ -21,12 +24,9 @@ export const PROVIDER_STATUS_STYLES = {
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
-/**
- * Antigravity's local health check proves the install, not the Google account,
- * so a healthy install reports `warning` with auth still unknown. API-key and
- * Agent Platform methods never sign in with Google, so their warnings are real.
- */
-export function isAntigravitySignInUnchecked(provider: ServerProvider): boolean {
+// Antigravity's local health check verifies installation, not Google sign-in.
+// API-key and Agent Platform warnings still need attention.
+function isAntigravitySignInUnchecked(provider: ServerProvider): boolean {
   return (
     provider.driver === "antigravity" &&
     provider.installed &&
@@ -36,6 +36,12 @@ export function isAntigravitySignInUnchecked(provider: ServerProvider): boolean 
       provider.auth.type === "oauth-personal" ||
       provider.auth.type === "oauth-business")
   );
+}
+
+export function getProviderStatusKey(provider: ServerProvider | undefined): ProviderStatusKey {
+  if (provider && !provider.enabled) return "disabled";
+  if (provider && isAntigravitySignInUnchecked(provider)) return "neutral";
+  return provider?.status ?? "warning";
 }
 
 export function getProviderSummary(provider: ServerProvider | undefined) {
@@ -67,7 +73,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
   }
   if (isAntigravitySignInUnchecked(provider)) {
     return {
-      headline: "Installed · Sign-in required",
+      headline: "Installed · Sign-in not checked",
       detail: provider.message ?? null,
     };
   }
