@@ -19,8 +19,7 @@ import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 const BOOTSTRAP_TRANSIENT_RETRY_TIMEOUT = Duration.seconds(15);
 const BOOTSTRAP_TRANSIENT_RETRY_INTERVAL = Duration.millis(500);
 const TRANSIENT_BOOTSTRAP_STATUS_CODES = new Set([502, 503, 504]);
-// The backend closes a bearer session's sockets when it expires, so hand out a
-// fresh token a little before then rather than one that is about to die.
+// Renew before expiry closes the session's sockets.
 const BEARER_TOKEN_RENEWAL_SKEW_MS = 60_000;
 
 const isTransientBearerBootstrapError = (error: RemoteEnvironmentRequestError): boolean => {

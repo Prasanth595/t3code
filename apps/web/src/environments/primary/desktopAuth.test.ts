@@ -16,29 +16,30 @@ describe("desktop primary auth", () => {
     Reflect.deleteProperty(globalThis, "window");
   });
 
-  it("shares one main-process request between concurrent renderer reads", async () => {
-    const getLocalEnvironmentBearerToken = vi.fn().mockResolvedValue("desktop-bearer-token");
-    window.desktopBridge = {
-      getLocalEnvironmentBearerToken,
-    } as unknown as DesktopBridge;
-
-    await expect(
-      Promise.all([readDesktopPrimaryBearerToken(), readDesktopPrimaryBearerToken()]),
-    ).resolves.toEqual(["desktop-bearer-token", "desktop-bearer-token"]);
-    expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(1);
-  });
-
-  it("picks up a bearer token the main process renewed", async () => {
+  it("shares in-flight reads but asks the main process again after they settle", async () => {
+    let resolveToken!: (token: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      resolveToken = resolve;
+    });
     const getLocalEnvironmentBearerToken = vi
       .fn()
-      .mockResolvedValueOnce("desktop-bearer-token-1")
-      .mockResolvedValueOnce("desktop-bearer-token-2");
+      .mockReturnValueOnce(pending)
+      .mockResolvedValueOnce("renewed-bearer-token");
     window.desktopBridge = {
       getLocalEnvironmentBearerToken,
     } as unknown as DesktopBridge;
 
-    await expect(readDesktopPrimaryBearerToken()).resolves.toBe("desktop-bearer-token-1");
-    await expect(readDesktopPrimaryBearerToken()).resolves.toBe("desktop-bearer-token-2");
+    const first = readDesktopPrimaryBearerToken();
+    const second = readDesktopPrimaryBearerToken();
+    expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(1);
+    resolveToken("initial-bearer-token");
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      "initial-bearer-token",
+      "initial-bearer-token",
+    ]);
+
+    await expect(readDesktopPrimaryBearerToken()).resolves.toBe("renewed-bearer-token");
+    expect(getLocalEnvironmentBearerToken).toHaveBeenCalledTimes(2);
   });
 
   it("does not require desktop auth in a browser", async () => {

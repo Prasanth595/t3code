@@ -9,8 +9,7 @@ export function readDesktopPrimaryBearerToken(): Promise<string | null> {
     return Promise.resolve(null);
   }
 
-  // The main process caches and renews the token, so only share a request
-  // that is still in flight.
+  // Main owns expiry and renewal; only share pending reads here.
   desktopBearerTokenPromise ??= bridge.getLocalEnvironmentBearerToken().finally(() => {
     desktopBearerTokenPromise = null;
   });
