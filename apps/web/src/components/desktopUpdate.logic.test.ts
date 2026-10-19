@@ -271,7 +271,7 @@ describe("desktop update UI helpers", () => {
     ).toBe(false);
   });
 
-  it("shows an Apple Silicon warning for Intel builds under Rosetta", () => {
+  it("describes an emulated x64 build without assuming the host platform", () => {
     const state: DesktopUpdateState = {
       ...baseState,
       hostArch: "arm64",
@@ -280,8 +280,10 @@ describe("desktop update UI helpers", () => {
     };
 
     expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Apple Silicon");
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Intel build");
+    const description = getArm64IntelBuildWarningDescription(state);
+    expect(description).toMatch(/ARM64/i);
+    expect(description).toContain("x64");
+    expect(description).not.toMatch(/Mac|Apple Silicon|Rosetta|Intel/i);
   });
 
   it("changes the warning copy when a native build update is ready to download", () => {
@@ -294,7 +296,17 @@ describe("desktop update UI helpers", () => {
       availableVersion: "1.1.0",
     };
 
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Download the available update");
+    const description = getArm64IntelBuildWarningDescription(state);
+    expect(description).toContain("Download the available update");
+    expect(description).not.toMatch(/Mac|Apple Silicon|Rosetta|Intel/i);
+
+    const downloaded = getArm64IntelBuildWarningDescription({
+      ...state,
+      status: "downloaded",
+      downloadedVersion: "1.1.0",
+    });
+    expect(downloaded).toContain("Restart");
+    expect(downloaded).not.toMatch(/Mac|Apple Silicon|Rosetta|Intel/i);
   });
 
   it("includes the downloaded version in the install confirmation copy", () => {

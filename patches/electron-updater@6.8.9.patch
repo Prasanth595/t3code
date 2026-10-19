@@ -1,39 +1,25 @@
 diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
 --- a/out/NsisUpdater.js
 +++ b/out/NsisUpdater.js
-@@ -27,10 +27,35 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
-             this._verifyUpdateCodeSignature = value;
-         }
-     }
-+    /** Filters update files to the appropriate architecture.
-+     * On arm64 Windows hosts (including x64 builds running under Prism translation),
-+     * arm64 files are preferred when available. On x64 hosts, arm64 files are excluded. */
-+    static filterFilesForArch(files, isArm64Windows) {
-+        const isArm64File = (file) => { var _a; return file.url.pathname.includes("arm64") || ((_a = file.info.url) === null || _a === void 0 ? void 0 : _a.includes("arm64")); };
-+        const hasExplicitArch = files.some(file => /(?:^|[\/_-])(?:arm64|x64|ia32)(?=[\/_.-]|$)/i.test(file.url.pathname) || /(?:^|[\/_-])(?:arm64|x64|ia32)(?=[\/_.-]|$)/i.test(file.info.url || ""));
-+        if (!hasExplicitArch) {
-+            return files;
-+        }
-+        if (isArm64Windows && (process.arch === "arm64" || files.some(isArm64File))) {
-+            return files.filter(file => isArm64Windows === isArm64File(file));
-+        }
-+        return files.filter(file => !isArm64File(file));
-+    }
+@@ -30,7 +30,21 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
      /*** @private */
      doDownloadUpdate(downloadUpdateOptions) {
-+        var _a;
          const provider = downloadUpdateOptions.updateInfoAndProvider.provider;
 -        const fileInfo = (0, Provider_1.findFile)(provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info), "exe");
-+        let isArm64Translation = false;
-+        try {
-+            const electronApp = (_a = this.app) === null || _a === void 0 ? void 0 : _a.app;
-+            isArm64Translation = (electronApp != null ? electronApp.runningUnderARM64Translation : require("electron").app.runningUnderARM64Translation) === true;
++        let files = provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info);
++        const isArm64 = process.arch === "arm64" || this.app.app?.runningUnderARM64Translation === true || (process.env["PROCESSOR_ARCHITEW6432"] || "").toUpperCase() === "ARM64";
++        const hostArch = isArm64 ? "arm64" : process.arch;
++        const fileArch = (file) => {
++            const arch = path.posix.basename(file.url.pathname).match(/(?:^|[-_.])(arm64|aarch64|x64|x86_64|amd64|ia32)(?=[-_.]|$)/i)?.[1]?.toLowerCase();
++            if (arch === "aarch64") return "arm64";
++            if (arch === "x86_64" || arch === "amd64") return "x64";
++            return arch;
++        };
++        files = files.filter(file => file.url.pathname.toLowerCase().endsWith(".exe"));
++        // Keep legacy untagged installers, but never fall back to another architecture.
++        if (files.some(file => fileArch(file) !== undefined)) {
++            files = files.filter(file => fileArch(file) === hostArch);
 +        }
-+        catch (_ignored) {
-+            // ignore
-+        }
-+        const isArm64Windows = process.arch === "arm64" || isArm64Translation || (process.env["PROCESSOR_ARCHITEW6432"] || "").toUpperCase() === "ARM64";
-+        const files = NsisUpdater.filterFilesForArch(provider.resolveFiles(downloadUpdateOptions.updateInfoAndProvider.info), isArm64Windows);
 +        const fileInfo = (0, Provider_1.findFile)(files, "exe");
          return this.executeDownload({
              fileExtension: "exe",

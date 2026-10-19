@@ -64,6 +64,8 @@ type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
 
 const UpdateInfo = Schema.Struct({
   version: Schema.String,
+  files: Schema.optional(Schema.Array(Schema.Struct({ url: Schema.String }))),
+  path: Schema.optional(Schema.String),
   // Left unvalidated on purpose: a malformed release-notes payload must never
   // fail the decode and block the update state transition. The shape is
   // validated defensively in normalizeDesktopUpdateReleaseNotes.
@@ -333,48 +335,28 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
-const EXPLICIT_ARCH_FILE_PATTERN = /(?:^|[-_.])(arm64|aarch64|x64|x86_64|amd64)(?:[-_.]|$)/i;
-const ARM64_ARCH_FILE_PATTERN = /(?:^|[-_.])(arm64|aarch64)(?:[-_.]|$)/i;
-
-/**
- * Filters `updateInfo.files` in-place to entries matching `hostArch` when the
- * manifest carries per-architecture filenames. Returns `false` when the
- * manifest lists architecture-tagged files but none for `hostArch`, preventing
- * `electron-updater`'s `findFile` fallback (`filteredFiles.shift()`) from
- * pushing an x64 build onto an arm64 install (or vice versa).
- */
-function filterUpdateInfoFilesForHostArch(
-  raw: unknown,
+function hasWindowsUpdateForHostArch(
+  info: typeof UpdateInfo.Type,
   hostArch: DesktopRuntimeInfo["hostArch"],
 ): boolean {
-  if ((hostArch !== "arm64" && hostArch !== "x64") || typeof raw !== "object" || raw === null) {
-    return true;
-  }
-  const record = raw as { files?: unknown };
-  if (!Array.isArray(record.files) || record.files.length === 0) {
-    return true;
-  }
-  const urls = record.files.map((file) =>
-    typeof file === "object" && file !== null && typeof (file as { url?: unknown }).url === "string"
-      ? (file as { url: string }).url
-      : "",
-  );
-  if (!urls.some((url) => EXPLICIT_ARCH_FILE_PATTERN.test(url))) {
-    return true;
-  }
-  const wantsArm64 = hostArch === "arm64";
-  const matchingFiles = record.files.filter((_, index) => {
-    const url = urls[index] ?? "";
-    if (!EXPLICIT_ARCH_FILE_PATTERN.test(url)) {
-      return false;
-    }
-    return ARM64_ARCH_FILE_PATTERN.test(url) === wantsArm64;
+  if (hostArch !== "arm64" && hostArch !== "x64") return true;
+
+  const files = info.files?.length ? info.files : info.path ? [{ url: info.path }] : [];
+  const architectures = files.map(({ url }) => {
+    const filename = url.split(/[?#]/, 1)[0]?.split(/[\\/]/).at(-1) ?? "";
+    return filename
+      .match(/(?:^|[-_.])(arm64|aarch64|x64|x86_64|amd64|ia32)(?=[-_.]|$)/i)?.[1]
+      ?.toLowerCase();
   });
-  if (matchingFiles.length === 0) {
-    return false;
-  }
-  record.files = matchingFiles;
-  return true;
+  // Untagged legacy releases carry no architecture information.
+  return (
+    architectures.every((arch) => arch === undefined) ||
+    architectures.some((arch) =>
+      hostArch === "arm64"
+        ? arch === "arm64" || arch === "aarch64"
+        : arch === "x64" || arch === "x86_64" || arch === "amd64",
+    )
+  );
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -915,7 +897,10 @@ export const make = Effect.gen(function* () {
             return;
           }
 
-          if (!filterUpdateInfoFilesForHostArch(raw, environment.runtimeInfo.hostArch)) {
+          if (
+            environment.platform === "win32" &&
+            !hasWindowsUpdateForHostArch(info, environment.runtimeInfo.hostArch)
+          ) {
             yield* logUpdaterInfo("ignoring update that has no package for host architecture", {
               version: info.version,
               hostArch: environment.runtimeInfo.hostArch,
