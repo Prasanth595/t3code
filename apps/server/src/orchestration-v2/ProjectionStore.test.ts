@@ -1,4 +1,3 @@
-import { COMMAND_OUTPUT_WIRE_PREFIX_LENGTH } from "./WireProjection.ts";
 import { assert, it, vi } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -38,11 +37,14 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import {
+  boundedTimelineEncodedBytes,
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
+
+import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -1264,86 +1266,60 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("carries running background commands older than the snapshot window", () =>
+  it.effect("retains only actionable old work with bounded output until it settles", () =>
     Effect.gen(function* () {
-      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
-      const now = yield* DateTime.now;
+      const threadId = yield* addRolledBackRecoveryCandidate("old-background-command");
+      const original = yield* store.getThreadProjection(threadId);
+      const now = original.updatedAt;
       const nowIso = DateTime.formatIso(now);
-      const threadId = ThreadId.make("thread:old-background-command");
-      yield* projectionStore.apply({
-        id: EventId.make("event:old-background-command:thread"),
-        type: "thread.created",
+      yield* store.apply({
+        id: EventId.make("event:old-background-command:latest-run"),
+        type: "run.created",
         threadId,
         occurredAt: now,
         payload: {
-          createdBy: "user",
-          creationSource: "web",
-          id: threadId,
-          projectId: ProjectId.make("project:old-background-command"),
-          title: "Old background command",
-          providerInstanceId,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: null,
-          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
+          ...original.runs[0]!,
+          id: RunId.make("run:old-background-command:latest"),
+          ordinal: 2,
+          status: "completed",
+          completedAt: now,
         },
       });
+      const output = "log line\n".repeat(20_000);
+      const monitorInput = "tail -f " + "x".repeat(20_000);
       const rows = Array.from({ length: 120 }, (_, index) => {
-        const ordinal = index + 1;
-        const status = ordinal <= 3 ? "running" : "completed";
+        const ordinal = index + 2;
+        const status = ordinal <= 4 ? "running" : ordinal === 5 ? "interrupted" : "completed";
         const base = {
+          ...original.turnItems[0]!,
           id: `item:old-background-command:${ordinal}`,
-          threadId,
           runId: null,
           nodeId: null,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
           ordinal,
           status,
-          title: null,
           startedAt: nowIso,
           completedAt: status === "running" ? null : nowIso,
           updatedAt: nowIso,
         };
-        // A persistent monitor never counts as pending work, so it is not carried.
-        // A dynamic tool without the flag still does, and its input has no key at all.
         const item =
-          ordinal === 2
+          ordinal === 3 || ordinal === 4
             ? {
                 ...base,
                 type: "dynamic_tool",
                 toolName: "monitor",
-                input: { persistent: true, command: "tail -f log" },
+                input:
+                  ordinal === 3
+                    ? { persistent: true, command: monitorInput }
+                    : { command: "sleep 600" },
               }
-            : ordinal === 3
-              ? {
-                  ...base,
-                  type: "dynamic_tool",
-                  toolName: "wait",
-                  input: { command: "sleep 600" },
-                }
-              : {
-                  ...base,
-                  type: "command_execution",
-                  input: ordinal === 1 ? "vp run dev" : "command",
-                  // Hours of dev server logs.
-                  output: ordinal === 1 ? "log line\n".repeat(20_000) : "done",
-                  exitCode: status === "running" ? undefined : 0,
-                };
+            : {
+                ...base,
+                type: "command_execution",
+                input: "command",
+                output: ordinal === 2 ? output : "done",
+              };
         return {
           turn_item_id: item.id,
           thread_id: threadId,
@@ -1360,44 +1336,86 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         };
       });
       yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
-      const runningId = "item:old-background-command:1";
-
-      const recent = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 77 });
-      const carried = recent.projection.turnItems.find((item) => String(item.id) === runningId);
+      const runningId = TurnItemId.make("item:old-background-command:2");
+      const toolId = TurnItemId.make("item:old-background-command:4");
+      const recent = yield* Effect.acquireUseRelease(
+        Effect.sync(() => vi.spyOn(JSON, "parse")),
+        (parse) =>
+          store.getThreadSnapshotWindow(threadId, { rowLimit: 77 }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                // Check the decoder boundary, not just the already-decoded projection.
+                assert.isFalse(
+                  parse.mock.calls.some(
+                    ([text]) =>
+                      text.includes(JSON.stringify(output).slice(1, -1)) ||
+                      text.includes(monitorInput),
+                  ),
+                );
+              }),
+            ),
+          ),
+        (parse) => Effect.sync(() => parse.mockRestore()),
+      );
+      const carried = recent.projection.turnItems.find((item) => item.id === runningId);
+      assert.isDefined(carried, "The snapshot must retain the old running command for Stop");
       assert.strictEqual(
-        carried?.type === "command_execution" ? carried.output?.length : undefined,
-        COMMAND_OUTPUT_WIRE_PREFIX_LENGTH,
+        carried?.type === "command_execution" ? carried.output : undefined,
+        output.slice(0, 32_768),
       );
-      assert.notInclude(
-        recent.projection.turnItems.map((item) => String(item.id)),
-        "item:old-background-command:2",
+      assert.deepEqual(
+        recent.projection.turnItems.filter((item) => item.ordinal < 45).map((item) => item.id),
+        [runningId, toolId],
       );
-      // The command stays in its own place in history, not atop the recent window.
-      assert.notInclude(
-        recent.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
-        runningId,
-      );
+      assert.isFalse(recent.projection.visibleTurnItems.some((row) => row.item.ordinal < 45));
+      for (const shell of [
+        yield* store.getThreadShell(threadId),
+        (yield* store.getShellSnapshot()).threads.find((thread) => thread.id === threadId),
+      ]) {
+        assert.sameMembers(shell?.pendingBackgroundTasks?.map((task) => task.taskId) ?? [], [
+          runningId,
+          toolId,
+        ]);
+      }
       const bounded = buildBoundedThreadProjection({
-        projection: recent.projection,
+        projection: projectThreadProjectionForWire(recent.projection),
         snapshotSequence: 0,
+        policy: { maxItems: 1, maxEncodedBytes: 10_000 },
       });
-      assert.include(
-        bounded.projection.turnItems.map((item) => String(item.id)),
-        runningId,
+      assert.sameMembers(
+        bounded.projection.turnItems.map((item) => item.id),
+        [runningId, toolId, TurnItemId.make("item:old-background-command:121")],
       );
-      assert.include(
-        bounded.projection.turnItems.map((item) => String(item.id)),
-        "item:old-background-command:3",
+      assert.deepEqual(
+        bounded.projection.visibleTurnItems.map((row) => row.sourceItemId),
+        ["item:old-background-command:121"],
       );
-
-      const older = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+      assert.isAtMost(boundedTimelineEncodedBytes(bounded.projection), 10_000);
+      const older = yield* store.getThreadSnapshotWindow(threadId, {
         rowLimit: 77,
         anchorItemId: TurnItemId.make("item:old-background-command:40"),
       });
       assert.lengthOf(
-        older.projection.turnItems.filter((item) => String(item.id) === runningId),
+        older.projection.visibleTurnItems.filter((row) => row.sourceItemId === runningId),
         1,
       );
+      for (const id of [runningId, toolId]) {
+        const item = recent.projection.turnItems.find((item) => item.id === id)!;
+        yield* store.apply({
+          id: EventId.make(`event:old-background-command:settled:${id}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...item,
+            status: id === runningId ? "completed" : "interrupted",
+            completedAt: now,
+          },
+        });
+      }
+      const settled = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 77 });
+      assert.isFalse(settled.projection.turnItems.some((item) => item.ordinal < 45));
+      assert.deepEqual((yield* store.getThreadShell(threadId))?.pendingBackgroundTasks ?? [], []);
     }),
   );
 

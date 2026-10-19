@@ -211,7 +211,8 @@ describe("orchestration V2 wire projection", () => {
       completedAt: null,
       input: { persistent: true, command: "tail -f " + "x".repeat(20_000) },
     };
-    const projected = projectTurnItemForWire(item);
+    const projected = decodeTurnItemJson(encodeTurnItemJson(projectTurnItemForWire(item)));
+    expect(JSON.stringify(projected).length).toBeLessThan(2_000);
     expect(projected.type === "dynamic_tool" ? projected.input : null).toMatchObject({
       truncated: true,
       persistent: true,

@@ -185,11 +185,15 @@ describe("threadHistoryMerge", () => {
   });
 
   it("shows retained background work at its history position with live state", () => {
-    // Cold open kept the still-running command in turnItems without a row.
-    const pageRow = row(1);
+    const staleRow = row(1);
+    const pageRow = {
+      ...staleRow,
+      item: { ...staleRow.item, status: "running" as const, completedAt: null },
+    };
     const currentItem = {
       ...pageRow.item,
       status: "interrupted" as const,
+      completedAt: DateTime.makeUnsafe("2026-06-20T00:00:01.000Z"),
       updatedAt: DateTime.makeUnsafe("2026-06-20T00:00:01.000Z"),
     };
     const recent = row(5);

@@ -564,10 +564,11 @@ describe("V2 environment commands", () => {
     "interrupted",
     "cancelled",
     "rolled_back",
-  ] as const)("dispatches Stop for %s runs with background commands except rollback", (status) =>
+  ] as const)("stops old work after a %s latest run except rollback", (status) =>
     Effect.gen(function* () {
       const waitingRunId = RunId.make("run-waiting");
-      const projection: OrchestrationV2ThreadProjection = {
+      const oldRunId = RunId.make("run-old-background");
+      const initial: OrchestrationV2ThreadProjection = {
         ...v2Projection,
         runs: [
           {
@@ -588,11 +589,12 @@ describe("V2 environment commands", () => {
             contextHandoffId: null,
           },
         ],
+        visibleTurnItems: [],
         turnItems: [
           {
             id: TurnItemId.make("background-command"),
             threadId: v2ThreadId,
-            runId: waitingRunId,
+            runId: oldRunId,
             nodeId: null,
             providerThreadId: null,
             providerTurnId: null,
@@ -607,6 +609,13 @@ describe("V2 environment commands", () => {
             type: "command_execution",
             input: "vp run dev",
           },
+        ],
+      };
+      const projection: OrchestrationV2ThreadProjection = {
+        ...initial,
+        runs: [
+          { ...initial.runs[0]!, id: oldRunId, status: "completed", completedAt: v2Now },
+          { ...initial.runs[0]!, ordinal: 2 },
         ],
       };
       const commands: OrchestrationV2Command[] = [];
