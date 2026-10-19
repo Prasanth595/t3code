@@ -317,17 +317,71 @@ describe("parseGrokLine", () => {
 
 describe("Grok usage limits", () => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
+  const weeklyPeriod = {
+    type: "USAGE_PERIOD_TYPE_WEEKLY",
+    start: "2026-09-11T03:10:30.159171+00:00",
+    end: "2026-09-18T03:10:30.159171+00:00",
+  };
 
-  it("treats an omitted percentage as zero only for a complete known billing period", () => {
+  it("shows zero usage for complete weekly and monthly periods with no percentage", () => {
+    for (const [currentPeriod, kind, label, resetsAt] of [
+      [weeklyPeriod, "weekly", "Weekly", "2026-09-18T03:10:30.159Z"],
+      [
+        {
+          type: "USAGE_PERIOD_TYPE_MONTHLY",
+          start: "2026-09-01T00:00:00.000Z",
+          end: "2026-10-01T00:00:00.000Z",
+        },
+        "monthly",
+        "Monthly",
+        "2026-10-01T00:00:00.000Z",
+      ],
+    ] as const) {
+      const response = { config: { currentPeriod } };
+      expect
+        .soft(grokUsageResponseToLimits(response, checkedAt).windows)
+        .toEqual([{ id: "subscription", kind, label, usedPercent: 0, resetsAt }]);
+    }
+  });
+
+  it("keeps incomplete, invalid, unordered, and unknown periods unreported", () => {
+    for (const currentPeriod of [
+      undefined,
+      { ...weeklyPeriod, type: undefined },
+      { ...weeklyPeriod, type: "USAGE_PERIOD_TYPE_DAILY" },
+      { ...weeklyPeriod, start: undefined },
+      { ...weeklyPeriod, end: undefined },
+      { ...weeklyPeriod, start: "invalid" },
+      { ...weeklyPeriod, end: "invalid" },
+      { ...weeklyPeriod, start: weeklyPeriod.end },
+      { ...weeklyPeriod, start: weeklyPeriod.end, end: weeklyPeriod.start },
+    ]) {
+      const response = { config: { currentPeriod } };
+      expect
+        .soft(grokUsageResponseToLimits(response, checkedAt).windows, JSON.stringify(response))
+        .toEqual([]);
+    }
+  });
+
+  it("rejects impossible calendar dates at either period boundary", () => {
+    for (const [start, end] of [
+      ["2026-02-30T00:00:00.000Z", "2026-03-09T00:00:00.000Z"],
+      ["2026-02-23T00:00:00.000Z", "2026-02-30T00:00:00.000Z"],
+    ]) {
+      const response = { config: { currentPeriod: { ...weeklyPeriod, start, end } } };
+      expect
+        .soft(grokUsageResponseToLimits(response, checkedAt).windows, JSON.stringify(response))
+        .toEqual([]);
+    }
+  });
+
+  it("preserves explicit percentages without requiring a complete known period", () => {
     expect(
       grokUsageResponseToLimits(
         {
           config: {
-            currentPeriod: {
-              type: "USAGE_PERIOD_TYPE_WEEKLY",
-              start: "2026-09-11T03:10:30.159171+00:00",
-              end: "2026-09-18T03:10:30.159171+00:00",
-            },
+            creditUsagePercent: 37.5,
+            currentPeriod: { type: weeklyPeriod.type, end: weeklyPeriod.end },
           },
         },
         checkedAt,
@@ -337,66 +391,17 @@ describe("Grok usage limits", () => {
         id: "subscription",
         kind: "weekly",
         label: "Weekly",
-        usedPercent: 0,
+        usedPercent: 37.5,
         resetsAt: "2026-09-18T03:10:30.159Z",
       },
     ]);
-
-    expect(
-      grokUsageResponseToLimits(
-        {
-          config: {
-            currentPeriod: {
-              type: "USAGE_PERIOD_TYPE_MONTHLY",
-              start: "2026-09-01T00:00:00.000Z",
-              end: "2026-10-01T00:00:00.000Z",
-            },
-          },
-        },
-        checkedAt,
-      ).windows,
-    ).toEqual([
-      {
-        id: "subscription",
-        kind: "monthly",
-        label: "Monthly",
-        usedPercent: 0,
-        resetsAt: "2026-10-01T00:00:00.000Z",
-      },
-    ]);
-
-    for (const currentPeriod of [
-      { type: "USAGE_PERIOD_TYPE_WEEKLY", end: "2026-09-18T03:10:30.159171+00:00" },
-      { type: "USAGE_PERIOD_TYPE_WEEKLY", start: "2026-09-11T03:10:30.159171+00:00" },
-      {
-        type: "USAGE_PERIOD_TYPE_WEEKLY",
-        start: "invalid",
-        end: "2026-09-18T03:10:30.159171+00:00",
-      },
-      {
-        type: "USAGE_PERIOD_TYPE_WEEKLY",
-        start: "2026-09-18T03:10:30.159171+00:00",
-        end: "2026-09-11T03:10:30.159171+00:00",
-      },
-      {
-        type: "USAGE_PERIOD_TYPE_WEEKLY",
-        start: "2026-09-11T03:10:30.159171+00:00",
-        end: "invalid",
-      },
-      {
-        type: "USAGE_PERIOD_TYPE_WEEKLY",
-        start: "2026-09-11T03:10:30.159171+00:00",
-        end: "2026-09-11T03:10:30.159171+00:00",
-      },
-      {
-        type: "USAGE_PERIOD_TYPE_DAILY",
-        start: "2026-09-11T03:10:30.159171+00:00",
-        end: "2026-09-18T03:10:30.159171+00:00",
-      },
-    ]) {
-      expect(grokUsageResponseToLimits({ config: { currentPeriod } }, checkedAt).windows).toEqual(
-        [],
-      );
+    for (const [creditUsagePercent, usedPercent] of [
+      [0, 0],
+      [125, 100],
+    ] as const) {
+      expect(
+        grokUsageResponseToLimits({ config: { creditUsagePercent } }, checkedAt).windows,
+      ).toEqual([{ id: "subscription", kind: "other", label: "Subscription", usedPercent }]);
     }
   });
 });
