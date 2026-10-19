@@ -169,10 +169,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+    // This session never reopens its socket. Release pending cancel writes
+    // when it drops so subscriptions can move to the replacement session.
+    const transportClosed = yield* Deferred.make<void>();
     const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
-      onDisconnect: Effect.all([Deferred.isDone(connected), Ref.get(pingTimedOut)]).pipe(
+      onDisconnect: Deferred.succeed(transportClosed, undefined).pipe(
+        Effect.andThen(Effect.all([Deferred.isDone(connected), Ref.get(pingTimedOut)])),
         Effect.flatMap(([wasConnected, timedOut]) =>
           Deferred.fail(
             disconnected,
@@ -191,9 +195,20 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
-    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
-      openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    const layerSocket = Layer.effect(
+      Socket.Socket,
+      Socket.makeWebSocket(connection.socketUrl, { openTimeout: SOCKET_OPEN_TIMEOUT }).pipe(
+        Effect.map((socket): Socket.Socket => ({
+          ...socket,
+          writer: Effect.map(socket.writer, (writer): Socket.Writer => ({
+            write: (chunk) =>
+              Effect.raceFirst(writer.write(chunk), Deferred.await(transportClosed)),
+            writeAll: (chunks) =>
+              Effect.raceFirst(writer.writeAll(chunks), Deferred.await(transportClosed)),
+          })),
+        })),
+      ),
+    ).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({

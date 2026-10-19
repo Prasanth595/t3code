@@ -27,7 +27,6 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
-import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
@@ -91,8 +90,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     error: Option.none(),
   });
   const awaitingCompletion = yield* Ref.make(false);
-  const lastAuthoritativeSession = yield* Ref.make<RpcSession | null>(null);
-  const activeSubscriptionSession = yield* Ref.make<RpcSession | null>(null);
+  const hasAuthoritativeSnapshot = yield* Ref.make(false);
+  const serverVersion = yield* Ref.make<string | undefined>(undefined);
   const latestLiveSnapshot = yield* Ref.make<Option.Option<OrchestrationV2ShellSnapshot>>(
     Option.none(),
   );
@@ -182,6 +181,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
     pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
+    const replacesPendingLinks =
+      pendingLinkIds === undefined &&
+      items.some(
+        (item) => item.kind === "snapshot" && item.resolvedRepositoryIdentityRoots === undefined,
+      );
+    if (replacesPendingLinks) {
+      yield* cancelActiveFill;
+    }
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
     let next = initial;
@@ -229,13 +236,13 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
     if (Option.isSome(next.snapshot)) {
       yield* Ref.set(latestLiveSnapshot, next.snapshot);
+      if (replacesPendingLinks) {
+        pendingLinkRows = new Set();
+      }
     }
     yield* SubscriptionRef.set(state, next);
     if (receivedSnapshot) {
-      const session = yield* Ref.get(activeSubscriptionSession);
-      if (session !== null) {
-        yield* Ref.set(lastAuthoritativeSession, session);
-      }
+      yield* Ref.set(hasAuthoritativeSnapshot, true);
     }
     if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
       yield* Queue.offer(persistence, next.snapshot.value);
@@ -245,7 +252,6 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   const stateScope = yield* Effect.scope;
   // Each full snapshot supersedes the previous one's fill; links from an older snapshot must
   // not land on rows a newer snapshot reused.
-
   let activeFill: Fiber.Fiber<void> | undefined;
   const cancelActiveFill = Effect.suspend(() => {
     const fill = activeFill;
@@ -320,21 +326,30 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     subscribeDynamic(
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
-        yield* Ref.set(activeSubscriptionSession, session);
-        const supportsCompletionMarker = yield* session.initialConfig.pipe(
-          Effect.map((config) => config.shellResumeCompletionMarker === true),
-          Effect.orElseSucceed(() => false),
-        );
+        const config = yield* session.initialConfig.pipe(Effect.orElseSucceed(() => undefined));
+        const supportsCompletionMarker = config?.shellResumeCompletionMarker === true;
+        if (config !== undefined) {
+          const previousVersion = yield* Ref.getAndSet(
+            serverVersion,
+            config.environment.serverVersion,
+          );
+          if (
+            previousVersion !== undefined &&
+            previousVersion !== config.environment.serverVersion
+          ) {
+            // Migrations can rewrite projections without advancing the replay cursor.
+            yield* Ref.set(hasAuthoritativeSnapshot, false);
+          }
+        }
         yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
         yield* setSynchronizing;
 
-        // Foreground resubscriptions on the same live session can resume from
-        // the in-memory cursor. A new session reloads the authoritative HTTP
-        // snapshot so a valid cursor cannot preserve incomplete cached data.
-        const hasAuthoritativeSnapshot = (yield* Ref.get(lastAuthoritativeSession)) === session;
-        let canResume = hasAuthoritativeSnapshot;
+        // Disk caches may be incomplete. Once authoritative data arrives,
+        // replacement sessions can replay from memory; unusable cursors cause
+        // the server to send a full snapshot.
+        let canResume = yield* Ref.get(hasAuthoritativeSnapshot);
         let current = yield* SubscriptionRef.get(state);
-        if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
+        if (!canResume || Option.isNone(current.snapshot)) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({

@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
   type DesktopSshEnvironmentTarget,
+  type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import { describe, expect, it } from "@effect/vitest";
@@ -329,14 +330,42 @@ describe("ConnectionResolver", () => {
     }),
   );
 
-  it.effect("prepares relay connections with the authorized endpoint and credentials", () =>
+  it.effect("prepares relay connections using fresh compatibility checks on every attempt", () =>
     Effect.gen(function* () {
       const target = new RelayConnectionTarget({
         environmentId: ENVIRONMENT_ID,
         label: "Cloud",
       });
-      const layerBroker = yield* makeDependencies();
-      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const compatibleDescriptor = {
+        environmentId: ENVIRONMENT_ID,
+        label: "Relay",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0-test",
+        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+        capabilities: { repositoryIdentity: true },
+      } satisfies ExecutionEnvironmentDescriptor;
+      const descriptor = yield* Ref.make<ExecutionEnvironmentDescriptor | undefined>(
+        compatibleDescriptor,
+      );
+      const brokerLayer = yield* makeDependencies({
+        descriptorProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+        authorizeDpop: () =>
+          Ref.get(descriptor).pipe(
+            Effect.map((descriptor) => ({
+              environmentId: ENVIRONMENT_ID,
+              label: "Authorized relay environment",
+              httpBaseUrl: ENDPOINT.httpBaseUrl,
+              socketUrl: "wss://authorized.example.test/ws?wsTicket=dpop",
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: "dpop-access-token",
+                expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+              },
+              descriptor,
+            })),
+          ),
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
 
       expect(yield* broker.prepare(catalogEntry(target))).toEqual({
         environmentId: ENVIRONMENT_ID,
@@ -349,6 +378,20 @@ describe("ConnectionResolver", () => {
           expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
         },
         target,
+      });
+
+      yield* Ref.set(descriptor, {
+        ...compatibleDescriptor,
+        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+      });
+      expect(yield* Effect.flip(broker.prepare(catalogEntry(target)))).toMatchObject({
+        reason: "unsupported",
+      });
+
+      // A cached authorization supplies no fresh descriptor; discovery must run again.
+      yield* Ref.set(descriptor, undefined);
+      expect(yield* Effect.flip(broker.prepare(catalogEntry(target)))).toMatchObject({
+        reason: "unsupported",
       });
     }),
   );
