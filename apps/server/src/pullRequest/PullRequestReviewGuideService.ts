@@ -60,27 +60,23 @@ export class PullRequestReviewGuideService extends Context.Service<
 const keyString = (key: ThreadPullRequestKey) => `${key.host}/${key.repository}#${key.number}`;
 
 const fetchFailure = (remote: string, cause: GitCommandError) => {
+  if (cause.reason !== "host_key_unverified" && cause.reason !== "authentication_failed") {
+    return cause;
+  }
   const safeRemote = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(remote);
   const remoteLabel = safeRemote ? `"${remote}"` : "configured";
+  const diagnosis =
+    cause.reason === "host_key_unverified"
+      ? `Git does not trust the SSH host key of the project's ${remoteLabel} remote.`
+      : `Git could not sign in to the project's ${remoteLabel} remote. Check the Git credentials or SSH key it uses.`;
   const retry = safeRemote
     ? `Once "git fetch ${remote}" works in the project, write the guide again.`
     : "Once fetching from that remote works in the project, write the guide again.";
-  switch (cause.reason) {
-    case "host_key_unverified":
-      return new PullRequestOperationError({
-        operation: "generateReviewGuide",
-        detail: `Git does not trust the SSH host key of the project's ${remoteLabel} remote. ${retry}`,
-        cause,
-      });
-    case "authentication_failed":
-      return new PullRequestOperationError({
-        operation: "generateReviewGuide",
-        detail: `Git could not sign in to the project's ${remoteLabel} remote. Check the Git credentials or SSH key it uses. ${retry}`,
-        cause,
-      });
-    default:
-      return cause;
-  }
+  return new PullRequestOperationError({
+    operation: "generateReviewGuide",
+    detail: `${diagnosis} ${retry}`,
+    cause,
+  });
 };
 
 const nowIso = Clock.currentTimeMillis.pipe(

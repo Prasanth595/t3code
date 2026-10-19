@@ -5,7 +5,6 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import {
@@ -798,81 +797,89 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     ),
   );
 
-  const failedRunDetail = (refusal: string, remote = "origin") =>
+  const failedFetchDetail = (reason: GitCommandError["reason"], remote = "origin") =>
     Effect.gen(function* () {
       const repositories = yield* makeRepositories;
-      if (remote !== "origin") {
-        yield* git(repositories.workspace, ["remote", "rename", "origin", remote]);
-      }
-      yield* git(repositories.workspace, [
-        "remote",
-        "set-url",
-        remote,
-        "git@github.com:acme/app.git",
-      ]);
-      yield* git(repositories.workspace, [
-        "config",
-        "core.sshCommand",
-        `sh -c 'echo "${refusal}" >&2; exit 255'`,
-      ]);
       const stored = yield* Deferred.make<void>();
       const completed = yield* Deferred.make<void>();
-      const logger = Logger.make(({ fiber, message }) => {
-        if (Array.isArray(message) && message.includes("Review guide generation failed")) {
-          // The warning precedes the state update; wait for its fiber to finish both.
-          fiber.addObserver(() => Deferred.doneUnsafe(completed, Effect.void));
-        }
-      });
+      const driver = yield* GitVcsDriver.GitVcsDriver;
       const context = yield* Layer.build(
         makeLayer({
           ...repositories,
           stored,
-          generate: () => Effect.die("a guide must not be written without the change"),
-        }),
+          generate: () => Effect.die("a guide must not be written after a failed fetch"),
+        }).pipe(
+          Layer.provide(
+            Layer.succeed(GitVcsDriver.GitVcsDriver, {
+              ...driver,
+              resolvePrimaryRemoteName: () => Effect.succeed(remote),
+              execute: (call) =>
+                call.args[0] !== "fetch"
+                  ? driver.execute(call)
+                  : Effect.withFiber((fiber) => {
+                      // Fetch failure is handled in this fiber before it publishes the failed run.
+                      fiber.addObserver(() => Deferred.doneUnsafe(completed, Effect.void));
+                      return Effect.fail(
+                        new GitCommandError({
+                          operation: call.operation,
+                          command: "git",
+                          cwd: call.cwd,
+                          detail: "The fetch process failed.",
+                          ...(reason === undefined ? {} : { reason }),
+                        }),
+                      );
+                    }),
+            }),
+          ),
+        ),
       );
       const service = Context.get(
         context,
         PullRequestReviewGuideService.PullRequestReviewGuideService,
       );
-      yield* service
-        .generate(reference)
-        .pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+      const started = yield* service.generate(reference);
       yield* Deferred.await(completed);
       const result = yield* service.get(reference);
+      assert.deepStrictEqual(result.guide, started.guide);
+      assert.isFalse(yield* Deferred.isDone(stored));
       assert.strictEqual(result.run?._tag, "Failed");
-      return result.run?._tag === "Failed" ? result.run.detail : undefined;
+      if (result.run?._tag !== "Failed") return yield* Effect.die("expected a failed run");
+      return result.run.detail;
     });
 
-  it.effect("tells the reader what to fix when git does not trust the remote's host key", () =>
+  it.effect.each([
+    { reason: "host_key_unverified" as const, diagnosis: /(?:trust|verif).*SSH host key/i },
+    { reason: "authentication_failed" as const, diagnosis: /credentials|SSH key/i },
+  ])("explains $reason and requires a successful fetch before retrying", ({ reason, diagnosis }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        assert.strictEqual(
-          yield* failedRunDetail("Host key verification failed."),
-          'Git does not trust the SSH host key of the project\'s "origin" remote. Once "git fetch origin" works in the project, write the guide again.',
-        );
+        const detail = yield* failedFetchDetail(reason);
+        assert.match(detail, diagnosis);
+        assert.match(detail, /(?:once|after).*git fetch origin.*(?:works|succeeds)/i);
+        assert.match(detail, /(?:write|generate|retry).*guide/i);
       }),
     ),
   );
 
-  it.effect("tells the reader what to fix when the remote refuses git's credentials", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        assert.strictEqual(
-          yield* failedRunDetail("git@github.com: Permission denied (publickey)."),
-          'Git could not sign in to the project\'s "origin" remote. Check the Git credentials or SSH key it uses. Once "git fetch origin" works in the project, write the guide again.',
-        );
-      }),
-    ),
-  );
-
-  it.effect("keeps long or unsafe remote names out of the failure detail", () =>
+  it.effect("keeps long or unsafe remote names out of actionable fetch failures", () =>
     Effect.scoped(
       Effect.gen(function* () {
         for (const remote of ["remote".repeat(20), "remote;echo-secret"]) {
-          assert.strictEqual(
-            yield* failedRunDetail("Host key verification failed.", remote),
-            "Git does not trust the SSH host key of the project's configured remote. Once fetching from that remote works in the project, write the guide again.",
-          );
+          const detail = yield* failedFetchDetail("host_key_unverified", remote);
+          assert.notInclude(detail, remote);
+          assert.match(detail, /SSH host key/i);
+          assert.match(detail, /(?:once|after).*fetch.*(?:works|succeeds)/i);
+          assert.match(detail, /(?:write|generate|retry).*guide/i);
+        }
+      }),
+    ),
+  );
+
+  it.effect("preserves other fetch failure details", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        for (const reason of [undefined, "remote_unreachable"] as const) {
+          assert.strictEqual(yield* failedFetchDetail(reason), "The fetch process failed.");
         }
       }),
     ),
