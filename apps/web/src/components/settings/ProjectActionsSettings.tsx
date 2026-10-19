@@ -56,7 +56,7 @@ export function ProjectActionsSettings() {
     (candidate) =>
       JSON.stringify(candidate.settings.defaultProjectScripts) !== JSON.stringify(scripts),
   );
-  const canWriteSettings = useScopedSettingsWriteAllowed();
+  const canWriteSettings = useScopedSettingsWriteAllowed(["defaultProjectScripts"]);
   const [request, setRequest] = useState<ProjectScriptEditorRequest | null>(null);
   const memberById = new Map(
     isProjectScope ? scope.members.map((member) => [member.id, member]) : [],

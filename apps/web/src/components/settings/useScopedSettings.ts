@@ -139,11 +139,14 @@ export function useClearProjectOverrides() {
   };
 }
 
-export function useScopedSettingsWriteAllowed() {
-  const { connectedEnvironments } = useSettingsScope();
-  const writable = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
+export function useScopedSettingsWriteAllowed(keys: readonly (keyof ServerSettings)[] = []) {
+  const { connectedEnvironments, targets } = useSettingsScope();
+  const destinations =
+    keys.length > 0
+      ? targets.filter((target) => keys.some((key) => !target.unsupportedSettingKeys?.has(key)))
+      : connectedEnvironments;
+  const writable = useEnvironmentsWithScope(destinations, AuthSettingsWriteScope);
   return (
-    connectedEnvironments.length > 0 &&
-    connectedEnvironments.every((target) => writable.has(target.environmentId))
+    destinations.length > 0 && destinations.every((target) => writable.has(target.environmentId))
   );
 }

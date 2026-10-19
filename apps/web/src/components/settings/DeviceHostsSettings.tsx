@@ -4,7 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
 import { Spinner } from "../ui/spinner";
@@ -46,7 +46,6 @@ import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from ".
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
-  const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
@@ -55,6 +54,10 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   const hostDestinations = environments.filter(
     (environment) => !environment.unsupportedSettingKeys.has("deviceHosts"),
   );
+  const writableIds = useEnvironmentsWithScope(hostDestinations, AuthSettingsWriteScope);
+  const canConfigure =
+    hostDestinations.length > 0 &&
+    hostDestinations.every((environment) => writableIds.has(environment.environmentId));
   const targets = hostDestinations.map((environment) => ({
     environmentId: environment.environmentId,
     label: settingsScopeEnvironmentLabel(environment, environments),

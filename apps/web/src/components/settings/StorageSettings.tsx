@@ -453,6 +453,7 @@ export function StorageSettingsPanel() {
   }
 
   if (
+    (targets.length > 0 && cleanupTargets.length === 0) ||
     connectedEnvironments.some(
       (environment) => environment.serverConfig?.environment.capabilities.storageCleanup !== true,
     )
@@ -463,7 +464,8 @@ export function StorageSettingsPanel() {
         eligibleEnvironmentIds={connectedEnvironments
           .filter(
             (environment) =>
-              environment.serverConfig?.environment.capabilities.storageCleanup === true,
+              environment.serverConfig?.environment.capabilities.storageCleanup === true &&
+              cleanupTargets.some((target) => target.environmentId === environment.environmentId),
           )
           .map((environment) => environment.environmentId)}
       >
@@ -539,8 +541,7 @@ export function StorageSettingsPanel() {
               title="Delete worktrees with deleted threads"
               status={ruleStatus("worktreeOnDelete")}
               description="Remove unused worktrees when active or archived threads are deleted. Worktrees with local changes are kept."
-              serverScoped
-              settingKeys={[cleanupKey]}
+              serverScoped={!isProjectScope}
               control={
                 <Switch
                   aria-label="Delete worktrees with deleted threads"
@@ -553,8 +554,7 @@ export function StorageSettingsPanel() {
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
               description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
-              serverScoped
-              settingKeys={[cleanupKey]}
+              serverScoped={!isProjectScope}
               control={
                 <RetentionControl
                   label="Delete inactive worktrees"
@@ -580,8 +580,7 @@ export function StorageSettingsPanel() {
                     .filter(Boolean)
                     .join(". ")}
                   description="Remove worktrees this many days after their thread settles. Set 0 days to remove them at the next cleanup. Branches and thread history are kept."
-                  serverScoped
-                  settingKeys={[cleanupKey]}
+                  serverScoped={!isProjectScope}
                   control={
                     <RetentionControl
                       label="Delete settled worktrees"
@@ -598,8 +597,7 @@ export function StorageSettingsPanel() {
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
               description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
-              serverScoped
-              settingKeys={[cleanupKey]}
+              serverScoped={!isProjectScope}
               control={
                 <Switch
                   aria-label="Delete merged worktrees"
@@ -612,8 +610,7 @@ export function StorageSettingsPanel() {
               title="Delete unchanged worktrees"
               status={ruleStatus("worktreeUnchanged")}
               description="Remove worktrees with no commits beyond the default branch."
-              serverScoped
-              settingKeys={[cleanupKey]}
+              serverScoped={!isProjectScope}
               control={
                 <Switch
                   aria-label="Delete unchanged worktrees"
@@ -636,8 +633,7 @@ export function StorageSettingsPanel() {
                       ? "Deletes untracked and ignored files, including .env."
                       : "Keeps edits and untracked files. Deletes ignored files, including .env."
                 }
-                serverScoped
-                settingKeys={[cleanupKey]}
+                serverScoped={!isProjectScope}
                 control={
                   <Select
                     value={ruleStatus("worktreeKeepWhen") ? null : settings.worktreeKeepWhen}
@@ -677,7 +673,6 @@ export function StorageSettingsPanel() {
             status={ruleStatus("browserArtifactsAfterDays")}
             description="Delete saved browser captures after this many days. Older capture links will no longer open."
             serverScoped
-            settingKeys={["storageCleanup"]}
             control={
               <RetentionControl
                 label="Delete old browser artifacts"
@@ -691,7 +686,6 @@ export function StorageSettingsPanel() {
             status={ruleStatus("logsAfterDays")}
             description="Delete inactive rotated log files after this many days. Current logs are kept."
             serverScoped
-            settingKeys={["storageCleanup"]}
             control={
               <RetentionControl
                 label="Delete old rotated logs"

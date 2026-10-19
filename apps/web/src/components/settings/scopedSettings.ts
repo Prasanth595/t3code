@@ -126,6 +126,14 @@ export function resolveScopedSettingsTargets(
     return scope.members.flatMap((member) => {
       const environment = byId.get(member.environmentId);
       if (!environment?.serverConfig) return [];
+      const unsupportedSettingKeys =
+        environment.serverConfig.environment?.capabilities.projectSettingsOverrides === true &&
+        supportsSettingKey(environment, "projectSettingsOverrides")
+          ? (environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS)
+          : new Set([
+              ...(environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS),
+              ...PROJECT_SCOPED_SERVER_SETTING_KEYS,
+            ]);
       const projectFile = projectFiles?.get(member.physicalProjectKey);
       const resolved =
         projectFile === undefined
@@ -138,7 +146,7 @@ export function resolveScopedSettingsTargets(
           projectId: member.id,
           settings: resolved.settings,
           sources: resolved.sources,
-          unsupportedSettingKeys: environment.unsupportedSettingKeys ?? NO_UNSUPPORTED_KEYS,
+          unsupportedSettingKeys,
         },
       ];
     });

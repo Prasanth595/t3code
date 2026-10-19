@@ -287,13 +287,17 @@ export function SettingsRow({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primaryEnvironment = usePrimaryEnvironment();
   const primaryCanWrite = useEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
-  const writableIds = useEnvironmentsWithScope(
-    context?.connectedEnvironments ?? [],
-    AuthSettingsWriteScope,
-  );
+  const permissionTargets = context
+    ? settingKeys.length > 0
+      ? context.targets.filter((target) =>
+          settingKeys.some((key) => !target.unsupportedSettingKeys?.has(key)),
+        )
+      : context.connectedEnvironments
+    : [];
+  const writableIds = useEnvironmentsWithScope(permissionTargets, AuthSettingsWriteScope);
   const canWriteSettings = context
-    ? context.connectedEnvironments.length > 0 &&
-      context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
+    ? permissionTargets.length > 0 &&
+      permissionTargets.every((target) => writableIds.has(target.environmentId))
     : primaryCanWrite;
   const clearOverrides = useClearScopedSettings();
   const clearProjectOverrides = useClearProjectOverrides();
@@ -367,25 +371,25 @@ export function SettingsRow({
     </Tooltip>
   );
   const renderedControl =
-    unavailable && control
-      ? inertControl(
-          !canWriteSettings
-            ? `This connection lacks permission to change settings on ${
-                context
-                  ? context.connectedEnvironments
-                      .filter((target) => !writableIds.has(target.environmentId))
-                      .map((target) => target.label)
-                      .join(", ") || "the selected environment"
-                  : (primaryEnvironment?.label ?? "the primary environment")
-              }.`
-            : context
-              ? "Reconnect the selected environment to change this setting."
-              : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
-        )
-      : environmentWide && control
-        ? inertControl("Environment-wide setting. Select an environment to change it.")
-        : unsupportedEverywhere && control
-          ? inertControl(unsupportedMessage)
+    unsupportedEverywhere && control
+      ? inertControl(unsupportedMessage)
+      : unavailable && control
+        ? inertControl(
+            !canWriteSettings
+              ? `This connection lacks permission to change settings on ${
+                  context
+                    ? permissionTargets
+                        .filter((target) => !writableIds.has(target.environmentId))
+                        .map((target) => target.label)
+                        .join(", ") || "the selected environment"
+                    : (primaryEnvironment?.label ?? "the primary environment")
+                }.`
+              : context
+                ? "Reconnect the selected environment to change this setting."
+                : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+          )
+        : environmentWide && control
+          ? inertControl("Environment-wide setting. Select an environment to change it.")
           : control;
   const customized =
     context !== null &&
