@@ -371,7 +371,7 @@ function ComposerBannerStackAlert({
           ) : null}
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
-          <ComposerBanner.Actions>
+          <ComposerBanner.Actions className={descriptionBelow ? "self-start" : undefined}>
             {item.actions}
             {item.onDismiss ? (
               <ComposerBanner.Dismiss

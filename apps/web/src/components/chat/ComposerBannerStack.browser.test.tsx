@@ -120,6 +120,9 @@ it.each([320, 800])(
 
     const scrollBounds = viewport.getBoundingClientRect();
     const stopBounds = stop.element().getBoundingClientRect();
+    expect(stopBounds.top).toBe(
+      page.getByText("12 background tasks", { exact: true }).element().getBoundingClientRect().top,
+    );
     expect(scrollBounds.right).toBeLessThanOrEqual(stopBounds.left);
     expect(stopBounds.right).toBeLessThanOrEqual(container.getBoundingClientRect().right);
     expect(stopBounds.bottom).toBeLessThanOrEqual(scrollBounds.bottom);
