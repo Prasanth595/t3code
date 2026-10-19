@@ -25,6 +25,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  continueComposerPathTrigger,
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
@@ -332,12 +333,47 @@ export function useComposerCommandMenu({
     workspaceRefreshRetry,
   ]);
 
-  const trigger = (() => {
-    if (!enabled || selection.start !== selection.end) {
-      return null;
-    }
-    return detectComposerTrigger(draftMessage, selection.end);
-  })();
+  const [previousSearch, setPreviousSearch] = useState(() => ({
+    ownerKey,
+    draftMessage,
+    selection,
+    cursor: selection.end,
+    queryEnd: selection.end,
+    enabled,
+    trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
+  }));
+  let trigger = previousSearch.trigger;
+  if (
+    previousSearch.ownerKey !== ownerKey ||
+    previousSearch.draftMessage !== draftMessage ||
+    previousSearch.selection !== selection ||
+    previousSearch.enabled !== enabled
+  ) {
+    // Draft updates can lead selection updates by several edits. Accumulate
+    // those edits from the predicted cursor until selection catches up.
+    const cursor =
+      previousSearch.ownerKey !== ownerKey
+        ? draftMessage.length
+        : previousSearch.selection === selection
+          ? previousSearch.cursor + draftMessage.length - previousSearch.draftMessage.length
+          : selection.end;
+    const continued = continueComposerPathTrigger(
+      draftMessage,
+      cursor,
+      previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
+      previousSearch.draftMessage,
+      previousSearch.queryEnd,
+    );
+    trigger =
+      enabled && selection.start === selection.end
+        ? (detectComposerTrigger(draftMessage, cursor) ?? continued?.trigger ?? null)
+        : null;
+    const queryEnd =
+      trigger?.kind === "path" && trigger.rangeStart === continued?.trigger.rangeStart
+        ? continued.queryEnd
+        : (trigger?.rangeEnd ?? 0);
+    setPreviousSearch({ ownerKey, draftMessage, selection, cursor, queryEnd, enabled, trigger });
+  }
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,

@@ -5,7 +5,7 @@ import {
   ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { act, createElement } from "react";
+import { act, createElement, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const refreshProviders = vi.hoisted(() => vi.fn());
@@ -319,5 +319,120 @@ describe("workspace command discovery retry", () => {
     await act(() => vi.advanceTimersByTimeAsync(20_000));
     expect(refreshProviders).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("mobile mention search", () => {
+  let root: Root;
+  let menu: ReturnType<typeof useComposerCommandMenu>;
+  const onChangeDraftMessage = vi.fn();
+
+  function Probe({ draftMessage, ownerKey }: { draftMessage: string; ownerKey: string }) {
+    const state = useComposerCommandMenu({
+      draftMessage,
+      ownerKey,
+      environmentId: null,
+      projectCwd: null,
+      selectedProviderStatus: null,
+      hasThread: false,
+      hasCompactableConversation: false,
+      onChangeDraftMessage,
+    });
+    useLayoutEffect(() => {
+      menu = state;
+    });
+    return null;
+  }
+
+  async function renderDraft(draftMessage: string, ownerKey = "draft-1") {
+    await act(() => root.render(createElement(Probe, { draftMessage, ownerKey })));
+  }
+
+  beforeEach(() => {
+    onChangeDraftMessage.mockReset();
+    const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
+    const container = {
+      nodeType: 1,
+      tagName: "DIV",
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      ownerDocument: document,
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    vi.stubGlobal("document", document);
+    vi.stubGlobal("window", { document, HTMLIFrameElement: EventTarget });
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    root = createRoot(container as unknown as HTMLElement);
+  });
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the replacement range while native selection trails text changes", async () => {
+    const prefix = "Inspect ";
+    const suffix = " then summarize";
+    await renderDraft(`${prefix}@Release${suffix}`);
+    const cursor = `${prefix}@Release`.length;
+    await act(() => menu.onSelectionChange({ start: cursor, end: cursor }));
+    await renderDraft(`${prefix}@Release ${suffix}`);
+    expect(menu.trigger?.query).toBe("Release ");
+    await renderDraft(`${prefix}@Release Notes.md${suffix}`);
+    expect.soft(menu.trigger?.query).toBe("Release Notes.md");
+    const end = `${prefix}@Release Notes.md`.length;
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger).toMatchObject({ query: "Release Notes.md", rangeEnd: end });
+    await act(() => menu.onSelectionChange({ start: end - 1, end: end - 1 }));
+    expect(menu.trigger?.query).toBe("Release Notes.m");
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger?.query).toBe("Release Notes.md");
+    await act(() => menu.onSelectionChange({ start: cursor, end: cursor }));
+    expect(menu.trigger?.query).toBe("Release");
+    const editCursor = `${prefix}@Release No`.length;
+    await act(() => menu.onSelectionChange({ start: editCursor, end: editCursor }));
+    await renderDraft(`${prefix}@Release Nootes.md${suffix}`);
+    await act(() => menu.onSelectionChange({ start: end + 1, end: end + 1 }));
+    expect(menu.trigger?.query).toBe("Release Nootes.md");
+    await act(() => menu.onSelectionChange({ start: editCursor + 1, end: editCursor + 1 }));
+    await renderDraft(`${prefix}@Release Notes.md${suffix}`);
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger).toMatchObject({ query: "Release Notes.md", rangeEnd: end });
+    await act(() =>
+      menu.onSelect({
+        id: "path:docs/Release Notes.md",
+        type: "path",
+        path: "docs/Release Notes.md",
+        kind: "file",
+        label: "Release Notes.md",
+        description: "docs",
+      }),
+    );
+    const expected = "Inspect [Release Notes.md](docs/Release%20Notes.md)  then summarize";
+    expect(onChangeDraftMessage).toHaveBeenCalledExactlyOnceWith(expected);
+    await renderDraft(expected);
+    expect(menu.trigger).toBeNull();
+  });
+
+  it("drops continuation on text selection and when switching draft owners", async () => {
+    await renderDraft("@Release");
+    await renderDraft("@Release Notes");
+    const end = "@Release Notes".length;
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger?.query).toBe("Release Notes");
+    await act(() => menu.onSelectionChange({ start: 0, end }));
+    expect(menu.trigger).toBeNull();
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger).toBeNull();
+
+    await renderDraft("@Release");
+    await act(() => menu.onSelectionChange({ start: 8, end: 8 }));
+    await renderDraft("@Release Notes");
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger?.query).toBe("Release Notes");
+    await renderDraft("@Release Notes", "draft-2");
+    expect(menu.trigger).toBeNull();
+    await renderDraft("@Release Notes draft", "draft-2");
+    expect(menu.trigger).toBeNull();
   });
 });

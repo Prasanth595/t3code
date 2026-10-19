@@ -17,15 +17,16 @@ export type ComposerChangeKind = "insert" | "delete" | "other";
  * ProseMirror tags these itself only on its built-in clipboard paths; the
  * composer's `handlePaste` and cut handler replace those paths, so each of
  * their dispatches must call this, or the change merges with the typing or
- * deleting around it.
+ * deleting around it. A separate key avoids rerunning Tiptap paste rules on
+ * text the custom handler has already parsed.
  */
 export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Transaction {
-  return tr.setMeta("uiEvent", event);
+  return tr.setMeta("composerClipboardEdit", event);
 }
 
 function changeKindOf(tr: Transaction): ComposerChangeKind | null {
   if (!tr.docChanged) return null;
-  const uiEvent = tr.getMeta("uiEvent");
+  const uiEvent = tr.getMeta("composerClipboardEdit") ?? tr.getMeta("uiEvent");
   if (uiEvent === "paste" || uiEvent === "drop" || uiEvent === "cut") return "other";
   // IME input replaces its own range on each keystroke; it is still typing.
   if (tr.getMeta("composition") != null) return "insert";
