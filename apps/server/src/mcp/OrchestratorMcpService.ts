@@ -1180,10 +1180,7 @@ const make = Effect.gen(function* () {
     const instanceIds =
       requestedInstanceId === undefined
         ? input.providers
-            .filter(
-              (provider) =>
-                provider.driver === requestedDriver && provider.enabled && provider.installed,
-            )
+            .filter((provider) => provider.driver === requestedDriver && provider.enabled)
             .map((provider) => provider.instanceId)
         : [requestedInstanceId];
     const resolved = resolveTarget(input);

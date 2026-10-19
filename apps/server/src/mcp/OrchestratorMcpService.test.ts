@@ -1710,7 +1710,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         });
         const unavailable: ServerProvider = {
           ...healthy,
-          installed: targetKind === "driver",
+          installed: false,
           status: "error",
           message: "Claude Agent CLI is unavailable.",
         };
@@ -1886,7 +1886,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           [secondId, secondId],
         );
         assert.equal(commands.filter((command) => command.type === "message.dispatch").length, 2);
-        assert.deepStrictEqual(yield* Ref.get(probes), [firstId, secondId]);
+        assert.deepStrictEqual(yield* Ref.get(probes), [
+          firstId,
+          secondId,
+          ProviderInstanceId.make("missing"),
+        ]);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );
