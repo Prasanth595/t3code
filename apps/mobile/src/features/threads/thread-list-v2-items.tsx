@@ -1115,15 +1115,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 <ProviderIcon provider={driver} size={12} />
               </View>
             ))}
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
-            />
+            <View className={providerInstance.showBadge ? undefined : "opacity-60"}>
+              <ProviderInstanceIcon
+                iconUrl={providerIconUrl}
+                provider={providerInstance.driverKind}
+                size={14}
+                displayName={providerInstance.displayName}
+                accentColor={providerInstance.accentColor}
+                showBadge={providerInstance.showBadge}
+                surfaceColor={rowAppearance.providerIconSurfaceColor}
+              />
+            </View>
           </View>
         ) : null}
       </View>
