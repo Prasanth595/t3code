@@ -12,7 +12,8 @@ import { checkCodexProviderStatus } from "./CodexProvider.ts";
  * A stored ChatGPT login behind `requiresOpenaiAuth: true`, as the real CLI
  * reports for a custom provider that sets `requires_openai_auth = true`.
  * `account/rateLimits/read` leaves a marker file so a test can tell whether the
- * quota was fetched at all.
+ * quota was fetched at all. `FAKE_CODEX_ACCOUNT` replaces the stored login and
+ * `FAKE_CODEX_RATE_LIMITS_FAIL` makes the quota request fail.
  */
 const FAKE_CODEX_APP_SERVER = String.raw`#!/usr/bin/env node
 const fs = require("node:fs");
@@ -29,7 +30,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (method === "initialize") {
     write({ id, result: { userAgent: "codex/0.162.0", codexHome: process.env.CODEX_HOME, platformFamily: "unix", platformOs: "macos" } });
   } else if (method === "account/read") {
-    write({ id, result: { account: { type: "chatgpt", email: "test@example.com", planType: "pro" }, requiresOpenaiAuth: true } });
+    const account = process.env.FAKE_CODEX_ACCOUNT === undefined
+      ? { type: "chatgpt", email: "test@example.com", planType: "pro" }
+      : JSON.parse(process.env.FAKE_CODEX_ACCOUNT);
+    write({ id, result: { account, requiresOpenaiAuth: true } });
   } else if (method === "config/read") {
     if (process.env.FAKE_CODEX_CONFIG === undefined) {
       write({ id, error: { code: -32603, message: "config unreadable" } });
@@ -38,6 +42,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     }
   } else if (method === "account/rateLimits/read") {
     fs.writeFileSync(path.join(process.env.CODEX_HOME, "rate-limits-requested"), "");
+    if (process.env.FAKE_CODEX_RATE_LIMITS_FAIL !== undefined) {
+      write({ id, error: { code: -32600, message: "rate limits unavailable" } });
+      return;
+    }
     write({ id, result: { rateLimits: { primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 } } } });
   } else if (method === "skills/list") {
     write({ id, result: { data: [] } });
@@ -52,7 +60,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 /** A `config` of `undefined` makes the fake CLI fail `config/read`. */
-const usageFor = Effect.fn("usageFor")(function* (config: Record<string, unknown> | undefined) {
+const usageFor = Effect.fn("usageFor")(function* (
+  config: Record<string, unknown> | undefined,
+  options: { readonly account?: Record<string, unknown>; readonly rateLimitsFail?: boolean } = {},
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-usage-" });
@@ -66,6 +77,10 @@ const usageFor = Effect.fn("usageFor")(function* (config: Record<string, unknown
     {
       ...process.env,
       ...(config === undefined ? {} : { FAKE_CODEX_CONFIG: JSON.stringify(config) }),
+      ...(options.account === undefined
+        ? {}
+        : { FAKE_CODEX_ACCOUNT: JSON.stringify(options.account) }),
+      ...(options.rateLimitsFail ? { FAKE_CODEX_RATE_LIMITS_FAIL: "1" } : {}),
     },
   );
   return {
@@ -124,6 +139,24 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex native usage 
   it.effect("skips the ChatGPT quota when the routing config cannot be read", () =>
     Effect.gen(function* () {
       const { usageLimits, fetched } = yield* usageFor(undefined);
+      assert.strictEqual(fetched, false);
+      assert.deepStrictEqual(usageLimits?.windows, []);
+      assert.strictEqual(usageLimits?.unavailable?.reason, "unsupported");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("reports probeFailed when the ChatGPT quota request fails", () =>
+    Effect.gen(function* () {
+      const { usageLimits, fetched } = yield* usageFor({}, { rateLimitsFail: true });
+      assert.strictEqual(fetched, true);
+      assert.deepStrictEqual(usageLimits?.windows, []);
+      assert.strictEqual(usageLimits?.unavailable?.reason, "probeFailed");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("keeps an API key unsupported when requiresOpenaiAuth is true", () =>
+    Effect.gen(function* () {
+      const { usageLimits, fetched } = yield* usageFor({}, { account: { type: "apiKey" } });
       assert.strictEqual(fetched, false);
       assert.deepStrictEqual(usageLimits?.windows, []);
       assert.strictEqual(usageLimits?.unavailable?.reason, "unsupported");
