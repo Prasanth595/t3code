@@ -13,10 +13,7 @@ import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { renderBootServicePlist, renderBootServiceUnit } from "./cloud/bootService.ts";
-import {
-  SERVICE_LAUNCHER_CONTEXT_ENV,
-  SERVICE_LAUNCHER_PROTOCOL,
-} from "./cloud/serviceProtocol.ts";
+import { SERVICE_LAUNCHER_CONTEXT_ENV } from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as ServerRuntimeState from "./serverRuntimeState.ts";
@@ -49,12 +46,12 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
       JSON.stringify({ protocol: input.npmRuntime ? 2 : 3, activeVersion }),
     );
   }
-  const versionDir = path.join(serviceHome, "runtime", "versions", activeVersion);
-  const entryPath = input.npmRuntime
-    ? path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs")
-    : path.join(versionDir, "t3");
-  yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
-  yield* fs.writeFileString(entryPath, "");
+  if (input.npmRuntime) {
+    const versionDir = path.join(serviceHome, "runtime", "versions", activeVersion);
+    const entryPath = path.join(versionDir, "node_modules", "t3", "dist", "bin.mjs");
+    yield* fs.makeDirectory(path.dirname(entryPath), { recursive: true });
+    yield* fs.writeFileString(entryPath, "");
+  }
 
   if (input.restartPending) {
     yield* fs.writeFileString(
@@ -89,10 +86,7 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
       Effect.gen(function* () {
         const probe = `${path.basename(run.command)} ${run.args.find((arg) => !arg.startsWith("--"))}`;
         probes.push(probe);
-        const output =
-          path.isAbsolute(run.command) && !(yield* fs.exists(run.command).pipe(Effect.orDie))
-            ? undefined
-            : input.outputs[probe];
+        const output = input.outputs[probe];
         return yield* output === undefined
           ? Effect.fail(
               new ProcessRunner.ProcessSpawnError({
@@ -123,33 +117,11 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
     Effect.provideService(HostProcess.Environment, input.environment ?? {}),
     Effect.result,
   );
-  // Refusal must never stop, restart, or disable the existing service.
   assert.includeMembers(
-    [
-      "launchctl print",
-      "launchctl print-disabled",
-      "systemctl is-active",
-      "systemctl is-enabled",
-      "t3 __service-preflight",
-    ],
+    ["launchctl print", "launchctl print-disabled", "systemctl is-active", "systemctl is-enabled"],
     probes,
   );
-  return { result, probes, t3Home };
-});
-
-const preflightOutput = (answer: object) => ({ code: 0, stdout: `${JSON.stringify(answer)}\n` });
-/** What a real 0.0.42 runtime answers: it speaks launcher protocol 2. */
-const preLockPreflight = preflightOutput({
-  status: "blocked",
-  version: "0.0.42",
-  reason:
-    "This release requires a newer T3 Code service launcher. Update it on the server machine.",
-});
-// Stable 0.1.0 holds the ownership lock but predates the preflight ownership marker.
-const stablePreflight = preflightOutput({
-  status: "ready",
-  version: "0.1.0",
-  launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+  return { result, t3Home };
 });
 
 interface CapturedLog {
@@ -266,15 +238,10 @@ describe("server ownership", () => {
   describe("beside an installed boot service", () => {
     it.effect("refuses an old active or scheduled service even without its runtime record", () =>
       Effect.gen(function* () {
-        const readyWithoutLock = preflightOutput({
-          status: "ready",
-          version: "0.0.45",
-          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
-        });
         for (const fixture of [
           {
             platform: "darwin",
-            outputs: { "launchctl print": { code: 0 }, "t3 __service-preflight": preLockPreflight },
+            outputs: { "launchctl print": { code: 0 } },
           },
           {
             platform: "darwin",
@@ -284,7 +251,6 @@ describe("server ownership", () => {
                 code: 0,
                 stdout: '"com.t3tools.t3code.service" => false',
               },
-              "t3 __service-preflight": readyWithoutLock,
             },
           },
           {
@@ -293,7 +259,6 @@ describe("server ownership", () => {
               // Restart= keeps an otherwise disabled service alive during its restart delay.
               "systemctl is-active": { code: 3, stdout: "activating\n" },
               "systemctl is-enabled": { code: 1, stdout: "disabled\n" },
-              "t3 __service-preflight": readyWithoutLock,
             },
           },
           {
@@ -301,7 +266,6 @@ describe("server ownership", () => {
             outputs: {
               "systemctl is-active": { code: 3, stdout: "inactive\n" },
               "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
-              "t3 __service-preflight": preLockPreflight,
             },
           },
         ] as const) {
@@ -328,7 +292,6 @@ describe("server ownership", () => {
             npmRuntime: true,
             outputs: {
               "systemctl is-active": { code: 0, stdout: "active\n" },
-              "t3 __service-preflight": preLockPreflight,
             },
           });
           assert.equal(result._tag, "Failure");
@@ -346,22 +309,19 @@ describe("server ownership", () => {
           activeVersion: "0.1.0",
           outputs: {
             "launchctl print": { code: 0 },
-            "t3 __service-preflight": stablePreflight,
           },
         });
         assert.equal(result._tag === "Failure" && result.failure._tag, "OlderBootServiceError");
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("allows stable 0.1.0 services without a preflight ownership marker", () =>
+    it.effect("allows lock-aware stable services that are loaded or stopped and enabled", () =>
       Effect.gen(function* () {
-        const outcomes: string[] = [];
         for (const fixture of [
           {
             platform: "darwin",
             outputs: {
               "launchctl print": { code: 0 },
-              "t3 __service-preflight": stablePreflight,
             },
           },
           {
@@ -369,14 +329,12 @@ describe("server ownership", () => {
             outputs: {
               "systemctl is-active": { code: 3, stdout: "inactive\n" },
               "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
-              "t3 __service-preflight": stablePreflight,
             },
           },
         ] as const) {
           const { result } = yield* startBesideBootService({ ...fixture, activeVersion: "0.1.0" });
-          outcomes.push(result._tag);
+          assert.equal(result._tag, "Success");
         }
-        assert.deepEqual(outcomes, ["Success", "Success"]);
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
@@ -384,7 +342,6 @@ describe("server ownership", () => {
       Effect.gen(function* () {
         const outputs = {
           "launchctl print": { code: 0 },
-          "t3 __service-preflight": preLockPreflight,
         };
         for (const fixture of [
           { platform: "darwin", outputs, unitServesOtherHome: true },
@@ -397,7 +354,6 @@ describe("server ownership", () => {
                 code: 0,
                 stdout: '"com.t3tools.t3code.service" => disabled',
               },
-              "t3 __service-preflight": preLockPreflight,
             },
           },
           {
@@ -405,13 +361,11 @@ describe("server ownership", () => {
             outputs: {
               "systemctl is-active": { code: 3, stdout: "inactive\n" },
               "systemctl is-enabled": { code: 1, stdout: "disabled\n" },
-              "t3 __service-preflight": preLockPreflight,
             },
           },
         ] as const) {
-          const { result, probes } = yield* startBesideBootService(fixture);
+          const { result } = yield* startBesideBootService(fixture);
           assert.equal(result._tag, "Success");
-          assert.notInclude(probes, "t3 __service-preflight");
         }
       }).pipe(Effect.provide(NodeServices.layer)),
     );
