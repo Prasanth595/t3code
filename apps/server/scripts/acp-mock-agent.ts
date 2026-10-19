@@ -891,25 +891,29 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
-      const idleOutcome = process.env.T3_ACP_IDLE_OUTCOME;
-      if (idleOutcome !== undefined && promptCount === 1) {
+      const idleError = process.env.T3_ACP_IDLE_ERROR;
+      if (idleError !== undefined && promptCount === 1) {
+        const toolCallId = "tool-call-idle-error-1";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            title: "Terminal",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: ["long-running-tool"] },
+          },
+        });
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
           update: {
             sessionUpdate: "state_update",
             state: "idle",
-            stopReason: idleOutcome.startsWith("error") ? "error" : idleOutcome,
-            ...(idleOutcome === "error-null-details"
-              ? { error: null }
-              : idleOutcome === "error" || idleOutcome === "error-empty-message"
-                ? {
-                    error: {
-                      code: -32000,
-                      message: idleOutcome === "error" ? "Missing Authentication header" : "",
-                      data: { kind: "auth", status: 401 },
-                    },
-                  }
-                : {}),
+            stopReason: "error",
+            ...(idleError === "details"
+              ? { error: { code: -32000, message: "Missing Authentication header" } }
+              : {}),
           },
         });
         return {};

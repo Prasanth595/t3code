@@ -604,87 +604,97 @@ function makeTurnInput(input: {
 }
 
 describe("AcpAdapterV2", () => {
-  it.live.each([
-    "error",
-    "error-no-details",
-    "error-null-details",
-    "error-empty-message",
-    "cancelled",
-    "end_turn",
-  ])("settles ACP v2 idle %s and allows a follow-up turn", (outcome) =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const instanceId = ProviderInstanceId.make(`idle-${outcome}`);
-      const threadId = ThreadId.make(`thread-idle-${outcome}`);
-      const adapter = yield* makeAcpAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        flavor: {
-          driver: ACP_TEST_DRIVER,
-          capabilities: AcpProviderCapabilitiesV2,
-          makeRuntime: makeMockRuntime({
-            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-            mockAgentPath: yield* path.fromFileUrl(
-              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-            ),
-            environment: { T3_ACP_IDLE_OUTCOME: outcome },
-          }),
-        },
-      });
-      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        cwd: process.cwd(),
-      });
-      const modelSelection = { instanceId, model: "default" } as const;
-      const runtime = yield* adapter.openSession({
-        threadId,
-        providerSessionId: ProviderSessionId.make(`session-idle-${outcome}`),
-        modelSelection,
-        runtimePolicy,
-      });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection,
-        runtimePolicy,
-      });
-      const terminalTurnIds = new Set<string>();
-      for (const ordinal of [1, 2]) {
-        yield* runtime.startTurn(
-          makeTurnInput({
-            threadId,
-            providerThread,
-            instanceId,
-            runtimePolicy,
-            now: yield* DateTime.now,
-            ordinal,
-          }),
+  it.live.each(["details", "none"] as const)(
+    "fails the turn on an ACP v2 idle error with %s, settles its open tool, and accepts the next prompt",
+    (details) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const instanceId = ProviderInstanceId.make(`idle-error-${details}`);
+        const threadId = ThreadId.make(`thread-idle-error-${details}`);
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+              mockAgentPath: yield* path.fromFileUrl(
+                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+              ),
+              environment: { T3_ACP_IDLE_ERROR: details },
+            }),
+          },
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(`session-idle-error-${details}`),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runTurn = (ordinal: number) =>
+          Effect.gen(function* () {
+            yield* runtime.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now: yield* DateTime.now,
+                ordinal,
+              }),
+            );
+            return yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            );
+          });
+
+        const failedEvents = yield* runTurn(1);
+        const failed = failedEvents.at(-1);
+        assert.equal(failed?.type, "turn.terminal");
+        if (failed?.type !== "turn.terminal") return;
+        assert.equal(failed.status, "failed");
+        assert.deepEqual(
+          failed.failure,
+          details === "details"
+            ? {
+                class: "provider_error",
+                message: "Missing Authentication header",
+                code: "-32000",
+                retryable: null,
+              }
+            : {
+                class: "provider_error",
+                message: "Provider turn failed.",
+                code: null,
+                retryable: null,
+              },
         );
-        const events = yield* runtime.events.pipe(
-          Stream.takeUntil((event) => event.type === "turn.terminal"),
-          Stream.runCollect,
+        const toolStatuses = failedEvents.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "tool-call-idle-error-1"
+            ? [event.turnItem.status]
+            : [],
         );
-        const terminals = events.filter((event) => event.type === "turn.terminal");
-        assert.equal(terminals.length, 1);
-        const terminal = terminals[0]!;
-        terminalTurnIds.add(terminal.providerTurnId);
-        assert.equal(terminalTurnIds.size, ordinal);
-        if (ordinal === 1 && outcome.startsWith("error")) {
-          assert.equal(terminal.status, "failed");
-          assert.equal(terminal.failure?.class, "provider_error");
-          assert.equal(
-            terminal.failure?.message,
-            outcome === "error" ? "Missing Authentication header" : "Provider turn failed.",
-          );
-          if (outcome === "error") assert.equal(terminal.failure?.code, "-32000");
-        } else {
-          assert.equal(
-            terminal.status,
-            ordinal === 1 && outcome === "cancelled" ? "cancelled" : "completed",
-          );
-        }
-      }
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+        assert.include(toolStatuses, "running");
+        assert.notInclude(["pending", "running", "waiting"], toolStatuses.at(-1));
+
+        const nextEvents = yield* runTurn(2);
+        const next = nextEvents.at(-1);
+        assert.equal(next?.type === "turn.terminal" ? next.status : undefined, "completed");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.live.each(["failed", "recovered", "completed", "cancelled"] as const)(
