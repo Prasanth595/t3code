@@ -309,7 +309,7 @@ private final class ComposerTextView: UITextView {
     }
 
     group.notify(queue: .main) { [weak self] in
-      guard let self, !self.isReadOnly else {
+      guard let self, self.isEditable, !self.isReadOnly else {
         return
       }
       let urls = images.compactMap { $0 }.compactMap(Self.writeTemporaryImage)
@@ -823,23 +823,23 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     textView.loadImages(from: imageProviders)
   }
 
-  // UITextView only hands text-like sessions to its text drop delegate, so an
-  // image-only drag (screenshot thumbnail, Photos) never reaches the methods
-  // above. This interaction accepts those; sessions the text view does take
-  // (e.g. image + file URL) still go through the text drop delegate.
+  // Support image drops that do not reach UITextDropDelegate.
   public func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
-    droppedImageProviders(in: session) != nil
+    textView.isEditable && !isReadOnly && droppedImageProviders(in: session) != nil
   }
 
   public func dropInteraction(
     _ interaction: UIDropInteraction,
     sessionDidUpdate session: UIDropSession
   ) -> UIDropProposal {
-    UIDropProposal(operation: isReadOnly ? .cancel : .copy)
+    guard textView.isEditable, !isReadOnly, droppedImageProviders(in: session) != nil else {
+      return UIDropProposal(operation: .cancel)
+    }
+    return UIDropProposal(operation: .copy)
   }
 
   public func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
-    guard !isReadOnly, let imageProviders = droppedImageProviders(in: session) else {
+    guard textView.isEditable, !isReadOnly, let imageProviders = droppedImageProviders(in: session) else {
       return
     }
     textView.loadImages(from: imageProviders)
