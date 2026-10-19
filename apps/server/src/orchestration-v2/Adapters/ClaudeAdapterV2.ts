@@ -500,12 +500,12 @@ export class ClaudeAppendSystemPromptFileError extends Schema.TaggedError<Claude
   }
 }
 
-export class ClaudeAppendSystemPromptFileMissingPathError extends Schema.TaggedError<ClaudeAppendSystemPromptFileMissingPathError>()(
-  "ClaudeAppendSystemPromptFileMissingPathError",
-  {},
+export class ClaudeAppendSystemPromptMissingValueError extends Schema.TaggedError<ClaudeAppendSystemPromptMissingValueError>()(
+  "ClaudeAppendSystemPromptMissingValueError",
+  { flag: Schema.Literals(["--append-system-prompt", "--append-system-prompt-file"]) },
 ) {
   override get message(): string {
-    return "The --append-system-prompt-file launch argument has no file path. Add the path after it in the Claude launch arguments, then send the message again.";
+    return `The ${this.flag} launch argument has no ${this.flag === "--append-system-prompt" ? "text" : "file path"}. Add it after the flag in the Claude launch arguments, then send the message again.`;
   }
 }
 
@@ -1315,21 +1315,34 @@ export function makeClaudeQueryOptions(input: {
   return input.cwd === null ? withDirectories : { ...withDirectories, cwd: input.cwd };
 }
 
-/** Reads the file the way the Claude CLI would, relative to the process cwd. */
+/**
+ * Checks the append launch arguments the way the Claude CLI would and reads
+ * the file relative to the process cwd. makeClaudeQueryOptions folds these
+ * flags out of extraArgs, so a value the CLI would have rejected has to be
+ * rejected here or it silently disappears.
+ */
 const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
   readonly settings: ClaudeSettings | undefined;
   readonly cwd: string | null;
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
 }) {
-  const file =
-    input.settings === undefined
-      ? undefined
-      : parseCliArgs(input.settings.launchArgs).flags["append-system-prompt-file"];
+  if (input.settings === undefined) return undefined;
+  const flags = parseCliArgs(input.settings.launchArgs).flags;
+  // parseCliArgs gives null for a flag with no following value. An explicit
+  // `--append-system-prompt ""` is a value the CLI accepts, so it stays.
+  if (flags["append-system-prompt"] === null) {
+    return yield* new ClaudeAppendSystemPromptMissingValueError({
+      flag: "--append-system-prompt",
+    });
+  }
+  const file = flags["append-system-prompt-file"];
   if (file === undefined) return undefined;
-  // parseCliArgs gives null for a trailing flag and "" for `--flag=`.
+  // `--append-system-prompt-file=` is "" and names no file either.
   if (file === null || file === "") {
-    return yield* new ClaudeAppendSystemPromptFileMissingPathError();
+    return yield* new ClaudeAppendSystemPromptMissingValueError({
+      flag: "--append-system-prompt-file",
+    });
   }
   const filePath = input.path.resolve(input.cwd ?? ".", file);
   return yield* input.fileSystem

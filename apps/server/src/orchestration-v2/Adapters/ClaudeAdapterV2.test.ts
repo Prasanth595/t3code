@@ -1229,11 +1229,24 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
     ],
     [
       "--append-system-prompt-file",
-      () => new ClaudeAdapterV2.ClaudeAppendSystemPromptFileMissingPathError().message,
+      () =>
+        new ClaudeAdapterV2.ClaudeAppendSystemPromptMissingValueError({
+          flag: "--append-system-prompt-file",
+        }).message,
     ],
     [
       "--append-system-prompt-file=",
-      () => new ClaudeAdapterV2.ClaudeAppendSystemPromptFileMissingPathError().message,
+      () =>
+        new ClaudeAdapterV2.ClaudeAppendSystemPromptMissingValueError({
+          flag: "--append-system-prompt-file",
+        }).message,
+    ],
+    [
+      "--append-system-prompt",
+      () =>
+        new ClaudeAdapterV2.ClaudeAppendSystemPromptMissingValueError({
+          flag: "--append-system-prompt",
+        }).message,
     ],
   ] as const)("fails the turn before opening Claude for %s", ([launchArgs, expectedMessage]) =>
     Effect.scoped(
