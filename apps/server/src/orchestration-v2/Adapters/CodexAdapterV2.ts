@@ -1314,8 +1314,7 @@ export function codexThreadRuntimeParams(input: {
       ...(mcpSession === undefined
         ? {}
         : {
-            // Thread overrides share the launch-argument layer; replacing the whole
-            // MCP table would discard servers supplied through launch args.
+            // Override only T3's server so launch-argument MCP servers survive.
             "mcp_servers.t3-code": {
               url: mcpSession.endpoint,
               tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
