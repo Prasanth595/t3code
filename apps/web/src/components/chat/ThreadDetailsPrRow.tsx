@@ -246,9 +246,9 @@ export function ThreadDetailsPrRow({
         className="max-w-80 text-left whitespace-normal"
       >
         <div className="flex min-w-0 max-w-80 flex-col gap-2 px-1 py-2">
-          <div className="flex min-w-0 items-baseline gap-1.5 text-xs leading-none">
+          <div className="flex min-w-0 flex-col gap-1.5 text-xs">
             <span className="min-w-0 truncate font-medium text-foreground">{detail.title}</span>
-            <span className="min-w-0 truncate text-muted-foreground">{referenceLabel}</span>
+            <span className="min-w-0 wrap-anywhere text-muted-foreground">{referenceLabel}</span>
           </div>
           <div className="grid gap-1.5 pl-0.5 text-xs text-muted-foreground">
             <div className="flex min-w-0 items-center gap-2">
@@ -462,7 +462,7 @@ export function ThreadDetailsPrRow({
             <AlertDialogHeader>
               <AlertDialogTitle>Merge pull request?</AlertDialogTitle>
               <AlertDialogDescription>
-                This merges #{number} using {selectedMergeMethod}.
+                This merges {referenceLabel} using {selectedMergeMethod}.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>

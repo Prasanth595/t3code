@@ -49,7 +49,7 @@ vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) =
   usePullRequestHandoffs: () => ({ handoff: null, startAsk: vi.fn(), startHandoff: vi.fn() }),
 }));
 
-import { linkedPullRequestSnapshotStatus } from "../ThreadStatusIndicators";
+import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 import { ThreadDetailsPrRows } from "./ThreadDetailsPrRows";
 
 function link(
@@ -127,6 +127,8 @@ function render(
   current: ThreadPullRequestLink,
   threadProject: EnvironmentProject | null = project,
 ) {
+  const linked = linkedPullRequestSnapshotStatus(current);
+  const pr = linked?.pr ?? null;
   act(() => {
     root.render(
       <ThreadDetailsPrRows
@@ -138,10 +140,10 @@ function render(
         currentLink={current}
         onOpenLink={vi.fn()}
         environmentId={EnvironmentId.make("environment")}
-        pr={linkedPullRequestSnapshotStatus(current)?.pr ?? null}
+        pr={pr}
         number={current.number}
         reference={current}
-        status={null}
+        status={prStatusIndicator(pr, linked?.sourceControlProvider)}
         project={threadProject}
         label={`#${current.number}: ${current.snapshot?.title ?? ""}`}
         openAriaLabel={current.url}
@@ -264,7 +266,7 @@ it("keeps the same repository reference in the row and tooltip before and after 
 
 it("fits long repository references and their tooltips without hiding row controls", async () => {
   state.loaded = true;
-  const repository = "a-very-long-organization-name/a-repository-with-a-very-long-descriptive-name";
+  const repository = `${"organization".repeat(8)}/${"repository".repeat(12)}`;
   const long = link(2, "layer-two", "main", "2026-01-01T00:00:20.000Z", repository);
   render([long], long);
   expect(container.textContent).toContain(`${repository}#2`);
@@ -292,8 +294,17 @@ it("fits long repository references and their tooltips without hiding row contro
   const reference = [...tooltip.querySelectorAll("span")].find(
     (span) => span.textContent === `${repository}#2`,
   )!;
+  expect.soft(reference.scrollWidth).toBeLessThanOrEqual(reference.clientWidth);
   expect.soft(tooltip.scrollWidth).toBeLessThanOrEqual(tooltip.clientWidth);
   expect
     .soft(reference.getBoundingClientRect().right)
     .toBeLessThanOrEqual(tooltip.getBoundingClientRect().right);
+
+  await act(() => userEvent.unhover(rowButtons()[0]!));
+  await act(() => userEvent.click(merge));
+  const description = document.querySelector<HTMLElement>(
+    '[data-slot="alert-dialog-description"]',
+  )!;
+  expect.soft(description.textContent).toBe(`This merges ${repository}#2 using merge.`);
+  expect.soft(description.scrollWidth).toBeLessThanOrEqual(description.clientWidth);
 });
