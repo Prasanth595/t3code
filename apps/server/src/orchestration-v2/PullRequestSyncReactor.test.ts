@@ -1072,6 +1072,43 @@ describe("PullRequestSyncReactor", () => {
       ),
   );
 
+  it.effect("retries a missing link when the remaining project uses different credentials", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const projectA = ProjectId.make("project-a");
+        const projectB = ProjectId.make("project-b");
+        const first = makeThread("first", { projectId: projectA, pullRequests: [makeLink(9)] });
+        const second = makeThread("second", { projectId: projectB, pullRequests: [makeLink(9)] });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([first, second]),
+          summary: (input) =>
+            input.projectId === projectA ? missingSummary : Effect.succeed(makeSummary(input)),
+        });
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.projectId),
+            [projectA],
+          );
+          assert.deepStrictEqual(yield* Ref.get(fixture.syncCommands), []);
+
+          yield* Ref.set(fixture.snapshots, makeSnapshot([{ ...first, pullRequests: [] }, second]));
+          yield* sweepAgain(fixture, reactor);
+
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.summaryCalls)).map((call) => call.projectId),
+            [projectA, projectB],
+          );
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.threadId),
+            [second.id],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect(
     "holds missing links through sibling and link updates but honors a reader refresh",
     () =>
