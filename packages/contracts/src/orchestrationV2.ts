@@ -1556,7 +1556,7 @@ const ReceivedProjectedTurnItem = OrchestrationV2ProjectedTurnItem.mapFields((fi
 export type ReceivedOrchestrationV2ProjectedTurnItem = typeof ReceivedProjectedTurnItem.Type;
 
 /** Returns `rows` itself when every row's item is known. */
-export const knownProjectedTurnItems = (
+const knownProjectedTurnItems = (
   rows: ReadonlyArray<ReceivedOrchestrationV2ProjectedTurnItem>,
 ): ReadonlyArray<OrchestrationV2ProjectedTurnItem> =>
   (rows.some((row) => isUnknownUnionMember(row.item))
