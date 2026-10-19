@@ -191,17 +191,17 @@ export function cursorRuntimeAgentPolicy(
     typeof runtimePolicy.sandboxPolicy.type === "string"
       ? runtimePolicy.sandboxPolicy.type
       : undefined;
+  const autoReview =
+    runtimePolicy.approvalPolicy === undefined
+      ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
+      : runtimePolicy.approvalPolicy !== "never";
   return {
-    autoReview:
-      runtimePolicy.approvalPolicy === undefined
-        ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
-        : runtimePolicy.approvalPolicy !== "never",
-    // The Cursor SDK has no filesystem sandbox on Windows, so the default would
-    // fail before the turn starts. An explicit sandboxPolicy is still requested
-    // as-is: the SDK rejecting it beats silently widening access.
+    autoReview,
+    // The Windows SDK has no filesystem sandbox; omit the default only when
+    // Auto-review still gates execution. Explicit policies remain authoritative.
     sandboxEnabled:
       runtimePolicy.sandboxPolicy === undefined
-        ? platform !== "win32" && runtimePolicy.runtimeMode !== "full-access"
+        ? runtimePolicy.runtimeMode !== "full-access" && !(platform === "win32" && autoReview)
         : sandboxPolicyType !== "dangerFullAccess",
   };
 }
@@ -2131,10 +2131,19 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             yield* existing.session.close.pipe(Effect.ignore);
             yield* Ref.set(liveAgent, null);
           }
+          const options = makeCursorAgentOptions({
+            ...(apiKey === undefined ? {} : { apiKey }),
+            modelSelection: openInput.modelSelection,
+            runtimePolicy: openInput.runtimePolicy,
+            platform,
+            threadId: openInput.threadId,
+            mcpSession: yield* mcpSessions.read(openInput.threadId),
+          });
           if (
             platform === "win32" &&
             openInput.runtimePolicy.sandboxPolicy === undefined &&
             openInput.runtimePolicy.runtimeMode !== "full-access" &&
+            options.local?.sandboxOptions?.enabled === false &&
             !(yield* Ref.getAndSet(warnedUnsupportedSandbox, true))
           ) {
             yield* Effect.logWarning(
@@ -2145,14 +2154,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             .open({
               operation: openInput.operation,
               ...(openInput.agentId === undefined ? {} : { agentId: openInput.agentId }),
-              options: makeCursorAgentOptions({
-                ...(apiKey === undefined ? {} : { apiKey }),
-                modelSelection: openInput.modelSelection,
-                runtimePolicy: openInput.runtimePolicy,
-                platform,
-                threadId: openInput.threadId,
-                mcpSession: yield* mcpSessions.read(openInput.threadId),
-              }),
+              options,
               threadId: openInput.threadId,
               providerSessionId: input.providerSessionId,
             })

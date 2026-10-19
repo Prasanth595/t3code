@@ -1152,8 +1152,34 @@ describe("CursorAdapterV2", () => {
         sandboxEnabled: false,
       },
     );
-    // The Cursor SDK has no filesystem sandbox on Windows, so default modes skip it
-    // while an explicit sandbox policy is still passed through for the SDK to reject.
+    assert.deepEqual(
+      cursorRuntimeAgentPolicy(
+        {
+          ...base,
+          runtimeMode: "auto-accept-edits",
+        },
+        "win32",
+      ),
+      {
+        autoReview: false,
+        sandboxEnabled: true,
+      },
+    );
+    assert.deepEqual(
+      cursorRuntimeAgentPolicy(
+        {
+          ...base,
+          runtimeMode: "auto",
+          approvalPolicy: "never",
+        },
+        "win32",
+      ),
+      {
+        autoReview: false,
+        sandboxEnabled: true,
+      },
+    );
+    // Auto-review can gate Windows execution without the unsupported SDK sandbox.
     assert.deepEqual(
       cursorRuntimeAgentPolicy(
         {
