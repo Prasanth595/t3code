@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -715,6 +717,11 @@ describe("releaseManagedTunnelOnShutdown", () => {
         status: "revoked",
       });
       expect((yield* link.linkState()).linkRevoked).toBe(true);
+      expect(
+        yield* link.startManagedTunnelIfOriginConfirmed("http://127.0.0.1:3773", {
+          requireConfirmedOrigin: false,
+        }),
+      ).toBe(false);
       // One registration request, no relink, and nothing started or removed.
       // linkState also sends a HEAD to read the relay's clock.
       expect(requests.filter((request) => request.method !== "HEAD")).toHaveLength(1);
@@ -740,48 +747,97 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  it.effect(
-    "does not mark a link revoked when the rejection came while the clock was wrong",
-    () => {
-      const { store, values } = makeMemorySecretStore([
-        [
-          CLOUD_ENDPOINT_RUNTIME_CONFIG,
-          '{"providerKind":"cloudflare_tunnel","connectorToken":"existing-token","tunnelId":"existing-tunnel"}',
-        ],
-        [RELAY_URL_SECRET, "https://relay.example.test"],
-        [CLOUD_LINKED_USER_ID, "user-123"],
-        [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
-        [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
-      ]);
+  it.effect("keeps registering a skewed host and reconnects after its clock is corrected", () => {
+    const config = {
+      providerKind: "cloudflare_tunnel" as const,
+      connectorToken: "existing-token",
+      tunnelId: "existing-tunnel",
+    };
+    const { store, values } = makeMemorySecretStore([
+      [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+      [RELAY_URL_SECRET, "https://relay.example.test"],
+      [CLOUD_LINKED_USER_ID, "user-123"],
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      [CLOUD_CLI_DESIRED_LINK_SECRET, "managed"],
+    ]);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    let clockCorrected = false;
 
-      return Effect.gen(function* () {
-        const link = yield* CloudLink.CloudLink;
-        const error = yield* link
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      const firstFailure = yield* Deferred.make<void>();
+      const retryWindowExhausted = yield* Deferred.make<void>();
+      const registration = yield* retryManagedTunnelRegistration(
+        link
           .registerManagedTunnelRecovery("http://127.0.0.1:3773")
-          .pipe(Effect.flip);
-        expect(error).toMatchObject({ _tag: "RelayRequestError", clockSkewSeconds: -420 });
-        expect((yield* link.linkState()).linkRevoked).toBe(false);
-        expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
-      }).pipe(
-        provideReleaseHarness({
-          store,
-          applyConfigCalls: [],
-          requests: [],
-          respond: () =>
-            Response.json(
-              {
-                _tag: "RelayAuthInvalidError",
-                code: "auth_invalid",
-                reason: "not_authorized",
-                traceId: "trace-clock",
-              },
-              // The test clock starts at the epoch, so this relay is 7 minutes ahead.
-              { status: 401, headers: { date: "Thu, 01 Jan 1970 00:07:00 GMT" } },
-            ),
-        }),
+          .pipe(Effect.tapError(() => Deferred.succeed(firstFailure, undefined))),
+        CloudLink.shouldRetryCloudLink,
+        Deferred.succeed(retryWindowExhausted, undefined),
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.raceFirst(Deferred.await(firstFailure), Fiber.await(registration));
+      const state = yield* link.linkState();
+      expect(state).toMatchObject({ clockSkewSeconds: -420, linkRevoked: false });
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+
+      // Clock synchronization can take longer than the normal startup retry window.
+      yield* TestClock.adjust("15 minutes");
+      yield* Deferred.await(retryWindowExhausted);
+      const attempts = requests.filter((request) => request.method === "POST").length;
+      expect(attempts).toBeGreaterThan(1);
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+
+      clockCorrected = true;
+      yield* TestClock.setTime((yield* Clock.currentTimeMillis) + 420_000);
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* Fiber.join(registration)).toMatchObject({ status: "ready" });
+      expect(requests.filter((request) => request.method === "POST").length).toBeGreaterThan(
+        attempts,
       );
-    },
-  );
+      expect(applyConfigCalls).toEqual([config]);
+      const recoveredState = yield* link.linkState();
+      expect(recoveredState).toMatchObject({ linked: true, linkRevoked: false });
+      expect(recoveredState.clockSkewSeconds).toBeUndefined();
+      expect(new TextDecoder().decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
+        "environment-credential",
+      );
+      expect(
+        Option.getOrThrow(
+          decodeConfirmedOrigin(
+            new TextDecoder().decode(values.get(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)),
+          ),
+        ),
+      ).toEqual({ config, origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 } });
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls,
+        requests,
+        respondEffect: Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          return Response.json(
+            clockCorrected
+              ? { status: "ready" }
+              : {
+                  _tag: "RelayAuthInvalidError",
+                  code: "auth_invalid",
+                  reason: "not_authorized",
+                  traceId: "trace-clock",
+                },
+            {
+              status: clockCorrected ? 200 : 401,
+              headers: {
+                date: DateTime.toDateUtc(
+                  DateTime.makeUnsafe(now + (clockCorrected ? 0 : 420_000)),
+                ).toUTCString(),
+              },
+            },
+          );
+        }),
+      }),
+    );
+  });
 
   it.effect("does not mark a link that was replaced while its rejection was in flight", () => {
     const { store, values } = makeMemorySecretStore([
@@ -1159,10 +1215,18 @@ describe("releaseManagedTunnelOnShutdown", () => {
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
     ]);
     const applyConfigCalls: Array<unknown> = [];
+    let clockCorrected = false;
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
+      const skewed = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
+      expect(CloudLink.shouldRetryCloudLink(skewed)).toBe(true);
+      expect((yield* link.linkState()).linkRevoked).toBe(false);
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
+
+      clockCorrected = true;
       const error = yield* Effect.flip(link.recoverManagedTunnel("http://127.0.0.1:3773"));
+      expect(CloudLink.shouldRetryCloudLink(error)).toBe(false);
       expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unauthorized" });
       expect((yield* link.linkState()).linkRevoked).toBe(true);
       expect(applyConfigCalls).toEqual([]);
@@ -1180,7 +1244,14 @@ describe("releaseManagedTunnelOnShutdown", () => {
               reason: "not_authorized",
               traceId: "trace-recovery-revoked",
             },
-            { status: 401 },
+            {
+              status: 401,
+              headers: {
+                date: clockCorrected
+                  ? "Thu, 01 Jan 1970 00:00:00 GMT"
+                  : "Thu, 01 Jan 1970 00:07:00 GMT",
+              },
+            },
           ),
       }),
     );

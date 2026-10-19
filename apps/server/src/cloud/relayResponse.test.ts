@@ -1,17 +1,15 @@
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HttpClientError from "effect/http/HttpClientError";
 
 import {
   filterRelayResponse,
-  isRelayClockSkewError,
   relayRequestError,
   shouldRetryRelayRequest,
 } from "./relayResponse.ts";
-
-// The test clock starts at the epoch, so this relay is seven minutes ahead of it.
-const RELAY_SEVEN_MINUTES_AHEAD = { date: "Thu, 01 Jan 1970 00:07:00 GMT" };
 
 const response = (
   status: number,
@@ -47,18 +45,24 @@ it("reports a transport failure category without exposing request or cause detai
 it.effect("reports the tunnel limit and relay trace instead of a generic 403", () =>
   Effect.gen(function* () {
     const error = yield* filterRelayResponse(
-      response(403, {
-        _tag: "RelayEnvironmentLinkLimitExceededError",
-        code: "environment_link_limit_exceeded",
-        maxTunnels: 3,
-        traceId: "trace-limit",
-      }),
+      response(
+        403,
+        {
+          _tag: "RelayEnvironmentLinkLimitExceededError",
+          code: "environment_link_limit_exceeded",
+          maxTunnels: 3,
+          traceId: "trace-limit",
+        },
+        { date: "Thu, 01 Jan 1970 00:07:00 GMT" },
+      ),
     ).pipe(Effect.mapError(relayRequestError), Effect.flip);
 
     expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "forbidden" });
     expect(error.message).toContain("at most 3 tunnels");
     expect(error.message).toContain("Unlink an unused environment");
     expect(error.message).toContain("Trace ID: trace-limit");
+    expect(shouldRetryRelayRequest(error)).toBe(false);
+    expect(error.clockSkewSeconds).toBeUndefined();
   }),
 );
 
@@ -80,48 +84,37 @@ it.effect("makes revoked authorization actionable and non-retryable", () =>
   }),
 );
 
-it.effect("blames a refused link proof on this machine's clock when it is far off", () =>
+it.effect("keeps a rejected proof retryable until the host clock is within 60 seconds", () =>
   Effect.gen(function* () {
-    const error = yield* filterRelayResponse(
-      response(
-        400,
-        {
-          _tag: "RelayEnvironmentLinkProofInvalidError",
-          code: "environment_link_proof_invalid",
-          reason: "invalid_signature_or_scope",
-          traceId: "trace-clock",
-        },
-        RELAY_SEVEN_MINUTES_AHEAD,
-      ),
-    ).pipe(Effect.flip);
+    const rejectedProof = () =>
+      filterRelayResponse(
+        response(
+          400,
+          {
+            _tag: "RelayEnvironmentLinkProofInvalidError",
+            code: "environment_link_proof_invalid",
+            reason: "invalid_signature_or_scope",
+            traceId: "trace-clock",
+          },
+          { date: "Thu, 01 Jan 1970 00:07:00 GMT" },
+        ),
+      ).pipe(Effect.flip);
 
-    expect(error).toMatchObject({ rejection: "rejected", clockSkewSeconds: -420 });
-    expect(isRelayClockSkewError(error)).toBe(true);
-    expect(shouldRetryRelayRequest(error)).toBe(true);
-    expect(error.message).toContain("clock is 7 minutes behind");
-    expect(error.message).toContain("Trace ID: trace-clock");
-  }),
-);
+    const skewed = yield* rejectedProof();
+    expect(skewed.clockSkewSeconds).toBe(-420);
+    expect(shouldRetryRelayRequest(skewed)).toBe(true);
+    expect(skewed.message).toContain("clock is 7 minutes behind");
+    expect(skewed.message).toContain('"Sync now"');
+    expect(skewed.message).toContain("reconnects by itself");
+    expect(skewed.message).toContain("Trace ID: trace-clock");
 
-it.effect("keeps a refusal about the request itself permanent despite a skewed clock", () =>
-  Effect.gen(function* () {
-    const error = yield* filterRelayResponse(
-      response(
-        403,
-        {
-          _tag: "RelayEnvironmentLinkLimitExceededError",
-          code: "environment_link_limit_exceeded",
-          maxTunnels: 3,
-          traceId: "trace-limit",
-        },
-        RELAY_SEVEN_MINUTES_AHEAD,
-      ),
-    ).pipe(Effect.flip);
-
-    expect(isRelayClockSkewError(error)).toBe(false);
-    expect(shouldRetryRelayRequest(error)).toBe(false);
-    expect(error.message).not.toContain("clock");
-  }),
+    yield* TestClock.setTime(359_000);
+    expect(shouldRetryRelayRequest(yield* rejectedProof())).toBe(true);
+    yield* TestClock.setTime(360_000);
+    const withinTolerance = yield* rejectedProof();
+    expect(withinTolerance.clockSkewSeconds).toBeUndefined();
+    expect(shouldRetryRelayRequest(withinTolerance)).toBe(false);
+  }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
 );
 
 it.effect("reports an unrecognized access denial without printing its response body", () =>
@@ -156,23 +149,20 @@ it.effect.each([
   { status: 403, attempts: 1 },
   { status: 429, attempts: 2 },
   { status: 503, attempts: 2 },
-  { status: 401, headers: RELAY_SEVEN_MINUTES_AHEAD, attempts: 2 },
-])(
-  "stops rejected startup links but retries temporary failures: $status",
-  ({ status, headers, attempts }) =>
-    Effect.gen(function* () {
-      let requests = 0;
-      const result = yield* Effect.suspend(() => {
-        requests++;
-        return filterRelayResponse(response(requests === 1 ? status : 200, "{}", headers));
-      }).pipe(
-        Effect.mapError(relayRequestError),
-        Effect.retry({ while: shouldRetryRelayRequest, times: 1 }),
-        Effect.result,
-      );
-      expect(requests).toBe(attempts);
-      expect(result._tag).toBe(attempts === 1 ? "Failure" : "Success");
-    }),
+])("stops rejected startup links but retries temporary failures: $status", ({ status, attempts }) =>
+  Effect.gen(function* () {
+    let requests = 0;
+    const result = yield* Effect.suspend(() => {
+      requests++;
+      return filterRelayResponse(response(requests === 1 ? status : 200, "{}"));
+    }).pipe(
+      Effect.mapError(relayRequestError),
+      Effect.retry({ while: shouldRetryRelayRequest, times: 1 }),
+      Effect.result,
+    );
+    expect(requests).toBe(attempts);
+    expect(result._tag).toBe(attempts === 1 ? "Failure" : "Success");
+  }),
 );
 
 it.effect("keeps the relay failure reason and trace when tunnel cleanup fails", () =>
