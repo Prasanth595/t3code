@@ -122,7 +122,9 @@ function BrowserPreviewScreen({
         options={{ headerBackVisible: false }}
         actions={
           // Android WebView cannot play video in picture in picture.
-          Platform.OS === "ios" && pictureInPicture.supported && pdfUri === null
+          Platform.OS === "ios" &&
+          pictureInPicture.supported &&
+          (pictureInPicture.active || pdfUri === null)
             ? [
                 {
                   accessibilityLabel: pictureInPicture.active

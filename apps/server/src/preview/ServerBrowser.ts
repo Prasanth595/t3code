@@ -887,16 +887,14 @@ const make = Effect.gen(function* () {
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
     reportLiveTabs();
-    // Desktop PDFs may start loading before interception attaches. Other desktop
-    // pages and popups keep their existing navigation.
+    // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
-      !adopted &&
       snapshot.navStatus._tag === "Loading" &&
-      (!desktop || isPdfAssetUrl(snapshot.navStatus.url))
+      ((!adopted && !desktop) || isPdfAssetUrl(snapshot.navStatus.url))
     ) {
       const options = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
       tab.initialNavigation = (
-        desktop && page.url() === snapshot.navStatus.url
+        (desktop || adopted) && page.url() === snapshot.navStatus.url
           ? page.reload(options)
           : page.goto(snapshot.navStatus.url, options)
       ).then(constVoid);
