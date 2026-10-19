@@ -8,6 +8,7 @@ import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as References from "effect/References";
+import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -23,11 +24,6 @@ import * as ServerRuntimeState from "./serverRuntimeState.ts";
 
 const isServerRuntimeStateError = Schema.is(ServerRuntimeState.ServerRuntimeStateError);
 
-/**
- * Starts a lock-aware server on a T3 home whose user has a boot service unit
- * installed. Process probes are answered from `outputs`, keyed by command
- * name and subcommand; any other probe fails to run.
- */
 const startBesideBootService = Effect.fn("test.startBesideBootService")(function* (input: {
   readonly platform: "darwin" | "linux";
   readonly outputs: Readonly<Record<string, { readonly code: number; readonly stdout?: string }>>;
@@ -46,7 +42,7 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   yield* fs.makeDirectory(path.join(serviceHome, "runtime"));
   yield* fs.writeFileString(
     path.join(serviceHome, "runtime", "service-state.json"),
-    `{"protocol":3,"activeVersion":"0.0.42"}\n`,
+    JSON.stringify({ protocol: 3, activeVersion: input.restartPending ? "0.0.46" : "0.0.42" }),
   );
   if (input.restartPending) {
     yield* fs.writeFileString(path.join(serviceHome, "runtime", ".restart-pending"), "0.0.46\n");
@@ -65,15 +61,13 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
   yield* fs.makeDirectory(path.dirname(unitPath), { recursive: true });
   yield* fs.writeFileString(unitPath, unit);
 
-  const invocations: ReadonlyArray<string>[] = [];
-  const probeOf = (invocation: ReadonlyArray<string>) =>
-    `${path.basename(invocation[0] ?? "")} ${invocation.find((arg, index) => index > 0 && !arg.startsWith("--"))}`;
+  const probes: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (run) =>
       Effect.suspend(() => {
-        const invocation = [run.command, ...run.args];
-        invocations.push(invocation);
-        const output = input.outputs[probeOf(invocation)];
+        const probe = `${path.basename(run.command)} ${run.args.find((arg) => !arg.startsWith("--"))}`;
+        probes.push(probe);
+        const output = input.outputs[probe];
         return output === undefined
           ? Effect.fail(
               new ProcessRunner.ProcessSpawnError({
@@ -104,12 +98,18 @@ const startBesideBootService = Effect.fn("test.startBesideBootService")(function
     Effect.provideService(HostProcess.Environment, input.environment ?? {}),
     Effect.result,
   );
-  return {
-    outcome: result._tag === "Success" ? "started" : result.failure._tag,
-    invocations,
-    probes: invocations.map(probeOf),
-    t3Home,
-  };
+  // Refusal must never stop, restart, or disable the existing service.
+  assert.includeMembers(
+    [
+      "launchctl print",
+      "launchctl print-disabled",
+      "systemctl is-active",
+      "systemctl is-enabled",
+      "t3 __service-preflight",
+    ],
+    probes,
+  );
+  return { result, probes, t3Home };
 });
 
 const preflightOutput = (answer: object) => ({ code: 0, stdout: `${JSON.stringify(answer)}\n` });
@@ -235,97 +235,63 @@ describe("server ownership", () => {
   );
 
   describe("beside an installed boot service", () => {
-    it.effect("refuses while a loaded service runs a release without the lock", () =>
+    it.effect("refuses an old active or scheduled service even without its runtime record", () =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
-        for (const preflight of [
-          preLockPreflight,
-          preflightOutput({ status: "ready", version: "0.0.45", launcherProtocol: 3 }),
-        ]) {
-          const started = yield* startBesideBootService({
+        const readyWithoutLock = preflightOutput({
+          status: "ready",
+          version: "0.0.45",
+          launcherProtocol: SERVICE_LAUNCHER_PROTOCOL,
+        });
+        for (const fixture of [
+          {
             platform: "darwin",
-            outputs: { "launchctl print": { code: 0 }, "t3 __service-preflight": preflight },
-          });
-          assert.equal(started.outcome, "OlderBootServiceError", preflight.stdout);
-          assert.deepEqual(started.invocations, [
-            ["launchctl", "print", "gui/501/com.t3tools.t3code.service"],
-            [
-              path.join(started.t3Home, "runtime", "versions", "0.0.42", "t3"),
-              "__service-preflight",
-              "--database-path",
-              path.join(started.t3Home, "userdata", "statev2.sqlite"),
-              "--launcher-protocol",
-              String(SERVICE_LAUNCHER_PROTOCOL),
-            ],
-          ]);
-        }
-      }).pipe(Effect.provide(NodeServices.layer)),
-    );
-
-    it.effect("refuses a stopped service only when it starts again at login", () =>
-      Effect.gen(function* () {
-        // macOS 13+ prints enabled/disabled; macOS 12 and earlier print false/true.
-        for (const [state, outcome] of [
-          ["disabled", "started"],
-          ["true", "started"],
-          ["enabled", "OlderBootServiceError"],
-          ["false", "OlderBootServiceError"],
-        ]) {
-          const started = yield* startBesideBootService({
+            outputs: { "launchctl print": { code: 0 }, "t3 __service-preflight": preLockPreflight },
+          },
+          {
             platform: "darwin",
             outputs: {
               "launchctl print": { code: 113 },
               "launchctl print-disabled": {
                 code: 0,
-                stdout: `disabled services = {\n\t"com.apple.example" => disabled\n\t"com.t3tools.t3code.service" => ${state}\n}\n`,
+                stdout: '"com.t3tools.t3code.service" => false',
               },
-              "t3 __service-preflight": preLockPreflight,
+              "t3 __service-preflight": readyWithoutLock,
             },
-          });
-          assert.equal(started.outcome, outcome, state);
-        }
-        for (const [active, enabled, outcome] of [
-          ["active", "disabled", "OlderBootServiceError"],
-          ["inactive", "enabled", "OlderBootServiceError"],
-          ["inactive", "disabled", "started"],
-          // Waiting out its restart delay.
-          ["activating", "disabled", "OlderBootServiceError"],
-        ]) {
-          const started = yield* startBesideBootService({
+          },
+          {
             platform: "linux",
             outputs: {
-              "systemctl is-active": { code: active === "active" ? 0 : 3, stdout: `${active}\n` },
-              "systemctl is-enabled": {
-                code: enabled === "enabled" ? 0 : 1,
-                stdout: `${enabled}\n`,
-              },
+              // Restart= keeps an otherwise disabled service alive during its restart delay.
+              "systemctl is-active": { code: 3, stdout: "activating\n" },
+              "systemctl is-enabled": { code: 1, stdout: "disabled\n" },
+              "t3 __service-preflight": readyWithoutLock,
+            },
+          },
+          {
+            platform: "linux",
+            outputs: {
+              "systemctl is-active": { code: 3, stdout: "inactive\n" },
+              "systemctl is-enabled": { code: 0, stdout: "enabled\n" },
               "t3 __service-preflight": preLockPreflight,
             },
-          });
-          assert.equal(started.outcome, outcome, `${active} ${enabled}`);
+          },
+        ] as const) {
+          const { result, t3Home } = yield* startBesideBootService(fixture);
+          assert.equal(result._tag, "Failure");
+          if (result._tag !== "Failure") return;
+          assert.equal(result.failure._tag, "OlderBootServiceError");
+          assert.equal(Runtime.getErrorExitCode(result.failure), 78);
+          assert.include(result.failure.message, t3Home);
+          assert.include(result.failure.message, "t3 update");
+          assert.include(result.failure.message, "t3 service restart");
+          assert.include(result.failure.message, "No server was stopped");
         }
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("starts beside a service whose runtime takes the lock", () =>
+    it.effect("refuses while the loaded service has not restarted into its lock-aware update", () =>
       Effect.gen(function* () {
-        // A later runtime answers this launcher protocol with "blocked".
-        for (const launcherProtocol of [SERVICE_LAUNCHER_PROTOCOL, SERVICE_LAUNCHER_PROTOCOL + 1]) {
-          const started = yield* startBesideBootService({
-            platform: "darwin",
-            outputs: {
-              "launchctl print": { code: 0 },
-              "t3 __service-preflight": lockAwarePreflight(launcherProtocol),
-            },
-          });
-          assert.equal(started.outcome, "started", String(launcherProtocol));
-        }
-      }).pipe(Effect.provide(NodeServices.layer)),
-    );
-
-    it.effect("refuses a loaded service that has not restarted into its update", () =>
-      Effect.gen(function* () {
-        const started = yield* startBesideBootService({
+        const { result } = yield* startBesideBootService({
           platform: "darwin",
           restartPending: true,
           outputs: {
@@ -333,43 +299,73 @@ describe("server ownership", () => {
             "t3 __service-preflight": lockAwarePreflight(SERVICE_LAUNCHER_PROTOCOL),
           },
         });
-        assert.equal(started.outcome, "OlderBootServiceError");
-        assert.deepEqual(started.probes, ["launchctl print"]);
+        assert.equal(result._tag === "Failure" && result.failure._tag, "OlderBootServiceError");
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("never probes another home's service or from the service's own server", () =>
+    it.effect("allows a lock-aware runtime regardless of launcher compatibility", () =>
+      Effect.gen(function* () {
+        for (const launcherProtocol of [SERVICE_LAUNCHER_PROTOCOL, SERVICE_LAUNCHER_PROTOCOL + 1]) {
+          const { result } = yield* startBesideBootService({
+            platform: "darwin",
+            outputs: {
+              "launchctl print": { code: 0 },
+              "t3 __service-preflight": lockAwarePreflight(launcherProtocol),
+            },
+          });
+          assert.equal(result._tag, "Success");
+        }
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("allows services that cannot compete for this home", () =>
       Effect.gen(function* () {
         const outputs = {
           "launchctl print": { code: 0 },
           "t3 __service-preflight": preLockPreflight,
         };
-        for (const started of [
-          yield* startBesideBootService({ platform: "darwin", outputs, unitServesOtherHome: true }),
-          yield* startBesideBootService({
+        for (const fixture of [
+          { platform: "darwin", outputs, unitServesOtherHome: true },
+          { platform: "darwin", outputs, environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" } },
+          {
             platform: "darwin",
-            outputs,
-            environment: { [SERVICE_LAUNCHER_CONTEXT_ENV]: "{}" },
-          }),
-        ]) {
-          assert.equal(started.outcome, "started");
-          assert.deepEqual(started.probes, []);
+            outputs: {
+              "launchctl print": { code: 113 },
+              "launchctl print-disabled": {
+                code: 0,
+                stdout: '"com.t3tools.t3code.service" => disabled',
+              },
+              "t3 __service-preflight": preLockPreflight,
+            },
+          },
+          {
+            platform: "linux",
+            outputs: {
+              "systemctl is-active": { code: 3, stdout: "inactive\n" },
+              "systemctl is-enabled": { code: 1, stdout: "disabled\n" },
+              "t3 __service-preflight": preLockPreflight,
+            },
+          },
+        ] as const) {
+          const { result, probes } = yield* startBesideBootService(fixture);
+          assert.equal(result._tag, "Success");
+          assert.notInclude(probes, "t3 __service-preflight");
         }
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    it.effect("starts when the service runtime cannot be probed", () =>
+    it.effect("allows startup when the manager or runtime probe is unavailable", () =>
       Effect.gen(function* () {
         for (const outputs of [
+          {},
           { "launchctl print": { code: 0 } },
           {
             "launchctl print": { code: 0 },
             "t3 __service-preflight": { ...preLockPreflight, code: 1 },
           },
         ]) {
-          const started = yield* startBesideBootService({ platform: "darwin", outputs });
-          assert.equal(started.outcome, "started");
-          assert.deepEqual(started.probes, ["launchctl print", "t3 __service-preflight"]);
+          const { result } = yield* startBesideBootService({ platform: "darwin", outputs });
+          assert.equal(result._tag, "Success");
         }
       }).pipe(Effect.provide(NodeServices.layer)),
     );
