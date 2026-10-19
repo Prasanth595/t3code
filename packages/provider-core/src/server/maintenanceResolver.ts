@@ -490,13 +490,20 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     const isInstall = realPath.includes("/mise/installs/");
     // A shim is a link to mise itself, wherever mise keeps its data.
     const isShim = path.basename(realPath).replace(/\.exe$/, "") === "mise";
-    if (
-      !isInstall &&
-      !isShim &&
-      !resolvedPath.includes("/mise/shims/") &&
-      !(yield* isMiseWrapperScript(context))
-    ) {
+    const wrapper =
+      isInstall || isShim || resolvedPath.includes("/mise/shims/")
+        ? null
+        : yield* readMiseWrapper(context);
+    if (!isInstall && !isShim && !resolvedPath.includes("/mise/shims/") && wrapper === null) {
       return null;
+    }
+    // `mise which` answers for mise's config, so a wrapper that picks its own
+    // version may run an install `mise upgrade` never touches.
+    if (wrapper === "chooses-version") {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...owner,
+        installPath: context.realCommandPath,
+      });
     }
 
     const misePath = isShim
@@ -587,8 +594,8 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     return manual;
   }
 
-  // Mise goes first: Omarchy's `mise x` wrapper for claude sits at
-  // `~/.local/bin/claude`, the native installer's path.
+  // Mise goes first: a `mise x` wrapper can sit at the native installer's
+  // path, such as `~/.local/bin/claude`.
   const mise = yield* resolveMiseProviderMaintenance(
     { provider: definition.provider, packageName },
     context,
@@ -775,7 +782,23 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
   },
 );
 
-const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
+const MISE_EXEC = /\bmise\s+(?:x|exec)\b/;
+
+/**
+ * Whether a `mise x` line picks the tool's version itself (`claude@2`) or
+ * builds its tool list at run time. Scoped npm names (`npm:@scope/pkg`) and
+ * `@latest` follow mise's config like a bare name.
+ */
+function miseExecChoosesVersion(line: string): boolean {
+  const tools = line.slice(line.search(MISE_EXEC)).split(/\s--(?:\s|$)/, 1)[0] ?? "";
+  return /[$`]/.test(tools) || /[\w./-]@(?!latest\b)/.test(tools);
+}
+
+/**
+ * A small script that runs its tool through `mise x`, or null for anything
+ * else. Comment lines never count.
+ */
+const readMiseWrapper = Effect.fn("readMiseWrapper")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -784,17 +807,21 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
     Effect.orElseSucceed(() => Infinity),
   );
   if (size > MISE_WRAPPER_MAX_BYTES) {
-    return false;
+    return null;
   }
   const script = yield* fileSystem
     .readFileString(context.realCommandPath)
     .pipe(Effect.orElseSucceed(() => ""));
-  return (
-    script.startsWith("#!") &&
-    script
-      .split("\n")
-      .some((line) => !line.trimStart().startsWith("#") && /\bmise\s+(?:x|exec)\b/.test(line))
-  );
+  if (!script.startsWith("#!")) {
+    return null;
+  }
+  const lines = script
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#") && MISE_EXEC.test(line));
+  if (lines.length === 0) {
+    return null;
+  }
+  return lines.some(miseExecChoosesVersion) ? "chooses-version" : "follows-config";
 });
 
 /**

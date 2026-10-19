@@ -1257,7 +1257,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const installPath = NodePath.join(toolDir, "2.0.0");
         writeExecutable(NodePath.join(installPath, "native-package-tool"));
         NodeFS.symlinkSync(installPath, NodePath.join(toolDir, "latest"));
-        // Omarchy's lazy installer, written where the native installer links its binary.
+        // A `mise x` wrapper, written where the native installer links its binary.
         const wrapperPath = NodePath.join(tempDir, ".local", "bin", "native-package-tool");
         NodeFS.mkdirSync(NodePath.dirname(wrapperPath), { recursive: true });
         NodeFS.writeFileSync(
@@ -1307,6 +1307,59 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
         );
         expect(native.update).toMatchObject({ lockKey: "nativePackageTool-native" });
+
+        // A wrapper that picks its own version runs an install `mise upgrade` never touches.
+        for (const tool of ['"native-package-tool@1.9.0"', '"$TOOL"']) {
+          NodeFS.writeFileSync(
+            wrapperPath,
+            `#!/bin/sh\nexec mise x ${tool} -- "native-package-tool" "$@"\n`,
+          );
+          const asked: Array<ReadonlyArray<string>> = [];
+          const pinned = yield* resolve.pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner(
+                {
+                  which: NodePath.join(toolDir, "latest", "native-package-tool"),
+                  installed: {
+                    "native-package-tool": [
+                      { install_path: installPath, requested_version: "latest", active: true },
+                    ],
+                  },
+                },
+                asked,
+              ),
+            ),
+          );
+          expect(pinned.update).toBeNull();
+          expect(pinned.installPath).toBe(NodeFS.realpathSync(wrapperPath));
+          expect(asked).toEqual([]);
+        }
+
+        // `@latest` and a scoped npm name still follow mise's config.
+        for (const tool of ['"native-package-tool@latest"', "npm:@example/native-package-tool"]) {
+          NodeFS.writeFileSync(
+            wrapperPath,
+            `#!/bin/sh\nexec mise x ${tool} -- native-package-tool "$@"\n`,
+          );
+          const followed = yield* resolve.pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              miseSpawner(
+                {
+                  which: NodePath.join(toolDir, "latest", "native-package-tool"),
+                  installed: {
+                    "native-package-tool": [
+                      { install_path: installPath, requested_version: "latest", active: true },
+                    ],
+                  },
+                },
+                [],
+              ),
+            ),
+          );
+          expect(followed.update).toMatchObject({ command: "mise upgrade native-package-tool" });
+        }
       }),
   );
 
