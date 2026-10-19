@@ -4,7 +4,6 @@ import {
   type ProjectListEntriesResult,
   ProjectReadFileError,
   type ProjectReadFileResult,
-  T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
@@ -71,12 +70,7 @@ export function getProjectFileQueryAtom(
 ) {
   return projectEnvironment.readFile({
     environmentId,
-    input: {
-      cwd,
-      relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH,
-      // t3.json is optional, so its absence is a result rather than a failed read.
-      ...(relativePath === T3_PROJECT_FILE_NAME ? { allowMissing: true } : {}),
-    },
+    input: { cwd, relativePath: relativePath ?? EMPTY_PROJECT_FILE_PATH },
   });
 }
 
@@ -117,8 +111,7 @@ export function getProjectFileContents(
   const optimistic = getOptimisticProjectFileQueryData(environmentId, cwd, relativePath);
   if (optimistic) return optimistic.contents;
   const result = appAtomRegistry.get(getProjectFileQueryAtom(environmentId, cwd, relativePath));
-  const data = Option.getOrUndefined(AsyncResult.value(result));
-  return data?.exists === false ? undefined : data?.contents;
+  return Option.getOrUndefined(AsyncResult.value(result))?.contents;
 }
 
 export function getUnsavedProjectFileQueryData(
@@ -265,9 +258,7 @@ export function useProjectFileQuery(
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = () => refreshAtom();
-  const readData = Option.getOrNull(AsyncResult.value(result));
-  const isMissing = readData?.exists === false;
-  const data = isMissing ? null : readData;
+  const data = Option.getOrNull(AsyncResult.value(result));
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
@@ -281,9 +272,7 @@ export function useProjectFileQuery(
       !isQueryEnabled || fileAccess.isPending
         ? null
         : canReadFiles
-          ? isMissing && !optimisticFile
-            ? `'${relativePath}' does not exist.`
-            : errorMessage(cause)
+          ? errorMessage(cause)
           : (fileAccess.error ?? "This connection cannot read host files."),
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
