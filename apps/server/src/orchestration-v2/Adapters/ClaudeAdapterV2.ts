@@ -60,6 +60,7 @@ import {
 import {
   type ChatAttachment,
   ClaudeSettings,
+  TrimmedNonEmptyString,
   defaultInstanceIdForDriver,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
@@ -125,6 +126,7 @@ import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
+  resolveClaudeHomePath,
 } from "../../provider/Drivers/ClaudeHome.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
@@ -3404,60 +3406,48 @@ function applyClaudeTaskTool(
 }
 
 const CLAUDE_TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList"]);
-const CLAUDE_TASK_FILE_NAME = /^\d+\.json$/;
-const decodeClaudeTaskFile = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const decodeClaudeTaskFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      subject: TrimmedNonEmptyString,
+      status: Schema.Literals(["pending", "in_progress", "completed"]),
+      metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
+);
 
-/**
- * Reads the task list Claude persisted for a session, in id order. Claude
- * keeps it at `<config dir>/tasks/<list id>/<task id>.json`, where the list id
- * is `CLAUDE_CODE_TASK_LIST_ID` or else the session id, so a list started
- * before a server restart is still the one later task tools edit. The format
- * is Claude's and undocumented: an unreadable task file is skipped, and a
- * missing or unreadable directory reads as no stored list rather than failing
- * the turn.
- */
 const readClaudeTaskList = Effect.fnUntraced(
   function* (input: {
-    readonly fileSystem: FileSystem.FileSystem;
-    readonly path: Path.Path;
     readonly environment: NodeJS.ProcessEnv;
     readonly cwd: string | null | undefined;
     readonly nativeThreadId: string;
   }) {
-    const { fileSystem, path } = input;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const configDirOverride = input.environment.CLAUDE_CONFIG_DIR?.trim();
-    // The CLI resolves a relative config dir against its own cwd.
     const configDir = configDirOverride
       ? path.resolve(input.cwd ?? ".", configDirOverride)
-      : path.join(yield* HostProcess.HomeDirectory, ".claude");
-    const listId = input.environment.CLAUDE_CODE_TASK_LIST_ID?.trim() || input.nativeThreadId;
+      : yield* resolveClaudeHomePath({ homePath: "" });
+    // Claude sanitizes the raw override, including whitespace, before selecting its store.
+    const listId = input.environment.CLAUDE_CODE_TASK_LIST_ID || input.nativeThreadId;
     const directory = path.join(configDir, "tasks", listId.replace(/[^a-zA-Z0-9_-]/g, "-"));
-    const names = (yield* fileSystem.readDirectory(directory)).filter((name) =>
-      CLAUDE_TASK_FILE_NAME.test(name),
-    );
-    const tasks = yield* Effect.forEach(names, (name) =>
-      fileSystem.readFileString(path.join(directory, name)).pipe(
-        Effect.map((contents) => {
-          const task = Option.getOrUndefined(decodeClaudeTaskFile(contents));
-          const id = claudeTaskString(task, "id");
-          const text = claudeTaskString(task, "subject");
-          const status = claudeTaskStatus(claudeTaskField(task, "status"));
-          // Claude hides `_internal` tasks from TaskList; so do we.
-          const internal = claudeTaskField(claudeTaskField(task, "metadata"), "_internal");
-          return id === undefined || text === undefined || status === undefined || internal
-            ? []
-            : [{ id, text, status }];
-        }),
-        Effect.orElseSucceed(() => []),
-      ),
-    );
-    const list: ClaudeTaskList = new Map(
-      tasks
-        .flat()
-        .toSorted((left, right) => Number(left.id) - Number(right.id))
-        .map(({ id, text, status }) => [id, { text, status }]),
-    );
-    return list;
+    const tasks = new Map<string, Omit<OrchestrationV2PlanStep, "id">>();
+    const names = (yield* fileSystem.readDirectory(directory))
+      .filter((name) => /^\d+\.json$/.test(name))
+      .toSorted((left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10));
+    for (const name of names) {
+      const contents = yield* fileSystem
+        .readFileString(path.join(directory, name))
+        .pipe(Effect.orElseSucceed(() => ""));
+      const task = Option.getOrUndefined(decodeClaudeTaskFile(contents));
+      if (task === undefined || task.metadata?._internal) continue;
+      tasks.set(task.id, {
+        text: task.subject,
+        status: task.status === "in_progress" ? "running" : task.status,
+      });
+    }
+    return tasks;
   },
   Effect.orElseSucceed((): ClaudeTaskList | undefined => undefined),
 );
@@ -3597,7 +3587,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         // Claude 5 task tools edit one list per native session, across turns.
-        const taskListsByNativeThread = yield* Ref.make(new Map<string, ClaudeTaskList>());
+        const taskListsByNativeThread = yield* Ref.make(
+          new Map<string, ClaudeTaskList | undefined>(),
+        );
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
         );
@@ -7758,22 +7750,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               output,
               completedAt: yield* DateTime.now,
             });
-            if (parentToolUseId === null && !isClaudeToolResultError(toolResult)) {
+            if (
+              parentToolUseId === null &&
+              !isClaudeToolResultError(toolResult) &&
+              CLAUDE_TASK_TOOL_NAMES.has(toolCall.toolName)
+            ) {
               const taskLists = yield* Ref.get(taskListsByNativeThread);
               const knownTaskList = taskLists.get(liveQuery.nativeThreadId);
-              // This process has not seen the session's list yet (a server
-              // restart, or a resumed session): start from Claude's own copy.
-              // It already includes this call, so it is news even when
-              // applying the call changes nothing.
+              // TaskList already supplies a snapshot. Mutations need Claude's persisted
+              // list once; afterward the cache also records an unavailable store.
               const storedTaskList =
-                knownTaskList === undefined && CLAUDE_TASK_TOOL_NAMES.has(toolCall.toolName)
+                !taskLists.has(liveQuery.nativeThreadId) && toolCall.toolName !== "TaskList"
                   ? yield* readClaudeTaskList({
-                      fileSystem,
-                      path,
                       environment: adapterOptions.environment,
                       cwd: context.input.runtimePolicy.cwd,
                       nativeThreadId: liveQuery.nativeThreadId,
-                    })
+                    }).pipe(
+                      Effect.provideService(FileSystem.FileSystem, fileSystem),
+                      Effect.provideService(Path.Path, path),
+                    )
                   : undefined;
               const taskList =
                 applyClaudeTaskTool(
@@ -7782,11 +7777,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   claudeNativeToolInputValue(toolCall.input),
                   claudeNativeToolOutputValue(output),
                 ) ?? storedTaskList;
+              yield* Ref.set(
+                taskListsByNativeThread,
+                new Map(taskLists).set(liveQuery.nativeThreadId, taskList ?? knownTaskList),
+              );
               if (taskList !== undefined) {
-                yield* Ref.set(
-                  taskListsByNativeThread,
-                  new Map(taskLists).set(liveQuery.nativeThreadId, taskList),
-                );
                 yield* emitClaudePlanProjection({
                   context,
                   nativeItemId: `claude-tasks:${context.providerTurnId}`,

@@ -4821,8 +4821,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
         prefix: "t3-claude-tasks-",
       });
+      const path = yield* Path.Path;
       const harness = yield* makeWakeHarnessWithOptions({
-        environment: { CLAUDE_CONFIG_DIR: configDir, ...environment },
+        environment: {
+          CLAUDE_CONFIG_DIR: path.relative(CLAUDE_TEST_RUNTIME_POLICY.cwd ?? ".", configDir),
+          ...environment,
+        },
       });
       let sequence = 600;
       let turn = 0;
