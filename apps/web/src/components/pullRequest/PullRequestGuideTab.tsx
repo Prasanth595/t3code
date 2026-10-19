@@ -1,6 +1,6 @@
 import type { EnvironmentId, PullRequestRef, PullRequestReviewGuideStop } from "@t3tools/contracts";
 import { SparklesIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -46,6 +46,30 @@ export function PullRequestGuideTab({
   onOpenFile: (path: string) => void;
   onTourShown?: (() => void) | undefined;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [engaged, setEngaged] = useState(true);
+  useEffect(() => {
+    const panel =
+      panelRef.current?.closest("[data-right-panel-surface-content]") ?? panelRef.current;
+    const record = (event: Event) => {
+      // The hosting sheet takes focus when its non-focusable content is clicked.
+      if (
+        event.type === "focusin" &&
+        event.target instanceof Node &&
+        event.target.contains(panel)
+      ) {
+        return;
+      }
+      setEngaged(panel !== null && event.composedPath().includes(panel));
+    };
+    window.addEventListener("pointerdown", record, true);
+    window.addEventListener("focusin", record, true);
+    return () => {
+      window.removeEventListener("pointerdown", record, true);
+      window.removeEventListener("focusin", record, true);
+    };
+  }, []);
+
   const { query, data, running, canWrite, write } = useReviewGuideWriter({
     environmentId,
     reference,
@@ -101,31 +125,6 @@ export function PullRequestGuideTab({
       </Button>
     ) : null;
 
-  if (guide === null) {
-    if (query.isPending && data === null) {
-      return (
-        <div className="flex min-h-48 items-center justify-center">
-          <Spinner />
-        </div>
-      );
-    }
-    return (
-      <div className="flex min-h-48 flex-col items-center justify-center gap-2 px-4 py-10 text-center">
-        <p className="text-sm font-medium text-foreground">
-          {running ? "Writing a review guide" : "No review guide yet"}
-        </p>
-        <p className="max-w-md text-xs text-muted-foreground">
-          {failure ??
-            query.error ??
-            (running
-              ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
-              : "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")}
-        </p>
-        {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
-      </div>
-    );
-  }
-
   const banner =
     stale || failure !== null || running ? (
       <Alert variant={running ? "info" : "warning"}>
@@ -140,25 +139,50 @@ export function PullRequestGuideTab({
     ) : null;
 
   return (
-    <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
-      <GuideTour
-        environmentId={environmentId}
-        reference={reference}
-        guide={guide}
-        banner={banner}
-        active={active}
-        commenting={commenting}
-        onAsk={
-          onAskAboutStop === null
-            ? null
-            : (index, question) => {
-                const stop = guide.stops[index];
-                if (stop !== undefined) onAskAboutStop(stop, index, question);
-              }
-        }
-        onFinish={onFinishReview}
-        onOpenFile={onOpenFile}
-      />
-    </GuideProseContext>
+    <div ref={panelRef} className="h-full">
+      {guide === null ? (
+        query.isPending && data === null ? (
+          <div className="flex min-h-48 items-center justify-center">
+            <Spinner />
+          </div>
+        ) : (
+          <div className="flex min-h-48 flex-col items-center justify-center gap-2 px-4 py-10 text-center">
+            <p className="text-sm font-medium text-foreground">
+              {running ? "Writing a review guide" : "No review guide yet"}
+            </p>
+            <p className="max-w-md text-xs text-muted-foreground">
+              {failure ??
+                query.error ??
+                (running
+                  ? "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready."
+                  : "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.")}
+            </p>
+            {writeButton(failure === null ? "Write guide" : "Try again", "sm")}
+          </div>
+        )
+      ) : (
+        <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
+          <GuideTour
+            environmentId={environmentId}
+            reference={reference}
+            guide={guide}
+            banner={banner}
+            active={active}
+            engaged={engaged}
+            commenting={commenting}
+            onAsk={
+              onAskAboutStop === null
+                ? null
+                : (index, question) => {
+                    const stop = guide.stops[index];
+                    if (stop !== undefined) onAskAboutStop(stop, index, question);
+                  }
+            }
+            onFinish={onFinishReview}
+            onOpenFile={onOpenFile}
+          />
+        </GuideProseContext>
+      )}
+    </div>
   );
 }

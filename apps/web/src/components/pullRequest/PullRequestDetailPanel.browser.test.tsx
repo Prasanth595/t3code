@@ -421,10 +421,12 @@ describe("review guide keyboard ownership beside chat", () => {
 
   function BesideChat({
     enabled = true,
+    reference = detail,
     focusableHost = false,
     keybindings = DEFAULT_RESOLVED_KEYBINDINGS,
   }: {
     enabled?: boolean;
+    reference?: PullRequestDetailView;
     focusableHost?: boolean;
     keybindings?: ResolvedKeybindingsConfig;
   }) {
@@ -454,7 +456,7 @@ describe("review guide keyboard ownership beside chat", () => {
           <div data-right-panel-surface-content className="flex h-[700px] w-[900px]">
             <PullRequestDetailPanel
               environmentId={threadRef.environmentId}
-              reference={detail}
+              reference={reference}
               context="page"
               shortcutsEnabled={enabled}
               getShortcutContext={shortcutContext}
@@ -467,8 +469,8 @@ describe("review guide keyboard ownership beside chat", () => {
     );
   }
 
-  async function mountGuide(focusableHost = false, keepBodyFocus = false) {
-    guideResult = {
+  async function mountGuide(focusableHost = false, keepBodyFocus = false, delayGuide = false) {
+    const generatedResult = {
       currentHeadSha: "head",
       run: null,
       guide: {
@@ -485,7 +487,8 @@ describe("review guide keyboard ownership beside chat", () => {
           questions: [],
         })),
       },
-    };
+    } satisfies PullRequestReviewGuideResult;
+    guideResult = delayGuide ? { ...generatedResult, guide: null } : generatedResult;
     runProjectAction.mockReset();
     const container = document.createElement("div");
     document.body.append(container);
@@ -502,6 +505,16 @@ describe("review guide keyboard ownership beside chat", () => {
       expect(document.activeElement).toBe(document.body);
     } else {
       await tab("Guide").click();
+    }
+    if (delayGuide) {
+      await expect.element(page.getByText("No review guide yet", { exact: true })).toBeVisible();
+      await page.getByTestId("chat-transcript").click();
+      expect(document.activeElement).toBe(document.body);
+      guideResult = generatedResult;
+      await act(async () =>
+        root.render(<BesideChat reference={{ ...detail }} focusableHost={focusableHost} />),
+      );
+      expect(document.activeElement).toBe(document.body);
     }
     await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
     return root;
@@ -522,10 +535,15 @@ describe("review guide keyboard ownership beside chat", () => {
   }
 
   it("keeps J/K with the guide after focus or clicks while honoring explicit shortcuts", async () => {
-    const root = await mountGuide();
+    const root = await mountGuide(false, false, true);
     const composer = page.getByRole("textbox", { name: "Test composer" });
     const first = page.getByRole("heading", { name: "First change" });
     const second = page.getByRole("heading", { name: "Second change" });
+
+    await press("j");
+    await expect.element(composer).toHaveValue("j");
+    await expect.element(first).toBeVisible();
+    await composer.fill("");
 
     await page.getByTestId("chat-transcript").click();
     await act(async () => {

@@ -2,7 +2,7 @@ import type { EnvironmentId, PullRequestRef, PullRequestReviewGuide } from "@t3t
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
-import { guideTourTakesKey } from "../../chat/composerFocusRedirect";
+import { guideTourTakesKey } from "~/components/chat/composerFocusRedirect";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
@@ -27,6 +27,7 @@ export function GuideTour({
   guide,
   banner,
   active,
+  engaged,
   commenting,
   onAsk,
   onFinish,
@@ -37,6 +38,7 @@ export function GuideTour({
   guide: PullRequestReviewGuide;
   banner: ReactNode;
   active: boolean;
+  engaged: boolean;
   commenting: ExcerptCommenting | null;
   onAsk: ((stop: number, question: string) => void) | null;
   onFinish: (() => void) | null;
@@ -68,29 +70,6 @@ export function GuideTour({
   });
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Opening the guide precedes this lazy mount, so its listeners miss that interaction.
-  const [engaged, setEngaged] = useState(true);
-  useEffect(() => {
-    const panel =
-      scrollRef.current?.closest("[data-right-panel-surface-content]") ?? scrollRef.current;
-    const record = (event: Event) => {
-      // The hosting sheet takes focus when its non-focusable content is clicked.
-      if (
-        event.type === "focusin" &&
-        event.target instanceof Node &&
-        event.target.contains(panel)
-      ) {
-        return;
-      }
-      setEngaged(panel !== null && event.composedPath().includes(panel));
-    };
-    window.addEventListener("pointerdown", record, true);
-    window.addEventListener("focusin", record, true);
-    return () => {
-      window.removeEventListener("pointerdown", record, true);
-      window.removeEventListener("focusin", record, true);
-    };
-  }, []);
 
   const goTo = (next: number) => {
     update((current) => ({
