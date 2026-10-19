@@ -204,17 +204,10 @@ const mergeProviderModels = (
   nextModels: ReadonlyArray<ServerProvider["models"][number]>,
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
-  // ACP observations belong to the running driver; saved snapshots can contain
-  // options copied across models by older servers.
-  const carriesPreviousCapabilities = provider.driver !== ProviderDriverKind.make("acpRegistry");
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
-  const retainablePreviousModels = previousModels
-    .filter((model) => !model.isCustom && !updateRequiredSlugs.has(model.slug))
-    .map((model) =>
-      carriesPreviousCapabilities || model.capabilities === null
-        ? model
-        : { ...model, capabilities: null },
-    );
+  const retainablePreviousModels = previousModels.filter(
+    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+  );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
     return retainablePreviousModels;
@@ -224,7 +217,7 @@ const mergeProviderModels = (
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
     if (
-      !carriesPreviousCapabilities ||
+      provider.driver === ProviderDriverKind.make("acpRegistry") ||
       !previousModel ||
       hasModelCapabilities(model) ||
       !hasModelCapabilities(previousModel)

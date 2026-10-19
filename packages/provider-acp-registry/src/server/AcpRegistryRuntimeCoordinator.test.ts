@@ -4,15 +4,15 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from "./probe.ts";
+import {
+  recordAcpRegistryModelOptions,
+  type AcpRegistryAvailableCommands,
+  type AcpRegistryLiveConfiguration,
+} from "./probe.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
-import { applyAcpRegistryLiveConfiguration, buildCheckedAcpRegistrySnapshot } from "./driver.ts";
-import { AcpRegistrySettings } from "../settings.ts";
-
-const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
+import { applyAcpRegistryLiveConfiguration } from "./driver.ts";
 
 type ObservedLiveConfiguration = Parameters<typeof applyAcpRegistryLiveConfiguration>[1];
 
@@ -30,12 +30,9 @@ const probedProvider = {
   skills: [],
 } satisfies ServerProvider;
 
-function liveThinking(
-  configuration: ObservedLiveConfiguration,
-  provider: ServerProvider = probedProvider,
-) {
+function liveThinking(configuration: ObservedLiveConfiguration) {
   return Object.fromEntries(
-    applyAcpRegistryLiveConfiguration(provider, configuration, []).models.map((model) => {
+    applyAcpRegistryLiveConfiguration(probedProvider, configuration, []).models.map((model) => {
       const descriptor = model.capabilities?.optionDescriptors?.find(
         (candidate) => candidate.id === "thought_level",
       );
@@ -243,44 +240,25 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       });
       const wide = ["low", "medium", "high", "xhigh", "max"];
       const narrow = ["low", "high", "max"];
-      const probedOn = (currentModelId: string) =>
-        buildCheckedAcpRegistrySnapshot({
-          instanceId,
-          displayName: "Test ACP",
-          accentColor: undefined,
-          continuationKey: `acpRegistry:instance:${instanceId}`,
-          settings: decodeSettings({ agentId: "devin" }),
-          checkedAt: "2026-10-03T00:00:00.000Z",
-          inspection: {
-            status: "ready",
-            agentId: "devin",
-            version: "1.0.0",
-            distribution: "binary",
-          },
-          probe: {
-            probe: {
-              instanceId,
-              ready: true,
-              icon: null,
-              authMethods: [],
-              models,
-              currentModelId,
-              configOptions: [thinking(narrow, "low")],
-              sessionManagement: {
-                canList: false,
-                canLoad: false,
-                canResume: false,
-                canLogout: false,
-                canDelete: false,
-                canConfigureProviders: false,
-              },
-            },
-            slashCommands: [],
-            skills: [],
-          },
-        });
-      const observed = (id: ProviderInstanceId) =>
-        coordinator.getLiveConfiguration(id).pipe(Effect.map(Option.getOrThrow));
+      const probedOn = (currentModelId: string): AcpRegistryLiveConfiguration => ({
+        models,
+        currentModelId,
+        configOptions: [thinking(narrow, "low")],
+      });
+      const observed = (id: ProviderInstanceId, probe?: AcpRegistryLiveConfiguration) =>
+        coordinator.getLiveConfiguration(id).pipe(
+          Effect.map(Option.getOrThrow),
+          Effect.map((configuration) => ({
+            ...configuration,
+            modelOptions:
+              probe === undefined
+                ? configuration.modelOptions
+                : new Map([
+                    ...recordAcpRegistryModelOptions(new Map(), probe),
+                    ...configuration.modelOptions,
+                  ]),
+          })),
+        );
 
       yield* coordinator.publishLiveConfiguration(instanceId, {
         models,
@@ -304,7 +282,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         configOptions: [{ ...thinking(narrow, "low"), id: "unrelated" }],
       });
 
-      expect(liveThinking(yield* observed(instanceId), probedOn("sonnet"))).toEqual({
+      expect(liveThinking(yield* observed(instanceId, probedOn("sonnet")))).toEqual({
         opus: { choices: wide, current: "xhigh" },
         glm: { choices: narrow, current: "high" },
         sonnet: { choices: narrow, current: "low" },
@@ -320,7 +298,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         currentModelId: "opus",
         configOptions: [thinking(narrow, "low")],
       });
-      expect(liveThinking(yield* observed(instanceId), probedOn("sonnet"))).toEqual({
+      expect(liveThinking(yield* observed(instanceId, probedOn("sonnet")))).toEqual({
         opus: { choices: narrow, current: "low" },
         glm: { choices: narrow, current: "high" },
         sonnet: { choices: narrow, current: "low" },
@@ -331,7 +309,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         currentModelId: "opus",
         configOptions: [],
       });
-      expect(liveThinking(yield* observed(instanceId), probedOn("opus"))).toEqual({
+      expect(liveThinking(yield* observed(instanceId, probedOn("opus")))).toEqual({
         opus: null,
         glm: { choices: narrow, current: "high" },
         sonnet: null,

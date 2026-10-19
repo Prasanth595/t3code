@@ -6,6 +6,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -160,13 +161,53 @@ describe("acpRegistrySnapshotReadiness", () => {
         opus: ["low", "high"],
         glm: [],
       });
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const foregroundStarted = yield* Deferred.make<void>();
+      const releaseForeground = yield* Deferred.make<void>();
+      const foreground = yield* coordinator
+        .withForegroundStartup(
+          "test-agent",
+          Deferred.succeed(foregroundStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseForeground)),
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(foregroundStarted);
       yield* instance.snapshot.refresh;
+      const receiveLive = Effect.fn(function* (configuration: AcpRegistryLiveConfiguration) {
+        const updated = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.message === undefined),
+          Stream.runHead,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, configuration);
+        return Option.getOrThrow(yield* Fiber.join(updated));
+      });
+      expect(thinkingChoices(yield* receiveLive(observed("glm", ["max"])))).toEqual({
+        opus: ["low", "high"],
+        glm: ["max"],
+      });
+      yield* Deferred.succeed(releaseForeground, undefined);
+      yield* Fiber.join(foreground);
+      expect(thinkingChoices(yield* instance.snapshot.refresh)).toEqual({
+        opus: ["low", "high"],
+        glm: ["max"],
+      });
       expect(thinkingChoices(yield* receive(observed("glm", ["max"])))).toEqual({
         opus: ["low", "high"],
         glm: ["max"],
       });
       yield* instance.snapshot.refresh;
       expect(thinkingChoices(yield* receive(observed("opus", [])))).toEqual({
+        opus: [],
+        glm: ["max"],
+      });
+      expect(thinkingChoices(yield* receiveLive(observed("opus", [])))).toEqual({
+        opus: [],
+        glm: ["max"],
+      });
+      yield* instance.snapshot.refresh;
+      expect(thinkingChoices(yield* receive(observed("opus", ["high"])))).toEqual({
         opus: [],
         glm: ["max"],
       });

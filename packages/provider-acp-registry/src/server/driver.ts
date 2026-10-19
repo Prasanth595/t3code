@@ -282,20 +282,12 @@ export function applyAcpRegistryLiveConfiguration(
   customModels: ReadonlyArray<string>,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
-  const knownOptions = new Map(
-    provider.models.flatMap((model) => {
-      const optionDescriptors = model.capabilities?.optionDescriptors ?? [];
-      return model.isCustom || optionDescriptors.length === 0
-        ? []
-        : [[model.slug, optionDescriptors] as const];
-    }),
-  );
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
     models: withModelOptions(
       modelsFromDiscovery(configuration.latest, customModels),
-      new Map([...knownOptions, ...configuration.modelOptions]),
+      configuration.modelOptions,
     ),
   };
 }
@@ -587,12 +579,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             (yield* confirmedAuthentication.get)
               ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
               : input;
+          const { probedModelOptions } = yield* Ref.get(enrichmentCache);
           const provider = {
             ...authenticated,
-            models: withModelOptions(
-              authenticated.models,
-              (yield* Ref.get(enrichmentCache)).probedModelOptions,
-            ),
+            models: withModelOptions(authenticated.models, probedModelOptions),
           };
           return yield* Option.isNone(runtimeCoordinator)
             ? Effect.succeed(provider)
@@ -608,7 +598,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     onSome: (liveConfiguration) =>
                       applyAcpRegistryLiveConfiguration(
                         withCommands,
-                        liveConfiguration,
+                        {
+                          ...liveConfiguration,
+                          modelOptions: new Map([
+                            ...probedModelOptions,
+                            ...liveConfiguration.modelOptions,
+                          ]),
+                        },
                         effectiveConfig.customModels,
                       ),
                   });

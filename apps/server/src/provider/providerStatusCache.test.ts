@@ -180,6 +180,39 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
         message: cachedCodex.message,
       },
     );
+
+    const acpDriver = ProviderDriverKind.make("acpRegistry");
+    const thinking = createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "thought_level",
+          label: "Thinking",
+          type: "select",
+          options: [{ id: "high", label: "High" }],
+        },
+      ],
+    });
+    // Older servers copied the current model's options onto every cached model.
+    const cachedAcp = makeProvider(acpDriver, {
+      models: ["opus", "glm"].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: thinking,
+      })),
+    });
+    const fallbackAcp = makeProvider(acpDriver, {
+      models: [
+        { slug: "default", name: "Default", isCustom: false, capabilities: emptyCapabilities },
+      ],
+    });
+    assert.deepStrictEqual(
+      hydrateCachedProvider({ cachedProvider: cachedAcp, fallbackProvider: fallbackAcp }).models,
+      [
+        ...fallbackAcp.models,
+        ...cachedAcp.models.map((model) => ({ ...model, capabilities: null })),
+      ],
+    );
   });
 
   it("does not resurrect cached custom models that settings no longer declare", () => {

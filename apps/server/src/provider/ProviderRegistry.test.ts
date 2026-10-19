@@ -906,7 +906,14 @@ it.layer(
         auth: { status: "authenticated" },
         checkedAt: "2026-08-13T00:00:00.000Z",
         version: "1.2.0",
-        models: [{ slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null }],
+        models: [
+          {
+            slug: "gpt-5.6-sol",
+            name: "GPT-5.6-Sol",
+            isCustom: false,
+            capabilities: codexModelCapabilities,
+          },
+        ],
         slashCommands: [],
         skills: [],
       } as const satisfies ServerProvider;
@@ -933,21 +940,21 @@ it.layer(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, checkingProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ...previousProvider.models,
         ],
       );
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, confirmedCheckingProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ...previousProvider.models,
         ],
       );
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProbeProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ...previousProvider.models,
         ],
       );
     });
@@ -961,8 +968,7 @@ it.layer(
           ]),
         ],
       });
-      // Snapshots cached before per-model options gave every model the same list.
-      const cachedProvider = {
+      const previousProvider = {
         instanceId: ProviderInstanceId.make("acpRegistry_devin"),
         driver: ProviderDriverKind.make("acpRegistry"),
         status: "ready",
@@ -979,7 +985,7 @@ it.layer(
         skills: [],
       } as const satisfies ServerProvider;
       const refreshedProvider = {
-        ...cachedProvider,
+        ...previousProvider,
         checkedAt: "2026-10-03T00:01:00.000Z",
         models: [
           {
@@ -993,20 +999,8 @@ it.layer(
       } satisfies ServerProvider;
 
       assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(cachedProvider, refreshedProvider).models,
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
         [...refreshedProvider.models],
-      );
-      const checkingProvider = {
-        ...refreshedProvider,
-        status: "warning",
-        models: [{ slug: "default", name: "Default", isCustom: false, capabilities: null }],
-      } satisfies ServerProvider;
-      assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(cachedProvider, checkingProvider).models,
-        [
-          ...checkingProvider.models,
-          ...cachedProvider.models.map((model) => ({ ...model, capabilities: null })),
-        ],
       );
     });
 
