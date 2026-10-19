@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -526,6 +527,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const path = yield* Path.Path;
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const crypto = yield* Crypto.Crypto;
+  const hostPlatform = yield* HostProcess.Platform;
   const capabilities = {
     kind: "git" as const,
     supportsWorktrees: true,
@@ -785,15 +787,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // later fetch and push. Checkpoint writes flush before they are published;
   // macOS defaults to writeout-only, which does not reach the disk either.
   // Set fsync first: Git 2.36 ignores unknown batch without resetting the method.
-  // Git 2.37+ batches object flushes per command; refs still get a full flush.
+  // Git documents batch/fsync equivalence on macOS HFS+/APFS and Windows NTFS/ReFS;
+  // keep per-object fsync on other platforms. Batch still fully flushes refs.
   // On macOS, VcsProcess retries unsupported full flushes with plain fsync.
   const durableWrite = [
     "-c",
     "core.fsync=objects,reference",
     "-c",
     "core.fsyncMethod=fsync",
-    "-c",
-    "core.fsyncMethod=batch",
+    ...(hostPlatform === "darwin" || hostPlatform === "win32"
+      ? ["-c", "core.fsyncMethod=batch"]
+      : []),
   ] as const;
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {

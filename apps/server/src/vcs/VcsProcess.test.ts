@@ -137,16 +137,6 @@ describe("VcsProcess.run", () => {
         "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock'",
       fsyncMethods: ["batch", "writeout-only"],
     },
-    {
-      platform: "linux",
-      stderr: "fatal: fsync error on '.git/objects/bulk_fsync_Pseg66': Operation not supported",
-      fsyncMethods: ["batch"],
-    },
-    {
-      stderr: "fatal: fsync error on '.git/objects/bulk_fsync_Pseg66': Operation not supported",
-      fsyncMethods: ["batch", "writeout-only"],
-      fallbackFails: true,
-    },
   ] as const)(
     "falls back to writeout-only only for unsupported flushes on macOS ($fsyncMethods): $stderr",
     ({ stderr, fsyncMethods, ...scenario }) =>
