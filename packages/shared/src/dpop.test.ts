@@ -183,23 +183,24 @@ describe("verifyDpopProof", () => {
     assert.equal(invalidSignature.code, "invalid_signature");
   });
 
-  it("tolerates the same clock skew ahead of and behind the verifier", () => {
-    const verifyAt = (nowEpochSeconds: number) =>
-      verifyDpopProof({
+  it("accepts clock offsets through 300 seconds in either direction", () => {
+    for (const { offset, accepted } of [
+      { offset: -300, accepted: true },
+      { offset: 300, accepted: true },
+      { offset: -301, accepted: false },
+      { offset: 301, accepted: false },
+    ]) {
+      const result = verifyDpopProof({
         proof,
         method: "POST",
         url: "https://example.com/oauth/token",
-        nowEpochSeconds,
+        nowEpochSeconds: 100 + offset,
       });
 
-    assert.equal(verifyAt(100 - 200).ok, true);
-    assert.equal(verifyAt(100 + 200).ok, true);
-    for (const nowEpochSeconds of [100 - 301, 100 + 301]) {
-      const result = verifyAt(nowEpochSeconds);
-      if (result.ok) {
-        assert.fail(`Expected verification at ${nowEpochSeconds} to fail.`);
+      assert.equal(result.ok, accepted, `Clock offset: ${offset}s`);
+      if (!result.ok) {
+        assert.equal(result.code, "time_window");
       }
-      assert.equal(result.code, "time_window");
     }
   });
 
