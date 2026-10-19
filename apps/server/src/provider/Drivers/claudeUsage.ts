@@ -12,11 +12,7 @@ import {
 } from "@t3tools/provider-core/server/usage";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-/**
- * Claude Code stamps this model on messages it writes locally, such as the
- * placeholder after an interrupted turn. They never reached the API, so they
- * are not usage.
- */
+// Claude Code uses this model for local placeholders that never reached the API.
 export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 
 /**

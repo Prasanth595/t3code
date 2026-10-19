@@ -237,8 +237,9 @@ export function decodeScanCache(
       ) {
         return null;
       }
-      // Entries cached before the parser skipped these still hold them, and a
-      // transcript that never grows is never re-parsed.
+
+      // Unchanged and deleted transcripts may only exist in the cache, so the
+      // parser cannot remove their previously saved local placeholders.
       if (provider === "claude" && model === CLAUDE_SYNTHETIC_MODEL) continue;
 
       records.push({
