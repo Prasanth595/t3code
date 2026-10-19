@@ -384,7 +384,12 @@ describe("scoped settings writes", () => {
           expect(result.savedEnvironments.map(({ label }) => label)).toEqual([laptop.label]);
           expect(
             result.failedEnvironments.map(({ label, droppedKeys }) => ({ label, droppedKeys })),
-          ).toEqual([{ label: server.label, droppedKeys: ["enableAgentBrowserAccess"] }]);
+          ).toEqual([
+            {
+              label: server.label,
+              droppedKeys: ["projectSettingsOverrides.enableAgentBrowserAccess"],
+            },
+          ]);
           for (const failure of result.failedEnvironments) {
             recordDroppedSettingKeys(failure.environmentId, "old", failure.droppedKeys);
           }
@@ -404,6 +409,29 @@ describe("scoped settings writes", () => {
                 projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
               });
           }
+          for (const scope of [project, checkout]) {
+            expect(
+              planScopedSettingsClear(scope, learned, [
+                "enableAgentBrowserAccess",
+              ]).serverWrites.map(({ environmentId }) => environmentId),
+            ).toEqual(scope.kind === "project" ? [laptop.environmentId] : []);
+          }
+          const overrides = listProjectOverrides(learned, ["enableAgentBrowserAccess"]);
+          expect(overrides).toEqual([
+            { environmentId: laptop.environmentId, projectId: laptopProjectId },
+          ]);
+          expect(
+            planProjectOverridesClear(
+              learned,
+              [{ environmentId: server.environmentId, projectId }],
+              ["enableAgentBrowserAccess"],
+            ).serverWrites,
+          ).toEqual([]);
+          expect(
+            planScopedSettingsPatch(named, learned, {
+              projectSettingsOverrides: { [projectId]: patch },
+            }).serverWrites[0]?.patch,
+          ).toEqual({ projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } } });
           const projectTargets = resolveScopedSettingsTargets(project, learned);
           expect
             .soft(
@@ -458,6 +486,42 @@ describe("scoped settings writes", () => {
                 })),
               );
           }
+          const reset = planScopedSettingsPatch(named, learned, {
+            projectSettingsOverrides: { [projectId]: null },
+          });
+          expect(reset.serverWrites[0]?.patch).toEqual({
+            projectSettingsOverrides: { [projectId]: null },
+          });
+          const resetResult = await persistScopedSettingsPatch(
+            reset,
+            async () => ({ _tag: "Success", value: saved[1]!.serverConfig.settings }),
+            vi.fn(),
+          );
+          expect(resetResult.failedEnvironments[0]?.droppedKeys).toEqual([
+            "projectSettingsOverrides.defaultAutoPull",
+          ]);
+          for (const failure of resetResult.failedEnvironments) {
+            recordDroppedSettingKeys(failure.environmentId, "old", failure.droppedKeys);
+          }
+          const afterReset = saved.map(withSupport);
+          expect(
+            planScopedSettingsClear(checkout, afterReset, ["defaultAutoPull"]).serverWrites,
+          ).toEqual([]);
+          expect(
+            planScopedSettingsPatch(named, afterReset, {
+              projectSettingsOverrides: { [projectId]: null },
+            }).serverWrites,
+          ).toEqual([]);
+          expect(
+            planScopedSettingsPatch(named, afterReset, { defaultAutoPull: false }).serverWrites,
+          ).toHaveLength(1);
+          expect(
+            droppedSettingKeysFor(
+              appAtomRegistry.get(droppedSettingKeysAtom),
+              server.environmentId,
+              "new",
+            ),
+          ).toBeUndefined();
         }
       } finally {
         appAtomRegistry.set(droppedSettingKeysAtom, previousDropped);

@@ -146,7 +146,7 @@ export function useProjectScriptSettings(
         project
           ? result.value.projectSettingsOverrides[project.id]?.defaultProjectScripts
           : result.value.defaultProjectScripts,
-        "defaultProjectScripts",
+        project ? "projectSettingsOverrides.defaultProjectScripts" : "defaultProjectScripts",
       );
       if (droppedKeys.length > 0) {
         const serverVersion = scope?.environments.find(

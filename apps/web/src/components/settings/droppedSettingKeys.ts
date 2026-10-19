@@ -1,4 +1,4 @@
-import { ServerSettings, type EnvironmentId } from "@t3tools/contracts";
+import { ProjectSettingsOverrides, ServerSettings, type EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -18,8 +18,16 @@ export function recordDroppedSettingKeys(
   serverVersion: string,
   keys: readonly string[],
 ) {
-  const topLevelKeys = keys.filter((key) => Object.hasOwn(ServerSettings.fields, key));
-  if (topLevelKeys.length === 0) return;
+  const knownKeys = keys.filter(
+    (key) =>
+      Object.hasOwn(ServerSettings.fields, key) ||
+      (key.startsWith("projectSettingsOverrides.") &&
+        Object.hasOwn(
+          ProjectSettingsOverrides.fields,
+          key.slice("projectSettingsOverrides.".length),
+        )),
+  );
+  if (knownKeys.length === 0) return;
   appAtomRegistry.update(droppedSettingKeysAtom, (current) => {
     const existing = current.get(environmentId);
     const next = new Map(current);
@@ -27,7 +35,7 @@ export function recordDroppedSettingKeys(
       serverVersion,
       keys: new Set([
         ...(existing?.serverVersion === serverVersion ? existing.keys : []),
-        ...topLevelKeys,
+        ...knownKeys,
       ]),
     });
     return next;
