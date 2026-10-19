@@ -172,7 +172,9 @@ describe("UsageLimitSources.poolResetAt", () => {
           yield* sources.refresh;
           test.reads.length = 0;
           accounts[0]!.five_hour.resets_at = TWO_HOURS;
-          expect(yield* sources.poolResetAt("https://hub.test:8317/v1/")).toBe(TWO_HOURS);
+          expect(yield* sources.poolResetAt("https://hub.test:8317/v1/", "claude-fable-5-1")).toBe(
+            TWO_HOURS,
+          );
           expect(test.reads).toEqual(["https://hub.test:8317/"]);
         }).pipe(Effect.provide(test.layer)),
       ),
@@ -193,26 +195,29 @@ describe("UsageLimitSources.poolResetAt", () => {
         Effect.gen(function* () {
           const sources = yield* UsageLimitSources.UsageLimitSources;
           yield* sources.refresh;
-          expect(yield* sources.poolResetAt("https://hub.test:8317/v1")).toBeNull();
+          expect(
+            yield* sources.poolResetAt("https://hub.test:8317/v1", "claude-fable-5-1"),
+          ).toBeNull();
         }).pipe(Effect.provide(test.layer)),
       ),
     );
   });
 
   it.effect("waits for the requested model's windows without waiting for another model", () => {
+    const limits: NonNullable<HubAccount["limits"]> = [
+      {
+        kind: "weekly_scoped",
+        percent: 100,
+        resets_at: ONE_DAY,
+        scope: { model: { display_name: "Fable" } },
+      },
+    ];
     const test = makePoolFixture({
       "https://hub.test:8317/": [
         {
           id: "limited",
           five_hour: { utilization: 100, resets_at: ONE_HOUR },
-          limits: [
-            {
-              kind: "weekly_scoped",
-              percent: 100,
-              resets_at: ONE_DAY,
-              scope: { model: { display_name: "Opus 4.6" } },
-            },
-          ],
+          limits,
         },
       ],
     });
@@ -221,12 +226,23 @@ describe("UsageLimitSources.poolResetAt", () => {
         Effect.gen(function* () {
           const sources = yield* UsageLimitSources.UsageLimitSources;
           yield* sources.refresh;
-          const poolResetAt: (baseUrl: string, model: string) => Effect.Effect<string | null> =
-            sources.poolResetAt;
-          expect(yield* poolResetAt("https://hub.test:8317/v1", "claude-sonnet-4-6")).toBe(
+          expect(yield* sources.poolResetAt("https://hub.test:8317/v1", "claude-fable-5-1")).toBe(
+            ONE_DAY,
+          );
+          expect(yield* sources.poolResetAt("https://hub.test:8317/v1", "claude-opus-5-5")).toBe(
             ONE_HOUR,
           );
-          expect(yield* poolResetAt("https://hub.test:8317/v1", "claude-opus-4-6")).toBe(ONE_DAY);
+          expect(
+            yield* sources.poolResetAt("https://hub.test:8317/v1", "claude-fable-5-1[1m]"),
+          ).toBe(ONE_DAY);
+          expect(yield* sources.poolResetAt("https://hub.test:8317/v1", "fable")).toBeNull();
+          limits[0]!.scope.model.display_name = "Fable 5.1";
+          expect(yield* sources.poolResetAt("https://hub.test:8317/v1", "claude-fable-5-2")).toBe(
+            ONE_HOUR,
+          );
+          expect(
+            yield* sources.poolResetAt("https://hub.test:8317/v1", "claude-fable-5-1-20261001[1m]"),
+          ).toBe(ONE_DAY);
         }).pipe(Effect.provide(test.layer)),
       ),
     );

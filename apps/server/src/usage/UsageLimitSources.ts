@@ -32,7 +32,7 @@ export class UsageLimitSources extends Context.Service<
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
     /** Fresh recovery evidence for a Claude proxy failure with no native reset. */
-    readonly poolResetAt: (baseUrl: string, model?: string) => Effect.Effect<string | null>;
+    readonly poolResetAt: (baseUrl: string, model: string) => Effect.Effect<string | null>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -61,19 +61,20 @@ function hubOrigin(url: string): string | null {
 function claudeModelIdentity(model: string) {
   const key = model
     .toLowerCase()
+    .replace(/\[1m\]$/, "")
     .replace(/^claude-/, "")
     .replace(/[-. ]/g, "_")
     .replace(/_\d{8}$/, "");
-  const match = /^(opus|sonnet|haiku)(?:_(\d+(?:_\d+)?))?$/.exec(key);
+  const match = /^([a-z]+)(?:_(\d+(?:_\d+)?))?$/.exec(key);
   return match ? { family: match[1], version: match[2] ?? null } : null;
 }
 
 function poolUsageLimitResetAt(
   accounts: ReadonlyArray<UsageLimitSourceAccount>,
   nowMs: number,
-  model: string | undefined,
+  model: string,
 ): string | null {
-  const requestedModel = model === undefined ? null : claudeModelIdentity(model);
+  const requestedModel = claudeModelIdentity(model);
   let earliest = Infinity;
   for (const account of accounts) {
     if (account.driver !== "claudeAgent") continue;
@@ -175,7 +176,7 @@ export const make = Effect.gen(function* () {
 
   const poolResetAt = Effect.fn("UsageLimitSources.poolResetAt")(function* (
     baseUrl: string,
-    model?: string,
+    model: string,
   ) {
     const origin = hubOrigin(baseUrl);
     if (origin === null) return null;
