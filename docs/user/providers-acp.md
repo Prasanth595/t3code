@@ -82,8 +82,8 @@ build modes follow T3 Code's Plan and Build toggle. Models and options that chan
 is running update the picker without waiting for another provider probe.
 
 Options are learned separately for each model from provider checks and running threads. Until
-a model has been observed, it shows no options and the agent uses its defaults. Restarting the
-server or changing a provider's configuration clears these observations.
+a model has been observed, it shows no options and the agent uses its defaults. After restarting
+the server, models need to be observed again.
 
 ## Commands and skills
 

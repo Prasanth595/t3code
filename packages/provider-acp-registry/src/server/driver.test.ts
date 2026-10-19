@@ -86,7 +86,7 @@ function catalogWithInspection(
 }
 
 describe("acpRegistrySnapshotReadiness", () => {
-  it.effect("reprobes on explicit refresh while retaining other models' probe observations", () =>
+  it.effect("caches probes until invalidated while retaining model observations", () =>
     Effect.gen(function* () {
       const probes = yield* Queue.unbounded<AcpRegistryLiveConfiguration>();
       const probe = vi
@@ -161,6 +161,17 @@ describe("acpRegistrySnapshotReadiness", () => {
         opus: ["low", "high"],
         glm: [],
       });
+      const cachedRefresh = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+        Stream.runHead,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      expect(thinkingChoices(Option.getOrThrow(yield* Fiber.join(cachedRefresh)))).toEqual({
+        opus: ["low", "high"],
+        glm: [],
+      });
+      expect(probe).toHaveBeenCalledTimes(1);
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const foregroundStarted = yield* Deferred.make<void>();
       const releaseForeground = yield* Deferred.make<void>();
@@ -173,6 +184,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         )
         .pipe(Effect.forkChild);
       yield* Deferred.await(foregroundStarted);
+      yield* instance.invalidateCaches!;
       yield* instance.snapshot.refresh;
       const receiveLive = Effect.fn(function* (configuration: AcpRegistryLiveConfiguration) {
         const updated = yield* instance.snapshot.streamChanges.pipe(
@@ -189,6 +201,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       });
       yield* Deferred.succeed(releaseForeground, undefined);
       yield* Fiber.join(foreground);
+      yield* instance.invalidateCaches!;
       expect(thinkingChoices(yield* instance.snapshot.refresh)).toEqual({
         opus: ["low", "high"],
         glm: ["max"],
@@ -197,6 +210,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         opus: ["low", "high"],
         glm: ["max"],
       });
+      yield* instance.invalidateCaches!;
       yield* instance.snapshot.refresh;
       expect(thinkingChoices(yield* receive(observed("opus", [])))).toEqual({
         opus: [],
@@ -206,6 +220,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         opus: [],
         glm: ["max"],
       });
+      yield* instance.invalidateCaches!;
       yield* instance.snapshot.refresh;
       expect(thinkingChoices(yield* receive(observed("opus", ["high"])))).toEqual({
         opus: [],

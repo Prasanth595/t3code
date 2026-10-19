@@ -844,10 +844,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         accentColor,
         enabled,
         auth,
+        invalidateCaches: liveSnapshotSemaphore.withPermit(refreshEnrichmentCache),
         snapshot: {
           ...snapshot,
-          refresh: liveSnapshotSemaphore.withPermit(refreshEnrichmentCache).pipe(
-            Effect.andThen(snapshot.refresh),
+          refresh: snapshot.refresh.pipe(
             Effect.tap(() => controller.refreshMethods ?? Effect.void),
           ),
         },
