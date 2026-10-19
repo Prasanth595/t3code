@@ -4206,6 +4206,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           platform?: NodeJS.Platform;
           hiddenConfig?: boolean;
           submodules?: boolean;
+          fetchErrors?: readonly string[];
         } = {},
       ) {
         const sshEnvKeys = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT", "GIT_CONFIG"] as const;
@@ -4250,20 +4251,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const exit = yield* Deferred.make<void>();
         const released = yield* Deferred.make<void>();
         const fetches: Array<string | undefined> = [];
+        const attempts: Array<readonly string[]> = [];
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             if (!ChildProcess.isStandardCommand(command))
               return yield* Effect.die("unexpected command");
             if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+            const fetchError = options.fetchErrors?.[fetches.length];
             fetches.push(command.options.env?.GIT_SSH_COMMAND);
+            attempts.push(command.args);
             yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
             yield* Deferred.succeed(started, undefined);
             return ChildProcessSpawner.makeHandle({
               ...makeSuccessfulHandle(""),
-              exitCode: Deferred.await(exit).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-              stderr: Stream.encodeText(stderr).pipe(
-                Stream.ensuring(Deferred.succeed(stderrRead, undefined)),
+              exitCode: Deferred.await(exit).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(fetchError === undefined ? 0 : 128)),
               ),
+              stderr: Stream.encodeText(
+                fetchError === undefined ? stderr : Stream.concat(stderr, Stream.make(fetchError)),
+              ).pipe(Stream.ensuring(Deferred.succeed(stderrRead, undefined))),
             });
           }),
         );
@@ -4276,7 +4282,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .fetchRemote({ cwd: fetchCwd, remoteName: "origin", refName: "main" })
           .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
-        return { fetching, stderrRead, exit, released, fetches };
+        return { fetching, stderrRead, exit, released, fetches, attempts };
       });
 
       it.effect("reports pending approval before the command timeout and releases the fetch", () =>
@@ -4326,6 +4332,40 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* Fiber.interrupt(fetch.fetching);
           assert.isTrue(yield* Deferred.isDone(fetch.released));
           assert.isFalse(yield* Deferred.isDone(fetch.exit));
+        }),
+      );
+
+      it.effect("keeps retry, fallback, and error diagnostics after verbose SSH output", () =>
+        Effect.gen(function* () {
+          const fetch = yield* startFetch(
+            Stream.make("debug3: channel 0: rcvd adjust 2097152\n".repeat(30_000)),
+            {
+              fetchErrors: [
+                "error: cannot lock ref 'refs/remotes/origin/main': is at abc but expected def\n",
+                "fatal: couldn't find remote ref refs/heads/main\n",
+                "fatal: Authentication failed\n",
+              ],
+            },
+          );
+          yield* Deferred.await(fetch.stderrRead);
+          yield* Deferred.succeed(fetch.exit, undefined);
+          const result = yield* Fiber.join(fetch.fetching);
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.equal(
+              result.failure.detail,
+              "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.",
+            );
+          }
+          const scoped = [
+            "fetch",
+            "--quiet",
+            "--",
+            "origin",
+            "+refs/heads/main:refs/remotes/origin/main",
+          ];
+          assert.deepEqual(fetch.attempts, [scoped, scoped, ["fetch", "--quiet", "--", "origin"]]);
+          assert.isTrue(yield* Deferred.isDone(fetch.released));
         }),
       );
 

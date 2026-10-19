@@ -3771,18 +3771,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           env: { ...STATUS_UPSTREAM_REFRESH_ENV, GIT_SSH_COMMAND: "ssh -o LogLevel=DEBUG3" },
           appendTruncationMarker: true,
           keepLineCallbacksAfterTruncation: true,
-          progress: {
-            onStderrLine: (line: string) =>
-              Effect.flatMap(Clock.currentTimeMillis, (now) =>
-                Ref.update(approvalDeadline, (deadline) =>
-                  line.startsWith(SSH_SIGN_REQUEST_LINE_PREFIX)
-                    ? now + SSH_KEY_APPROVAL_WAIT_MS
-                    : SSH_SIGNING_LINE.test(line)
-                      ? deadline
-                      : Infinity,
-                ),
-              ),
-          },
         }),
       };
       const approvalTimedOut = (fetchArgs: readonly string[]) =>
@@ -3805,15 +3793,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // poll, can win the race for a remote-tracking ref. The loser fails, but
       // the ref is free again by the time a rerun needs it, so retry once.
       const runFetch = (fetchArgs: readonly string[]) => {
-        const fetched = executeGitWithStableDiagnostics(
-          "GitVcsDriver.fetchRemote",
-          input.cwd,
-          fetchArgs,
-          {
-            ...options,
-            allowNonZeroExit: true,
-          },
-        );
+        const fetched = Effect.gen(function* () {
+          // SSH debug noise must not crowd Git's retry and failure diagnostics out of the cap.
+          let diagnostics = "";
+          const result = yield* executeGitWithStableDiagnostics(
+            "GitVcsDriver.fetchRemote",
+            input.cwd,
+            fetchArgs,
+            {
+              ...options,
+              allowNonZeroExit: true,
+              ...(watchSshApproval && {
+                progress: {
+                  onStderrLine: (line: string) =>
+                    Effect.gen(function* () {
+                      if (!/^debug\d:/.test(line)) {
+                        diagnostics += (line + "\n").slice(
+                          0,
+                          DEFAULT_MAX_OUTPUT_BYTES - diagnostics.length,
+                        );
+                      }
+                      const now = yield* Clock.currentTimeMillis;
+                      yield* Ref.update(approvalDeadline, (deadline) =>
+                        line.startsWith(SSH_SIGN_REQUEST_LINE_PREFIX)
+                          ? now + SSH_KEY_APPROVAL_WAIT_MS
+                          : SSH_SIGNING_LINE.test(line)
+                            ? deadline
+                            : Infinity,
+                      );
+                    }),
+                },
+              }),
+            },
+          );
+          return watchSshApproval ? { ...result, stderr: diagnostics } : result;
+        });
         const run = watchSshApproval
           ? Effect.raceFirst(fetched, approvalTimedOut(fetchArgs))
           : fetched;
