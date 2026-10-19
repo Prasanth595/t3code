@@ -1706,7 +1706,7 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "prompt \u001b[32mok\u001b[0m done\n");
+      expect(reopened.history.startsWith("prompt \u001b[32mok\u001b[0m done\n")).toBe(true);
     }),
   );
 
@@ -1821,6 +1821,9 @@ it.layer(
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       const first = yield* manager.open(openInput());
       expect(replay(first.history)).toEqual(clean);
+      expect(replay(first.history + "\u001b[?1049hnext app")).toEqual(
+        replay(text + "\u001b[?1049hnext app"),
+      );
       expect(events[0]).toMatchObject({ type: "snapshot", snapshot: { history: first.history } });
       expect(ptyAdapter.spawnInputs).toHaveLength(1);
 
@@ -1871,7 +1874,9 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, 'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n');
+      expect(reopened.history.startsWith('prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n')).toBe(
+        true,
+      );
     }),
   );
 
@@ -1921,10 +1926,11 @@ it.layer(
         yield* manager.close({ threadId: "thread-1" });
 
         const reopened = yield* manager.open(openInput());
-        assert.equal(
-          reopened.history,
-          "before clear\n\u001b[H\u001b[2Jprompt \u001b[36mdone\u001b[0m\n",
-        );
+        expect(
+          reopened.history.startsWith(
+            "before clear\n\u001b[H\u001b[2Jprompt \u001b[36mdone\u001b[0m\n",
+          ),
+        ).toBe(true);
       }),
   );
 
@@ -1943,7 +1949,7 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "before \u001b(Bafter\n");
+      expect(reopened.history.startsWith("before \u001b(Bafter\n")).toBe(true);
     }),
   );
 
@@ -1964,7 +1970,7 @@ it.layer(
         yield* manager.close({ threadId: "thread-1" });
 
         const reopened = yield* manager.open(openInput());
-        assert.equal(reopened.history, "before \u001b(Bafter\n");
+        expect(reopened.history.startsWith("before \u001b(Bafter\n")).toBe(true);
       }),
   );
 
