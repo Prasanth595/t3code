@@ -91,6 +91,9 @@ describe("composer list continuation", () => {
 
   it("indents list items on Tab", () => {
     expect(applyEdit("- foo", listIndentForTab("- foo", 2, 2)!)).toBe("  - foo");
+    const value = "1. parent\n2. child";
+    const cursor = value.indexOf("2.");
+    expect(listIndentForTab(value, cursor, cursor)?.cursor).toBe(cursor + 3);
     expect(listIndentForTab("plain", 2, 2)).toBeNull();
     expect(listIndentForTab("- foo", 1, 3)).toBeNull();
   });

@@ -175,7 +175,7 @@ export function listIndentForTab(
       start: line.start,
       end: editEnd,
       replacement,
-      cursor: start >= editEnd ? start + shift : line.start + replacement.length,
+      cursor: start >= editEnd ? start + shift : line.start + indent.length,
     };
   }
   return { start: line.start, end: line.start, replacement: "  ", cursor: start + 2 };
