@@ -1,7 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - the host name goes on every `claimed` line, as softfac writes it; a gate lock is a file.
+// @effect-diagnostics nodeBuiltinImport:off - the host name goes on every `claimed` line, as softfac writes it; a gate lock and a checkout's project config are files.
 // @effect-diagnostics globalDate:off - the ledger stamps lines with the wall clock, as softfac does.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -177,12 +178,29 @@ interface ProjectReadError extends PassError {
   readonly errors: ReadonlyArray<ConfigError>;
 }
 
+/** The checkout's own `.dw/config.yml`, for a repo whose default branch `branch` has none on GitHub. */
+const fromCheckout = (
+  file: string,
+  branch: string,
+): Effect.Effect<{ readonly file: string; readonly text: string }, ProjectReadError> =>
+  Effect.try({
+    try: () => ({ file, text: NodeFS.readFileSync(file, "utf8") }),
+    catch: (error): ProjectReadError => {
+      const reason = error instanceof Error ? error.message : String(error);
+      const message = `${PROJECT_CONFIG_PATH} is not on ${branch} on GitHub, and cannot read ${file}: ${reason}`;
+      return { kind: "config", message, errors: [{ file, message }] };
+    },
+  });
+
 /**
- * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub.
- * The config must name that branch as its `base`: it is committed on its own base branch.
+ * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub,
+ * or, only when GitHub says the file is not there, the copy in the watched checkout's working
+ * tree. Some repos keep the file off GitHub because their gate holds machine-specific commands.
+ * Either way the config must name the default branch as its `base`.
  */
 const projectFromBase = (
   github: ReturnType<typeof makeGitHub>,
+  checkout: string,
 ): Effect.Effect<ProjectConfig, ProjectReadError, FactoryProcess> =>
   Effect.gen(function* () {
     const found = yield* github.baseConfig().pipe(
@@ -197,8 +215,11 @@ const projectFromBase = (
         ],
       })),
     );
-    const file = `${found.branch}:${PROJECT_CONFIG_PATH}`;
-    const parsed = parseProjectConfig(found.text, file);
+    const { file, text } =
+      found.text !== null
+        ? { file: `${found.branch}:${PROJECT_CONFIG_PATH}`, text: found.text }
+        : yield* fromCheckout(NodePath.join(checkout, PROJECT_CONFIG_PATH), found.branch);
+    const parsed = parseProjectConfig(text, file);
     if (Result.isFailure(parsed)) {
       return yield* Effect.fail<ProjectReadError>({
         kind: "config",
@@ -494,7 +515,7 @@ export const liveWorld = (
     });
   return {
     project: (watched) =>
-      withProcess(projectFromBase(githubFor(watched))).pipe(
+      withProcess(projectFromBase(githubFor(watched), watched.path)).pipe(
         Effect.tap((project) =>
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
