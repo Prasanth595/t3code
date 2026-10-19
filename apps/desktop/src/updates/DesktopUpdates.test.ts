@@ -252,7 +252,6 @@ describe("DesktopUpdates", () => {
 
   it.effect("reuses an update an earlier launch downloaded once its check finishes", () => {
     const releaseCheck = Deferred.makeUnsafe<void>();
-    const downloaded = Deferred.makeUnsafe<void>();
     const harness = makeHarness({
       cachedDownloadSha512: "sha-1.2.4",
       // electron-updater reports update-available while the check is running.
@@ -262,9 +261,7 @@ describe("DesktopUpdates", () => {
           files: [{ url: "T3-Code-1.2.4.zip", sha512: "sha-1.2.4" }],
         }),
       ).pipe(Effect.andThen(Deferred.await(releaseCheck))),
-      downloadUpdate: Effect.sync(() =>
-        harness.emit("update-downloaded", { version: "1.2.4" }),
-      ).pipe(Effect.andThen(Deferred.succeed(downloaded, undefined))),
+      downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: "1.2.4" })),
     });
 
     return Effect.scoped(
@@ -279,7 +276,6 @@ describe("DesktopUpdates", () => {
 
         yield* Deferred.succeed(releaseCheck, undefined);
         yield* Fiber.join(check);
-        yield* Deferred.await(downloaded);
         yield* flushCallbacks;
 
         assert.equal(harness.downloadCount(), 1);
@@ -290,52 +286,79 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("waits for the user when a newer release replaces the cached download", () => {
-    const harness = makeHarness({ cachedDownloadSha512: "sha-1.2.4" });
+  it.effect.each([
+    { name: "a newer release", cachedDownloadSha512: "older-release" },
+    { name: "an interrupted download", cachedFileExists: false },
+    { name: "unfinished metadata", cachedDownloadInfo: "{" },
+  ])("keeps $name click-to-download", (cache) => {
+    const harness = makeHarness({ cachedDownloadSha512: "release-sha", ...cache });
 
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
-
         harness.emit("update-available", {
           version: "1.2.5",
-          files: [{ url: "T3-Code-1.2.5.zip", sha512: "sha-1.2.5" }],
-        });
-        yield* flushCallbacks;
-
-        assert.equal(harness.downloadCount(), 0);
-        const state = yield* updates.getState;
-        assert.equal(state.status, "available");
-        assert.equal(state.availableVersion, "1.2.5");
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
-
-  it.effect("ignores a cached download this platform's updater would not pick", () => {
-    // The x64 Mac updater picks the x64 zip, so a cached arm64 zip would be
-    // discarded and downloaded over the network again.
-    const harness = makeHarness({ cachedDownloadSha512: "sha-arm64" });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-
-        harness.emit("update-available", {
-          version: "1.2.4",
-          files: [
-            { url: "T3-Code-1.2.4-arm64.zip", sha512: "sha-arm64" },
-            { url: "T3-Code-1.2.4.zip", sha512: "sha-x64" },
-          ],
+          files: [{ url: "T3-Code-1.2.5.zip", sha512: "release-sha" }],
         });
         yield* flushCallbacks;
 
         assert.equal(harness.downloadCount(), 0);
         assert.equal((yield* updates.getState).status, "available");
+        assert.isTrue((yield* updates.download).accepted);
+        assert.equal(harness.downloadCount(), 1);
       }),
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
+
+  it.effect.each(["quitting", "newer release", "no longer available"] as const)(
+    "abandons pending cache recovery after %s",
+    (change) => {
+      const releaseCheck = Deferred.makeUnsafe<void>();
+      const harness = makeHarness({
+        cachedDownloadSha512: "cached-release",
+        checkForUpdates: Effect.sync(() =>
+          harness.emit("update-available", {
+            version: "1.2.4",
+            files: [{ url: "T3-Code-1.2.4.zip", sha512: "cached-release" }],
+          }),
+        ).pipe(Effect.andThen(Deferred.await(releaseCheck))),
+      });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          const check = yield* Effect.forkChild(updates.check("startup"));
+          yield* flushCallbacks;
+          assert.equal((yield* updates.getState).status, "available");
+          assert.equal(harness.downloadCount(), 0);
+
+          if (change === "quitting") {
+            const desktop = yield* DesktopState.DesktopState;
+            yield* Ref.set(desktop.quitting, true);
+          } else if (change === "newer release") {
+            harness.emit("update-available", {
+              version: "1.2.5",
+              files: [{ url: "T3-Code-1.2.5.zip", sha512: "new-release" }],
+            });
+          } else {
+            harness.emit("update-not-available");
+          }
+          yield* flushCallbacks;
+          yield* Deferred.succeed(releaseCheck, undefined);
+          yield* Fiber.join(check);
+          yield* flushCallbacks;
+
+          assert.equal(harness.downloadCount(), 0);
+          assert.equal(
+            (yield* updates.getState).status,
+            change === "no longer available" ? "up-to-date" : "available",
+          );
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
 
   it.effect("preserves a queued installer when the feed has no update", () => {
     const harness = makeHarness();

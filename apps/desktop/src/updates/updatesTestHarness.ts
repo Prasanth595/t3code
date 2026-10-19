@@ -28,6 +28,11 @@ export interface UpdatesHarnessOptions {
   readonly downloadUpdate?: Effect.Effect<void>;
   /** sha512 of a download an earlier launch left in electron-updater's cache. */
   readonly cachedDownloadSha512?: string;
+  readonly cachedDownloadInfo?: string;
+  readonly cachedFileExists?: boolean;
+  readonly updater?: ElectronUpdater.ElectronUpdater["Service"];
+  readonly fileSystem?: FileSystem.FileSystem;
+  readonly runningUnderArm64Translation?: boolean;
   readonly quitAndInstall?: Effect.Effect<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>;
   readonly stopBackend?: Effect.Effect<void>;
   readonly startBackend?: Effect.Effect<void>;
@@ -69,7 +74,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }
   };
 
-  const layerUpdater = Layer.succeed(ElectronUpdater.ElectronUpdater, {
+  const stubUpdater = {
     setFeedURL: (options) =>
       Effect.sync(() => {
         feedUrls.push(options);
@@ -114,7 +119,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
             removeListener(eventName, listener as unknown as (...args: readonly unknown[]) => void);
           }),
       ).pipe(Effect.asVoid),
-  } satisfies ElectronUpdater.ElectronUpdater["Service"]);
+  } satisfies ElectronUpdater.ElectronUpdater["Service"];
+  const layerUpdater = Layer.succeed(
+    ElectronUpdater.ElectronUpdater,
+    options.updater ?? stubUpdater,
+  );
 
   const layerWindow = Layer.succeed(ElectronWindow.ElectronWindow, {
     create: () => Effect.die("unexpected BrowserWindow creation"),
@@ -170,7 +179,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     appPath: "/repo",
     isPackaged: true,
     resourcesPath: "/missing/resources",
-    runningUnderArm64Translation: false,
+    runningUnderArm64Translation: options.runningUnderArm64Translation ?? false,
   }).pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -227,7 +236,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let previousInstallRecord = options.installRecord;
   const isInstallRecord = (path: string) =>
     path.endsWith(DesktopUpdates.DESKTOP_UPDATE_INSTALL_RECORD_FILE);
-  const layerFileSystem = FileSystem.layerNoop({
+  const stubFileSystem = FileSystem.layerNoop({
     readFileString: (path) => {
       const installRecord = isInstallRecord(path)
         ? (installRecords.get(path) ?? previousInstallRecord)
@@ -238,7 +247,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         : path === `${PENDING_DOWNLOAD_DIRECTORY}/update-info.json` &&
             options.cachedDownloadSha512 !== undefined
           ? Effect.succeed(
-              JSON.stringify({ fileName: "update.zip", sha512: options.cachedDownloadSha512 }),
+              options.cachedDownloadInfo ??
+                JSON.stringify({
+                  fileName: "update.zip",
+                  sha512: options.cachedDownloadSha512,
+                }),
             )
           : Effect.fail(
               PlatformError.systemError({
@@ -249,7 +262,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
               }),
             );
     },
-    exists: (path) => Effect.succeed(path === `${PENDING_DOWNLOAD_DIRECTORY}/update.zip`),
+    exists: (path) =>
+      Effect.succeed(
+        options.cachedFileExists !== false && path === `${PENDING_DOWNLOAD_DIRECTORY}/update.zip`,
+      ),
     makeDirectory: () => Effect.void,
     writeFileString: (path, data) =>
       Effect.sync(() => {
@@ -264,6 +280,9 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       }),
   });
 
+  const layerFileSystem = options.fileSystem
+    ? Layer.succeed(FileSystem.FileSystem, options.fileSystem)
+    : stubFileSystem;
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
     Layer.provideMerge(layerUpdater),

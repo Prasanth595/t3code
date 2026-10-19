@@ -71,12 +71,10 @@ const UpdateInfo = Schema.Struct({
   files: Schema.optional(Schema.Unknown),
 });
 
-// Read to recognize a download an earlier launch finished.
 const ReleaseFile = Schema.Struct({ url: Schema.String, sha512: Schema.String });
 type ReleaseFile = typeof ReleaseFile.Type;
 const ReleaseFiles = Schema.Array(ReleaseFile);
 
-// electron-updater's pending/update-info.json.
 const CachedDownloadInfo = Schema.fromJsonString(
   Schema.Struct({ fileName: Schema.String, sha512: Schema.String }),
 );
@@ -346,9 +344,8 @@ function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean 
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
 }
 
-/** The release file electron-updater's platform updater will download, mirroring
-    MacUpdater.filterFilesForArch and Provider.findFile. A cached download only
-    counts if it is this file: the updater discards any other and fetches anew. */
+// Match electron-updater 6.8.9's MacUpdater.filterFilesForArch and Provider.findFile
+// for T3's package feeds. Matching any artifact can trigger a different download.
 function selectUpdateFile(
   files: ReadonlyArray<ReleaseFile>,
   platform: NodeJS.Platform,
@@ -914,30 +911,29 @@ export const make = Effect.gen(function* () {
     return fileExists ? Option.some(info.sha512) : Option.none<string>();
   }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
-  // Update state lives in memory, but electron-updater keeps a finished download
-  // on disk across launches. When the release a check finds is the cached one,
-  // pick it back up so the restart prompt returns without another click. A newer
-  // release does not match and waits for the user like any other.
+  // downloadUpdate validates the cached bytes and restores install readiness.
+  // Only resume the selected artifact; a cache miss would start a network download.
   const resumeCachedDownload = Effect.fn("desktop.updates.resumeCachedDownload")(function* (
     version: string,
     files: unknown,
   ) {
-    const cachedSha512 = yield* cachedDownloadSha512;
-    if (Option.isNone(cachedSha512)) return;
+    const releaseFiles = decodeReleaseFiles(files);
+    if (Option.isNone(releaseFiles)) return;
     const updateFile = selectUpdateFile(
-      Option.getOrElse(decodeReleaseFiles(files), () => []),
+      releaseFiles.value,
       environment.platform,
       isDebPackage,
       environment.runtimeInfo,
     );
-    if (updateFile?.sha512 !== cachedSha512.value) return;
+    if (!updateFile) return;
+    const cachedSha512 = yield* cachedDownloadSha512;
+    if (Option.isNone(cachedSha512) || updateFile.sha512 !== cachedSha512.value) return;
 
     // update-available arrives while its check still holds the action reservation.
     yield* awaitIdleUpdateAction;
     if (yield* Ref.get(desktopState.quitting)) return;
     const state = yield* Ref.get(updateStateRef);
     if (state.status !== "available" || state.availableVersion !== version) return;
-    yield* logUpdaterInfo("reusing update downloaded by an earlier launch", { version });
     yield* downloadAvailableUpdate;
   });
 
