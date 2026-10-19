@@ -22,6 +22,8 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -929,95 +931,102 @@ const seedRestartCancelledChild = (input: {
     return { taskId, childThreadId, childRunId };
   });
 
-const seedRunningCompletionDelivery = (name: string) =>
-  Effect.gen(function* () {
-    const sink = yield* EventSink.EventSinkV2;
-    const now = yield* DateTime.now;
-    const threadId = ThreadId.make(`thread:settlement-retry:${name}`);
-    const runId = RunId.make(`run:settlement-retry:${name}`);
-    const taskId = NodeId.make(`node:settlement-retry:${name}`);
-    const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
-    const deliveryRunId = RunId.make(`${runId}:delivery`);
-    yield* seedParentWithTerminalTask({
-      threadId,
-      runId,
-      taskId,
-      projectId: ProjectId.make(`project:settlement-retry:${name}`),
-      rootNodeId: NodeId.make(`root:settlement-retry:${name}`),
-      deliveryState: "claimed",
-      completionWake: "always",
-      deliveryTaskIds: [taskId],
-      now,
-    });
-    const terminal = runEvent({
-      threadId,
-      runId: deliveryRunId,
-      ordinal: 2,
-      status: "cancelled",
-      now,
-      providerThreadId: parentProviderThreadId(threadId),
-      userMessageId: messageId,
-    });
-    yield* sink.write({
-      commandId: reconcileCommandId(`settlement-retry:${name}`),
-      events: [
-        {
-          id: EventId.make(`event:settlement-retry:${name}:message`),
-          type: "message.updated",
+it.effect.each(["missing thread", "exhausted retries"] as const)(
+  "stops terminal repair after %s and logs its identity",
+  (failure) =>
+    Effect.gen(function* () {
+      const stopped = yield* Deferred.make<unknown>();
+      const logger = Logger.make(({ message }) => {
+        const parts = Array.isArray(message) ? message : [message];
+        if (parts[0] === "Failed to react to terminal V2 run") {
+          Deferred.doneUnsafe(stopped, Effect.succeed(parts[1]));
+        }
+      });
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:terminal-repair-stop:${failure}`);
+        const runId = RunId.make(`run:terminal-repair-stop:${failure}`);
+        yield* seedParentWithTerminalTask({
           threadId,
-          runId: deliveryRunId,
-          occurredAt: now,
-          payload: {
-            id: messageId,
-            threadId,
-            runId: deliveryRunId,
-            nodeId: null,
-            role: "user",
-            text: "Delegated task finished.",
-            attachments: [],
-            streaming: false,
-            createdBy: "agent",
-            creationSource: "server",
-            createdAt: now,
-            updatedAt: now,
-            delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [taskId] },
-          },
-        },
-        { ...terminal, payload: { ...terminal.payload, status: "running", completedAt: null } },
-      ],
-    });
-    return { threadId, runId, taskId, terminal, now };
-  });
+          runId,
+          projectId: ProjectId.make(`project:terminal-repair-stop:${failure}`),
+          rootNodeId: NodeId.make(`root:terminal-repair-stop:${failure}`),
+          taskId: NodeId.make(`task:terminal-repair-stop:${failure}`),
+          deliveryState: "delivered",
+          now,
+        });
+        const attempts = yield* Queue.unbounded<number>();
+        let reads = 0;
+        const read = projections.getRunMessage;
+        const spy = vi.spyOn(projections, "getRunMessage").mockImplementation((...args) =>
+          args[0] === threadId
+            ? Effect.gen(function* () {
+                yield* Queue.offer(attempts, ++reads);
+                return yield* failure === "missing thread"
+                  ? new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })
+                  : new ProjectionStore.ProjectionStoreReadError({ threadId });
+              })
+            : read(...args),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+        const terminal = runEvent({ threadId, runId, ordinal: 1, status: "completed", now });
+        yield* sink.write({
+          commandId: CommandId.make(`command:terminal-repair-stop:${failure}`),
+          events: [terminal],
+        });
+        assert.equal(yield* Queue.take(attempts), 1);
+        if (failure === "exhausted retries") {
+          assert.equal(yield* Queue.take(attempts), 2);
+          for (const [index, delay] of [250, 500, 1000, 2000].entries()) {
+            yield* TestClock.adjust(delay);
+            assert.equal(yield* Queue.take(attempts), index + 3);
+          }
+        }
+        assert.deepInclude(yield* Deferred.await(stopped), { threadId, runId });
+        yield* TestClock.adjust("1 hour");
+        assert.equal(reads, failure === "missing thread" ? 1 : 6);
+
+        const resumed = yield* Deferred.make<void>();
+        spy.mockImplementation((...args) =>
+          read(...args).pipe(Effect.tap(() => Deferred.succeed(resumed, undefined))),
+        );
+        yield* sink.write({
+          commandId: CommandId.make(`command:terminal-repair-resume:${failure}`),
+          events: [{ ...terminal, id: EventId.make(`event:terminal-repair-resume:${failure}`) }],
+        });
+        yield* Deferred.await(resumed);
+      }).pipe(
+        Effect.provide(
+          layerTest.pipe(Layer.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+        ),
+      );
+    }),
+);
 
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
-    it.effect.each([
-      { stage: "result", failures: 1 },
-      { stage: "result", failures: 3 },
-      { stage: "offer", failures: 1 },
-      { stage: "offer", failures: 3 },
-      { stage: "discovery", failures: 1 },
-      { stage: "settlement", failures: 1 },
-    ] as const)(
-      "recovers terminal delivery after $failures $stage read failures",
-      ({ stage, failures }) =>
+    it.effect.each(["before publication", "after publication", "after offer"] as const)(
+      "publishes and offers a child result after repeated terminal failures %s",
+      (stage) =>
         Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const eventSink = yield* EventSink.EventSinkV2;
           const projections = yield* ProjectionStore.ProjectionStoreV2;
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           const now = yield* DateTime.now;
-          const parentThreadId = ThreadId.make(`thread:transient-result-read:${stage}:${failures}`);
-          const projectId = ProjectId.make(`project:transient-result-read:${stage}:${failures}`);
-          const parentRunId = RunId.make(`run:transient-result-read:${stage}:${failures}`);
-          const rootNodeId = NodeId.make(`node:transient-result-read:${stage}:${failures}`);
+          const parentThreadId = ThreadId.make(`thread:transient-terminal:${stage}`);
+          const projectId = ProjectId.make(`project:transient-terminal:${stage}`);
+          const parentRunId = RunId.make(`run:transient-terminal:${stage}`);
+          const rootNodeId = NodeId.make(`node:transient-terminal:${stage}`);
           yield* seedParentWithTerminalTask({
             threadId: parentThreadId,
             projectId,
             runId: parentRunId,
             rootNodeId,
-            taskId: NodeId.make(`node:transient-result-read-settled:${stage}:${failures}`),
+            taskId: NodeId.make(`node:transient-terminal-settled:${stage}`),
             deliveryState: "delivered",
             now,
           });
@@ -1026,400 +1035,84 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             projectId,
             parentRunId,
             rootNodeId,
-            name: `transient-result-read-child-${stage}:${failures}`,
+            name: `transient-terminal-child:${stage}`,
             completionWake: "always",
             continuationPending: false,
-            runStatus: "completed",
+            runStatus: stage === "after offer" ? "cancelled" : "completed",
             now,
           });
           const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
             (run) => run.id === parentRunId,
           )!;
-          const nextTerminalEntered = yield* Deferred.make<void>();
-          const backgroundRetryEntered = yield* Deferred.make<void>();
-          const afterSequence = yield* eventSink.latestSequence();
           const readRecords = projections.getThreadRecords;
           const readMessage = projections.getRunMessage;
-          const readThread = projections.getThread;
-          const offersSpy = vi.spyOn(requests, "offer");
-          let resultReads = 0;
+          const resultOffered = yield* Deferred.make<void>();
+          const offer = requests.offer;
+          const offers = vi
+            .spyOn(requests, "offer")
+            .mockImplementation((request) =>
+              offer(request).pipe(
+                Effect.andThen(
+                  request.threadId === parentThreadId
+                    ? Deferred.succeed(resultOffered, undefined)
+                    : Effect.void,
+                ),
+              ),
+            );
+          const immediateAttemptsFailed = yield* Deferred.make<void>();
+          const delayedAttemptFailed = yield* Deferred.make<void>();
+          const childReactionDone = yield* Deferred.make<void>();
+          let failures = 0;
           const failRead = Effect.suspend(() => {
-            resultReads += 1;
-            return resultReads <= failures
-              ? Effect.fail(
-                  new ProjectionStore.ProjectionStoreReadError({
-                    threadId: child.childThreadId,
-                    cause: new Error(`transient ${stage} projection failure`),
-                  }),
-                ).pipe(
-                  Effect.tapError(() =>
-                    resultReads === 3
-                      ? Deferred.succeed(backgroundRetryEntered, undefined)
-                      : Effect.void,
-                  ),
-                )
-              : Effect.void;
+            if (failures === 3) return Effect.void;
+            failures += 1;
+            return Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId: stage === "after publication" ? parentThreadId : child.childThreadId,
+              }),
+            ).pipe(
+              Effect.tapError(() =>
+                failures === 2
+                  ? Deferred.succeed(immediateAttemptsFailed, undefined)
+                  : failures === 3
+                    ? Deferred.succeed(delayedAttemptFailed, undefined)
+                    : Effect.void,
+              ),
+            );
           });
           const recordsSpy = vi
             .spyOn(projections, "getThreadRecords")
             .mockImplementation((...args) => {
               const target =
-                stage === "result"
+                stage === "before publication"
                   ? args[0] === child.childThreadId &&
                     args[1].length === 2 &&
                     args[1].includes("turnItems")
-                  : stage === "offer" &&
-                    args[0] === parentThreadId &&
-                    args[1].length === 4 &&
-                    args[1].includes("providerThreads") &&
-                    args[1].includes("providerTurns");
+                  : stage === "after publication"
+                    ? args[0] === parentThreadId &&
+                      args[1].length === 4 &&
+                      args[1].includes("providerThreads") &&
+                      args[1].includes("providerTurns")
+                    : args[0] === child.childThreadId &&
+                      args[1].length === 1 &&
+                      args[1].includes("runtimeRequests");
               return target
-                ? failRead.pipe(Effect.andThen(readRecords(...args)))
+                ? failRead.pipe(
+                    Effect.andThen(readRecords(...args)),
+                    Effect.tap(() => Deferred.succeed(childReactionDone, undefined)),
+                  )
                 : readRecords(...args);
             });
-          const threadSpy = vi
-            .spyOn(projections, "getThread")
-            .mockImplementation((threadId) =>
-              stage === "discovery" && threadId === child.childThreadId
-                ? failRead.pipe(Effect.andThen(readThread(threadId)))
-                : readThread(threadId),
-            );
+          // The parent event must progress while the child waits for backoff.
+          const parentReactionStarted = yield* Deferred.make<void>();
           const messageSpy = vi
             .spyOn(projections, "getRunMessage")
             .mockImplementation((threadId, runId) =>
-              (stage === "settlement" && threadId === child.childThreadId
-                ? failRead.pipe(Effect.andThen(readMessage(threadId, runId)))
-                : readMessage(threadId, runId)
-              ).pipe(
+              readMessage(threadId, runId).pipe(
                 Effect.tap(() =>
                   threadId === parentThreadId && runId === parentRunId
-                    ? Deferred.succeed(nextTerminalEntered, undefined)
+                    ? Deferred.succeed(parentReactionStarted, undefined)
                     : Effect.void,
-                ),
-              ),
-            );
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              recordsSpy.mockRestore();
-              threadSpy.mockRestore();
-              offersSpy.mockRestore();
-              messageSpy.mockRestore();
-            }),
-          );
-          yield* eventSink.write({
-            commandId: CommandId.make(
-              `command:transient-result-read:terminal:${stage}:${failures}`,
-            ),
-            events: [
-              {
-                ...runEvent({
-                  threadId: child.childThreadId,
-                  runId: child.childRunId,
-                  ordinal: 1,
-                  status: "completed",
-                  now,
-                }),
-                id: EventId.make(`event:transient-result-read:child-terminal:${stage}:${failures}`),
-              },
-              {
-                id: EventId.make(
-                  `event:transient-result-read:parent-terminal:${stage}:${failures}`,
-                ),
-                type: "run.updated",
-                threadId: parentThreadId,
-                runId: parentRunId,
-                occurredAt: now,
-                payload: { ...parentRun, status: "completed", completedAt: now },
-              },
-            ],
-          });
-          // The terminal listener is serial. Entering the next event proves that
-          // it finished handling the injected failure, without a timeout or poll.
-          yield* Deferred.await(nextTerminalEntered);
-          if (failures === 3) {
-            yield* Deferred.await(backgroundRetryEntered);
-            yield* TestClock.adjust("1 second");
-            yield* eventSink.stream({ afterSequence, eventType: "context-transfer.created" }).pipe(
-              Stream.filter(
-                (stored) =>
-                  stored.event.type === "context-transfer.created" &&
-                  stored.event.payload.sourceThreadId === child.childThreadId,
-              ),
-              Stream.take(1),
-              Stream.runDrain,
-            );
-          }
-          const published = yield* orchestrator.getThreadProjection(parentThreadId);
-          const transfers = published.contextTransfers.filter(
-            (transfer) =>
-              transfer.type === "subagent_result" &&
-              transfer.sourceThreadId === child.childThreadId,
-          );
-          assert.equal(transfers.length, 1);
-          if (stage !== "offer") assert.isAtLeast(resultReads, 2);
-          assert.equal(
-            offersSpy.mock.calls.filter(([request]) => request.threadId === parentThreadId).length,
-            1,
-          );
-          if (stage !== "offer") assert.equal(resultReads, failures + 1);
-          assert.equal(
-            published.subagents.find((task) => task.id === child.taskId)?.status,
-            "completed",
-          );
-          const wake = yield* requests.take;
-          assert.equal(wake.threadId, parentThreadId);
-          assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
-          assert.equal(wake.delegatedCompletion?.generation, 2);
-          yield* orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId);
-          const replayed = yield* orchestrator.getThreadProjection(parentThreadId);
-          assert.deepEqual(replayed.contextTransfers, published.contextTransfers);
-          assert.deepEqual(
-            replayed.runs.find((run) => run.id === parentRunId)?.delegatedCompletion,
-            published.runs.find((run) => run.id === parentRunId)?.delegatedCompletion,
-          );
-          assert.equal(
-            offersSpy.mock.calls.filter(([request]) => request.threadId === parentThreadId).length,
-            1,
-          );
-        }),
-    );
-
-    it.effect("owns one retry worker per terminal run and releases ownership after recovery", () =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const eventSink = yield* EventSink.EventSinkV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        const now = yield* DateTime.now;
-        const parentThreadId = ThreadId.make("thread:retry-ownership");
-        const projectId = ProjectId.make("project:retry-ownership");
-        const parentRunId = RunId.make("run:retry-ownership");
-        const rootNodeId = NodeId.make("node:retry-ownership");
-        yield* seedParentWithTerminalTask({
-          threadId: parentThreadId,
-          projectId,
-          runId: parentRunId,
-          rootNodeId,
-          taskId: NodeId.make("node:retry-ownership-settled"),
-          deliveryState: "delivered",
-          now,
-        });
-        const seedChild = (name: string) =>
-          seedRestartCancelledChild({
-            parentThreadId,
-            projectId,
-            parentRunId,
-            rootNodeId,
-            name,
-            completionWake: "always",
-            continuationPending: false,
-            runStatus: "completed",
-            now,
-          });
-        const child = yield* seedChild("retry-ownership-child");
-        const sibling = yield* seedChild("retry-ownership-sibling");
-        let phase: "result" | "discovery" = "result";
-        let failing = true;
-        let reads = 0;
-        let nextTerminalEntered = yield* Deferred.make<void>();
-        const backgroundEntered = yield* Deferred.make<void>();
-        const failRead = Effect.suspend(() => {
-          reads += 1;
-          return (
-            failing
-              ? Effect.fail(
-                  new ProjectionStore.ProjectionStoreReadError({ threadId: child.childThreadId }),
-                )
-              : Effect.void
-          ).pipe(
-            Effect.ensuring(
-              reads === 3 ? Deferred.succeed(backgroundEntered, undefined) : Effect.void,
-            ),
-          );
-        });
-        const readRecords = projections.getThreadRecords;
-        const readThread = projections.getThread;
-        const readMessage = projections.getRunMessage;
-        const recordsSpy = vi
-          .spyOn(projections, "getThreadRecords")
-          .mockImplementation((...args) =>
-            phase === "result" &&
-            args[0] === child.childThreadId &&
-            args[1].length === 2 &&
-            args[1].includes("turnItems")
-              ? failRead.pipe(Effect.andThen(readRecords(...args)))
-              : readRecords(...args),
-          );
-        const threadSpy = vi
-          .spyOn(projections, "getThread")
-          .mockImplementation((threadId) =>
-            phase === "discovery" && threadId === child.childThreadId
-              ? failRead.pipe(Effect.andThen(readThread(threadId)))
-              : readThread(threadId),
-          );
-        const messageSpy = vi
-          .spyOn(projections, "getRunMessage")
-          .mockImplementation((threadId, runId) =>
-            readMessage(threadId, runId).pipe(
-              Effect.tap(() =>
-                threadId === parentThreadId && runId === parentRunId
-                  ? Deferred.succeed(nextTerminalEntered, undefined)
-                  : Effect.void,
-              ),
-            ),
-          );
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            failing = false;
-          }).pipe(
-            Effect.andThen(TestClock.adjust("1 second")),
-            Effect.andThen(
-              Effect.sync(() => {
-                recordsSpy.mockRestore();
-                threadSpy.mockRestore();
-                messageSpy.mockRestore();
-              }),
-            ),
-          ),
-        );
-        const terminalEvent = (target: typeof child, suffix: string) => ({
-          ...runEvent({
-            threadId: target.childThreadId,
-            runId: target.childRunId,
-            ordinal: 1,
-            status: "completed",
-            now,
-          }),
-          id: EventId.make(`event:retry-ownership:${suffix}`),
-        });
-        const emitTerminal = (suffix: string) =>
-          Effect.gen(function* () {
-            const parent = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
-              (run) => run.id === parentRunId,
-            )!;
-            yield* eventSink.write({
-              commandId: CommandId.make(`command:retry-ownership:${suffix}`),
-              events: [
-                terminalEvent(child, suffix),
-                {
-                  id: EventId.make(`event:retry-ownership:marker:${suffix}`),
-                  type: "run.updated",
-                  threadId: parentThreadId,
-                  runId: parentRunId,
-                  occurredAt: now,
-                  payload: { ...parent, status: "completed", completedAt: now },
-                },
-              ],
-            });
-            yield* Deferred.await(nextTerminalEntered);
-          });
-        const awaitTransfer = (sourceThreadId: ThreadId, afterSequence: number) =>
-          eventSink
-            .stream({
-              afterSequence,
-              eventType: "context-transfer.created",
-            })
-            .pipe(
-              Stream.filter(
-                (stored) =>
-                  stored.event.type === "context-transfer.created" &&
-                  stored.event.payload.sourceThreadId === sourceThreadId,
-              ),
-              Stream.take(1),
-              Stream.runDrain,
-            );
-        yield* emitTerminal("initial");
-        yield* Deferred.await(backgroundEntered);
-        const afterSequence = yield* eventSink.latestSequence();
-        yield* eventSink.write({
-          commandId: CommandId.make("command:retry-ownership:duplicate"),
-          events: [terminalEvent(child, "duplicate"), terminalEvent(sibling, "sibling")],
-        });
-        yield* awaitTransfer(sibling.childThreadId, afterSequence);
-        yield* TestClock.adjust("0 seconds");
-        const beforeTick = reads;
-        yield* TestClock.adjust("1 second");
-        assert.equal(reads - beforeTick, 1);
-        failing = false;
-        yield* TestClock.adjust("1 second");
-        yield* awaitTransfer(child.childThreadId, afterSequence);
-        const recovered = yield* orchestrator.getThreadProjection(parentThreadId);
-        assert.equal(
-          recovered.contextTransfers.filter(
-            (transfer) =>
-              transfer.type === "subagent_result" &&
-              transfer.sourceThreadId === child.childThreadId,
-          ).length,
-          1,
-        );
-        assert.equal(
-          recovered.contextTransfers.filter(
-            (transfer) =>
-              transfer.type === "subagent_result" &&
-              transfer.sourceThreadId === sibling.childThreadId,
-          ).length,
-          1,
-        );
-        const siblingWake = yield* requests.take;
-        const recoveredWake = yield* requests.take;
-        assert.equal(siblingWake.delegatedCompletion?.generation, 2);
-        assert.deepEqual(recoveredWake.delegatedCompletion, siblingWake.delegatedCompletion);
-
-        // A later failure on the same child must acquire fresh worker ownership.
-        phase = "discovery";
-        failing = true;
-        reads = 0;
-        nextTerminalEntered = yield* Deferred.make<void>();
-        yield* emitTerminal("after-recovery");
-        yield* TestClock.adjust("0 seconds");
-        assert.equal(reads, 3);
-        failing = false;
-        yield* TestClock.adjust("1 second");
-        const laterWake = yield* requests.take;
-        assert.deepEqual(laterWake.delegatedCompletion, recoveredWake.delegatedCompletion);
-        const final = yield* orchestrator.getThreadProjection(parentThreadId);
-        assert.deepEqual(final.contextTransfers, recovered.contextTransfers);
-        assert.deepEqual(
-          final.runs.find((run) => run.id === parentRunId)?.delegatedCompletion,
-          recovered.runs.find((run) => run.id === parentRunId)?.delegatedCompletion,
-        );
-      }),
-    );
-
-    it.effect.each([0, 1, 3])(
-      "offers the successor after %i postcommit settlement read failures",
-      (failures) =>
-        Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const sink = yield* EventSink.EventSinkV2;
-          const projections = yield* ProjectionStore.ProjectionStoreV2;
-          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          const { threadId, runId, taskId, terminal, now } = yield* seedRunningCompletionDelivery(
-            `offer-${failures}`,
-          );
-          const markerRunId = RunId.make(`${runId}:marker`);
-          let drained = yield* Deferred.make<void>();
-          let offerReads = 0;
-          const readRecords = projections.getThreadRecords;
-          const readMessage = projections.getRunMessage;
-          const offers = vi.spyOn(requests, "offer");
-          const recordsSpy = vi
-            .spyOn(projections, "getThreadRecords")
-            .mockImplementation((...args) =>
-              args[0] === threadId && args[1].length === 4 && args[1].includes("providerTurns")
-                ? Effect.suspend(() =>
-                    ++offerReads <= failures
-                      ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
-                      : readRecords(...args),
-                  )
-                : readRecords(...args),
-            );
-          const messageSpy = vi
-            .spyOn(projections, "getRunMessage")
-            .mockImplementation((tid, rid) =>
-              readMessage(tid, rid).pipe(
-                Effect.tap(() =>
-                  rid === markerRunId ? Deferred.succeed(drained, undefined) : Effect.void,
                 ),
               ),
             );
@@ -1430,313 +1123,104 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
               offers.mockRestore();
             }),
           );
-          const emit = (suffix: string) =>
-            sink.write({
-              events: [
-                { ...terminal, id: EventId.make(`event:${runId}:terminal:${suffix}`) },
-                {
-                  ...runEvent({
-                    threadId,
-                    runId: markerRunId,
-                    ordinal: 3,
-                    status: "completed",
-                    now,
-                  }),
-                  id: EventId.make(`event:${runId}:marker:${suffix}`),
-                },
-              ],
-            });
-          yield* emit("initial");
-          yield* Deferred.await(drained);
-          yield* TestClock.adjust("1 second");
-          const published = yield* orchestrator.getThreadProjection(threadId);
-          const cohort = published.runs.find((run) => run.id === runId)?.delegatedCompletion;
-          assert.equal(cohort?.delivery?.generation, 2);
-          assert.equal(
-            offers.mock.calls.filter(([request]) => request.threadId === threadId).length,
-            1,
-          );
-          assert.equal(offerReads, failures + 1);
-          assert.equal(
-            published.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
-            "claimed",
-          );
-          const wake = yield* requests.take;
-          assert.deepEqual(wake.delegatedCompletion, {
-            parentRunId: runId,
-            generation: 2,
-            messageId: cohort?.delivery?.messageId,
-          });
-          drained = yield* Deferred.make<void>();
-          yield* emit("replay");
-          yield* Deferred.await(drained);
-          const replayed = yield* orchestrator.getThreadProjection(threadId);
-          assert.deepEqual(
-            replayed.runs.find((run) => run.id === runId)?.delegatedCompletion,
-            cohort,
-          );
-          assert.deepEqual(replayed.contextTransfers, published.contextTransfers);
-          assert.equal(
-            offers.mock.calls.filter(([request]) => request.threadId === threadId).length,
-            1,
-          );
-        }),
-    );
-
-    it.effect("retains distinct terminal-run settlements on one thread", () =>
-      Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const projections = yield* ProjectionStore.ProjectionStoreV2;
-        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        const { threadId, runId, terminal, now } =
-          yield* seedRunningCompletionDelivery("distinct-runs");
-        const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-          (run) => run.id === runId,
-        )!;
-        const markerRunId = RunId.make(`${runId}:marker`);
-        const entered = yield* Deferred.make<void>();
-        const drained = yield* Deferred.make<void>();
-        let failing = true;
-        let parentReads = 0;
-        let deliveryReads = 0;
-        const readMessage = projections.getRunMessage;
-        const offers = vi.spyOn(requests, "offer");
-        const messageSpy = vi.spyOn(projections, "getRunMessage").mockImplementation((tid, rid) =>
-          Effect.suspend(() => {
-            if (tid === threadId && (rid === runId || rid === terminal.payload.id)) {
-              if (rid === runId) parentReads += 1;
-              else deliveryReads += 1;
-              if (failing)
-                return Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId })).pipe(
-                  Effect.ensuring(
-                    rid === runId && parentReads === 3
-                      ? Deferred.succeed(entered, undefined)
-                      : Effect.void,
-                  ),
-                );
-            }
-            return readMessage(tid, rid).pipe(
-              Effect.tap(() =>
-                rid === markerRunId ? Deferred.succeed(drained, undefined) : Effect.void,
-              ),
-            );
-          }),
-        );
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            failing = false;
-          }).pipe(
-            Effect.andThen(TestClock.adjust("1 second")),
-            Effect.andThen(
-              Effect.sync(() => {
-                messageSpy.mockRestore();
-                offers.mockRestore();
-              }),
-            ),
-          ),
-        );
-        yield* sink.write({
-          events: [
-            {
-              ...runEvent({ threadId, runId, ordinal: 1, status: "completed", now }),
-              payload: { ...parentRun, status: "completed", completedAt: now },
-            },
-          ],
-        });
-        yield* Deferred.await(entered);
-        yield* sink.write({
-          events: [
-            { ...terminal, id: EventId.make(`event:${runId}:delivery-terminal`) },
-            runEvent({ threadId, runId: markerRunId, ordinal: 3, status: "completed", now }),
-          ],
-        });
-        yield* Deferred.await(drained);
-        yield* TestClock.adjust("0 seconds");
-        const beforeTick = { parentReads, deliveryReads };
-        yield* TestClock.adjust("1 second");
-        assert.equal(parentReads - beforeTick.parentReads, 1);
-        assert.equal(deliveryReads - beforeTick.deliveryReads, 1);
-        failing = false;
-        yield* TestClock.adjust("1 second");
-        const recovered = yield* orchestrator.getThreadProjection(threadId);
-        const cohort = recovered.runs.find((run) => run.id === runId)?.delegatedCompletion;
-        assert.equal(cohort?.delivery?.generation, 2);
-        assert.equal(
-          offers.mock.calls.filter(([request]) => request.threadId === threadId).length,
-          1,
-        );
-        const wake = yield* requests.take;
-        assert.equal(wake.delegatedCompletion?.generation, 2);
-        assert.equal(wake.delegatedCompletion?.messageId, cohort?.delivery?.messageId);
-      }),
-    );
-
-    it.effect.each([false, true])(
-      "repairs a published result offer with an intervening follow-up: %s",
-      (followup) =>
-        Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const sink = yield* EventSink.EventSinkV2;
-          const projections = yield* ProjectionStore.ProjectionStoreV2;
-          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          const now = yield* DateTime.now;
-          const parentThreadId = ThreadId.make(
-            `thread:published-followup-retry:followup:${followup}`,
-          );
-          const parentRunId = RunId.make(`run:published-followup-retry:followup:${followup}`);
-          const projectId = ProjectId.make(`project:published-followup-retry:followup:${followup}`);
-          const rootNodeId = NodeId.make(`node:published-followup-retry:followup:${followup}`);
-          yield* seedParentWithTerminalTask({
-            threadId: parentThreadId,
-            runId: parentRunId,
-            projectId,
-            rootNodeId,
-            taskId: NodeId.make(`node:published-followup-retry:seed:${followup}`),
-            deliveryState: "delivered",
-            now,
-          });
-          const child = yield* seedRestartCancelledChild({
-            parentThreadId,
-            projectId,
-            parentRunId,
-            rootNodeId,
-            name: `published-followup-retry-child-${followup}`,
-            completionWake: "always",
-            continuationPending: false,
-            runStatus: "completed",
-            now,
-          });
-          const markerRunId = RunId.make(`run:published-followup-retry:marker:${followup}`);
-          const retryEntered = yield* Deferred.make<void>();
-          const resumeRetry = yield* Deferred.make<void>();
-          const drained = yield* Deferred.make<void>();
-          const records = projections.getThreadRecords;
-          const thread = projections.getThread;
-          const message = projections.getRunMessage;
-          let failedOffer = false;
-          let heldRetry = false;
-          const offers = vi.spyOn(requests, "offer");
-          const recordsSpy = vi
-            .spyOn(projections, "getThreadRecords")
-            .mockImplementation((...args) =>
-              args[0] === parentThreadId &&
-              args[1].length === 4 &&
-              args[1].includes("providerTurns")
-                ? Effect.suspend(() => {
-                    if (failedOffer) return records(...args);
-                    failedOffer = true;
-                    return Effect.fail(
-                      new ProjectionStore.ProjectionStoreReadError({ threadId: parentThreadId }),
-                    );
-                  })
-                : records(...args),
-            );
-          const threadSpy = vi.spyOn(projections, "getThread").mockImplementation((tid) =>
-            Effect.suspend(() => {
-              if (tid === child.childThreadId && failedOffer && !heldRetry) {
-                heldRetry = true;
-                return Deferred.succeed(retryEntered, undefined).pipe(
-                  Effect.andThen(Deferred.await(resumeRetry)),
-                  Effect.andThen(thread(tid)),
-                );
-              }
-              return thread(tid);
-            }),
-          );
-          const messageSpy = vi
-            .spyOn(projections, "getRunMessage")
-            .mockImplementation((tid, rid) =>
-              message(tid, rid).pipe(
-                Effect.tap(() =>
-                  rid === markerRunId ? Deferred.succeed(drained, undefined) : Effect.void,
-                ),
-              ),
-            );
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(resumeRetry, undefined).pipe(
-              Effect.andThen(
-                Effect.sync(() => {
-                  recordsSpy.mockRestore();
-                  threadSpy.mockRestore();
-                  messageSpy.mockRestore();
-                  offers.mockRestore();
-                }),
-              ),
-            ),
-          );
-          yield* sink.write({
+          yield* eventSink.write({
+            commandId: CommandId.make(`command:transient-terminal:${stage}`),
             events: [
               {
                 ...runEvent({
                   threadId: child.childThreadId,
                   runId: child.childRunId,
                   ordinal: 1,
-                  status: "completed",
+                  status: stage === "after offer" ? "cancelled" : "completed",
                   now,
                 }),
-                id: EventId.make(`event:published-followup-retry:terminal:${followup}`),
+                id: EventId.make(`event:transient-terminal:child:${stage}`),
               },
-              runEvent({
+              {
+                id: EventId.make(`event:transient-terminal:parent:${stage}`),
+                type: "run.updated",
                 threadId: parentThreadId,
-                runId: markerRunId,
-                ordinal: 3,
-                status: "completed",
-                now,
-              }),
+                runId: parentRunId,
+                occurredAt: now,
+                payload: { ...parentRun, status: "completed", completedAt: now },
+              },
             ],
           });
-          yield* Deferred.await(retryEntered);
-          const before = yield* orchestrator.getThreadProjection(parentThreadId);
-          const cohortBefore = before.runs.find((r) => r.id === parentRunId)?.delegatedCompletion;
-          assert.isNotNull(before.subagents.find((t) => t.id === child.taskId)?.result);
-          assert.equal(cohortBefore?.delivery?.generation, 2);
-          if (followup) {
+          yield* Deferred.await(immediateAttemptsFailed);
+          yield* Deferred.await(parentReactionStarted);
+          const interrupted = yield* orchestrator.getThreadProjection(parentThreadId);
+          const interruptedTransfers = interrupted.contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === child.childThreadId,
+          );
+          const reservedDelivery = interrupted.runs.find((run) => run.id === parentRunId)
+            ?.delegatedCompletion?.delivery;
+          assert.lengthOf(interruptedTransfers, stage === "before publication" ? 0 : 1);
+          if (stage === "after publication") {
+            assert.exists(reservedDelivery);
+            assert.equal(
+              interrupted.subagents.find((task) => task.id === child.taskId)?.completionDelivery
+                ?.state,
+              "claimed",
+            );
+          }
+          if (stage === "after publication") {
             yield* orchestrator.dispatch({
               type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make("command:published-followup-retry:real-followup"),
+              commandId: CommandId.make("command:terminal-retry-followup"),
               threadId: child.childThreadId,
-              messageId: MessageId.make("message:published-followup-retry:real-followup"),
-              text: "Check the same work again.",
+              senderThreadId: parentThreadId,
+              messageId: MessageId.make("message:terminal-retry-followup"),
+              createdBy: "agent",
+              creationSource: "mcp",
+              text: "Continue with the next task.",
               attachments: [],
               dispatchMode: { type: "start_immediately" },
             });
-            const childNow = yield* orchestrator.getThreadProjection(child.childThreadId);
-            assert.isTrue(
-              childNow.runs.some((r) => r.id !== child.childRunId && r.status === "starting"),
-            );
-            const parentNow = yield* orchestrator.getThreadProjection(parentThreadId);
-            const childTasks = parentNow.subagents.filter(
-              (t) => t.childThreadId === child.childThreadId,
-            );
-            assert.equal(childTasks.length, 2);
-            const followupTask = childTasks.find((t) => t.id !== child.taskId);
-            assert.isDefined(followupTask);
-            assert.isNull(followupTask?.result);
           }
-          yield* Deferred.succeed(resumeRetry, undefined);
-          yield* Deferred.await(drained);
-          yield* TestClock.adjust("3 seconds");
-          const after = yield* orchestrator.getThreadProjection(parentThreadId);
-          const cohortAfter = after.runs.find((r) => r.id === parentRunId)?.delegatedCompletion;
-          const offerCount = offers.mock.calls.filter(
-            ([r]) => r.threadId === parentThreadId,
-          ).length;
-          const original = after.subagents.find((t) => t.id === child.taskId);
-          const transferCount = after.contextTransfers.filter(
-            (t) => t.type === "subagent_result" && t.sourceThreadId === child.childThreadId,
-          ).length;
-          assert.equal(transferCount, 1);
-          assert.deepEqual(after.contextTransfers, before.contextTransfers);
-          assert.deepEqual(cohortAfter, cohortBefore);
-          assert.equal(original?.completionDelivery?.state, "claimed");
-          assert.equal(offerCount, 1);
+          assert.equal(failures, 2);
+          assert.lengthOf(offers.mock.calls, stage === "after offer" ? 1 : 0);
+          yield* TestClock.adjust("250 millis");
+          yield* Deferred.await(delayedAttemptFailed);
+          assert.lengthOf(offers.mock.calls, stage === "after offer" ? 1 : 0);
+          yield* TestClock.adjust("500 millis");
+          yield* Deferred.await(stage === "after offer" ? childReactionDone : resultOffered);
+
+          assert.equal(failures, 3);
+          const published = yield* orchestrator.getThreadProjection(parentThreadId);
+          assert.equal(
+            published.contextTransfers.filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === child.childThreadId,
+            ).length,
+            1,
+          );
+          assert.equal(
+            offers.mock.calls.filter(([request]) => request.threadId === parentThreadId).length,
+            1,
+          );
+          const delivery = published.runs.find((run) => run.id === parentRunId)?.delegatedCompletion
+            ?.delivery;
+          if (stage === "after publication") {
+            assert.deepEqual(delivery, reservedDelivery);
+            assert.deepEqual(
+              published.contextTransfers.filter(
+                (transfer) =>
+                  transfer.type === "subagent_result" &&
+                  transfer.sourceThreadId === child.childThreadId,
+              ),
+              interruptedTransfers,
+            );
+          }
           const wake = yield* requests.take;
-          assert.equal(wake.delegatedCompletion?.messageId, cohortBefore?.delivery?.messageId);
-          assert.equal(wake.delegatedCompletion?.generation, 2);
-          assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
+          assert.equal(wake.threadId, parentThreadId);
+          assert.deepEqual(wake.delegatedCompletion, {
+            parentRunId,
+            generation: delivery?.generation,
+            messageId: delivery?.messageId,
+          });
         }),
     );
 
