@@ -1,4 +1,5 @@
 import {
+  DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewConfigInputSchema,
@@ -20,6 +21,8 @@ import {
   PreviewAnnotationSubmissionResultSchema,
   DEFAULT_BROWSER_PROFILE_ID,
   INCOGNITO_BROWSER_PROFILE_ID,
+  PreviewForwardedShortcut,
+  MAX_KEYBINDINGS_COUNT,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -51,6 +54,19 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribePointerEvents((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_POINTER_EVENT_CHANNEL, event),
   );
+  yield* manager.subscribeOpenLinks((event) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_OPEN_LINK_CHANNEL, event),
+  );
+});
+
+export const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_FORWARDED_SHORTCUTS_CHANNEL,
+  payload: Schema.Array(PreviewForwardedShortcut).check(Schema.isMaxLength(MAX_KEYBINDINGS_COUNT)),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setForwardedShortcuts")(function* (shortcuts) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setForwardedShortcuts(shortcuts);
+  }),
 });
 
 export const createTab = DesktopIpc.makeIpcMethod({
@@ -240,11 +256,9 @@ export const clearCache = DesktopIpc.makeIpcMethod({
 });
 
 /**
- * Partition scope for an (environment, profile) pair.
- *
  * The default profile keeps the bare environment id it used before profiles
- * existed, so upgrading does not strand anyone's existing logins in an
- * orphaned partition. Incognito derives a non-persistent partition.
+ * existed, so upgrading does not strand anyone's existing logins in an orphaned
+ * partition.
  */
 export function resolvePartitionScope(
   environmentId: string,
@@ -306,11 +320,6 @@ export const getPreviewConfig = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/**
- * Registered separately from `methods`: these carry `BrowserImport` in their
- * context and their own failure type, so they do not unify with the
- * manager-backed handlers the shared loop iterates.
- */
 export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
   payload: Schema.Void,
@@ -365,6 +374,19 @@ export const pickElement = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const setAnnotationSendEnabled = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_ANNOTATION_SEND_ENABLED_CHANNEL,
+  payload: DesktopPreviewAnnotationSendEnabledInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setAnnotationSendEnabled")(function* ({
+    tabId,
+    enabled,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setAnnotationSendEnabled(tabId, enabled);
+  }),
+});
+
 export const captureScreenshot = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_CAPTURE_SCREENSHOT_CHANNEL,
   payload: DesktopPreviewTabInputSchema,
@@ -406,6 +428,7 @@ export const saveRecording = DesktopIpc.makeIpcMethod({
 });
 
 export const methods = [
+  setForwardedShortcuts,
   createTab,
   closeTab,
   registerWebview,
@@ -425,6 +448,7 @@ export const methods = [
   clearCache,
   getPreviewConfig,
   setAnnotationTheme,
+  setAnnotationSendEnabled,
   pickElement,
   cancelPickElement,
   captureScreenshot,
