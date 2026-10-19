@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
@@ -10,9 +11,11 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
 import { useClientSettings } from "../../hooks/useSettings";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
+import { allReachableShellsLiveAtom } from "../../state/shell";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
@@ -52,6 +55,7 @@ export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
   const projects = useProjects();
+  const projectsReady = useAtomValue(allReachableShellsLiveAtom);
   const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const openThread = useNewThreadHandler();
@@ -62,6 +66,7 @@ export function DesktopWebLinkCoordinator() {
   });
   const httpBaseUrl = useEnvironmentHttpBaseUrl(primaryEnvironment?.environmentId ?? null);
   const queueRef = useRef(Promise.resolve());
+  const pendingLinksRef = useRef<string[]>([]);
   const webLinks = window.desktopBridge?.webLinks;
   const ready =
     webLinks !== undefined &&
@@ -139,11 +144,27 @@ export function DesktopWebLinkCoordinator() {
     }
   });
 
+  const flushLinks = useEffectEvent(() => {
+    while (pendingLinksRef.current.length > 0) {
+      const url = pendingLinksRef.current[0]!;
+      // A connected server can publish its config before its project snapshot.
+      // Offline environments must not prevent an unmatched PR from falling back.
+      if (openPullRequestsInApp && parseChangeRequestUrl(url) !== null && !projectsReady) return;
+      pendingLinksRef.current.shift();
+      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
+    }
+  });
+
+  useEffect(() => {
+    if (ready && (projectsReady || !openPullRequestsInApp)) flushLinks();
+  }, [ready, projectsReady, openPullRequestsInApp]);
+
   useEffect(() => {
     if (!ready || webLinks === undefined) return;
     let subscribed = true;
     const unsubscribe = webLinks.onOpen((url) => {
-      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
+      pendingLinksRef.current.push(url);
+      flushLinks();
     });
     queueMicrotask(() => {
       if (subscribed) void webLinks.setReady(true).catch(() => undefined);
