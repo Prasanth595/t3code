@@ -400,8 +400,8 @@ it.each([
   },
 );
 
-it("keeps a real literal file when the workspace index only returns a nested twin", async () => {
-  state.search.mockResolvedValue(searchResult([indexedPath]));
+it("opens a real literal file without waiting for the workspace index", async () => {
+  state.search.mockReturnValue(Promise.withResolvers<ReturnType<typeof searchResult>>().promise);
   state.metadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind: "file" }] }));
   await renderMarkdown(fileChip);
   await activateFile("panel");
@@ -411,6 +411,7 @@ it("keeps a real literal file when the workspace index only returns a nested twi
     environmentId: threadRef.environmentId,
     input: { cwd: "/work/docs/GROUPS_PLAN.html:12:3", editor: "vscode" },
   });
+  expect(state.search).not.toHaveBeenCalled();
 });
 
 it.each([
