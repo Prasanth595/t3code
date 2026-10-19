@@ -372,6 +372,7 @@ const stubCatalog = (plugins: ReadonlyArray<StubPlugin>) => {
   );
   const unused = () => Effect.die("not used by PluginApprovals");
   return PluginCatalog.PluginCatalog.of({
+    ready: Effect.void,
     list: Effect.sync(() => ({ installations: rows })),
     revision: Effect.succeed(0),
     subscribe: Stream.empty,
