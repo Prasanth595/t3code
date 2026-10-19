@@ -899,8 +899,24 @@ describe("PiAdapterV2", () => {
       const prompt = yield* fake.takeRequest("prompt");
       assert.equal(prompt["message"], "Continue the review");
       assert.equal(prompt["streamingBehavior"], "steer");
-      // The orchestrator records the answer before asking for this response, so the
-      // adapter does not report the dialog resolved again.
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "next-dialog",
+        method: "confirm",
+        title: "Continue?",
+      });
+      yield* takeEvent((event) => {
+        if (event.type !== "runtime_request.updated") return false;
+        requests.push(event);
+        return event.runtimeRequest.nativeRequestRef?.nativeId === "next-dialog";
+      });
+      assert.deepEqual(
+        requests
+          .filter((event) => event.runtimeRequest.id === dialog!.id)
+          .map((event) => event.runtimeRequest.status),
+        ["pending"],
+        "answering the model dialog must not replace the orchestrator's record",
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
