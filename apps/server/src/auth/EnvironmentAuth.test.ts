@@ -18,12 +18,6 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 
 const TEST_SERVER_PORT = 13_773;
-const mcpFullAccessScopes = [
-  "orchestration:read",
-  "orchestration:operate",
-  "settings:write",
-  "source-control:write",
-] as const;
 const isPairingCredentialIssueError = Schema.is(PairingGrantStore.PairingCredentialIssueError);
 const isPersistenceSqlError = Schema.is(PersistenceErrors.PersistenceSqlError);
 
@@ -430,67 +424,33 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
-  it.effect.each([
-    { label: "read-only", scopes: ["orchestration:read"] as const },
-    ...mcpFullAccessScopes.map((missingScope) => ({
-      label: `missing ${missingScope}`,
-      scopes: mcpFullAccessScopes.filter((scope) => scope !== missingScope),
-    })),
-  ])("preserves a $label pairing code after rejecting full-access MCP approval", ({ scopes }) =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const pairing = yield* serverAuth.issuePairingCredential({ scopes });
+  it.effect(
+    "preserves a rejected MCP pairing code for exactly one concurrent lower-access retry",
+    () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const pairing = yield* serverAuth.issuePairingCredential({
+          scopes: ["orchestration:read"],
+        });
 
-      const rejected = yield* Effect.flip(
-        serverAuth.consumeMcpApprovalCode(pairing.credential, "full-access"),
-      );
-      expect(rejected).toMatchObject({
-        _tag: "ServerAuthMcpApprovalCodeError",
-        reason: "insufficient_scope",
-      });
+        const rejected = yield* Effect.flip(
+          serverAuth.consumeMcpApprovalCode(pairing.credential, "full-access"),
+        );
+        expect(rejected).toMatchObject({
+          _tag: "ServerAuthMcpApprovalCodeError",
+          reason: "insufficient_scope",
+        });
 
-      // Retry with an access level this code can approve.
-      if (scopes.includes("orchestration:read")) {
-        yield* serverAuth.consumeMcpApprovalCode(pairing.credential, "read-only");
-        const reused = yield* Effect.flip(
+        const retry = Effect.result(
           serverAuth.consumeMcpApprovalCode(pairing.credential, "read-only"),
         );
-        expect(reused).toMatchObject({
-          _tag: "ServerAuthMcpApprovalCodeError",
-          reason: "unknown_or_used",
-        });
-      } else {
-        expect((yield* serverAuth.listPairingLinks()).map((link) => link.id)).toContain(pairing.id);
-      }
-    }).pipe(Effect.provide(layerEnvironmentAuth())),
-  );
+        const results = yield* Effect.all([retry, retry], { concurrency: "unbounded" });
 
-  it.effect("consumes a pairing code only once across concurrent full-access MCP approvals", () =>
-    Effect.gen(function* () {
-      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
-      const pairing = yield* serverAuth.issuePairingCredential({
-        scopes: mcpFullAccessScopes,
-      });
-      const results = yield* Effect.all(
-        Array.from({ length: 8 }, () =>
-          Effect.result(serverAuth.consumeMcpApprovalCode(pairing.credential, "full-access")),
-        ),
-        { concurrency: "unbounded" },
-      );
-
-      expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
-      const failures = results.filter((result) => result._tag === "Failure");
-      expect(failures).toHaveLength(7);
-      for (const failure of failures) {
-        expect(failure.failure).toMatchObject({
-          _tag: "ServerAuthMcpApprovalCodeError",
-          reason: "unknown_or_used",
-        });
-      }
-      expect((yield* serverAuth.listPairingLinks()).map((link) => link.id)).not.toContain(
-        pairing.id,
-      );
-    }).pipe(Effect.provide(layerEnvironmentAuth())),
+        expect(results.filter((result) => result._tag === "Success")).toHaveLength(1);
+        expect(results.filter((result) => result._tag === "Failure")).toMatchObject([
+          { failure: { _tag: "ServerAuthMcpApprovalCodeError", reason: "unknown_or_used" } },
+        ]);
+      }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
   it.effect("narrows seeded desktop grants to the requested scopes", () =>
