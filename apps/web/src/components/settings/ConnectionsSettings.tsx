@@ -1287,7 +1287,7 @@ type AdvertisedEndpointListRowProps = {
   presentation?: AccessSectionPresentation;
   onSetDefault: (endpoint: AdvertisedEndpoint) => void;
   onSetupTailscaleServe: (endpoint: AdvertisedEndpoint) => void;
-  onDisableTailscaleServe: (endpoint: AdvertisedEndpoint) => void;
+  onDisableTailscaleServe: () => void;
   isUpdatingTailscaleServe: boolean;
 };
 
@@ -1354,7 +1354,7 @@ const AdvertisedEndpointListRow = memo(function AdvertisedEndpointListRow({
             <Button
               size="xs"
               variant="destructive-outline"
-              onClick={() => onDisableTailscaleServe(endpoint)}
+              onClick={onDisableTailscaleServe}
               disabled={isUpdatingTailscaleServe}
             >
               {isUpdatingTailscaleServe ? "Restarting…" : "Disable"}
@@ -3270,14 +3270,16 @@ export function ConnectionsSettings() {
       title={searchableSetting("tailscale-https").title}
       description={
         tailscaleHttpsRowState.checked
-          ? (tailscaleHttpsRowState.url ??
+          ? (tailscaleHttpsEndpoint?.httpBaseUrl ??
             "Tailscale isn't reporting a MagicDNS name for this machine.")
           : tailscaleHttpsEndpoint
             ? "Use Tailscale Serve to expose this backend through a MagicDNS HTTPS URL."
             : missingTailscaleEndpointDescription(desktopServerExposureState)
       }
       status={
-        tailscaleHttpsRowState.url !== null && !tailscaleHttpsRowState.reachable
+        tailscaleHttpsRowState.checked &&
+        tailscaleHttpsEndpoint &&
+        !tailscaleHttpsRowState.reachable
           ? "This machine can't reach that URL, so pairing links won't offer it."
           : null
       }

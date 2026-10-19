@@ -114,13 +114,7 @@ export async function applyWslEnableSelection(input: {
   return await bridge.setWslBackendEnabled(true);
 }
 
-/**
- * The Tailscale HTTPS switch follows the saved setting, not the endpoint's
- * self-probe. A machine that can't resolve its own MagicDNS name still serves
- * the route, so it must still show as on and stay possible to turn off.
- * `reachable` reports probe health separately; pairing only offers reachable
- * endpoints.
- */
+// A failed self-probe or missing endpoint must not prevent disabling saved Serve configuration.
 export function resolveTailscaleHttpsRowState(input: {
   readonly endpoint: AdvertisedEndpoint | null;
   readonly serveEnabled: boolean;
@@ -129,7 +123,6 @@ export function resolveTailscaleHttpsRowState(input: {
   return {
     showSwitch: endpoint !== null || serveEnabled,
     checked: serveEnabled,
-    url: serveEnabled ? (endpoint?.httpBaseUrl ?? null) : null,
     reachable: endpoint?.status === "available",
   };
 }

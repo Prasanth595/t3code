@@ -253,61 +253,37 @@ describe("missingTailscaleEndpointDescription", () => {
 });
 
 describe("resolveTailscaleHttpsRowState", () => {
-  const magicDnsEndpoint = (status: AdvertisedEndpoint["status"]) =>
-    makeEndpoint({
-      id: "tailscale-magicdns:https://machine.tailnet.ts.net",
-      label: "Tailscale HTTPS",
-      httpBaseUrl: "https://machine.tailnet.ts.net",
-      reachability: "private-network",
-      status,
-    });
+  const endpoint = makeEndpoint({
+    id: "tailscale-magicdns:https://machine.tailnet.ts.net",
+    label: "Tailscale HTTPS",
+    httpBaseUrl: "https://machine.tailnet.ts.net",
+    wsBaseUrl: "wss://machine.tailnet.ts.net",
+    reachability: "private-network",
+  });
 
-  it("keeps the switch on when Serve is enabled but the self-probe fails", () => {
+  it("keeps failed-probe HTTPS enabled and disableable without offering it for QR pairing", () => {
+    const unavailable = { ...endpoint, status: "unavailable" as const };
     expect(
-      resolveTailscaleHttpsRowState({
-        endpoint: magicDnsEndpoint("unavailable"),
-        serveEnabled: true,
-      }),
-    ).toEqual({
+      resolveTailscaleHttpsRowState({ endpoint: unavailable, serveEnabled: true }),
+    ).toMatchObject({
       showSwitch: true,
       checked: true,
-      url: "https://machine.tailnet.ts.net",
       reachable: false,
     });
+    expect(isQrShareableEndpoint(unavailable)).toBe(false);
+    expect(isQrShareableEndpoint(endpoint)).toBe(true);
   });
 
-  it("keeps the switch reachable when Serve is enabled but no MagicDNS name is found", () => {
-    expect(resolveTailscaleHttpsRowState({ endpoint: null, serveEnabled: true })).toEqual({
+  it("keeps enabled HTTPS disableable when its endpoint disappears", () => {
+    expect(resolveTailscaleHttpsRowState({ endpoint: null, serveEnabled: true })).toMatchObject({
       showSwitch: true,
       checked: true,
-      url: null,
-      reachable: false,
     });
   });
 
-  it("shows a reachable endpoint as on", () => {
-    expect(
-      resolveTailscaleHttpsRowState({
-        endpoint: magicDnsEndpoint("available"),
-        serveEnabled: true,
-      }),
-    ).toEqual({
+  it("keeps HTTPS off when saved as disabled even if its endpoint is reachable", () => {
+    expect(resolveTailscaleHttpsRowState({ endpoint, serveEnabled: false })).toMatchObject({
       showSwitch: true,
-      checked: true,
-      url: "https://machine.tailnet.ts.net",
-      reachable: true,
-    });
-  });
-
-  it("offers setup when Serve is off and hides the switch without Tailscale", () => {
-    expect(
-      resolveTailscaleHttpsRowState({
-        endpoint: magicDnsEndpoint("unavailable"),
-        serveEnabled: false,
-      }),
-    ).toEqual({ showSwitch: true, checked: false, url: null, reachable: false });
-    expect(resolveTailscaleHttpsRowState({ endpoint: null, serveEnabled: false })).toMatchObject({
-      showSwitch: false,
       checked: false,
     });
   });
