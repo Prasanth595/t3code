@@ -7139,6 +7139,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "system" && message.subtype === "compact_boundary") {
             if (context.streamUsage !== null) context.streamUsage.usage = null;
+            if (input.replayed !== true) context.nativeMessageCursor = message.uuid;
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
             const postTokens = message.compact_metadata.post_tokens;
