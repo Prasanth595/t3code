@@ -1,6 +1,6 @@
 # Install and run
 
-The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server. Both are built from a clone of this repo on an Apple silicon Mac.
+The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server. The server is built from a clone of this repo on an Apple silicon Mac; the app comes signed from the repo's releases.
 
 ## Before you start
 
@@ -71,11 +71,15 @@ To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To s
 
 ## Install the desktop app
 
-```sh
-vp run dist:desktop:dmg:arm64
-```
+Every merge to `main` publishes a signed, notarized build for Apple silicon as a prerelease.
 
-The dmg lands under `release/`. It is unsigned, so the first time you open the app, right-click it and choose Open. It installs beside upstream T3 Code as `T3 Code Factory` and shares no data with it.
+1. Open the newest prerelease on the [releases page](https://github.com/original-solutions/t3code-factory/releases) and download its `.dmg`.
+2. Open the dmg and drag `T3 Code Factory (Nightly)` to Applications.
+3. Open the app from Applications.
+
+You install it once. When a newer build is published, the app shows "Update available"; choose "Restart to update" to install it. The app installs beside upstream T3 Code and shares no data with it.
+
+To build it yourself instead, run `vp run dist:desktop:dmg:arm64`. That dmg lands under `release/` and is unsigned, so the first time you open the app, right-click it and choose Open. It has no update feed.
 
 The app runs no server of its own. It opens onto the LaunchAgent server on port 3876, so install the server first and keep it running. The first time you open the app it asks for a pairing link. Make one with:
 
