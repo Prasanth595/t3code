@@ -3,6 +3,7 @@ import { act, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+import { listIndentForTab } from "~/composer-list-continuation";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
 import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
 
@@ -22,13 +23,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mountEditor(value: string, richTextEnabled = true) {
+async function mountEditor(value: string, richTextEnabled = true, cursor = value.length) {
   await act(async () =>
     root.render(
       <ComposerPromptEditor
         editorRef={createRef<ComposerPromptEditorHandle>()}
         value={value}
-        cursor={value.length}
+        cursor={cursor}
         richTextEnabled={richTextEnabled}
         contextRecords={new Map()}
         skills={[]}
@@ -133,5 +134,29 @@ it.each([false, true])(
     });
     await replaceDomText(editor, '"');
     expect(serializeEditorDoc(editor.state.doc).value).toBe('"word"');
+  },
+);
+
+it.each([false, true])(
+  "keeps typing inside a numbered item after Tab nests it (rich text: %s)",
+  async (richTextEnabled) => {
+    const value = "10. parent\n11. child";
+    const cursor = value.indexOf("child") + 2;
+    const editor = await mountEditor(value, richTextEnabled, cursor);
+    const edit = listIndentForTab(value, cursor, cursor)!;
+    const nested = value.slice(0, edit.start) + edit.replacement + value.slice(edit.end);
+    await mountEditor(nested, richTextEnabled, edit.cursor);
+
+    await act(async () => {
+      editor.commands.insertContent("X");
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("10. parent\n    1. chXild");
+    if (richTextEnabled) {
+      const { $from } = editor.state.selection;
+      const listItems = Array.from({ length: $from.depth }, (_, index) =>
+        $from.node(index + 1),
+      ).filter((node) => node.type.name === "listItem");
+      expect(listItems).toHaveLength(2);
+    }
   },
 );
