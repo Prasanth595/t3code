@@ -2964,7 +2964,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? cohortJson("nodeId")
             : encodeIdList(
                 (yield* sql<{ readonly node_id: string }>`
-            -- One arm per lookup so each seeks its own index, as the windowed reads below.
             WITH RECURSIVE retained(node_id) AS (
               SELECT value FROM json_each(${cohortJson("nodeId")})
               UNION
@@ -3019,11 +3018,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
 
-        // Windowed reads OR a live-status lookup with cohort ID lookups. Each arm
-        // carries its own thread filter and `+thread_id` keeps ID arms off the
-        // thread index. With `thread_id = ?` outside the OR, SQLite reads every
-        // row of a long thread whenever its stats say threads are small, as they
-        // are in most databases. Live arms use the *_live_idx partial indexes.
+        // Keep each OR arm indexable; +thread_id preserves isolation while
+        // preventing a thread-history scan instead of a cohort ID seek.
         const [
           thread,
           runRows,
@@ -3695,7 +3691,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
               `;
             case "delegated-completions":
-              // Matches orchestration_v2_projection_runs_delegated_delivery_idx (migration 65).
               return sql`
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE CASE WHEN json_valid(payload_json)

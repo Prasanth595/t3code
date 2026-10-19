@@ -1772,11 +1772,45 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         `;
       }
 
+      const queries: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+      const recordQueries: Statement.Transformer = (statement) => {
+        queries.push(statement.compile());
+        return Effect.succeed(statement);
+      };
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
           projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
         ),
         { concurrency: 4 },
+      ).pipe(Effect.provideService(Statement.CurrentTransformer, recordQueries));
+      // These tables grow with every turn. A thread-only index lookup still
+      // visits the entire history even when only a few cohort rows survive.
+      const historyTables =
+        /orchestration_v2_projection_(runs|run_attempts|provider_turns|checkpoints|messages)\b/;
+      const plans = yield* Effect.forEach(
+        queries.filter(([query]) => historyTables.test(query)),
+        ([query, parameters]) =>
+          sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`, parameters),
+      );
+      const historyLookups = plans
+        .flat()
+        .map((row) => row.detail)
+        .filter(
+          (detail) =>
+            /^(SEARCH|SCAN) /.test(detail) &&
+            (historyTables.test(detail) || /^(SEARCH|SCAN) message /.test(detail)),
+        );
+      assert.isNotEmpty(historyLookups);
+      assert.deepEqual(
+        historyLookups.filter(
+          (detail) =>
+            !detail.includes("_live_idx") &&
+            !/(\(| AND )(status|run_id|attempt_id|provider_turn_id|node_id|checkpoint_id|message_id)=\?/.test(
+              detail,
+            ),
+        ),
+        [],
+        historyLookups.join("\n"),
       );
       for (const snapshot of snapshots) {
         assert.lengthOf(snapshot.projection.turnItems, 76);
@@ -2299,6 +2333,240 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isTrue(
         agentWindow.projection.visibleTurnItems.some((row) => row.sourceItemId === agentPromptId),
       );
+    }),
+  );
+
+  it.effect("retains live, cohort and required state in order without crossing threads", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("window-membership");
+      const otherThreadId = yield* addRolledBackRecoveryCandidate("window-membership:other");
+      const seed = yield* store.getThreadProjection(threadId);
+      const now = seed.updatedAt;
+      const scopeId = CheckpointScopeId.make("scope:window-membership");
+      const providerThreadId = ProviderThreadId.make("provider-thread:window-membership");
+      const runId = (ordinal: number) => RunId.make(`run:window-membership:${ordinal}`);
+      const rootId = (ordinal: number) => NodeId.make(`node:window-membership:${ordinal}:root`);
+      const leafId = (ordinal: number) => NodeId.make(`node:window-membership:${ordinal}:leaf`);
+      // The required run has no item yet. The other thread has live rows and
+      // deliberately shares cohort references, exercising every thread guard.
+      for (const ordinal of [5, 4, 3, 2, 1, 6]) {
+        const owner = ordinal === 6 ? otherThreadId : threadId;
+        const live = ordinal === 2 || ordinal === 6;
+        const status = live ? "running" : "completed";
+        const completedAt = live ? null : now;
+        const event = { threadId: owner, runId: runId(ordinal), occurredAt: now };
+        const rootNodeId = rootId(ordinal);
+        const nodeId = leafId(ordinal);
+        const messageId = MessageId.make(`message:window-membership:${ordinal}`);
+        const providerTurnId = ProviderTurnId.make(`provider-turn:window-membership:${ordinal}`);
+        const attemptId = RunAttemptId.make(`attempt:window-membership:${ordinal}`);
+        yield* store.apply({
+          ...event,
+          id: EventId.make(`event:window-membership:run:${ordinal}`),
+          type: "run.created",
+          payload: {
+            ...seed.runs[0]!,
+            id: runId(ordinal),
+            threadId: owner,
+            ordinal: ordinal + 1,
+            rootNodeId,
+            userMessageId: messageId,
+            status,
+            completedAt,
+            activeAttemptId: attemptId,
+          },
+        });
+        for (const id of [nodeId, rootNodeId]) {
+          yield* store.apply({
+            ...event,
+            id: EventId.make(`event:${id}`),
+            type: "node.updated",
+            payload: {
+              id,
+              threadId: owner,
+              runId: runId(ordinal),
+              rootNodeId,
+              parentNodeId: id === rootNodeId ? null : rootNodeId,
+              kind: id === rootNodeId ? "root_turn" : "assistant_message",
+              status: "completed",
+              countsForRun: id === rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+        }
+        yield* store.apply({
+          ...event,
+          id: EventId.make(`event:${attemptId}`),
+          type: "run-attempt.updated",
+          payload: {
+            id: attemptId,
+            runId: ordinal === 6 ? runId(4) : runId(ordinal),
+            attemptOrdinal: ordinal === 6 ? 2 : 1,
+            rootNodeId,
+            providerInstanceId,
+            providerThreadId,
+            providerTurnId,
+            reason: "initial",
+            status,
+            startedAt: now,
+            completedAt,
+          },
+        });
+        yield* store.apply({
+          ...event,
+          id: EventId.make(`event:${providerTurnId}`),
+          type: "provider-turn.updated",
+          payload: {
+            id: providerTurnId,
+            providerThreadId,
+            nodeId: ordinal === 6 ? leafId(4) : nodeId,
+            runAttemptId: attemptId,
+            nativeTurnRef: null,
+            ordinal,
+            status,
+            startedAt: now,
+            completedAt,
+          },
+        });
+        yield* store.apply({
+          ...event,
+          id: EventId.make(`event:window-membership:checkpoint:${ordinal}`),
+          type: "checkpoint.captured",
+          payload: {
+            id: CheckpointId.make(`checkpoint:window-membership:${ordinal}`),
+            threadId: owner,
+            scopeId,
+            runId: ordinal === 6 ? runId(4) : runId(ordinal),
+            nodeId: ordinal === 6 ? leafId(4) : nodeId,
+            parentCheckpointId: null,
+            ordinalWithinScope: ordinal,
+            appRunOrdinal: ordinal,
+            ref: CheckpointRef.make(`refs/checkpoints/window-membership/${ordinal}`),
+            status: "ready",
+            files: [],
+            capturedAt: now,
+          },
+        });
+        yield* store.apply({
+          ...event,
+          id: EventId.make(`event:${messageId}`),
+          type: "message.updated",
+          payload: {
+            id: messageId,
+            threadId: owner,
+            runId: ordinal === 6 ? runId(2) : runId(ordinal),
+            nodeId,
+            createdBy: "user",
+            creationSource: "web",
+            role: "user",
+            text: `Turn ${ordinal}`,
+            attachments: [],
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        if (ordinal === 5) continue;
+        yield* store.apply({
+          ...event,
+          id: EventId.make(`event:window-membership:item:${ordinal}`),
+          type: "turn-item.updated",
+          payload: {
+            id: TurnItemId.make(`item:window-membership:${ordinal}`),
+            threadId: owner,
+            runId: runId(ordinal),
+            nodeId,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            createdBy: "user",
+            creationSource: "web",
+            messageId,
+            inputIntent: "turn_start",
+            text: `Turn ${ordinal}`,
+            attachments: [],
+          },
+        });
+      }
+      const full = yield* store.getThreadProjection(threadId);
+      const { projection } = yield* store.getThreadSnapshotWindow(threadId, {
+        rowLimit: 2,
+      });
+      assert.deepEqual(
+        projection.runs.map((run) => run.id),
+        [2, 3, 4].map(runId),
+      );
+      assert.deepEqual(
+        projection.turnItems.map((item) => item.ordinal),
+        [3, 4],
+      );
+      assert.deepEqual(
+        projection.attempts.map((attempt) => attempt.runId),
+        [2, 3, 4].map(runId),
+      );
+      assert.deepEqual(
+        projection.providerTurns.map((turn) => turn.ordinal),
+        [2, 3, 4],
+      );
+      assert.deepEqual(
+        projection.checkpoints.map((checkpoint) => checkpoint.appRunOrdinal),
+        [2, 3, 4],
+      );
+      assert.deepEqual(
+        projection.messages.map((message) => message.runId),
+        [3, 4, 2].map(runId),
+      );
+      const nodeIds = [2, 3, 4].flatMap((ordinal) => [leafId(ordinal), rootId(ordinal)]);
+      assert.deepEqual(
+        projection.nodes.map((node) => node.id),
+        nodeIds,
+      );
+      for (const field of ["runs", "attempts", "providerTurns", "checkpoints", "nodes"] as const) {
+        const ids = new Set(projection[field].map((row) => row.id));
+        assert.deepEqual(
+          [...projection[field]],
+          full[field].filter((row) => ids.has(row.id)),
+          field,
+        );
+      }
+      for (const required of [5, 6]) {
+        const forkId = ThreadId.make(`thread:window-membership:fork:${required}`);
+        yield* store.apply({
+          id: EventId.make(`event:${forkId}`),
+          type: "thread.created",
+          threadId: forkId,
+          occurredAt: now,
+          payload: {
+            ...seed.thread,
+            id: forkId,
+            forkedFrom: { type: "run", threadId, runId: runId(required) },
+          },
+        });
+        const fork = yield* store.getThreadSnapshotWindow(forkId, { rowLimit: 2 });
+        assert.deepEqual(
+          fork.projection.visibleTurnItems
+            .filter((row) => row.item.type !== "fork")
+            .map((row) => row.sourceItemId),
+          required === 5
+            ? [3, 4].map((ordinal) => TurnItemId.make(`item:window-membership:${ordinal}`))
+            : [],
+        );
+      }
     }),
   );
 
@@ -2967,6 +3235,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
+    }),
+  );
+
+  it.effect("recovers delegated deliveries without scanning completed run history", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("delegated-delivery-index");
+      assert.notInclude(yield* store.getRecoveryThreadIds("delegated-completions"), threadId);
+      yield* sql`
+        UPDATE orchestration_v2_projection_runs
+        SET payload_json = json_set(payload_json, '$.delegatedCompletion', json(${encodeUnknownJsonString(
+          {
+            disposition: "open",
+            nextGeneration: 2,
+            delivery: {
+              generation: 1,
+              messageId: "message:delegated-delivery-index",
+              taskIds: ["node:delegated-delivery-index"],
+            },
+          },
+        )}))
+        WHERE thread_id = ${threadId}
+      `;
+      const { statements, tracer } = traceSqlStatements();
+      const candidates = yield* store
+        .getRecoveryThreadIds("delegated-completions")
+        .pipe(Effect.withTracer(tracer));
+      assert.include(candidates, threadId);
+      const query = statements.find((statement) =>
+        statement.includes("orchestration_v2_projection_runs"),
+      );
+      assert.isDefined(query);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`);
+      assert.isTrue(
+        plan.some((row) =>
+          row.detail.includes("orchestration_v2_projection_runs_delegated_delivery_idx"),
+        ),
+        plan.map((row) => row.detail).join("\n"),
+      );
+      yield* sql`
+        UPDATE orchestration_v2_projection_runs
+        SET payload_json = json_set(payload_json, '$.delegatedCompletion.delivery', NULL)
+        WHERE thread_id = ${threadId}
+      `;
+      assert.notInclude(yield* store.getRecoveryThreadIds("delegated-completions"), threadId);
     }),
   );
 

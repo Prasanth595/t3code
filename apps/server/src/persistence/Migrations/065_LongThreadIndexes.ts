@@ -1,14 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 
-// Lookups that only want unfinished or undelivered rows otherwise read every
-// row a thread has ever had: seconds on a cold cache once a thread has tens of
-// thousands of turns. Each WHERE must stay identical to its query's predicate
-// for the planner to use the partial index.
+// Partial predicates must match the snapshot and recovery queries so SQLite
+// can seek live rows without traversing completed history.
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
-  // Startup recovery of runs still owing a delegated-completion delivery.
   yield* sql`
     CREATE INDEX orchestration_v2_projection_runs_delegated_delivery_idx
     ON orchestration_v2_projection_runs(thread_id)
@@ -17,8 +14,6 @@ export default Effect.gen(function* () {
       ELSE 0 END
   `;
 
-  // Each lookup arm of the windowed thread snapshot reads, which retain live
-  // rows plus the rows of the visible window's runs and nodes.
   yield* sql`
     CREATE INDEX orchestration_v2_projection_run_attempts_live_idx
     ON orchestration_v2_projection_run_attempts(thread_id)
