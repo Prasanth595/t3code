@@ -6,7 +6,6 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
-import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
 
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "../files/fileTreeExpansion";
@@ -49,6 +48,7 @@ export function DiffFileTree({
   const paths = entries.map((entry) => entry.path);
   const presented = diffFileTreeModel(paths);
   const modelPaths = presented.paths;
+  const icons = presented.icons;
   const directoryPaths = collectDirectoryPaths(modelPaths);
   const positions = diffFileTreePositions(modelPaths);
   const [ordering] = useState(() => {
@@ -60,8 +60,8 @@ export function DiffFileTree({
       },
     };
   });
-  const gitStatus: ReadonlyArray<GitStatusEntry> = entries.map((entry, index) => ({
-    path: modelPaths[index] ?? entry.path,
+  const gitStatus: ReadonlyArray<GitStatusEntry> = entries.map((entry) => ({
+    path: presented.modelPath(entry.path),
     status: entry.status,
   }));
   const syncingSelectionRef = useRef(false);
@@ -75,20 +75,17 @@ export function DiffFileTree({
   // The tree model keeps the first selection handler it was given.
   const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
     if (syncingSelectionRef.current) return;
-    const raw = selectedPaths.at(-1);
-    if (!raw) return;
-    // Directory ids end in `/`. A file that shares that directory's name is stored under a
-    // different model path, so stripping the slash must not select it.
-    const modelPath = modelPaths.includes(raw) ? raw : raw.replace(/\/$/, "");
-    if (!modelPaths.includes(modelPath)) return;
-    onSelectFile(presented.selectionPath(modelPath));
+    const modelPath = selectedPaths.at(-1);
+    if (modelPath && modelPaths.includes(modelPath)) {
+      onSelectFile(presented.selectionPath(modelPath));
+    }
   });
 
   const { model } = useFileTree({
     density: "compact",
     flattenEmptyDirectories: true,
     initialExpansion: "open",
-    icons: T3_PIERRE_ICONS,
+    icons,
     onSelectionChange: handleSelectionChange,
     paths: [],
     search: false,
@@ -98,6 +95,10 @@ export function DiffFileTree({
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, directoryPaths),
   );
+
+  useEffect(() => {
+    model.setIcons(icons);
+  }, [icons, model]);
 
   useEffect(() => {
     ordering.update(positions);
@@ -110,9 +111,8 @@ export function DiffFileTree({
       const updates = buildDiffFileTreeUpdates(mountedPaths, modelPaths);
       if (updates.length > 0) model.batch(updates);
     } else {
-      // A refreshed diff can change the rank of existing siblings. A file that becomes a
-      // directory prefix also changes its model path, which Pierre cannot rename in place.
-      // Rebuild while carrying the reader's folder expansion forward.
+      // Refreshes can reorder siblings or change collision aliases. Rebuild while
+      // carrying the reader's folder expansion forward.
       const collapsedDirectories = directoryPaths.filter((path) => {
         const directory = model.getItem(path);
         return directory !== null && "isExpanded" in directory && !directory.isExpanded();
@@ -217,10 +217,8 @@ export function DiffFileTree({
           // Pierre does not emit a selection change for its sole selected row.
           // Read selection before the row handles the click so new selections reveal only once.
           const selected = model.getSelectedPaths();
-          const raw = selected.length === 1 ? selected[0] : undefined;
-          if (!raw) return;
-          const path = modelPaths.includes(raw) ? raw : raw.replace(/\/$/, "");
-          if (!modelPaths.includes(path)) return;
+          const path = selected.length === 1 ? selected[0] : undefined;
+          if (!path || !modelPaths.includes(path)) return;
           const clickedSelectedRow = event.nativeEvent
             .composedPath()
             .some(
