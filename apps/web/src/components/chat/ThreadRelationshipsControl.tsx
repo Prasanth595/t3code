@@ -28,6 +28,7 @@ import {
   resolveLatestMergeBackRun,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  isProviderNativeSubagentThread,
   NodeId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
@@ -226,7 +227,14 @@ export function ThreadRelationshipsPanel(props: {
     currentThread?.forkedFrom?.type === "run"
       ? currentThread.forkedFrom.threadId
       : currentThread?.lineage.parentThreadId;
-  const parentRef = parentThreadId ? scopeThreadRef(props.environmentId, parentThreadId) : null;
+  const parentShell = parentThreadId
+    ? (relationshipShells.find((thread) => thread.id === parentThreadId) ??
+      archivedShells?.find((thread) => thread.id === parentThreadId))
+    : undefined;
+  const parentRef =
+    parentShell && isProviderNativeSubagentThread(parentShell)
+      ? scopeThreadRef(props.environmentId, parentShell.id)
+      : null;
   const parentProjection = useThreadProjection(parentRef)?.projection;
   const navigate = useNavigate();
   const mergeBack = useAtomCommand(threadEnvironment.mergeBack);
