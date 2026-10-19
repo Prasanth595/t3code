@@ -34,6 +34,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { usePromptLinkResolver } from "../prompt-links/usePromptLinkResolver";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { useForkNewThreadStart } from "./forkNewThreadStart";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
 
@@ -237,25 +238,37 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     if (!scratchEnvironment || scratchStartInFlightRef.current) return;
     const environmentId = scratchEnvironment.environmentId;
     scratchStartInFlightRef.current = true;
-    try {
-      const result = await openScratch({ environmentId, input: {} });
-      if (result._tag === "Failure") {
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          Dialog.alert(
-            "Could not start without a project",
-            error instanceof Error
-              ? error.message
-              : "The folder for threads without a project could not be created.",
-          );
-        }
-        return;
-      }
-      await selectProject(result.value);
-    } finally {
+    const result = await openScratch({ environmentId, input: {} });
+    if (result._tag === "Failure") {
       scratchStartInFlightRef.current = false;
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        Dialog.alert(
+          "Could not start without a project",
+          error instanceof Error
+            ? error.message
+            : "The folder for threads without a project could not be created.",
+        );
+      }
+      return;
     }
+    // selectProject handles its own failures, so this never throws.
+    await selectProject(result.value);
+    scratchStartInFlightRef.current = false;
   }
+
+  // Fork: `mobileNewThreadProject` can skip the picker for a plain new thread.
+  const navigationState = navigation.getState();
+  useForkNewThreadStart({
+    enabled:
+      navigationState?.routes[navigationState.index - 1]?.name !== "NewTaskDraft" &&
+      routeShareId === undefined &&
+      Object.values(route.params ?? {}).every((value) => value === undefined),
+    projects,
+    canStartScratch,
+    startScratch,
+    selectProject,
+  });
 
   useEffect(() => {
     const destination = incomingShare?.destination;

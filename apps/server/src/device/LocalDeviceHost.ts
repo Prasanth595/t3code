@@ -163,6 +163,13 @@ const androidSdk = Effect.gen(function* () {
           "Android",
           "Sdk",
         ),
+        // Fork: the Homebrew `android-commandlinetools` cask on Apple silicon and on Intel Macs.
+        ...(windows
+          ? []
+          : [
+              "/opt/homebrew/share/android-commandlinetools",
+              "/usr/local/share/android-commandlinetools",
+            ]),
       ];
   for (const root of candidates) {
     const sdk = yield* inspect(root);
@@ -171,14 +178,19 @@ const androidSdk = Effect.gen(function* () {
   // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
   if (!explicit) {
     const searchPath = environment.PATH ?? environment.Path ?? "";
+    // Fork: an adb without an emulator next to it, such as the Homebrew `android-platform-tools`
+    // cask, does not end the search. It is the answer only when no later entry has an emulator.
+    let adbOnly: Effect.Success<ReturnType<typeof inspect>> = null;
     for (const directory of searchPath.split(windows ? ";" : ":")) {
       if (!directory) continue;
       const adb = path.join(directory, adbBinary);
       if (!(yield* exists(adb))) continue;
       const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
       const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
-      if (sdk) return sdk;
+      if (sdk?.emulator) return sdk;
+      adbOnly ??= sdk;
     }
+    if (adbOnly) return adbOnly;
   }
   return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
 });
@@ -223,6 +235,10 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   }
   return env;
 });
+
+/** Only a Mac can list Apple simulators; elsewhere the hub's attempt surfaces as an error. */
+const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
+  hostPlatform === "darwin" ? [] : ["--platform", "android"];
 
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -394,6 +410,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               "127.0.0.1",
               "--hide-sidebar",
               "--hide-boot-device",
+              ...hubPlatformArguments(hostPlatform),
             ],
             {
               detached: false,

@@ -1,7 +1,13 @@
-import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  MAX_TOOLTIP_SHORTCUT_LIMIT,
+  MIN_TOOLTIP_SHORTCUT_LIMIT,
+} from "@t3tools/contracts";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
+import { BoundedIntegerInput } from "./BoundedIntegerInput";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -11,7 +17,6 @@ const selectHighlight = (settings: ClientSettings) => settings.focusLevelHighlig
 /** Fork: `keyboardFocusLevels`, Escape and arrow keys move focus between areas of the screen. */
 export function KeyboardFocusLevelsSettingsRow() {
   const enabled = useClientSettings(selectLevels);
-  const updateSettings = useUpdateClientSettings();
   return (
     <SettingsRow
       {...searchableSetting("keyboard-focus-levels")}
@@ -21,7 +26,7 @@ export function KeyboardFocusLevelsSettingsRow() {
           <SettingResetButton
             label="keyboard focus levels"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 keyboardFocusLevels: DEFAULT_CLIENT_SETTINGS.keyboardFocusLevels,
               })
             }
@@ -32,7 +37,7 @@ export function KeyboardFocusLevelsSettingsRow() {
         <Switch
           checked={enabled}
           onCheckedChange={(checked) =>
-            void updateSettings({ keyboardFocusLevels: Boolean(checked) })
+            void updateClientSettings({ keyboardFocusLevels: Boolean(checked) })
           }
           aria-label="Keyboard focus levels"
         />
@@ -44,7 +49,6 @@ export function KeyboardFocusLevelsSettingsRow() {
 /** Fork: `focusLevelHighlight`, the outline fade on the area that takes keyboard focus. */
 export function FocusLevelHighlightSettingsRow() {
   const enabled = useClientSettings(selectHighlight);
-  const updateSettings = useUpdateClientSettings();
   return (
     <SettingsRow
       {...searchableSetting("focus-level-highlight")}
@@ -54,7 +58,7 @@ export function FocusLevelHighlightSettingsRow() {
           <SettingResetButton
             label="focus highlight"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 focusLevelHighlight: DEFAULT_CLIENT_SETTINGS.focusLevelHighlight,
               })
             }
@@ -65,9 +69,77 @@ export function FocusLevelHighlightSettingsRow() {
         <Switch
           checked={enabled}
           onCheckedChange={(checked) =>
-            void updateSettings({ focusLevelHighlight: Boolean(checked) })
+            void updateClientSettings({ focusLevelHighlight: Boolean(checked) })
           }
           aria-label="Focus highlight"
+        />
+      }
+    />
+  );
+}
+
+const selectTooltipShortcuts = (settings: ClientSettings) => settings.tooltipShortcuts;
+
+/** Fork: `tooltipShortcuts`, control tooltips name the keyboard shortcut of the control. */
+export function TooltipShortcutsSettingsRow() {
+  const enabled = useClientSettings(selectTooltipShortcuts);
+  return (
+    <SettingsRow
+      {...searchableSetting("tooltip-shortcuts")}
+      description="Show the keyboard shortcut of a control in its tooltip, such as the stash, the runtime mode or the approval buttons."
+      resetAction={
+        enabled !== DEFAULT_CLIENT_SETTINGS.tooltipShortcuts ? (
+          <SettingResetButton
+            label="shortcuts in tooltips"
+            onClick={() =>
+              void updateClientSettings({
+                tooltipShortcuts: DEFAULT_CLIENT_SETTINGS.tooltipShortcuts,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) =>
+            void updateClientSettings({ tooltipShortcuts: Boolean(checked) })
+          }
+          aria-label="Shortcuts in tooltips"
+        />
+      }
+    />
+  );
+}
+
+const selectShortcutLimit = (settings: ClientSettings) => settings.tooltipShortcutLimit;
+
+/** Fork: `tooltipShortcutLimit`, the most keys one tooltip shows before "+N". */
+export function TooltipShortcutLimitSettingsRow() {
+  const limit = useClientSettings(selectShortcutLimit);
+  return (
+    <SettingsRow
+      {...searchableSetting("tooltip-shortcut-limit")}
+      description="The most keys one tooltip shows. More show as +N; Settings → Keybindings lists them all."
+      resetAction={
+        limit !== DEFAULT_CLIENT_SETTINGS.tooltipShortcutLimit ? (
+          <SettingResetButton
+            label="keys per tooltip"
+            onClick={() =>
+              void updateClientSettings({
+                tooltipShortcutLimit: DEFAULT_CLIENT_SETTINGS.tooltipShortcutLimit,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <BoundedIntegerInput
+          value={limit}
+          min={MIN_TOOLTIP_SHORTCUT_LIMIT}
+          max={MAX_TOOLTIP_SHORTCUT_LIMIT}
+          onCommit={(value) => void updateClientSettings({ tooltipShortcutLimit: value })}
+          aria-label="Keys per tooltip"
         />
       }
     />

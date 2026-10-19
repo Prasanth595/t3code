@@ -166,11 +166,13 @@ export interface RotationResponse {
   readonly delivered: boolean;
 }
 
-/** A token rotation that waits for its machine (MM-207). The secret never leaves the portal. */
+/** A token rotation awaiting confirmation, or its expired recovery marker (MM-207). */
 export interface PendingRotation {
   readonly machineId: MachineId;
   readonly createdAt: string;
   readonly expiresAt: string;
+  /** The deadline passed without confirmation. Only a rejoin marker remains, never a secret. */
+  readonly expired?: boolean;
 }
 
 /**
@@ -283,7 +285,10 @@ export type ApproveClientRequest = typeof ApproveClientRequest.Type;
  * arrows or into an existing client with its own arrows. A new invite ends the older ones.
  */
 export const InviteRequest = Schema.Struct({
-  client: ApproveClientRequest.fields.client,
+  client: Schema.Union([
+    Schema.TaggedStruct("new", { name: Text, position: Schema.optionalKey(MapPosition) }),
+    Schema.TaggedStruct("existing", { clientId: ClientId }),
+  ]),
   arrows: ApproveClientRequest.fields.arrows,
 });
 export type InviteRequest = typeof InviteRequest.Type;
@@ -309,7 +314,26 @@ export interface InviteResponse {
 export type ApprovalsStatus =
   /** `warning` names a token permission that another owner action needs, for example MM-903. */
   | { readonly _tag: "ready"; readonly warning: string | null }
-  | { readonly _tag: "missing"; readonly reason: string };
+  | { readonly _tag: "missing"; readonly reason: string }
+  /** The owner does a step in the Zero Trust dashboard first, because the portal cannot. */
+  | { readonly _tag: "cloudflareStep"; readonly step: CloudflareStep };
+
+/**
+ * MM-1208: `allowPasskey` turns on independent MFA (MM-1207). `appLauncher` adds the App Launcher
+ * app, which passkey enrollment needs, when the API token cannot create it.
+ */
+export type CloudflareStep = "allowPasskey" | "appLauncher";
+
+/** MM-1205: the token permission that lets the portal do each step itself. */
+export const CLOUDFLARE_STEP_PERMISSION: Readonly<Record<CloudflareStep, string>> = {
+  allowPasskey: "Access: Organizations, Identity Providers, and Groups Edit",
+  appLauncher: "Access: Apps and Policies Edit",
+};
+
+/** GET /api/passkey (MM-1207): the Cloudflare page where the owner registers a passkey. */
+export interface PasskeyResponse {
+  readonly enrollUrl: string;
+}
 
 /** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */
 export const ThresholdsRequest = Schema.Struct({ thresholds: Schema.NullOr(HealthThresholds) });
@@ -373,7 +397,7 @@ export const PushSubscribeRequest = Schema.Struct({
 });
 export type PushSubscribeRequest = typeof PushSubscribeRequest.Type;
 
-/** POST /api/push/unsubscribe and POST /api/push/test: one subscription of this device. */
+/** POST /api/push/status, /api/push/unsubscribe and /api/push/test: one device subscription. */
 export const PushEndpointRequest = Schema.Struct({
   endpoint: PushSubscribeRequest.fields.endpoint,
 });
@@ -382,6 +406,11 @@ export type PushEndpointRequest = typeof PushEndpointRequest.Type;
 /** GET /api/push: null when the portal has no `VAPID_JWK` secret. */
 export interface PushKeyResponse {
   readonly publicKey: string | null;
+}
+
+/** POST /api/push/status: reads registration without turning notifications on. */
+export interface PushStatusResponse {
+  readonly subscribed: boolean;
 }
 
 /** The encrypted body of one push message. The service worker shows it (MM-1808). */

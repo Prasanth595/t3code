@@ -55,6 +55,34 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["thread link address url browser tab slack github desktop app deep link open"],
     environmentOnly: true,
   },
+  {
+    id: "mobile-published-themes",
+    title: "Published themes on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app theme published fonts shape radius canvas pattern"],
+    environmentOnly: true,
+  },
+  {
+    id: "mobile-new-thread-project",
+    title: "New thread on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app new thread project picker last scratch no project"],
+    environmentOnly: true,
+  },
+  {
+    id: "mobile-composer-camera",
+    title: "Camera on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app camera photo take picture composer attachment plus"],
+    environmentOnly: true,
+  },
+  {
+    id: "mobile-sidebar-groups",
+    title: "Sidebar groups on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app sidebar groups tabs thread list home"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [
@@ -148,6 +176,18 @@ export const BEHAVIOR_ITEMS = [
     title: "Focus highlight",
     to: "/settings/general",
     searchTerms: ["keyboard focus outline flash escape composer timeline sidebar right panel"],
+  },
+  {
+    id: "tooltip-shortcuts",
+    title: "Shortcuts in tooltips",
+    to: "/settings/general",
+    searchTerms: ["keyboard shortcuts keybindings tooltip hint key label"],
+  },
+  {
+    id: "tooltip-shortcut-limit",
+    title: "Keys per tooltip",
+    to: "/settings/general",
+    searchTerms: ["keyboard shortcuts keybindings tooltip chips limit more how many"],
   },
   {
     id: "repository-owner-filters",
@@ -267,6 +307,13 @@ export const TUNNEL_PAIRING_ITEMS = [
 // Fork: machine map (apps/machine-map/SPEC.md MM-203).
 export const MACHINE_MAP_ITEMS = [
   {
+    id: "environment-label-from-machine-map",
+    title: "Environment name from machine map",
+    to: "/settings/fork",
+    searchTerms: ["machine map environment label name hostname computer portal"],
+    environmentOnly: true,
+  },
+  {
     id: "machine-map",
     title: "Machine map",
     to: "/settings/machines",
@@ -289,6 +336,16 @@ export const MACHINE_MAP_ITEMS = [
     title: "Sync keybindings",
     to: "/settings/keybindings",
     searchTerms: ["keybindings shortcuts machine map share sync all environments"],
+    environmentOnly: true,
+  },
+] as const satisfies ReadonlyArray<SettingsSearchItem>;
+
+export const PREVIEW_ITEMS = [
+  {
+    id: "preview-local-server-groups",
+    title: "All local servers in the browser",
+    to: "/settings/integrations",
+    searchTerms: ["preview local servers ports listeners dev server worktree project localhost"],
     environmentOnly: true,
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

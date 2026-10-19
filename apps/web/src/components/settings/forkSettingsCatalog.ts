@@ -30,7 +30,11 @@ const FORK_SETTING_GROUPS = [
   },
   {
     title: "Machine map",
-    entries: [{ ids: ["machine-map"] }, { ids: ["keybinding-sync"] }],
+    entries: [
+      { ids: ["machine-map"] },
+      { ids: ["keybinding-sync"] },
+      { ids: ["environment-label-from-machine-map"] },
+    ],
   },
   {
     title: "Updates and releases",
@@ -73,6 +77,9 @@ const FORK_SETTING_GROUPS = [
     entries: [
       { ids: ["sidebar-groups", "sidebar-group-single-thread"] },
       { ids: ["snooze-quick-options"] },
+      { ids: ["mobile-new-thread-project"] },
+      { ids: ["mobile-composer-camera"] },
+      { ids: ["mobile-sidebar-groups"] },
       { ids: ["storage-worktree-path-template"] },
       {
         ids: ["storage-worktrees-location"],
@@ -92,6 +99,8 @@ const FORK_SETTING_GROUPS = [
       { ids: ["terminal-app-shortcuts-first"] },
       { ids: ["keyboard-focus-levels"] },
       { ids: ["focus-level-highlight"] },
+      { ids: ["tooltip-shortcuts"] },
+      { ids: ["tooltip-shortcut-limit"] },
       { ids: ["terminal-close-confirmation"] },
     ],
   },
@@ -100,9 +109,12 @@ const FORK_SETTING_GROUPS = [
     entries: [
       { ids: ["installed-app"] },
       { ids: ["inkwire-white-frame"] },
+      { ids: ["web-push"] },
       { ids: ["thread-card-layout"] },
       { ids: ["thread-link-chips"] },
       { ids: ["thread-links-open-desktop-app"] },
+      { ids: ["preview-local-server-groups"] },
+      { ids: ["mobile-published-themes"] },
     ],
   },
 ] as const satisfies ReadonlyArray<{

@@ -7,6 +7,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
+  EnvironmentTheme,
+  MobileNewThreadProject,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -17,6 +19,7 @@ import {
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
+import { isPublishedMobileThemeId } from "../lib/forkPublishedThemeRegistry";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -49,6 +52,26 @@ export type PullRequestListPreferences = typeof PullRequestListPreferences.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
+const isPublishedThemes = Schema.is(Schema.Array(EnvironmentTheme));
+
+/** Fork: a scratch project is kept as `scratch`, because its id differs per environment. */
+const LastNewThreadProject = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: Schema.String,
+  scratch: Schema.Boolean,
+});
+export type LastNewThreadProject = typeof LastNewThreadProject.Type;
+const isLastNewThreadProject = Schema.is(LastNewThreadProject);
+const ScratchProjectRef = Schema.Struct({ environmentId: EnvironmentId, projectId: Schema.String });
+export type ScratchProjectRef = typeof ScratchProjectRef.Type;
+const isScratchProjectRef = Schema.is(ScratchProjectRef);
+const isMobileNewThreadProject = Schema.is(MobileNewThreadProject);
+const AppTokenClient = Schema.Struct({
+  machinesUrl: Schema.String,
+  clientId: Schema.optionalKey(Schema.String),
+});
+export type AppTokenClient = typeof AppTokenClient.Type;
+const isAppTokenClient = Schema.is(AppTokenClient);
 
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
@@ -84,6 +107,22 @@ export interface Preferences {
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
+  /** Fork: the last published themes, so the app draws them before a server connects. */
+  readonly publishedThemes?: ReadonlyArray<EnvironmentTheme>;
+  /** Fork: the server `defaultTheme` that the app took last. */
+  readonly publishedDefaultThemeApplied?: string;
+  /** Fork: the project of the last new thread, for `mobileNewThreadProject: "last"`. */
+  readonly lastNewThreadProject?: LastNewThreadProject;
+  /** Fork: the project of the last thread without a project, so a new one opens without the server. */
+  readonly scratchProject?: ScratchProjectRef;
+  /** Fork: the last `mobileNewThreadProject` of a server, so a cold start uses it before connecting. */
+  readonly newThreadProjectMode?: MobileNewThreadProject;
+  /** Fork: the open sidebar group tab of the home thread list. */
+  readonly sidebarGroupTabId?: string;
+  /** Fork: environments that the app token repair disabled because the portal no longer lists them. */
+  readonly appTokenDisabledEnvironmentIds?: ReadonlyArray<string>;
+  /** Fork: the app token client of this phone (MM-913) and its machine list (MM-914). */
+  readonly appTokenClient?: AppTokenClient;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -153,6 +192,14 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
+    publishedThemes?: ReadonlyArray<EnvironmentTheme>;
+    publishedDefaultThemeApplied?: string;
+    lastNewThreadProject?: LastNewThreadProject;
+    scratchProject?: ScratchProjectRef;
+    newThreadProjectMode?: MobileNewThreadProject;
+    sidebarGroupTabId?: string;
+    appTokenDisabledEnvironmentIds?: ReadonlyArray<string>;
+    appTokenClient?: AppTokenClient;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -172,19 +219,22 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (
     typeof parsed.themeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId)
+    ((MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId) ||
+      isPublishedMobileThemeId(parsed.themeId))
   ) {
     preferences.themeId = parsed.themeId as MobileThemeId;
   }
   if (
     typeof parsed.lightThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId)
+    ((MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId) ||
+      isPublishedMobileThemeId(parsed.lightThemeId))
   ) {
     preferences.lightThemeId = parsed.lightThemeId as MobileThemeId;
   }
   if (
     typeof parsed.darkThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId)
+    ((MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId) ||
+      isPublishedMobileThemeId(parsed.darkThemeId))
   ) {
     preferences.darkThemeId = parsed.darkThemeId as MobileThemeId;
   }
@@ -277,6 +327,33 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;
+  }
+  if (isPublishedThemes(parsed.publishedThemes)) {
+    preferences.publishedThemes = parsed.publishedThemes;
+  }
+  if (typeof parsed.publishedDefaultThemeApplied === "string") {
+    preferences.publishedDefaultThemeApplied = parsed.publishedDefaultThemeApplied;
+  }
+  if (isLastNewThreadProject(parsed.lastNewThreadProject)) {
+    preferences.lastNewThreadProject = parsed.lastNewThreadProject;
+  }
+  if (isScratchProjectRef(parsed.scratchProject)) {
+    preferences.scratchProject = parsed.scratchProject;
+  }
+  if (isMobileNewThreadProject(parsed.newThreadProjectMode)) {
+    preferences.newThreadProjectMode = parsed.newThreadProjectMode;
+  }
+  if (typeof parsed.sidebarGroupTabId === "string") {
+    preferences.sidebarGroupTabId = parsed.sidebarGroupTabId;
+  }
+  if (
+    Array.isArray(parsed.appTokenDisabledEnvironmentIds) &&
+    parsed.appTokenDisabledEnvironmentIds.every((value: unknown) => typeof value === "string")
+  ) {
+    preferences.appTokenDisabledEnvironmentIds = parsed.appTokenDisabledEnvironmentIds;
+  }
+  if (isAppTokenClient(parsed.appTokenClient)) {
+    preferences.appTokenClient = parsed.appTokenClient;
   }
   return preferences;
 }

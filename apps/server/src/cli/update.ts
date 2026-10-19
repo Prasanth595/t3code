@@ -20,6 +20,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
+import { isInstallableForkRelease } from "../fork/forkReleases.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
@@ -45,6 +46,7 @@ const ReleaseIndex = Schema.Array(
   Schema.Struct({
     tag_name: Schema.String,
     draft: Schema.optional(Schema.Boolean),
+    assets: Schema.Array(Schema.Struct({ name: Schema.String })),
   }),
 );
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
@@ -78,7 +80,8 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
         () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
       ),
     );
-    const version = newestCliReleaseVersion(releases, channel);
+    // Fork: skip a release that is still publishing, as "Update everything" does.
+    const version = newestCliReleaseVersion(releases.filter(isInstallableForkRelease), channel);
     if (version !== undefined) return version;
     if (releases.length === 0) break;
   }

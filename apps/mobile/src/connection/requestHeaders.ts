@@ -32,6 +32,11 @@ export function setRequestHeaderRules(next: ReadonlyArray<OriginRequestHeaders>)
   rules = next;
 }
 
+/** The saved headers of each origin, as the catalog store last pushed them. */
+export function requestHeaderRules(): ReadonlyArray<OriginRequestHeaders> {
+  return rules;
+}
+
 /** The store of the headers, kept in the connection catalog of `storage.ts`. */
 export function makeRequestHeaderStore(catalog: {
   readonly read: Effect.Effect<ConnectionCatalogDocument, ConnectionTransientError>;

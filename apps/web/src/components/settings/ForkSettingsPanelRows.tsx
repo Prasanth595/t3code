@@ -6,6 +6,8 @@ import { isElectron } from "../../env";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import {
   FocusLevelHighlightSettingsRow,
+  TooltipShortcutLimitSettingsRow,
+  TooltipShortcutsSettingsRow,
   KeyboardFocusLevelsSettingsRow,
 } from "./FocusLevelsSettingsRows";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
@@ -17,6 +19,7 @@ import {
   TerminalCloseConfirmationSettingsRow,
 } from "./ForkSettingsRows";
 import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
+import { MobileAppSettingsSection } from "./MobileAppSettings";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
 import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
@@ -45,6 +48,7 @@ export function AppearanceSections() {
       <InkwireWhiteFrameSettingsRow />
       <ThreadCardLayoutSettingsSection />
       <ThreadLinkChipsSettingsSection />
+      <MobileAppSettingsSection />
     </>
   );
 }
@@ -70,6 +74,10 @@ export function BehaviorRows() {
       <KeyboardFocusLevelsSettingsRow />
 
       <FocusLevelHighlightSettingsRow />
+
+      <TooltipShortcutsSettingsRow />
+
+      <TooltipShortcutLimitSettingsRow />
 
       {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
 

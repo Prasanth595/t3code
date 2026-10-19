@@ -22,6 +22,7 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { fitComposerImage, renderPhoto } from "./composerImageFit";
 import { beginForegroundHandoff } from "./foreground-handoff";
+import { consumeCameraRequest, withCameraLauncher } from "./forkComposerCamera";
 import { uuidv4 } from "./uuid";
 import { writeFileAtomically } from "./atomic-file";
 
@@ -364,6 +365,8 @@ export async function pickComposerMedia(input: {
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
 }> {
+  // Fork: read before any await, see lib/forkComposerCamera.ts.
+  const camera = consumeCameraRequest();
   const remainingSlots = PROVIDER_SEND_TURN_MAX_ATTACHMENTS - input.existingCount;
   if (remainingSlots <= 0) {
     return {
@@ -381,6 +384,7 @@ export async function pickComposerMedia(input: {
       error: error instanceof Error ? error.message : "The photo library is unavailable right now.",
     };
   }
+  if (camera) imagePicker = withCameraLauncher(imagePicker);
 
   // The picker covers the Android activity, which reports the app as
   // backgrounded; the guard keeps background-triggered restarts away mid-pick.

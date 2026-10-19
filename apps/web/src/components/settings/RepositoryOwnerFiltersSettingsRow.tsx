@@ -1,6 +1,6 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -10,7 +10,6 @@ const selectEnabled = (settings: ClientSettings) => settings.repositoryOwnerFilt
 /** Fork: `repositoryOwnerFilters`, owner filters on the pull request page and in the sidebar. */
 export function RepositoryOwnerFiltersSettingsRow() {
   const enabled = useClientSettings(selectEnabled);
-  const updateSettings = useUpdateClientSettings();
   return (
     <SettingsRow
       {...searchableSetting("repository-owner-filters")}
@@ -20,7 +19,7 @@ export function RepositoryOwnerFiltersSettingsRow() {
           <SettingResetButton
             label="repository owner filters"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 repositoryOwnerFilters: DEFAULT_CLIENT_SETTINGS.repositoryOwnerFilters,
               })
             }
@@ -31,7 +30,7 @@ export function RepositoryOwnerFiltersSettingsRow() {
         <Switch
           checked={enabled}
           onCheckedChange={(checked) =>
-            void updateSettings({ repositoryOwnerFilters: Boolean(checked) })
+            void updateClientSettings({ repositoryOwnerFilters: Boolean(checked) })
           }
           aria-label="Repository owner filters"
         />

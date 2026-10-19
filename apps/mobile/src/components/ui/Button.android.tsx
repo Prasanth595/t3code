@@ -13,6 +13,7 @@ import {
 import { defaultMinSize, fillMaxWidth, size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
 
+import { useThemeComposeModifiers } from "../../lib/forkThemeStyle";
 import { useControlTheme } from "./useControlTheme";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import type { ButtonProps } from "./Button";
@@ -45,6 +46,14 @@ export function Button(props: ButtonProps) {
           : tone === "text"
             ? colors["--color-primary-text"]
             : colors["--color-secondary-foreground"];
+  // Fork: a published theme sets the shape, the outline and the shadow (lib/forkThemeStyle.ts). Like
+  // web, a disabled button casts no shadow, and a text button keeps its stock look.
+  const enabled = !props.disabled && !props.loading;
+  const themeModifiers = useThemeComposeModifiers(
+    colors["--color-border"],
+    enabled ? containerColor : colors["--color-subtle-strong"],
+    enabled,
+  );
   return (
     <View
       accessible
@@ -68,11 +77,12 @@ export function Button(props: ButtonProps) {
           style={props.fullWidth ? { width: "100%" } : { alignSelf: "flex-start" }}
         >
           <Component
-            enabled={!props.disabled && !props.loading}
+            enabled={enabled}
             onClick={props.onPress}
             modifiers={[
               defaultMinSize({ minHeight: 48 }),
               ...(props.fullWidth ? [fillMaxWidth()] : []),
+              ...(tone !== "text" ? themeModifiers : []),
             ]}
             colors={{
               containerColor,

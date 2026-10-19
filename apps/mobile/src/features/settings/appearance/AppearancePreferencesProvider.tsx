@@ -39,6 +39,15 @@ import {
   type MobileThemeMode,
 } from "../../../lib/mobileTheme";
 import {
+  availableMobileThemeIds,
+  publishedThemeStyleOf,
+  publishedThemeStyleVariables,
+  type PublishedMobileTheme,
+  type PublishedMobileThemeStyle,
+} from "../../../lib/forkPublishedThemes";
+import { usePublishedMobileThemes } from "../../../state/forkPublishedThemes";
+import { ThemeStyleContext } from "../../../lib/forkThemeStyle";
+import {
   createMobileThemeRuntimeOperations,
   getMobileUniwindThemeName,
   type MobileThemeRuntimeState,
@@ -58,6 +67,10 @@ interface AppearancePreferencesContextValue {
   >;
   readonly systemColorPalettes: ReturnType<typeof readSystemColorPalettes>;
   readonly isReady: boolean;
+  /** Fork: the published themes that the theme picker offers. */
+  readonly publishedThemes: ReadonlyArray<PublishedMobileTheme>;
+  /** Fork: the style fields of the active published theme; empty for every other theme. */
+  readonly themeStyle: PublishedMobileThemeStyle;
   readonly setThemeIdForAppearance: (
     appearance: MobileThemeAppearance,
     value: MobileThemeId,
@@ -85,12 +98,20 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
-  const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
+  const { themes: publishedThemes, paletteVersion } = usePublishedMobileThemes({
+    storedPreferences,
+    savePreferences,
+  });
+  const resolvedThemeIds = availableMobileThemeIds(
+    resolveMobileThemeIds(storedPreferences ?? {}),
+    publishedThemes,
+  );
   const themeIds = useMemo<MobileThemeIds>(
     () => ({ light: resolvedThemeIds.light, dark: resolvedThemeIds.dark }),
     [resolvedThemeIds.dark, resolvedThemeIds.light],
   );
   const themeId = themeIds[themeAppearance];
+  const themeStyle = publishedThemeStyleOf(themeId, publishedThemes);
   const systemColorsActive = themeId === "material-you" && isSystemColorsAvailable;
   const [systemColorPalettes, setSystemColorPalettes] = useState(readSystemColorPalettes);
   useEffect(() => {
@@ -122,8 +143,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
         : base;
     };
     return { light: resolve("light"), dark: resolve("dark") };
-  }, [themeIds, systemColorPalettes]);
+    // Fork: `paletteVersion` changes when a server republishes a theme under the same id.
+  }, [themeIds, systemColorPalettes, paletteVersion]);
   const themeVariables = themeVariablesByAppearance[themeAppearance];
+  const scopedVariables = useMemo(
+    () => ({ ...themeVariables, ...publishedThemeStyleVariables(themeStyle) }),
+    [themeStyle, themeVariables],
+  );
   const activeThemeName = getMobileUniwindThemeName(themeId, themeAppearance);
   const { baseFontSize, codeFontSize, codeWordBreak, terminalFontSize } = preferences;
   const appearance = useMemo(
@@ -277,6 +303,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeVariablesByAppearance,
       systemColorPalettes,
       isReady,
+      publishedThemes,
+      themeStyle,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
@@ -296,6 +324,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       themeVariablesByAppearance,
       systemColorPalettes,
       isReady,
+      publishedThemes,
+      themeStyle,
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
@@ -309,7 +339,9 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   return (
     <AppearancePreferencesContext.Provider value={value}>
       <ScopedTheme theme={activeThemeName}>
-        <ScopedVariables variables={themeVariables}>{props.children}</ScopedVariables>
+        <ScopedVariables variables={scopedVariables}>
+          <ThemeStyleContext value={themeStyle}>{props.children}</ThemeStyleContext>
+        </ScopedVariables>
       </ScopedTheme>
     </AppearancePreferencesContext.Provider>
   );

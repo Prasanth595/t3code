@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Fork: Android adaptive icon foreground. The sticker of tick3d-macos.svg, inside the 66/108 safe zone. -->
+  <g transform="translate(512 512) scale(0.75) translate(-515 -480)">
+  <!-- sticker: yellow card, slightly rotated, with its own shadow -->
+  <g transform="rotate(-6 500 500)">
+    <rect x="262" y="282" width="500" height="460" rx="56" fill="#000"/>
+    <rect x="232" y="252" width="500" height="460" rx="56" fill="#FFE14D" stroke="#000" stroke-width="26"/>
+    <!-- tick -->
+    <defs>
+      <linearGradient id="boltFill" x1="0" y1="0" x2="0.4" y2="1">
+        <stop offset="0" stop-color="#FF8AA2"/>
+        <stop offset="0.55" stop-color="#FF5277"/>
+        <stop offset="1" stop-color="#E23A60"/>
+      </linearGradient>
+    </defs>
+    <!-- bolt shadow -->
+    <path d="M470 300 L610 300 L540 430 L630 430 L400 670 L460 500 L370 500 Z" transform="translate(22 22)" fill="#000" stroke="#000" stroke-width="22" stroke-linejoin="round"/>
+    <!-- bolt -->
+    <path d="M470 300 L610 300 L540 430 L630 430 L400 670 L460 500 L370 500 Z" fill="url(#boltFill)" stroke="#000" stroke-width="22" stroke-linejoin="round"/>
+    <!-- comic highlight along the top and upper left edge -->
+    <path d="M582 328 L494 328 L432 452" fill="none" stroke="#fff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- pink dot accent -->
+  <circle cx="742" cy="270" r="62" fill="#FF5277" stroke="#000" stroke-width="24"/>
+  </g>
+</svg>

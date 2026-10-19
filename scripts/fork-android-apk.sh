@@ -2,7 +2,7 @@
 # Builds and signs the fork Android APK with a local Gradle build (no EAS).
 # The APK holds arm64 code, and its package differs from the store app, so both
 # install side by side. .github/workflows/fork-android.yml runs it after each
-# Fork Release of main. See docs/fork.md "Android app".
+# Fork Release of main. See docs/fork/operations.md "Android APK build".
 #
 # Usage:
 #   scripts/fork-android-apk.sh build <unsigned.apk>

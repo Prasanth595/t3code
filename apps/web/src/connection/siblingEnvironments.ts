@@ -194,6 +194,34 @@ const delayAfter = (issue: SiblingIssue, failures: number): number => {
 };
 
 /**
+ * Pairs a sibling when its backoff allows it, with at most one pairing per origin at a time.
+ * `skipped` means that the backoff or a pairing in flight held it back. A success waits
+ * `afterSuccessMs` before the next pairing; a failure waits 30 seconds, doubled per failure, up to
+ * 10 minutes.
+ */
+export async function pairSiblingWhenDue(
+  origin: string,
+  connectPairing: Parameters<typeof pairSiblingOrigin>[1],
+  options: { readonly credentials?: RequestCredentials; readonly afterSuccessMs?: number } = {},
+): Promise<"skipped" | { readonly issue: SiblingIssue | null; readonly error: unknown }> {
+  if (inFlight.has(origin) || (nextAttempt.get(origin)?.atMs ?? 0) > Date.now()) return "skipped";
+  inFlight.add(origin);
+  const error = await pairSiblingOrigin(origin, connectPairing, options.credentials);
+  inFlight.delete(origin);
+  if (error === null) {
+    nextAttempt.set(origin, {
+      atMs: Date.now() + (options.afterSuccessMs ?? AFTER_SUCCESS_MS),
+      failures: 0,
+    });
+    return { issue: null, error };
+  }
+  const issue = issueOf(error);
+  const failures = (nextAttempt.get(origin)?.failures ?? 0) + 1;
+  nextAttempt.set(origin, { atMs: Date.now() + delayAfter(issue, failures), failures });
+  return { issue, error };
+}
+
+/**
  * Pairs the siblings of `siblingOriginsToPair` on load, on focus, when a sibling's connection is
  * refused, and once a minute, each one only after its backoff.
  */
@@ -209,30 +237,28 @@ export function useSiblingEnvironmentAutoPair(): void {
 
   const pairSiblings = useEffectEvent(async () => {
     if (!isReady || trustedOrigins === undefined) return;
-    const nowMs = Date.now();
-    const due = siblingOriginsToPair({ trustedOrigins, environments, page: globalThis.location })
-      .filter((origin) => !inFlight.has(origin))
-      .filter((origin) => (nextAttempt.get(origin)?.atMs ?? 0) <= nowMs);
-    if (due.length === 0) return;
+    const candidates = siblingOriginsToPair({
+      trustedOrigins,
+      environments,
+      page: globalThis.location,
+    });
+    if (candidates.length === 0) return;
     const next = new Map(issues);
+    let changed = false;
     await Promise.all(
-      due.map(async (origin) => {
-        inFlight.add(origin);
-        const error = await pairSiblingOrigin(origin, connectPairing);
-        inFlight.delete(origin);
-        if (error === null) {
+      candidates.map(async (origin) => {
+        const outcome = await pairSiblingWhenDue(origin, connectPairing);
+        if (outcome === "skipped") return;
+        changed = true;
+        if (outcome.issue === null) {
           next.delete(origin);
-          nextAttempt.set(origin, { atMs: Date.now() + AFTER_SUCCESS_MS, failures: 0 });
           return;
         }
-        const issue = issueOf(error);
-        const failures = (nextAttempt.get(origin)?.failures ?? 0) + 1;
-        console.warn("Could not pair sibling environment.", origin, issue, error);
-        next.set(origin, issue);
-        nextAttempt.set(origin, { atMs: Date.now() + delayAfter(issue, failures), failures });
+        console.warn("Could not pair sibling environment.", origin, outcome.issue, outcome.error);
+        next.set(origin, outcome.issue);
       }),
     );
-    setIssues(next);
+    if (changed) setIssues(next);
   });
 
   useEffect(() => {

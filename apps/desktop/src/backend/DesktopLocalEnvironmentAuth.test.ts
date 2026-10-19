@@ -210,6 +210,22 @@ describe("DesktopLocalEnvironmentAuth", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("renews before expiry and exchanges a revoked token again", () =>
+    Effect.gen(function* () {
+      const { auth, requestCount } = yield* makeExchange(0, () => new Response());
+      yield* auth.getBearerToken;
+      yield* TestClock.adjust(Duration.seconds(3540));
+      yield* auth.getBearerToken;
+      assert.strictEqual(yield* Ref.get(requestCount), 2);
+      yield* auth.invalidateBearerToken("different-token");
+      yield* auth.getBearerToken;
+      assert.strictEqual(yield* Ref.get(requestCount), 2);
+      yield* auth.invalidateBearerToken("desktop-bearer-token");
+      yield* auth.getBearerToken;
+      assert.strictEqual(yield* Ref.get(requestCount), 3);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>

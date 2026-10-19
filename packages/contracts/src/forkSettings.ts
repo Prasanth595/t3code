@@ -61,6 +61,13 @@ const SnoozeQuickOptions = Schema.NullOr(
   Schema.Array(SnoozeQuickOption).check(Schema.isMaxLength(MAX_SNOOZE_QUICK_OPTIONS)),
 );
 
+export const MIN_TOOLTIP_SHORTCUT_LIMIT = 1;
+export const MAX_TOOLTIP_SHORTCUT_LIMIT = 9;
+/** How many keys of one control its tooltip shows before "+N". */
+export const TooltipShortcutLimit = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_TOOLTIP_SHORTCUT_LIMIT, maximum: MAX_TOOLTIP_SHORTCUT_LIMIT }),
+);
+
 export const MIN_AGENT_SESSION_IMPORT_WINDOW_DAYS = 1;
 export const MAX_AGENT_SESSION_IMPORT_WINDOW_DAYS = 3650;
 /** How far back recent Claude Code and Codex sessions are offered for import. */
@@ -209,6 +216,10 @@ export const ForkClientSettingsFields = {
    * animation, filter or fixed background), so it does not add scroll cost.
    */
   inkwireWhiteFrame: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: control tooltips show the keys of the control as chips, such as "Stash ⌘S". */
+  tooltipShortcuts: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Fork: the most keys one tooltip shows; more show as "+N". */
+  tooltipShortcutLimit: TooltipShortcutLimit.pipe(Schema.withDecodingDefault(Effect.succeed(4))),
 };
 
 export const ForkClientSettingsPatchFields = {
@@ -229,12 +240,26 @@ export const ForkClientSettingsPatchFields = {
   keyboardFocusLevels: Schema.optionalKey(Schema.Boolean),
   focusLevelHighlight: Schema.optionalKey(Schema.Boolean),
   inkwireWhiteFrame: Schema.optionalKey(Schema.Boolean),
+  tooltipShortcuts: Schema.optionalKey(Schema.Boolean),
+  tooltipShortcutLimit: Schema.optionalKey(TooltipShortcutLimit),
 };
 
+/**
+ * Fork: what "New thread" opens in the mobile app. `picker` shows the project picker, `last`
+ * opens a draft in the project of the last new thread on the phone, and `none` opens a draft
+ * without a project. A thread link, a share or a prompt link keeps its own project.
+ */
+export const MobileNewThreadProject = Schema.Literals(["picker", "last", "none"]);
+export type MobileNewThreadProject = typeof MobileNewThreadProject.Type;
+
 export const ForkServerSettingsFields = {
+  /** Fork: use the joined machine map name as the environment label. */
+  environmentLabelFromMachineMap: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /**
    * Fork: where new worktrees go, such as `{repoDir}/{branchLeaf}`. Empty
-   * keeps the `worktreesDirectory` layout. See docs/fork.md.
+   * keeps the `worktreesDirectory` layout. See docs/fork/features.md.
    */
   worktreePathTemplate: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
@@ -256,7 +281,7 @@ export const ForkServerSettingsFields = {
   ),
   /**
    * Fork: a server that runs as the background service installs each newer
-   * fork release when no agent turn runs. See docs/fork.md "Server updates".
+   * fork release when no agent turn runs. See docs/fork/operations.md "Server updates".
    */
   forkAutoUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -314,7 +339,7 @@ export const ForkServerSettingsFields = {
   sidebarGroups: SidebarGroups.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Fork: the machine map reports and applies the rules of `keybindings.json` as the server
-   * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See docs/fork.md "Machine map".
+   * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See apps/machine-map/README.md "Keybinding sync".
    */
   keybindingSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -325,9 +350,33 @@ export const ForkServerSettingsFields = {
   voiceTranscriptionOpenAiApiKey: TrimmedString.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
   ).annotateKey({ settingsSecret: true }),
+  /**
+   * Fork: the preview "Local servers" list also shows local listeners that no T3 terminal owns,
+   * in groups: same worktree, same project, then all others. A server setting, because this
+   * server reads the process folders and sends the HTTP checks, for every client.
+   */
+  previewLocalServerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the mobile app offers the themes that this server publishes, with their fonts, shape
+   * and canvas pattern, and takes `defaultTheme`. A server setting, so the machine map syncs it
+   * and the mobile app reads it.
+   */
+  mobilePublishedThemes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: what "New thread" opens in the mobile app. See `MobileNewThreadProject`. */
+  mobileNewThreadProject: MobileNewThreadProject.pipe(
+    Schema.withDecodingDefault(Effect.succeed("picker")),
+  ),
+  /**
+   * Fork: the plus button of the mobile composer offers "Take Photo". Off by default, because it
+   * turns the plus button into a menu on a server without file attachments.
+   */
+  mobileComposerCamera: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: the home thread list of the mobile app shows the `sidebarGroups` tabs. */
+  mobileSidebarGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 };
 
 export const ForkServerSettingsPatchFields = {
+  environmentLabelFromMachineMap: Schema.optionalKey(Schema.Boolean),
   worktreePathTemplate: Schema.optionalKey(TrimmedString),
   recoverInterruptedTurns: Schema.optionalKey(Schema.Boolean),
   recoverInterruptedTurnsMessage: Schema.optionalKey(TrimmedNonEmptyString),
@@ -347,6 +396,11 @@ export const ForkServerSettingsPatchFields = {
   keybindingSync: Schema.optionalKey(Schema.Boolean),
   /** An empty value removes the saved key; the redaction marker keeps it. */
   voiceTranscriptionOpenAiApiKey: Schema.optionalKey(TrimmedString),
+  previewLocalServerGroups: Schema.optionalKey(Schema.Boolean),
+  mobilePublishedThemes: Schema.optionalKey(Schema.Boolean),
+  mobileNewThreadProject: Schema.optionalKey(MobileNewThreadProject),
+  mobileComposerCamera: Schema.optionalKey(Schema.Boolean),
+  mobileSidebarGroups: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

@@ -27,6 +27,7 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 
 export interface EditQueuedRunRequest {
   readonly runId: RunId;
@@ -66,8 +67,6 @@ export function QueuedRunsControl({
   ...props
 }: {
   readonly ref?: Ref<QueuedRunsControlHandle>;
-  readonly steerShortcutLabel?: string | null;
-  readonly editShortcutLabel?: string | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly optimisticMessages: ReadonlyArray<
@@ -469,7 +468,13 @@ export function QueuedRunsControl({
                             <PencilIcon />
                           </TooltipTrigger>
                           <TooltipPopup>
-                            {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                            Edit in the composer
+                            {item.serverIndex === queued.length - 1 ? (
+                              <ShortcutHint
+                                command="thread.editQueuedMessage"
+                                context={{ composerFocus: true }}
+                              />
+                            ) : null}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>
@@ -495,7 +500,13 @@ export function QueuedRunsControl({
                           <TooltipPopup>
                             {activeRun === null
                               ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                              : "Send as a steer instead"}
+                            {item.serverIndex === 0 && activeRun !== null ? (
+                              <ShortcutHint
+                                command="thread.steerQueuedMessage"
+                                context={{ terminalFocus: false }}
+                              />
+                            ) : null}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>

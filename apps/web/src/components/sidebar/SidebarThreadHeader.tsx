@@ -13,6 +13,8 @@ import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
+import type { KeybindingCommand } from "@t3tools/contracts";
 
 export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
@@ -23,8 +25,7 @@ export interface SidebarThreadHeaderProps {
   onNewProject: () => void;
   onNewThread: (event: ReactMouseEvent) => void;
   newThreadDisabled: boolean;
-  newThreadShortcutLabel: string | null | undefined;
-  newThreadInProjectShortcutLabel: string | null | undefined;
+  newThreadCommand: KeybindingCommand;
   showNewThreadInProjectHint: boolean;
   searchInputRef: RefObject<HTMLInputElement | null>;
   searchQuery: string;
@@ -44,8 +45,7 @@ export function SidebarThreadHeader({
   onNewProject,
   onNewThread,
   newThreadDisabled,
-  newThreadShortcutLabel,
-  newThreadInProjectShortcutLabel,
+  newThreadCommand,
   showNewThreadInProjectHint,
   searchInputRef,
   searchQuery,
@@ -61,9 +61,12 @@ export function SidebarThreadHeader({
   // list; pointing aria-activedescendant at a removed option strands the
   // screen reader on nothing.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
-  const newThreadLabel = newThreadShortcutLabel
-    ? `New thread (${newThreadShortcutLabel})`
-    : "New thread";
+  const newThreadLabel = (
+    <>
+      New thread
+      <ShortcutHint command={newThreadCommand} />
+    </>
+  );
 
   return (
     <div className="flex items-center gap-1">
@@ -126,7 +129,7 @@ export function SidebarThreadHeader({
                 <span>{newThreadLabel}</span>
                 <span className="text-muted-foreground">
                   New thread in current project: Shift+click
-                  {newThreadInProjectShortcutLabel ? ` (${newThreadInProjectShortcutLabel})` : ""}
+                  <ShortcutHint command="chat.newLocal" />
                 </span>
               </span>
             ) : (

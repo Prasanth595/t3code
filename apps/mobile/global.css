@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "uniwind";
 @import "./generated-uniwind-themes.css";
+@import "./fork-theme.css";
 
 /* ─── Theme tokens ──────────────────────────────────────────────────── */
 @layer theme {
