@@ -64,54 +64,44 @@ describe("timeline minimap previews", () => {
     expect(resolveTimelineMinimapPreview(null)).toBeNull();
   });
 
-  it("previews assistant markdown as plain text", () => {
+  it("renders assistant markdown only when resolving a preview and keeps user text literal", () => {
+    const userText = "Explain **operators** and [x] in [the docs](https://example.com/docs)";
+    const assistantText = [
+      "## Operators",
+      "Use **either** option from [the docs](https://example.com/docs).",
+      "",
+      "| Operator | Meaning |",
+      "| --- | :---: |",
+      "| `a \\| b` | either |",
+      "",
+      "- [x] Match `**/*.ts` files",
+      "",
+      "[x] deployment complete",
+      "",
+      "> Note: ~~old~~ new  ",
+      "> Next line",
+      "",
+      "```sh",
+      "# install deps",
+      "- **not bold**",
+      "const snake_case = a * b;",
+      "```",
+    ].join("\n");
     const [item] = deriveTimelineMinimapItems(
       rows([
-        ["user", "what **model** are we using?"],
-        [
-          "assistant",
-          [
-            "## Models",
-            "We use **two** models, see [the docs](https://example.com/docs):",
-            "",
-            "| Used for | Model |",
-            "| --- | :---: |",
-            "| Titles | `@cf/meta/llama` |",
-            "",
-            "- [x] Set in `config/ai.ts`",
-            "> Note: ~~old~~ new",
-            "```ts",
-            "const snake_case = a * b;",
-            "```",
-          ].join("\n"),
-        ],
+        ["user", userText],
+        ["assistant", assistantText],
       ]),
     );
-    expect(resolveTimelineMinimapPreview(item!)).toMatchObject({
-      userText: "what **model** are we using?",
+
+    expect(item).toMatchObject({ userText, assistantText });
+    expect(resolveTimelineMinimapPreview(item!)).toEqual({
+      ...item,
+      userText,
       assistantText:
-        "Models We use two models, see the docs: Used for Model Titles @cf/meta/llama Set in config/ai.ts Note: old new const snake_case = a * b;",
+        "Operators Use either option from the docs. Operator Meaning a | b either Match **/*.ts files [x] deployment complete Note: old new Next line # install deps - **not bold** const snake_case = a * b;",
     });
-  });
-
-  it("keeps code, escaped table pipes, and literal checkboxes as written", () => {
-    const preview = (markdown: string) =>
-      resolveTimelineMinimapPreview(
-        deriveTimelineMinimapItems(
-          rows([
-            ["user", "Q"],
-            ["assistant", markdown],
-          ]),
-        )[0]!,
-      )?.assistantText;
-
-    expect(preview("Match `**/*.ts` files\n\n```sh\n# install deps\n- **not bold**\n```")).toBe(
-      "Match **/*.ts files # install deps - **not bold**",
-    );
-    expect(preview("| Operator | Meaning |\n| --- | --- |\n| `a \\| b` | either |")).toBe(
-      "Operator Meaning a | b either",
-    );
-    expect(preview("[x] deployment complete")).toBe("[x] deployment complete");
+    expect(item).toMatchObject({ userText, assistantText });
   });
 
   it("shows fresh streaming text without changing the jump target", () => {

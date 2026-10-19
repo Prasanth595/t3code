@@ -67,16 +67,12 @@ const INLINE_PARENT_TYPES = new Set<Nodes["type"]>([
 
 function markdownNodeText(node: Nodes): string {
   if (node.type === "html") return "";
+  if (node.type === "break") return " ";
   if ("value" in node) return node.value;
   if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
   if (!("children" in node)) return "";
   const separator = INLINE_PARENT_TYPES.has(node.type) ? "" : " ";
-  return node.children.map((child: Nodes) => markdownNodeText(child)).join(separator);
-}
-
-/** Reads assistant markdown as rendered text so previews never show table pipes or link syntax. */
-function markdownPreviewText(markdown: string) {
-  return markdownNodeText(markdownPreviewParser.parse(markdown));
+  return node.children.map(markdownNodeText).join(separator);
 }
 
 function compactMinimapPreview(text: string | null | undefined) {
@@ -93,7 +89,9 @@ export function resolveTimelineMinimapPreview(
         ...item,
         userText: compactMinimapPreview(item.userText),
         assistantText: compactMinimapPreview(
-          item.assistantText === null ? null : markdownPreviewText(item.assistantText),
+          item.assistantText === null
+            ? null
+            : markdownNodeText(markdownPreviewParser.parse(item.assistantText)),
         ),
       };
 }

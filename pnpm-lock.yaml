@@ -953,7 +953,7 @@ importers:
         specifier: 'catalog:'
         version: 4.0.1
       remark-parse:
-        specifier: ^11.0.0
+        specifier: 'catalog:'
         version: 11.0.0
       tailwind-merge:
         specifier: ^3.4.0
@@ -962,7 +962,7 @@ importers:
         specifier: ^5.0.0
         version: 5.0.0
       unified:
-        specifier: ^11.0.5
+        specifier: 'catalog:'
         version: 11.0.5
       use-sync-external-store:
         specifier: ^1.6.0
