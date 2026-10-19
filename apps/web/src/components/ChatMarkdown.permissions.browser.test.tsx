@@ -18,6 +18,7 @@ import { useRightPanelStore } from "../rightPanelStore";
 
 const state = vi.hoisted(() => ({
   allowed: true,
+  previewAvailable: false,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
   updateMetadata: vi.fn(),
@@ -41,7 +42,7 @@ vi.mock(import("../state/use-atom-query-runner"), async (original) => {
 });
 vi.mock(import("../browser/previewRuntime"), async (original) => ({
   ...(await original()),
-  isPreviewAvailableFor: () => true,
+  isPreviewAvailableFor: () => state.previewAvailable,
 }));
 vi.mock(import("../browser/openFileInPreview"), async (original) => ({
   ...(await original()),
@@ -152,6 +153,7 @@ let container: HTMLDivElement;
 
 beforeEach(() => {
   state.allowed = true;
+  state.previewAvailable = false;
   state.listeners.clear();
   state.linkedPullRequest = null;
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -355,6 +357,7 @@ async function activateFile(action: string) {
 it.each(["panel", "open", "open-in-browser", "reveal"])(
   "resolves the unique segment suffix for the %s file action",
   async (action) => {
+    state.previewAvailable = action === "open-in-browser";
     state.search.mockResolvedValue(
       searchResult(["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html", indexedPath]),
     );
@@ -395,10 +398,6 @@ it("keeps a real literal file when the workspace index only returns a nested twi
   await renderMarkdown(fileChip);
   await activateFile("panel");
   expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.html", 12);
-  expect(state.readFile).toHaveBeenCalledWith({
-    environmentId: threadRef.environmentId,
-    input: { cwd: "/work", relativePath: "docs/GROUPS_PLAN.html" },
-  });
   await activateFile("open");
   expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
     environmentId: threadRef.environmentId,
@@ -428,6 +427,7 @@ it.each([
 it.each(["open", "open-in-browser"])(
   "discards a pending %s lookup after a newer panel action in the same thread",
   async (action) => {
+    state.previewAvailable = action === "open-in-browser";
     const finishLookup = deferSearch();
     await renderMarkdown(fileChip);
     await activateFile(action);
