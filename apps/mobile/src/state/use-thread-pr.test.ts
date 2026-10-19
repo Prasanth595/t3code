@@ -1,9 +1,11 @@
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import { ProjectId, type ThreadPullRequestLink, type VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   presentThreadLinkedPullRequests,
   presentThreadPr,
+  resolveThreadPrBadgeAction,
   resolveThreadPrSource,
 } from "./thread-pr-presentation";
 
@@ -28,7 +30,7 @@ describe("presentThreadPr", () => {
   it("uses merge-request terminology for GitLab", () => {
     expect(
       presentThreadPr(pullRequest, {
-        kind: "gitlab",
+        kind: SourceControlProviderKind.make("gitlab"),
         name: "GitLab",
         baseUrl: "https://gitlab.com",
       }),
@@ -87,9 +89,43 @@ describe("presentThreadLinkedPullRequests", () => {
   it("counts unrelated links without labelling them a stack", () => {
     expect(presentThreadLinkedPullRequests([linkedPr(1), linkedPr(2)])).toMatchObject({
       kind: "pull-request",
-      label: "1 +1",
+      label: "+2",
+      others: 1,
+      state: "open",
+      isDraft: false,
+      textClassName: "text-adaptive-emerald-600-400",
     });
   });
+
+  it.each([
+    ["closed", false, "closed", false, "closed", false, "text-adaptive-rose-600-400"],
+    ["open", true, "open", true, "open", true, "text-foreground-muted"],
+    ["open", true, "open", false, "open", false, "text-adaptive-emerald-600-400"],
+    ["closed", false, "open", false, "open", false, "text-adaptive-emerald-600-400"],
+    ["merged", false, "merged", false, "merged", false, "text-adaptive-violet-600-400"],
+    ["closed", false, "merged", false, "closed", false, "text-adaptive-rose-600-400"],
+  ] as const)(
+    "colors linked %s (draft %s) and %s (draft %s) by their aggregate state",
+    (firstState, firstDraft, secondState, secondDraft, state, isDraft, textClassName) => {
+      const first = linkedPr(1);
+      const second = linkedPr(2);
+      expect(
+        presentThreadLinkedPullRequests([
+          { ...first, snapshot: { ...first.snapshot!, state: firstState, isDraft: firstDraft } },
+          {
+            ...second,
+            snapshot: { ...second.snapshot!, state: secondState, isDraft: secondDraft },
+          },
+        ]),
+      ).toMatchObject({
+        label: "+2",
+        state,
+        isDraft,
+        textClassName,
+        accessibilityLabel: `2 linked pull requests, overall ${isDraft ? "draft" : state}`,
+      });
+    },
+  );
 
   it("uses the top of a derived stack even when its bottom was linked later", () => {
     const bottom = linkedPr(1, { linkedAt: "2026-09-09T00:00:00.000Z" });
@@ -118,6 +154,36 @@ describe("presentThreadLinkedPullRequests", () => {
         { ...link, snapshot: { ...link.snapshot!, state: "merged" } },
       ]),
     ).toMatchObject({ state: "merged", textClassName: "text-adaptive-violet-600-400" });
+  });
+});
+
+describe("resolveThreadPrBadgeAction", () => {
+  it("opens a single linked or branch pull request directly", () => {
+    expect(resolveThreadPrBadgeAction(presentThreadLinkedPullRequests([linkedPr(1)])!)).toEqual({
+      kind: "open",
+      accessibilityLabel: "Open #1 pull request open",
+    });
+    expect(resolveThreadPrBadgeAction(presentThreadPr(pullRequest, null))).toMatchObject({
+      kind: "open",
+    });
+  });
+
+  it("lists unrelated linked pull requests", () => {
+    expect(
+      resolveThreadPrBadgeAction(presentThreadLinkedPullRequests([linkedPr(1), linkedPr(2)])!),
+    ).toEqual({
+      kind: "list",
+      accessibilityLabel: "Show 2 linked pull requests, overall open",
+    });
+  });
+
+  it("lists a stack even though the badge shows its top pull request", () => {
+    const top = linkedPr(2);
+    const stack = presentThreadLinkedPullRequests([
+      linkedPr(1),
+      { ...top, snapshot: { ...top.snapshot!, baseBranch: "change-1" } },
+    ])!;
+    expect(resolveThreadPrBadgeAction(stack)).toMatchObject({ kind: "list" });
   });
 });
 
