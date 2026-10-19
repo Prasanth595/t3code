@@ -1686,11 +1686,11 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.live.each([
-    { name: "parent instance", parentEnabled: true },
-    { name: "alternate instance", parentEnabled: false },
+    { name: "parent instance", parentEnabled: true, model: "gpt-5.4" },
+    { name: "alternate instance", parentEnabled: false, model: "gpt-5.5" },
   ])(
     "replays accepted creation on the $name without authorizing new disabled work",
-    ({ parentEnabled }) =>
+    ({ parentEnabled, model }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const altInstanceId = ProviderInstanceId.make("codex-alt");
@@ -1780,7 +1780,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               dispatchMode: { type: "start_immediately" },
             });
             const request = {
-              threads: [{ target: { driverKind: driver } }],
+              threads: [{ target: { driverKind: driver, model } }],
               clientRequestId: "create-retry",
             };
             const first = yield* service.createThreads(scope, request);
@@ -1837,7 +1837,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 clientRequestId: "empty",
               })
               .pipe(Effect.flip);
-            assert.equal(promptError.code, "orchestration_error");
+            assert.equal(promptError.code, "invalid_request");
             assert.include(promptError.message, "disabled");
             const untouched = yield* orchestrator.getThreadProjection(empty.threads[0]!.threadId);
             assert.equal(untouched.messages.length, 0);
