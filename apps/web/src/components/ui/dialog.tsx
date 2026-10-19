@@ -12,8 +12,15 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { ControlledOpenContext, renderRetainedPopup } from "~/components/ui/retained-popup";
 
-const Dialog = DialogPrimitive.Root;
+function Dialog<Payload>(props: DialogPrimitive.Root.Props<Payload>) {
+  return (
+    <ControlledOpenContext value={props.open}>
+      <DialogPrimitive.Root {...props} />
+    </ControlledOpenContext>
+  );
+}
 
 const DialogPortal = DialogPrimitive.Portal;
 
@@ -88,6 +95,7 @@ function DialogPopup({
             className,
           )}
           data-slot="dialog-popup"
+          render={renderRetainedPopup}
           {...props}
         >
           {children}
