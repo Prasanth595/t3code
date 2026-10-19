@@ -130,9 +130,13 @@ export function upsertRoute(
   route: ConnectionRoute,
 ): ReadonlyArray<ConnectionRoute> {
   const id = connectionRouteId(route.target);
-  return routes.some((existing) => connectionRouteId(existing.target) === id)
-    ? routes.map((existing) => (connectionRouteId(existing.target) === id ? route : existing))
-    : insertRoute(routes, route);
+  const sameAddress = findRouteToSameAddress(routes, route);
+  const remaining = routes.filter(
+    (existing) => existing !== sameAddress || connectionRouteId(existing.target) === id,
+  );
+  return remaining.some((existing) => connectionRouteId(existing.target) === id)
+    ? remaining.map((existing) => (connectionRouteId(existing.target) === id ? route : existing))
+    : insertRoute(remaining, route);
 }
 
 export function findRouteToSameAddress(
@@ -396,10 +400,8 @@ export function isLearned(route: ConnectionRoute): boolean {
 }
 
 /**
- * A learned route borrows the credential of the route it was learned over, so
- * it cannot outlive that route: removing T3 Connect also removes routes learned
- * through it, and removing a paired address removes routes that borrow its
- * token.
+ * Connect-authorized routes depend on the relay; learned paired routes depend
+ * on the route whose credential they borrow.
  */
 export function routesAfterRemoving(
   routes: ReadonlyArray<ConnectionRoute>,
@@ -409,11 +411,11 @@ export function routesAfterRemoving(
   if (removed === undefined) return routes;
   return routes.filter((route) => {
     if (route === removed) return false;
-    if (!isLearned(route)) return true;
     const profile = Option.getOrNull(route.profile);
     if (profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect") {
       return removed.target._tag !== "RelayConnectionTarget";
     }
+    if (!isLearned(route)) return true;
     return credentialConnectionId(connectionRouteId(route.target)) !== removedId;
   });
 }

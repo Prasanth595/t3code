@@ -50,6 +50,8 @@ import {
   credentialConnectionId,
   entryWithRoutes,
   findRouteToSameAddress,
+  hasRelayRoute,
+  isLearned,
   mergeLearnedRoutes,
   routesAfterRemoving,
   upsertRoute,
@@ -112,6 +114,19 @@ export class EnvironmentRegistry extends Context.Service<
     ) => Effect.Effect<void>;
     readonly remove: (
       environmentId: EnvironmentId,
+    ) => Effect.Effect<
+      void,
+      | Persistence.ConnectionPersistenceError
+      | ConnectionAttemptError
+      | EnvironmentNotRegisteredError
+      | PlatformEnvironmentRemovalError
+    >;
+    /**
+     * Adds a credential-free route. Existing paired addresses keep their credentials.
+     */
+    readonly addRoute: (
+      environmentId: EnvironmentId,
+      route: ConnectionRoute,
     ) => Effect.Effect<
       void,
       | Persistence.ConnectionPersistenceError
@@ -556,14 +571,7 @@ export const make = Effect.gen(function* () {
         let entry = registered;
         if (previous !== undefined) {
           const route: ConnectionRoute = { target: registered.target, profile: registered.profile };
-          const existing = connectionRoutes(previous);
-          const sameAddress = findRouteToSameAddress(existing, route);
-          const routes = existing.filter(
-            (existing) =>
-              existing !== sameAddress ||
-              connectionRouteId(existing.target) === connectionRouteId(route.target),
-          );
-          const next = withRoutes(previous, upsertRoute(routes, route));
+          const next = withRoutes(previous, upsertRoute(connectionRoutes(previous), route));
           if (next.addressesChanged) {
             yield* forgetRoutingTrust(environmentId, "register-connection");
           }
@@ -936,6 +944,46 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const addRoute = Effect.fn("EnvironmentRegistry.addRoute")(function* (
+    environmentId: EnvironmentId,
+    route: ConnectionRoute,
+  ) {
+    yield* withLeaseLock(
+      environmentId,
+      Effect.gen(function* () {
+        const entry = yield* userEntry(environmentId);
+        const routes = connectionRoutes(entry);
+        const profile = Option.getOrNull(route.profile);
+        // The relay may have been removed while onboarding fetched the descriptor.
+        if (
+          profile?._tag === "BearerConnectionProfile" &&
+          profile.authorization === "t3-connect" &&
+          !hasRelayRoute(entry)
+        ) {
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            detail:
+              "This machine no longer has a T3 Connect route. Add it again with a pairing code.",
+          });
+        }
+        const existing = findRouteToSameAddress(routes, route);
+        if (existing !== undefined && !isLearned(existing)) return;
+        const conflicting = routes.find(
+          (candidate) => connectionRouteId(candidate.target) === connectionRouteId(route.target),
+        );
+        if (conflicting !== undefined && !isLearned(conflicting)) {
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            detail:
+              "A saved route was moved from this address. Edit that route or use a pairing code.",
+          });
+        }
+        if (profile !== null) yield* profiles.put(profile);
+        yield* replaceRoutesLocked(entry, upsertRoute(routes, route));
+      }),
+    );
+  });
+
   const removeRoute = Effect.fn("EnvironmentRegistry.removeRoute")(function* (
     environmentId: EnvironmentId,
     routeId: string,
@@ -1152,6 +1200,7 @@ export const make = Effect.gen(function* () {
     registerPlatform,
     reconcilePlatform,
     remove,
+    addRoute,
     removeRoute,
     reorderRoutes,
     removeRelayEnvironments,
