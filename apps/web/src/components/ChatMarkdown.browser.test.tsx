@@ -1,11 +1,13 @@
 import { EnvironmentId } from "@t3tools/contracts";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
-import { act, type ReactElement } from "react";
+import { act, useEffect, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { useTheme } from "../hooks/useTheme";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { applyThemeColorPreview, getStandardThemeColors } from "../themePalette";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
@@ -88,6 +90,61 @@ function fileOptions(container: HTMLElement) {
     .map((button) => button.getAttribute("aria-label"))
     .filter((label) => label?.startsWith("File options for "));
 }
+
+describe("ChatMarkdown theme drafts", () => {
+  afterEach(() => {
+    act(() => {
+      localStorage.clear();
+      window.dispatchEvent(new StorageEvent("storage", { key: null }));
+    });
+  });
+
+  it.each(["dark", "light"] as const)(
+    "previews opposite syntax colors and restores saved %s colors on cancel",
+    async (savedAppearance) => {
+      let selection: ReturnType<typeof useTheme>;
+      function Preview() {
+        const theme = useTheme();
+        useEffect(() => {
+          selection = theme;
+        }, [theme]);
+        return <ChatMarkdown cwd={undefined} text={"```typescript\nconst answer = 42;\n```"} />;
+      }
+      await getSyntaxHighlighterPromise("typescript");
+      const { container } = await render(<Preview />);
+      await act(async () => {
+        selection.setTheme(savedAppearance);
+        selection.setAppearanceMode(savedAppearance);
+      });
+      const keywordColor = () =>
+        container.querySelector<HTMLElement>(".chat-markdown-shiki .line span")?.style.color;
+      await vi.waitFor(() => expect(keywordColor()).toBeTruthy());
+      const savedColor = keywordColor();
+      const savedStorage = { ...localStorage };
+      const draftAppearance = savedAppearance === "dark" ? "light" : "dark";
+
+      await act(async () =>
+        applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance),
+      );
+      await vi.waitFor(() => {
+        expect(keywordColor()).toBeTruthy();
+        expect(keywordColor()).not.toBe(savedColor);
+      });
+      expect(document.documentElement.classList.contains("dark")).toBe(draftAppearance === "dark");
+      expect(selection!).toMatchObject({
+        theme: savedAppearance,
+        resolvedTheme: savedAppearance,
+        appearanceMode: savedAppearance,
+      });
+      expect({ ...localStorage }).toEqual(savedStorage);
+
+      await act(async () => selection.refreshTheme());
+      await vi.waitFor(() => expect(keywordColor()).toBe(savedColor));
+      expect(document.documentElement.classList.contains("dark")).toBe(savedAppearance === "dark");
+      expect({ ...localStorage }).toEqual(savedStorage);
+    },
+  );
+});
 
 describe("ChatMarkdown bare anchor placeholders", () => {
   it.each(["<A>", "<a>", "<a >", "<a/>", "<A/>", "<a />"])(
