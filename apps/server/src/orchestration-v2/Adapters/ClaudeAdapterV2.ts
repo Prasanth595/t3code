@@ -2811,19 +2811,8 @@ const isClaudeBlockedAssistantRateLimit = Schema.is(
   }),
 );
 
-function claudeUsageLimitResetAt(info: {
-  readonly rateLimitType?: unknown;
-  readonly resetsAt?: unknown;
-}): string | null {
-  // An unidentified or malformed rejected window must hold recovery even when
-  // another window has a usable reset.
-  if (
-    typeof info.rateLimitType !== "string" ||
-    !Object.hasOwn(CLAUDE_USAGE_LIMIT_WINDOWS, info.rateLimitType)
-  ) {
-    return null;
-  }
-  const resetMs = typeof info.resetsAt === "number" ? info.resetsAt * 1000 : NaN;
+function claudeUsageLimitResetAt(resetsAt: unknown): string | null {
+  const resetMs = typeof resetsAt === "number" ? resetsAt * 1000 : NaN;
   return Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
     ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
     : null;
@@ -6915,7 +6904,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
             if (blocked) {
               context.rejectedRateLimitTypes.add(limitType);
-              context.rateLimitResetTimes.set(limitType, claudeUsageLimitResetAt(rateLimitInfo));
+              context.rateLimitResetTimes.set(
+                limitType,
+                claudeUsageLimitResetAt(rateLimitInfo.resetsAt),
+              );
             } else if (
               rateLimitInfo.status === "allowed" ||
               rateLimitInfo.status === "allowed_warning" ||
@@ -7148,7 +7140,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 if (!overageAllowed) {
                   context.latestAssistantRateLimit = {
                     type: typeof info.rateLimitType === "string" ? info.rateLimitType : "unknown",
-                    resetAt: claudeUsageLimitResetAt(info),
+                    resetAt: claudeUsageLimitResetAt(info.resetsAt),
                   };
                 }
               }
