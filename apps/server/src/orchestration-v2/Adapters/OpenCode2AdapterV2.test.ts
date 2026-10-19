@@ -1083,6 +1083,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         yield* runtime.interruptTurn({
           providerThread: thread,
           providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
         });
         assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
         assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
@@ -1153,7 +1154,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect("keeps background shells pending across worktree moves and stream reconnects", () =>
     Effect.gen(function* () {
       const movedDirectory = "/work/opencode2-feature";
-      const gate = makeProviderReplayGate(["drop", "queued-drop", "delivered-drop"]);
+      const gate = makeProviderReplayGate(["drop", "queued-drop", "deleted-drop"]);
       const disconnected = yield* Deferred.make<void>();
       const logger = Logger.make(({ message }) => {
         if (JSON.stringify(message).includes("Lost the OpenCode event stream; reconnecting.")) {
@@ -1176,8 +1177,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           replyData("session.active", {}),
           // Moving the session does not move the shells out of their launch directory.
           ...shellStatus("sh_1", "running"),
-          // This shell completed and its result was delivered during the gap.
-          ...shellStatus("sh_2", "exited"),
+          // A missing location for one job must not release the healthy job.
+          out("shell.get", { id: "sh_2", "location[directory]": WORK }),
+          reply("shell.get", {
+            status: 404,
+            body: {
+              _tag: "LocationNotFoundError",
+              location: { directory: WORK },
+              message: `Location not found: ${WORK}`,
+            },
+          }),
           out("session.inbox.list", { sessionID: SESSION }),
           replyData("session.inbox.list", []),
           readMarker("reconnected"),
@@ -1199,14 +1208,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             },
           ]),
           readMarker("recovered-result"),
-          event("session.usage.updated", { sessionID: SESSION }, "delivered-drop"),
+          event("session.usage.updated", { sessionID: SESSION }, "deleted-drop"),
           { type: "runtime_exit", status: "success" },
           out("event.subscribe"),
           out("session.active"),
           replyData("session.active", {}),
           out("session.inbox.list", { sessionID: SESSION }),
-          replyData("session.inbox.list", []),
-          readMarker("delivered-result"),
+          // Deleting an idle session must clear its queued result without failing recovery.
+          reply("session.inbox.list", {
+            status: 404,
+            body: {
+              _tag: "SessionNotFoundError",
+              sessionID: SESSION,
+              message: `Session not found: ${SESSION}`,
+            },
+          }),
+          readMarker("deleted-session"),
         ],
         { replayGate: gate },
       ).pipe(Effect.provide(Logger.layer([logger])));
@@ -1241,8 +1258,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.seen.models.has("opencode/recovered-result"));
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
-      gate.release("delivered-drop");
-      yield* watch.until(() => watch.seen.models.has("opencode/delivered-result"));
+      gate.release("deleted-drop");
+      yield* watch.until(() => watch.seen.models.has("opencode/deleted-session"));
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
