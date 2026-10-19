@@ -84,8 +84,7 @@ const localEnvironmentBootstraps = createPreloadSnapshot(
   async () =>
     readBootstraps(await ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL)),
 );
-// This setting changes only through a relaunch; repeated renderer reads do
-// not need to block on the main process.
+// Changes take effect on relaunch, so renderer reads can reuse the startup value.
 let localEnvironmentEnabled: boolean | undefined;
 
 contextBridge.exposeInMainWorld("desktopBridge", {

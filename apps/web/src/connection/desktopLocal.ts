@@ -121,7 +121,6 @@ const desktopSecondaryBootstrapsReader = createDesktopSecondaryBootstrapsReader(
   () => window.desktopBridge,
 );
 
-/** Read the topology while preserving failures for platform cache policy. */
 export function readDesktopSecondaryBootstrapsResult(): Promise<DesktopSecondaryBootstrapsRead> {
   return desktopSecondaryBootstrapsReader.refresh();
 }
