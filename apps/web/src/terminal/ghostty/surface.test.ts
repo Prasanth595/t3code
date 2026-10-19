@@ -95,16 +95,34 @@ describe("GhosttyTerminalSurface visibility", () => {
       width = 300;
       height = 150;
       value = "";
+      textContent = "";
+      children: TerminalTestElement[] = [];
+      private readonly attributes = new Map<string, string>();
       private readonly captures = new Set<number>();
 
-      setAttribute() {}
+      setAttribute(name: string, value: string) {
+        this.attributes.set(name, value);
+      }
+      getAttribute(name: string) {
+        return this.attributes.get(name) ?? null;
+      }
       append(...children: TerminalTestElement[]) {
-        for (const child of children) child.parentElement = this;
+        for (const child of children) {
+          child.remove();
+          child.parentElement = this;
+          this.children.push(child);
+        }
       }
       replaceChildren(...children: TerminalTestElement[]) {
+        for (const child of this.children) child.parentElement = null;
+        this.children = [];
         this.append(...children);
       }
       remove() {
+        if (this.parentElement) {
+          const siblings = this.parentElement.children;
+          siblings.splice(siblings.indexOf(this), 1);
+        }
         this.parentElement = null;
       }
       getContext() {
@@ -192,6 +210,22 @@ describe("GhosttyTerminalSurface visibility", () => {
       requestFrame,
       snapshot,
       onData,
+      get outputRegion() {
+        const region = mount.children.find(
+          (element) =>
+            element.getAttribute("role") === "region" &&
+            element.getAttribute("aria-label") === "Terminal output",
+        );
+        if (!region) throw new Error("Terminal output region is missing");
+        return region;
+      },
+      get liveRegion() {
+        const region = mount.children.find(
+          (element) => element.getAttribute("aria-live") === "polite",
+        );
+        if (!region) throw new Error("Terminal live region is missing");
+        return region;
+      },
       get renderedSnapshot() {
         const result = snapshot.mock.results.at(-1);
         if (result?.type !== "return") throw new Error("No terminal snapshot was rendered");
@@ -269,6 +303,183 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("exposes readable terminal rows and updates them after overwrite, replay, and scroll", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("hello\x1b[8msecret\x1b[28m!\r\nworld");
+    harness.flushFrame();
+    const rows = () => harness.outputRegion.children.map((row) => row.textContent);
+    expect(rows().slice(0, 2)).toEqual(["hello      !", "world"]);
+
+    surface.write("\r\x1b[2Kchanged");
+    harness.flushFrame();
+    expect(rows().slice(0, 2)).toEqual(["hello      !", "changed"]);
+
+    surface.resetAndWrite(Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\r\n"));
+    harness.flushFrame();
+    expect(rows()).toHaveLength(surface.rows);
+    expect(rows().at(-1)).toBe("line 19");
+    key(surface, "PageUp", "PageUp", { shiftKey: true });
+    harness.flushFrame();
+    expect(rows()[0]).toBe("line 8");
+    expect(rows().join("\n")).not.toContain("secret");
+  });
+
+  it("batches spoken output without typed echo, escapes, or intermediate progress", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.focus();
+    key(surface, "a", "KeyA");
+    surface.write("\r$ a");
+    vi.advanceTimersByTime(100);
+    expect(harness.onData).toHaveBeenCalledWith("a");
+    expect(harness.liveRegion.textContent).toBe("$ ");
+
+    surface.input.value = "@";
+    surface.input.dispatchEvent(Object.assign(new Event("input"), { inputType: "insertText" }));
+    surface.write("@from text input\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("from text input\n");
+
+    surface.input.dispatchEvent(new Event("compositionstart"));
+    surface.input.value = "候補";
+    surface.input.dispatchEvent(Object.assign(new Event("compositionend"), { data: "候補" }));
+    surface.input.dispatchEvent(
+      Object.assign(new Event("input"), { inputType: "insertFromComposition", data: "候補" }),
+    );
+    expect(harness.onData.mock.calls.map(([data]) => data)).toEqual(["a", "@", "候補"]);
+    surface.write("候補from IME\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("from IME\n");
+
+    key(surface, "Enter", "Enter");
+    surface.write("\r\n\x1b]0;private title\x07\x1b[3");
+    surface.write("2m10%\r50%");
+    surface.write("\r100%\x1b[0m\r\n");
+    vi.advanceTimersByTime(99);
+    expect(harness.liveRegion.textContent).toBe("");
+    vi.advanceTimersByTime(1);
+    expect(harness.liveRegion.textContent).toBe("\n100%\n");
+
+    surface.write("\r\n100%\r\n");
+    expect(harness.liveRegion.textContent).toBe("");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("\n100%\n");
+  });
+
+  it("keeps conceal and escape state across unfocused output and replay", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.write("background\x1b[");
+    surface.focus();
+    surface.write("8msecret");
+    surface.write(" hidden\x1b[28mshown\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("shown\n");
+
+    surface.resetAndWrite("history\x1b[1;");
+    surface.write("8mhidden\x1b[0mreplayed\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("replayed\n");
+
+    surface.resetAndWrite("\x1b[8m\x1b7\x1b[0m");
+    surface.write("public\x1b8hidden\x1b[0mshown\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("publicshown\n");
+
+    surface.input.dispatchEvent(new Event("blur"));
+    surface.write("\x1b]0;private");
+    for (let index = 0; index < 16; index += 1) surface.write("x".repeat(65_536));
+    surface.write(" title\x1b");
+    surface.focus();
+    surface.write("\\visible\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("visible\n");
+
+    surface.input.dispatchEvent(new Event("blur"));
+    surface.write("\x1b]0;title\x1b");
+    surface.focus();
+    surface.write("xVISIBLE\x1b\\\r\n");
+    vi.advanceTimersByTime(100);
+    harness.flushFrame();
+    expect(harness.outputRegion.children.map((row) => row.textContent).join("\n")).toContain(
+      "VISIBLE",
+    );
+    expect(harness.liveRegion.textContent).toBe("VISIBLE\n");
+
+    surface.write("\x1bPqprivate\x07still private\x1b\\shown\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("shown\n");
+  });
+
+  it("bounds spoken line bursts until another keystroke", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({ beforeKey: () => true });
+    surface.focus();
+    surface.write("line\r\n".repeat(30));
+    vi.advanceTimersByTime(100);
+    const announcement = harness.liveRegion.textContent;
+    expect(announcement.match(/line\n/g)).toHaveLength(20);
+    expect(announcement).toContain("Too much output");
+    expect(announcement.length).toBeLessThan(200);
+    surface.write("more\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe(announcement);
+
+    key(surface, "Enter", "Enter");
+    surface.write("next\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("next\n");
+
+    surface.write("x".repeat(10_000));
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toContain("Too much output");
+    expect(harness.liveRegion.textContent.length).toBeLessThan(4_200);
+    surface.input.value = "@";
+    surface.input.dispatchEvent(Object.assign(new Event("input"), { inputType: "insertText" }));
+    surface.write("@resumed\r\n");
+    vi.advanceTimersByTime(100);
+    expect(harness.liveRegion.textContent).toBe("resumed\n");
+  });
+
+  it("announces only while focused and visible and cancels pending output on disposal", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    const live = harness.liveRegion;
+    const output = harness.outputRegion;
+    surface.write("unfocused\r\n");
+    vi.advanceTimersByTime(100);
+    expect(live.textContent).toBe("");
+
+    surface.focus();
+    surface.write("canceled by blur\r\n");
+    surface.input.dispatchEvent(new Event("blur"));
+    vi.advanceTimersByTime(100);
+    expect(live.textContent).toBe("");
+
+    surface.focus();
+    surface.write("canceled by hide\r\n");
+    surface.setVisible(false);
+    surface.write("hidden\r\n");
+    vi.advanceTimersByTime(100);
+    expect(live.textContent).toBe("");
+    expect(vi.getTimerCount()).toBe(0);
+
+    surface.setVisible(true);
+    surface.write("visible again\r\n");
+    vi.advanceTimersByTime(100);
+    expect(live.textContent).toBe("visible again\n");
+
+    surface.write("canceled by disposal");
+    surface.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(harness.frames.size).toBe(0);
+    expect(harness.mount.children).not.toContain(live);
+    expect(harness.mount.children).not.toContain(output);
+    vi.advanceTimersByTime(100);
+    expect(live.textContent).toBe("");
   });
 
   it.each([
