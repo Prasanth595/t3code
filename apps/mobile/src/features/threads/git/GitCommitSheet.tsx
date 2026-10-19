@@ -1,3 +1,4 @@
+import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
@@ -131,23 +132,13 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
               </View>
               <View className="flex-row items-center gap-2">
                 {!allSelected && isEditingFiles ? (
-                  <Pressable
-                    className="rounded-full px-3 android:min-h-12 android:justify-center android:active:bg-subtle ios:bg-subtle ios:py-2"
-                    onPress={() => setExcludedFiles(new Set())}
-                  >
-                    <Text className="android:text-primary-text android:text-sm android:font-t3-medium ios:text-foreground ios:text-2xs ios:font-t3-bold ios:uppercase">
-                      Reset
-                    </Text>
-                  </Pressable>
+                  <Button label="Reset" tone="text" onPress={() => setExcludedFiles(new Set())} />
                 ) : null}
-                <Pressable
-                  className="rounded-full px-3 android:min-h-12 android:justify-center android:active:bg-subtle ios:bg-subtle ios:py-2"
+                <Button
+                  label={isEditingFiles ? "Done" : "Edit"}
+                  tone="text"
                   onPress={() => setIsEditingFiles((current) => !current)}
-                >
-                  <Text className="android:text-primary-text android:text-sm android:font-t3-medium ios:text-foreground ios:text-2xs ios:font-t3-bold ios:uppercase">
-                    {isEditingFiles ? "Done" : "Edit"}
-                  </Text>
-                </Pressable>
+                />
               </View>
             </View>
 
