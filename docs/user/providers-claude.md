@@ -57,6 +57,13 @@ history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
+## Steer a running turn
+
+A [steer](./composer.md#send-while-the-agent-is-working) interrupts Claude's running
+command so Claude can read your message promptly. Foreground subagents move to the
+background first so they can continue, and background commands and subagents keep
+running. Queue the message instead if the current command should finish first.
+
 ## Usage limits
 
 If your Claude subscription runs out of usage mid-turn, the thread shows which

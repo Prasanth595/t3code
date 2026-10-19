@@ -1262,6 +1262,9 @@ export function makeClaudeQueryOptions(input: {
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
+    // Keep background subagents alive across interrupts; T3 exposes stop_task
+    // for individual subagents and closes the query on Stop.
+    perTaskStopAffordance: true,
     ...(input.environment === undefined ? {} : { env: input.environment }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
     systemPrompt: {
@@ -9251,6 +9254,31 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
+            // A now-priority offer alone waits for running tools. Interrupt first
+            // so user steers take effect promptly; automatic deliveries can wait.
+            if (
+              turnInput.message.createdBy === "user" &&
+              turnInput.message.scheduledTaskId === undefined
+            ) {
+              yield* existing.query.interrupt.pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("orchestration-v2.claude-steer-interrupt-failed", {
+                    providerTurnId: turnInput.providerTurnId,
+                    cause,
+                  }),
+                ),
+              );
+            }
+            // Completion or Stop can release ownership while interrupt is pending.
+            if (
+              (yield* Ref.get(activeTurn))?.providerTurnId !== turnInput.providerTurnId ||
+              (yield* Ref.get(queryContext)) !== existing
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: `Claude provider turn ${turnInput.providerTurnId} ended before the steer was sent.`,
+              });
+            }
             yield* existing.query.offer(userMessage);
           },
           (effect, turnInput) =>
