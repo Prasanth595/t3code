@@ -135,10 +135,10 @@ describe("resolveTranscriptCommit", () => {
   });
 
   it("adds word spacing for other space-delimited languages", () => {
-    const atEnd = draft({ text: "Schön", selection: { start: 5, end: 5 } });
-    expect(resolveTranscriptCommit(atEnd, atEnd, "Grüße", "de-DE")).toMatchObject({
+    const atStart = draft({ text: "Änderungen", selection: { start: 0, end: 0 } });
+    expect(resolveTranscriptCommit(atStart, atStart, "Weitere", "de_DE")).toMatchObject({
       kind: "commit",
-      text: "Schön Grüße",
+      text: "Weitere Änderungen",
     });
 
     const combiningMark = draft({ text: "नमस्ते", selection: { start: 6, end: 6 } });
@@ -148,11 +148,18 @@ describe("resolveTranscriptCommit", () => {
     });
   });
 
-  it("does not add English boundary spaces to CJK or selected inline text", () => {
-    const cjk = draft({ text: "修正キャッシュ", selection: { start: 8, end: 8 } });
+  it("preserves spaceless languages and selected inline text", () => {
+    const text = "修正キャッシュ";
+    const cjk = draft({ text, selection: { start: text.length, end: text.length } });
     expect(resolveTranscriptCommit(cjk, cjk, "テストも", "ja-JP")).toMatchObject({
       kind: "commit",
       text: "修正キャッシュテストも",
+    });
+
+    const thai = draft({ text: "โลก", selection: { start: 0, end: 0 } });
+    expect(resolveTranscriptCommit(thai, thai, "สวัสดี", "th-TH")).toMatchObject({
+      kind: "commit",
+      text: "สวัสดีโลก",
     });
 
     const selected = draft({ text: "one $skill two", selection: { start: 4, end: 10 } });

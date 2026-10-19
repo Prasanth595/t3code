@@ -178,9 +178,9 @@ On supported iPhones with iOS 26 or later, use the composer's microphone to reco
 then confirm to transcribe. Text is inserted where your selection was when
 recording started, ready for you to review and edit before sending.
 
-Transcription uses the first language in your iPhone's preferred language list
-(Settings > General > Language & Region) that Apple's speech model supports,
-or English if none is supported.
+Transcription tries your iPhone's preferred languages in order
+(Settings > General > Language & Region), then the app's language. If Apple's speech
+model supports none of them, voice input reports that the language is unavailable.
 
 The first use may download Apple's speech model and needs a network connection.
 Later transcription works offline for that language. Recordings can be up to five

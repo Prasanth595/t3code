@@ -90,18 +90,17 @@ describe("getLocalVoiceTranscriber", () => {
       signal: new AbortController().signal,
     });
 
-    expect(mocks.getSetting).toHaveBeenCalledWith("AppleLanguages");
-    expect(mocks.prepare).toHaveBeenCalledWith("de-DE");
+    expect(mocks.prepare.mock.calls).toEqual([["de-DE"]]);
     expect(prepared.locale).toBe("de_DE");
   });
 
   it("falls back to the next language when one is unsupported", async () => {
     mocks.getSetting.mockReturnValue(["gsw-CH", "de-CH"]);
-    mocks.prepare.mockImplementation(async (locale) => {
-      if (locale === "gsw-CH")
-        throw Object.assign(new Error(), { code: "AppleTranscriptionUnsupportedLocale" });
-      return "de_CH";
-    });
+    mocks.prepare
+      .mockRejectedValueOnce(
+        Object.assign(new Error(), { code: "AppleTranscriptionUnsupportedLocale" }),
+      )
+      .mockResolvedValueOnce("de_CH");
 
     const prepared = await getLocalVoiceTranscriber()!.prepare({
       signal: new AbortController().signal,

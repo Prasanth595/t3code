@@ -70,7 +70,6 @@ type TranscriptCommitResult =
   | { readonly kind: "stale" }
   | { readonly kind: "empty" };
 
-/** Languages written without spaces between words. */
 const WORD_SPACELESS_LANGUAGES = new Set(["ja", "zh", "yue", "th", "lo", "km", "my"]);
 
 export function resolveTranscriptCommit(

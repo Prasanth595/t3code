@@ -10,11 +10,7 @@ import {
   type VoiceTranscriptionOptions,
 } from "@t3tools/client-runtime/voice-input";
 
-/**
- * The app only ships English, so its locale is e.g. "en-DE" on a German iPhone.
- * Speech follows the user's preferred languages instead (`AppleLanguages` holds
- * the same list as `Locale.preferredLanguages`), falling back to the app locale.
- */
+// The English-only app locale can differ from the user's preferred spoken languages.
 function getPreferredLocales(): string[] {
   const languages = Settings.get("AppleLanguages");
   const preferred = Array.isArray(languages)
