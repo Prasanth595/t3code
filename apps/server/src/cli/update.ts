@@ -116,8 +116,26 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
     const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
     if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
+    const utf8 = [...input.targetEntryPath].some((character) => character.codePointAt(0)! > 0x7f);
+    // A Ctrl-C that ends the batch skips restoration, so only switch for a non-ASCII target.
+    const contents = [
+      "@echo off",
+      "setlocal EnableExtensions DisableDelayedExpansion",
+      ...(utf8
+        ? [
+            'set "T3CP="',
+            'for /f "tokens=2 delims=:." %%c in (\'chcp\') do set "T3CP=%%c"',
+            "if defined T3CP chcp 65001 >nul",
+          ]
+        : []),
+      `"${input.targetEntryPath}" %*`,
+      'set "T3EC=%ERRORLEVEL%"',
+      ...(utf8 ? ["if defined T3CP chcp %T3CP% >nul"] : []),
+      "exit /b %T3EC%",
+      "",
+    ].join("\r\n");
     yield* fs
-      .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
+      .writeFileString(shimPath, contents)
       .pipe(
         Effect.mapError(
           () => new CliUpdateError({ reason: `Could not rewrite the t3 launcher at ${shimPath}.` }),
