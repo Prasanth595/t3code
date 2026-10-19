@@ -156,7 +156,7 @@ describe("thread workflows", () => {
   });
 
   it("hides automatic completion delivery from the visible queue", () => {
-    const state = deriveThreadQueueWorkflowState({
+    const projection = {
       thread: { id: "thread", activeProviderThreadId: null },
       runs: [
         {
@@ -205,35 +205,20 @@ describe("thread workflows", () => {
       providerTurns: [],
       providerThreads: [],
       providerSessions: [],
-    } as never);
+    } as unknown as OrchestrationV2ThreadProjection;
+    const state = deriveThreadQueueWorkflowState(projection);
 
     expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
       ["visible", "Visible queued message"],
     ]);
-  });
-
-  it("reports a held queue when only automatic wake-ups remain", () => {
-    const state = deriveThreadQueueWorkflowState({
-      thread: { id: "thread", activeProviderThreadId: null },
-      runs: [{ id: "wake", status: "queued", userMessageId: "wake", ordinal: 1, queueHeld: true }],
-      messages: [
-        {
-          id: "wake",
-          text: "Monitor updated",
-          notification: {
-            source: { kind: "monitor" },
-            outcome: "updated",
-            summary: "Monitor updated",
-          },
-        },
-      ],
-      providerTurns: [],
-      providerThreads: [],
-      providerSessions: [],
-    } as never);
-
-    expect(state.isHeld).toBe(true);
-    expect(state.queuedRuns).toEqual([]);
+    const held = deriveThreadQueueWorkflowState({
+      ...projection,
+      runs: projection.runs
+        .filter((run) => run.id !== "visible")
+        .map((run) => ({ ...run, queueHeld: true })),
+    });
+    expect(held.isHeld).toBe(true);
+    expect(held.queuedRuns).toEqual([]);
   });
 
   it("removes only the promoted head from the visible queue", () => {

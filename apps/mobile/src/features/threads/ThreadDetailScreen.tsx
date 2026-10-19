@@ -145,7 +145,7 @@ import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
-import { useThreadQueuedCount } from "./ThreadQueueControl";
+import { useThreadQueuedCount, useThreadQueueHeld } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
@@ -394,6 +394,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   });
   const composerError = useAtomValue(threadComposerErrorsAtom)[selectedThreadKey]?.message ?? null;
   const queuedCount = useThreadQueuedCount(props.selectedThreadDetailRef);
+  const queueHeld = useThreadQueueHeld(props.selectedThreadDetailRef);
   const turnSubagents = useThreadTurnSubagents(props.selectedThreadDetailRef);
   const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
@@ -517,6 +518,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const showFloatingStatus =
     showWorkingControl ||
     queuedCount > 0 ||
+    queueHeld ||
     agentsSegment !== null ||
     devicePreviews.length > 0 ||
     browserTabs.tabs.length > 0 ||
@@ -1140,6 +1142,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                     });
                   }}
                   queuedCount={queuedCount}
+                  queueHeld={queueHeld}
                   onOpenQueue={() => {
                     Keyboard.dismiss();
                     navigation.navigate("ThreadQueue", {

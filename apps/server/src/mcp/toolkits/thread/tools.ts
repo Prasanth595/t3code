@@ -89,9 +89,7 @@ const QueueListTool = Tool.make("t3_queue_list", {
   success: Schema.Struct({
     items: Schema.Array(
       Schema.Struct({
-        queuedRunId: RunId,
-        text: Schema.String,
-        truncated: Schema.Boolean,
+        ...queueEntry.fields,
         queueHeld: Schema.Boolean,
       }),
     ),

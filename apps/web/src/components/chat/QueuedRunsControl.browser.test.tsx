@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   projection: null as unknown,
   workflow: null as unknown,
+  canOperate: true,
+  command: vi.fn(async (_input: unknown) => undefined),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -19,7 +21,13 @@ vi.mock(import("../../state/entities"), async (importOriginal) => ({
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => undefined) as never,
+  useAtomCommand: (() => state.command) as never,
+}));
+
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => state.canOperate,
+  readEnvironmentScope: () => state.canOperate,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -38,6 +46,8 @@ afterEach(async () => {
   });
   document.body.replaceChildren();
   vi.unstubAllGlobals();
+  state.command.mockClear();
+  state.canOperate = true;
 });
 
 const baseProps = {
@@ -90,6 +100,57 @@ describe("QueuedRunsControl automatic completion delivery", () => {
     const view = await render();
 
     expect(view.childElementCount).toBe(0);
+  });
+});
+
+describe("QueuedRunsControl held queue", () => {
+  it("shows a held automatic-only queue and lets the user resume it", async () => {
+    state.projection = {
+      projection: {
+        runs: [{ id: "run:wake", status: "queued", queueHeld: true }],
+        messages: [{ id: "message:wake", text: "Model-facing notification" }],
+      },
+    };
+    state.workflow = {
+      activeRun: null,
+      isHeld: true,
+      canPromoteToSteer: false,
+      canReorder: false,
+      queuedRuns: [],
+    };
+
+    state.canOperate = false;
+    const view = await render();
+
+    expect(view.textContent).toContain("Queue held");
+    expect(view.textContent).not.toContain("Model-facing notification");
+    const resume = [...view.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Resume"),
+    );
+    expect(resume).toBeDefined();
+    expect(resume?.disabled).toBe(true);
+    state.canOperate = true;
+    await act(async () => roots.at(-1)!.render(<QueuedRunsControl {...baseProps} />));
+    expect(resume?.disabled).toBe(false);
+    state.canOperate = false;
+    await act(async () => resume!.click());
+    expect(state.command).not.toHaveBeenCalled();
+    state.canOperate = true;
+    let finishResume!: () => void;
+    state.command.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finishResume = () => resolve(undefined);
+        }),
+    );
+    await act(async () => resume!.click());
+    expect(resume?.disabled).toBe(true);
+    expect(state.command).toHaveBeenCalledExactlyOnceWith({
+      environmentId: baseProps.environmentId,
+      input: { threadId: baseProps.threadId },
+    });
+    await act(async () => finishResume());
+    expect(resume?.disabled).toBe(false);
   });
 });
 

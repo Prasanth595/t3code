@@ -1,6 +1,12 @@
 import { type StaticScreenProps, useNavigation } from "@react-navigation/native";
 import { useAtomValue } from "@effect/atom-react";
-import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type ChatAttachment,
+  type EnvironmentId,
+  type RunId,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
@@ -28,6 +34,7 @@ import { assetImageSource } from "../../lib/assetImageSource";
 import { beginQueuedRunEdit, useQueuedRunEdit } from "../../state/queued-run-edit";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
@@ -44,6 +51,7 @@ const THUMBNAIL_LIMIT = 3;
 const EMPTY_QUEUED_COUNT_ATOM = Atom.make(0).pipe(
   Atom.withLabel("mobile-thread-queue-count:empty"),
 );
+const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make(null);
 
 type QueueTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 type QueueAction = "steer" | "edit" | "up" | "down" | "remove";
@@ -56,6 +64,15 @@ export function useThreadQueueWorkflow(target: QueueTarget) {
 export function useThreadQueuedCount(target: QueueTarget | null) {
   return useAtomValue(
     target === null ? EMPTY_QUEUED_COUNT_ATOM : environmentThreadDetails.queuedCountAtom(target),
+  );
+}
+
+export function useThreadQueueHeld(target: QueueTarget | null) {
+  return useAtomValue(
+    target === null
+      ? EMPTY_QUEUE_WORKFLOW_ATOM
+      : environmentThreadDetails.queueWorkflowAtom(target),
+    (workflow) => workflow?.isHeld === true,
   );
 }
 
@@ -72,6 +89,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun, "promote queued message");
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun, "remove queued message");
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  const canOperate = useEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope);
   const [resuming, setResuming] = useState(false);
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
   const busyRef = useRef(false);
@@ -99,13 +117,13 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     }
   }, [order, translation]);
 
-  const hadQueuedRuns = useRef(queuedRuns.length > 0);
+  const hadQueue = useRef(queuedRuns.length > 0 || workflow?.isHeld === true);
   useEffect(() => {
-    if (queuedRuns.length > 0) {
-      hadQueuedRuns.current = true;
+    if (queuedRuns.length > 0 || workflow?.isHeld === true) {
+      hadQueue.current = true;
       return;
     }
-    if (hadQueuedRuns.current && workflow?.isHeld !== true) navigation.goBack();
+    if (hadQueue.current) navigation.goBack();
   }, [navigation, queuedRuns.length, workflow?.isHeld]);
 
   const move = async (runId: RunId, beforeRunId: RunId | null) => {
@@ -192,14 +210,21 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           <Text className="text-sm text-foreground-muted">Queue held</Text>
           <Button
             label="Resume queue"
-            disabled={resuming || busyRunId !== null}
+            disabled={!canOperate || resuming || busyRunId !== null}
             onPress={async () => {
-              if (busyRef.current) return;
+              if (
+                busyRef.current ||
+                !readEnvironmentScope(target.environmentId, AuthOrchestrationOperateScope)
+              )
+                return;
               busyRef.current = true;
               setResuming(true);
-              await resume({ ...target, input: { threadId: target.threadId } });
-              busyRef.current = false;
-              setResuming(false);
+              try {
+                await resume({ ...target, input: { threadId: target.threadId } });
+              } finally {
+                busyRef.current = false;
+                setResuming(false);
+              }
             }}
           />
         </View>
