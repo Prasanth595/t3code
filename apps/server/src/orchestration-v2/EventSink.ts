@@ -1,7 +1,6 @@
 import {
   CommandId,
   type OrchestrationV2Run,
-  type OrchestrationV2ProviderThread,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   OrchestrationV2StoredEvent,
@@ -379,7 +378,7 @@ const layerBase: Layer.Layer<
 
       return yield* commitThenPublish(
         Effect.gen(function* () {
-          // Recheck alongside publication, including retries of stopped reservations.
+          // Check ownership in the same transaction that claims the native session.
           const imported = input.unlessNativeThreadOwned;
           if (imported?.nativeThreadRef != null) {
             const owners = yield* sql`
