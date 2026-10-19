@@ -127,17 +127,24 @@ const listenHttp = (server: NodeHttp.Server) =>
       }),
   );
 
-/** A proxy that refuses every CONNECT and absolute-form request but records who asked. */
-const loopbackRefusingProxy = Effect.gen(function* () {
+/**
+ * A proxy that answers every request itself and records the authority asked
+ * for. undici 7 reaches an HTTP proxy with a CONNECT tunnel and undici 8 with
+ * an absolute-form request, so both are served and the body is the proof.
+ */
+const recordingProxy = Effect.gen(function* () {
   const authorities: string[] = [];
   const proxy = NodeHttp.createServer((request, response) => {
     authorities.push(request.headers.host ?? "");
-    response.writeHead(403);
-    response.end();
+    response.end("proxied");
   });
-  proxy.on("connect", (request, socket) => {
+  proxy.on("connect", (request, socket, head) => {
     authorities.push(request.url ?? "");
-    socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    const answer = () =>
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nproxied");
+    if (head.length > 0) answer();
+    else socket.once("data", answer);
   });
   const port = yield* listenHttp(proxy);
   return { authorities, url: `http://127.0.0.1:${port}` };
@@ -150,11 +157,10 @@ const probe = async (url) => {
   try {
     return await (await fetch(url)).text();
   } catch (error) {
-    return "error:" + (error.cause?.code ?? error.message);
+    return "error:" + String(error.cause ?? error);
   }
 };
 console.log(JSON.stringify({
-  dispatcher: globalThis[Symbol.for("undici.globalDispatcher.1")].constructor.name,
   loopback: await probe(process.env.LOOPBACK_URL),
   external: await probe(process.env.EXTERNAL_URL),
   noProxy: process.env.NO_PROXY,
@@ -164,32 +170,30 @@ console.log(JSON.stringify({
 // Only Node's own `--use-env-proxy` installs the agent class its fetch
 // dispatches through, so the probe runs in a child Node process.
 const probeWithEnvProxy = (env: Record<string, string>) =>
-  Effect.callback<{ dispatcher: string; loopback: string; external: string; noProxy: string }>(
-    (resume) => {
-      NodeChildProcess.execFile(
-        process.execPath,
-        ["--use-env-proxy", "--input-type=module", "--eval", USE_ENV_PROXY_PROBE],
-        {
-          env: {
-            PATH: process.env.PATH,
-            OUTBOUND_HTTP_MODULE: new URL("./outboundHttp.ts", import.meta.url).href,
-            ...env,
-          },
+  Effect.callback<{ loopback: string; external: string; noProxy: string }>((resume) => {
+    NodeChildProcess.execFile(
+      process.execPath,
+      ["--use-env-proxy", "--input-type=module", "--eval", USE_ENV_PROXY_PROBE],
+      {
+        env: {
+          PATH: process.env.PATH,
+          OUTBOUND_HTTP_MODULE: new URL("./outboundHttp.ts", import.meta.url).href,
+          ...env,
         },
-        (error, stdout, stderr) =>
-          resume(
-            error
-              ? Effect.die(new Error(`probe failed: ${error.message}\n${stderr}`))
-              : Effect.succeed(JSON.parse(stdout)),
-          ),
-      );
-    },
-  );
+      },
+      (error, stdout, stderr) =>
+        resume(
+          error
+            ? Effect.die(new Error(`probe failed: ${error.message}\n${stderr}`))
+            : Effect.succeed(JSON.parse(stdout)),
+        ),
+    );
+  });
 
 describe("configureOutboundFetch", () => {
   it.effect("keeps loopback off the env proxy while external requests still use it", () =>
     Effect.gen(function* () {
-      const proxy = yield* loopbackRefusingProxy;
+      const proxy = yield* recordingProxy;
       const port = yield* listenHttp(
         NodeHttp.createServer((_request, response) => response.end("direct")),
       );
@@ -199,12 +203,7 @@ describe("configureOutboundFetch", () => {
         LOOPBACK_URL: `http://127.0.0.1:${port}/`,
         EXTERNAL_URL: `http://external-proof.invalid:${port}/`,
       });
-      expect(result).toEqual({
-        dispatcher: "EnvHttpProxyAgent",
-        loopback: "direct",
-        external: "error:0",
-        noProxy: "corp.example",
-      });
+      expect(result).toEqual({ loopback: "direct", external: "proxied", noProxy: "corp.example" });
       expect(proxy.authorities).toEqual([`external-proof.invalid:${port}`]);
     }),
   );
