@@ -1867,7 +1867,7 @@ function PullRequestsRouteView() {
 function usePullRequestScope(
   search: PullRequestsSearch,
   owners: Pick<
-    Parameters<typeof ForkOwners.usePullRequestOwnerFilter>[0],
+    Parameters<typeof ForkOwners.resolvePullRequestOwnerFilter>[0],
     "enabled" | "typedOwners" | "sentOwners"
   >,
 ) {
@@ -1895,7 +1895,7 @@ function usePullRequestScope(
   const projects = allProjects.filter(
     (project) => !project.isScratch && environmentIds.includes(project.environmentId),
   );
-  const ownerFilter = ForkOwners.usePullRequestOwnerFilter({ ...owners, search, projects });
+  const ownerFilter = ForkOwners.resolvePullRequestOwnerFilter({ ...owners, search, projects });
   // Fork: the project scope, the project menu and the per-server split read the projects of the
   // selected owners. A project outside the owner filter drops out of the scope, like an unknown
   // id does. The selection reads every project, because a link can open any owner's pull request.

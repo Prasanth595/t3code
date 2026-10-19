@@ -75,7 +75,7 @@ export const ownerMenuPatch = (
   ownerOperator: operator === "is_not" ? operator : undefined,
 });
 
-export function usePullRequestOwnerFilter<Project extends OwnedProject>(input: {
+export function resolvePullRequestOwnerFilter<Project extends OwnedProject>(input: {
   /** The `repositoryOwnerFilters` setting. */
   readonly enabled: boolean;
   readonly search: Pick<PullRequestListPreferences, "owners" | "ownerOperator"> & {
