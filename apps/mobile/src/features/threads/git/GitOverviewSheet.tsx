@@ -246,7 +246,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       contentContainerStyle={{
         paddingHorizontal: Platform.OS === "android" ? 8 : isInspector ? 12 : 20,
         paddingTop: 8,
-        // Android ignores contentInset, so reserve the navigation bar in the scrollable content.
         paddingBottom: Platform.OS === "android" ? Math.max(insets.bottom, 18) + 18 : undefined,
         gap: Platform.OS === "android" ? 8 : 14,
       }}
