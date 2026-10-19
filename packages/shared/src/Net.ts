@@ -44,12 +44,6 @@ export class NetService extends Context.Service<NetService, NetServiceShape>()(
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = () => {
-  /**
-   * Returns true when a TCP server can bind to {host, port}.
-   * `EADDRNOTAVAIL` (no such address, e.g. no `::1`) and `EAFNOSUPPORT` (no
-   * IPv6 in the kernel, e.g. `ipv6.disable=1`) are treated as available so
-   * IPv6-absent hosts don't fail availability checks.
-   */
   const canListenOnHost = (port: number, host: string): Effect.Effect<boolean> =>
     Effect.callback<boolean>((resume) => {
       const server = NodeNet.createServer();
@@ -64,6 +58,7 @@ export const make = () => {
       server.unref();
 
       server.once("error", (cause) => {
+        // Missing IPv6 addresses or kernel support do not mean the port is occupied.
         if (
           isErrnoExceptionWithCode(cause) &&
           (cause.code === "EADDRNOTAVAIL" || cause.code === "EAFNOSUPPORT")
