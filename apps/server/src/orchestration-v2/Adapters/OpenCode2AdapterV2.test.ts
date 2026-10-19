@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -16,7 +17,6 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
-  type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -46,8 +46,6 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
-  presentPromptFiles,
-  promptImageFiles,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -314,6 +312,7 @@ const resumed = (
     readonly supervised?: boolean;
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
+    readonly onPrompt?: (input: unknown) => void;
   },
 ) =>
   Effect.gen(function* () {
@@ -334,6 +333,7 @@ const resumed = (
         ...entries,
       ]),
       {
+        ...(options?.onPrompt === undefined ? {} : { onPrompt: options.onPrompt }),
         ...(options?.external === undefined ? {} : { external: options.external }),
         ...(options?.replayGate === undefined ? {} : { replayGate: options.replayGate }),
         ...(options?.attachmentsDir === undefined
@@ -3335,34 +3335,54 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
-  it.effect("sends a turn's and a steer's pasted images as prompt files", () =>
+  it.effect.each([
+    {
+      external: false,
+      name: "sends only existing supported images as turn and steer prompt files with path text",
+    },
+    {
+      external: true,
+      name: "keeps turn and steer attachment paths without local files for external servers",
+    },
+  ])("$name", ({ external }) =>
     Effect.gen(function* () {
-      const steerId = "msg_recorded_steer_image";
       const fileSystem = yield* FileSystem.FileSystem;
       const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-oc2-images-",
+        prefix: "t3 oc2 #images-",
       });
-      const screenshot = `${attachmentsDir}/thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc.png`;
-      const chart = `${attachmentsDir}/thread-opencode2-adapter-abcdefab-1234-1234-1234-123456789abc.png`;
-      yield* Effect.forEach([screenshot, chart], (file) =>
-        fileSystem.writeFileString(file, "png!"),
-      );
+      const image = (id: string, name: string, mimeType = "image/png") =>
+        ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make(`thread-opencode2-adapter-${id}-1234-1234-1234-123456789abc`),
+          name,
+          mimeType,
+          sizeBytes: 4,
+        });
+      const screenshot = image("12345678", "screen shot.png");
+      const chart = image("abcdefab", "chart.webp", "image/webp");
+      const missing = image("23456789", "missing.png");
+      const unsupported = image("34567890", "diagram.svg", "image/svg+xml");
+      const document = ChatFileAttachment.make({
+        type: "file",
+        id: ChatAttachmentId.make("thread-opencode2-adapter-45678901-1234-1234-1234-123456789abc"),
+        name: "requirements.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 4,
+      });
+      for (const attachment of [screenshot, chart, unsupported, document]) {
+        yield* fileSystem.writeFileString(
+          resolveAttachmentPath({ attachmentsDir, attachment })!,
+          "data",
+        );
+      }
+      const prompts: Array<unknown> = [];
+      const steerId = "msg_recorded_steer_image";
       const { runtime, thread } = yield* resumed(
         [
-          out("session.prompt", {
-            sessionID: SESSION,
-            text: `What's in this image?\n\n[Attached image "screenshot.png" is saved at: ${screenshot}]`,
-            files: [{ uri: `file://${screenshot}`, name: "screenshot.png" }],
-          }),
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
           event("session.execution.started", { sessionID: SESSION }),
-          out("session.prompt", {
-            sessionID: SESSION,
-            id: steerId,
-            text: `And this one?\n\n[Attached image "chart.png" is saved at: ${chart}]`,
-            files: [{ uri: `file://${chart}`, name: "chart.png" }],
-            delivery: "steer",
-          }),
+          out("session.prompt", { sessionID: SESSION, id: steerId, delivery: "steer" }),
           replyData("session.prompt", {
             id: steerId,
             sessionID: SESSION,
@@ -3374,16 +3394,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.inbox.delivered", { sessionID: SESSION, inboxID: steerId }),
           event("session.execution.succeeded", { sessionID: SESSION }),
         ],
-        { attachmentsDir },
+        { attachmentsDir, external, onPrompt: (input) => prompts.push(input) },
       );
-      const image = (name: string, id: string) =>
-        ChatImageAttachment.make({
-          type: "image",
-          id: ChatAttachmentId.make(`thread-opencode2-adapter-${id}-1234-1234-1234-123456789abc`),
-          name,
-          mimeType: "image/png",
-          sizeBytes: 4,
-        });
       const ids = yield* IdAllocator.IdAllocatorV2;
       const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       const input = turnInput(thread);
@@ -3391,8 +3403,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...input,
         message: {
           ...input.message,
-          text: "What's in this image?",
-          attachments: [image("screenshot.png", "12345678")],
+          text: "What is in this image?",
+          attachments: [screenshot, missing, unsupported, document],
         },
       });
       yield* runtime.steerTurn({
@@ -3407,52 +3419,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ...input.message,
           messageId: MessageId.make("message:opencode2-adapter:steer"),
           text: "And this one?",
-          attachments: [image("chart.png", "abcdefab")],
+          attachments: [chart, missing, unsupported, document],
         },
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.equal(prompts.length, 2);
+      for (const [index, attachment] of [screenshot, chart].entries()) {
+        const path = resolveAttachmentPath({ attachmentsDir, attachment })!;
+        assert.deepInclude(prompts[index], {
+          text: [
+            index === 0 ? "What is in this image?" : "And this one?",
+            `[Attached image "${attachment.name}" is saved at: ${path}]`,
+            `[Attached image "missing.png" is saved at: ${attachmentsDir}/${missing.id}.png]`,
+            `[Attached image "diagram.svg" is saved at: ${attachmentsDir}/${unsupported.id}.svg]`,
+            `[Attached file "requirements.pdf" is saved at: ${attachmentsDir}/${document.id}.pdf]`,
+          ].join("\n\n"),
+        });
+        if (external) {
+          assert.notProperty(prompts[index], "files");
+        } else {
+          assert.deepInclude(prompts[index], {
+            files: [
+              {
+                uri: NodeURL.pathToFileURL(path).href,
+                name: attachment.name,
+              },
+            ],
+          });
+        }
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(IdAllocator.layer, NodeServices.layer))),
   );
-
-  it.effect("drops a pasted image whose saved file is gone", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-oc2-images-",
-      });
-      const kept = { uri: `file://${attachmentsDir}/kept.png`, name: "kept.png" };
-      yield* fileSystem.writeFileString(`${attachmentsDir}/kept.png`, "png!");
-      const deleted = { uri: `file://${attachmentsDir}/deleted.png`, name: "deleted.png" };
-      assert.deepEqual(yield* presentPromptFiles(fileSystem, [kept, deleted]), [kept]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it("gives a server T3 started a file URL for each pasted image, an external one none", () => {
-    const image = ChatImageAttachment.make({
-      type: "image",
-      id: ChatAttachmentId.make("thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc"),
-      name: "screen shot.png",
-      mimeType: "image/png",
-      sizeBytes: 4,
-    });
-    const document = ChatFileAttachment.make({
-      type: "file",
-      id: ChatAttachmentId.make("thread-opencode2-adapter-abcdefab-1234-1234-1234-123456789abc"),
-      name: "requirements.pdf",
-      mimeType: "application/pdf",
-      sizeBytes: 4,
-    });
-    const attachmentsDir = "/home/a user/.t3/userdata/attachments";
-    const resolve = (attachment: ChatAttachment) =>
-      resolveAttachmentPath({ attachmentsDir, attachment });
-    assert.deepEqual(promptImageFiles([image, document], resolve, false), [
-      {
-        uri: "file:///home/a%20user/.t3/userdata/attachments/thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc.png",
-        name: "screen shot.png",
-      },
-    ]);
-    assert.deepEqual(promptImageFiles([image, document], resolve, true), []);
-  });
 
   it.effect("reads user and assistant text from the session's message list", () =>
     Effect.gen(function* () {

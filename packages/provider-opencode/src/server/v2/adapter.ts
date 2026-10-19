@@ -649,30 +649,6 @@ const skillsNamed = (text: string, known: ReadonlySet<string>) => [
   ),
 ];
 
-/** A server T3 did not start may not see T3's attachment directory, so it gets the path text only. */
-export const promptImageFiles = (
-  attachments: ReadonlyArray<ChatAttachment>,
-  resolveAttachmentPath: (attachment: ChatAttachment) => string | null,
-  external: boolean,
-) =>
-  external
-    ? []
-    : attachments.filter(isProviderNativeImageAttachment).flatMap((attachment) => {
-        const path = resolveAttachmentPath(attachment);
-        return path === null
-          ? []
-          : [{ uri: NodeURL.pathToFileURL(path).href, name: attachment.name }];
-      });
-
-/** OpenCode rejects the whole prompt for a missing file, so a deleted image keeps only its path text. */
-export const presentPromptFiles = (
-  fileSystem: FileSystem.FileSystem,
-  files: ReadonlyArray<{ readonly uri: string; readonly name: string }>,
-) =>
-  Effect.filter(files, (file) =>
-    fileSystem.exists(NodeURL.fileURLToPath(file.uri)).pipe(Effect.orElseSucceed(() => false)),
-  );
-
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) =>
   turn.steps === 0
     ? {
@@ -2952,6 +2928,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         resolveAttachmentPath: host.resolveAttachmentPath,
       }).trim();
 
+    const promptFiles = Effect.fnUntraced(function* (attachments: ReadonlyArray<ChatAttachment>) {
+      const files: Array<{ uri: string; name: string }> = [];
+      // An external server may not share T3's attachment directory.
+      if (connection.external) return files;
+      for (const attachment of attachments) {
+        if (!isProviderNativeImageAttachment(attachment)) continue;
+        const path = host.resolveAttachmentPath(attachment);
+        if (path === null) continue;
+        // OpenCode rejects the whole prompt if an attached file is missing.
+        const exists = yield* fileSystem.exists(path).pipe(Effect.orElseSucceed(() => false));
+        if (exists) files.push({ uri: NodeURL.pathToFileURL(path).href, name: attachment.name });
+      }
+      return files;
+    });
+
     const removeMcp = (mcp: { readonly name: string; readonly directory: string }) =>
       Effect.suspend(() =>
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
@@ -3289,14 +3280,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           )
         : [];
-      const files = yield* presentPromptFiles(
-        fileSystem,
-        promptImageFiles(
-          turnInput.message.attachments,
-          host.resolveAttachmentPath,
-          connection.external,
-        ),
-      );
+      const files = yield* promptFiles(turnInput.message.attachments);
       if (!sending()) return;
       return yield* client.session
         .prompt({
@@ -3624,14 +3608,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (turn.settledInbox.has(inboxID)) return;
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
-          const files = yield* presentPromptFiles(
-            fileSystem,
-            promptImageFiles(
-              steerInput.message.attachments,
-              host.resolveAttachmentPath,
-              connection.external,
-            ),
-          );
+          const files = yield* promptFiles(steerInput.message.attachments);
           yield* client.session
             .prompt({
               sessionID: Session.ID.make(sessionId),

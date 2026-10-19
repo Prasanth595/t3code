@@ -129,6 +129,7 @@ const operationOf = (
 const replayHttpClient = (
   controller: OpenCodeReplayController,
   replayGate: ProviderReplayGate | undefined,
+  onPrompt: ((input: unknown) => void) | undefined,
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
@@ -150,6 +151,7 @@ const replayHttpClient = (
         // The event stream and requests are separate connections: a request
         // is matched only once what was recorded before it was delivered.
         if (operation.type !== "event.subscribe") await controller.untilInboundDelivered();
+        if (operation.type === "session.prompt") onPrompt?.(operation.input);
         await controller.expectOutbound(operation);
         if (operation.type === "event.subscribe") {
           controller.exited = false;
@@ -189,6 +191,7 @@ export const replayServer = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
+    readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -204,7 +207,7 @@ export const replayServer = (
     const opencode = yield* OpenCode2Client.make.pipe(
       Effect.provideService(
         HttpClient.HttpClient,
-        replayHttpClient(controller, options?.replayGate),
+        replayHttpClient(controller, options?.replayGate, options?.onPrompt),
       ),
     );
     const connection = {
@@ -235,6 +238,7 @@ const makeReplayAdapter = (
   transcript: ProviderReplayTranscript,
   options?: {
     readonly external?: boolean;
+    readonly onPrompt?: (input: unknown) => void;
     readonly replayGate?: ProviderReplayGate;
     readonly borrowers?: { current: number };
   },
@@ -277,6 +281,7 @@ export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
   options?: {
     readonly external?: boolean;
+    readonly onPrompt?: (input: unknown) => void;
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
