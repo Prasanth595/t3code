@@ -881,6 +881,58 @@ it.effect("waits for a growing OpenCode 2 catalog to settle before caching it", 
   }).pipe(Effect.provide(TestClock.layer())),
 );
 
+it.effect("waits for OpenCode 2 model names, provider labels, and variants to settle", () =>
+  Effect.gen(function* () {
+    const renamed = { ...bigPickle, name: "Bigger Pickle" };
+    const labeled = { ...renamed, providerName: "OpenCode Zen" };
+    const withVariants = { ...labeled, variants: [{ id: "low" }] };
+    const complete = { ...labeled, variants: [{ id: "high" }] };
+    const replies = [[bigPickle], [renamed], [labeled], [withVariants], [complete], [complete]];
+    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => replies.shift() ?? [complete]));
+    const fiber = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("2 seconds");
+    NodeAssert.ok(fiber.pollUnsafe());
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), [complete]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
+it.effect("bounds an unsettled OpenCode 2 catalog and prefers the last settled inventory", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    let latest: ReadonlyArray<OpenCode2Model> = [];
+    const changing = () => {
+      latest = [{ ...bigPickle, name: `Pickle ${++reads}` }];
+      return latest;
+    };
+    let list = changing;
+    const load = yield* makeOpenCode2ModelLoader(Effect.sync(() => list()));
+    const cold = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.ok(cold.pollUnsafe());
+    NodeAssert.ok(reads > 1);
+    NodeAssert.deepEqual(yield* Fiber.join(cold), latest);
+
+    list = () => [];
+    const empty = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.ok(empty.pollUnsafe());
+    NodeAssert.deepEqual(yield* Fiber.join(empty), latest);
+
+    list = () => [bigPickle];
+    const settled = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(settled), [bigPickle]);
+
+    reads = 0;
+    list = () => (reads++ === 0 ? [bigPickle] : changing());
+    const fresh = yield* load.pipe(Effect.forkChild);
+    yield* TestClock.adjust("5 seconds");
+    NodeAssert.ok(fresh.pollUnsafe());
+    NodeAssert.ok(reads > 1);
+    NodeAssert.deepEqual(yield* Fiber.join(fresh), [bigPickle]);
+  }).pipe(Effect.provide(TestClock.layer())),
+);
+
 const builtinCommands = [
   { name: "init", description: "guided AGENTS.md setup" },
   { name: "review", description: "review changes [commit|branch|pr], defaults to uncommitted" },
