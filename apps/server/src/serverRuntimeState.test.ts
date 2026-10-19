@@ -214,7 +214,10 @@ describe("server ownership", () => {
       "stat error",
     ] as const)("monitors ownership after %s", (operation) => {
       const messages: unknown[] = [];
-      const logger = Logger.make(({ message }) => messages.push(message));
+      const warnings: unknown[] = [];
+      const logger = Logger.make(({ message, logLevel }) =>
+        (logLevel === "Warn" ? warnings : messages).push(message),
+      );
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -248,9 +251,13 @@ describe("server ownership", () => {
         }
         if (operation === "stat error") {
           yield* fs.chmod(root, 0);
-          yield* TestClock.adjust("5 seconds").pipe(
+          yield* TestClock.adjust("15 seconds").pipe(
             Effect.ensuring(fs.chmod(root, 0o700).pipe(Effect.orDie)),
           );
+          assert.deepEqual(warnings, [
+            [`Cannot check server ownership lock at ${lockPath} (EACCES).`],
+          ]);
+          yield* TestClock.adjust("5 seconds");
           assert.deepEqual(messages, []);
           yield* fs.remove(lockPath);
         }
@@ -270,6 +277,7 @@ describe("server ownership", () => {
         }
         yield* TestClock.adjust("15 seconds");
         assert.deepEqual(messages, expected);
+        assert.lengthOf(warnings, operation === "stat error" ? 1 : 0);
       }).pipe(
         Effect.provide(
           Layer.merge(layerOwnership, Logger.layer([logger], { mergeWithExisting: false })),

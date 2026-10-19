@@ -250,17 +250,27 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
 
   yield* Effect.gen(function* () {
     let lost = lock.replacedDuringAcquire;
+    let statWarningLogged = false;
     while (!lost) {
       yield* Effect.sleep("5 seconds");
       // Closing another descriptor for this inode releases SQLite's POSIX locks. Stat by path only.
       const current = yield* Effect.sync(() => {
         try {
           return NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
-        } catch {
-          return "unreadable" as const;
+        } catch (cause) {
+          return cause instanceof Error && "code" in cause ? String(cause.code) : "unknown";
         }
       });
-      if (current === "unreadable") continue;
+      if (typeof current === "string") {
+        if (!statWarningLogged) {
+          yield* Effect.logWarning(
+            `Cannot check server ownership lock at ${lockPath} (${current}).`,
+          );
+          statWarningLogged = true;
+        }
+        continue;
+      }
+      statWarningLogged = false;
       lost =
         current === undefined ||
         current.dev !== lock.identity.dev ||
