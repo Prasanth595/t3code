@@ -1865,10 +1865,8 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
     readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
-  // Claude approves what its mode allows before the callback runs (edits in
-  // acceptEdits, classifier-approved actions in auto) and sends the rest,
-  // including user ask rules, to the callback, which must ask rather than
-  // allow. Only Full access answers it without asking.
+  // Claude handles mode-approved actions before the callback; escalations
+  // still need a human decision, including in Auto.
   const installPermissionCallback =
     runtimePolicy.approvalPolicy === undefined
       ? runtimePolicy.runtimeMode !== "full-access"
@@ -2325,26 +2323,6 @@ function summarizeClaudeToolRequest(toolName: string, input: ClaudeNativeToolInp
     : `${toolName}: ${serialized.slice(0, 397)}...`;
 }
 
-// Builds the approval prompt. The SDK nearly always sets `title`, so the
-// reason the ask escalated (such as a PreToolUse hook's message) is shown
-// on its own line instead of being dropped. It may carry ANSI escapes.
-function claudeApprovalPrompt(
-  options: {
-    readonly title?: string;
-    readonly description?: string;
-    readonly decisionReason?: string;
-  },
-  toolName: string,
-  input: ClaudeNativeToolInput,
-): string {
-  const base = options.title ?? options.description ?? summarizeClaudeToolRequest(toolName, input);
-  const reason =
-    options.decisionReason === undefined
-      ? ""
-      : NodeUtil.stripVTControlCharacters(options.decisionReason).trim();
-  return reason === "" || reason === base ? base : `${base}\n${reason}`;
-}
-
 function outputFromClaudeToolResult(
   toolResult: ClaudeToolResultContentBlock,
 ): ClaudeToolResultOutput | undefined {
@@ -2603,8 +2581,7 @@ function toSessionPermissionUpdates(
   if (updates.length > 0) {
     return updates;
   }
-  // A bare Bash rule would allow every later command, including the ones Auto
-  // mode or a hook escalated for a reason.
+  // Shell tools need an SDK-scoped suggestion to avoid allowing unrelated commands.
   if (toolName === "Bash" || toolName === "Monitor") {
     return [];
   }
@@ -8275,13 +8252,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const requestKind = providerRequestKindFromClaudeTool(toolName);
-          const prompt = claudeApprovalPrompt(callbackOptions, toolName, nativeToolInput);
+          const prompt =
+            callbackOptions.title ??
+            callbackOptions.description ??
+            summarizeClaudeToolRequest(toolName, nativeToolInput);
+          const reason = NodeUtil.stripVTControlCharacters(
+            callbackOptions.decisionReason ?? "",
+          ).trim();
           const artifacts = yield* buildApprovalRequestArtifacts({
             context,
             nativeItemId: nativeRequestId,
             nativeRequestId,
             requestKind,
-            prompt,
+            prompt: reason === "" || reason === prompt ? prompt : `${prompt}\n${reason}`,
           });
           const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
           yield* Ref.update(pendingRuntimeRequests, (current) => {
