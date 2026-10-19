@@ -24,6 +24,11 @@ const envs = (...ids: ReadonlyArray<string>) => ids as ReadonlyArray<Environment
 const plain = (assignment: Map<EnvironmentId, ProjectId[]>) =>
   Object.fromEntries([...assignment].map(([id, projectIds]) => [id, projectIds]));
 
+const hostAvailability = (hosts: ReadonlyMap<string, boolean>) => ({
+  hosts,
+  projectHosts: new Map<ProjectId, string>(),
+});
+
 const provider = (host: string, configured: boolean): PullRequestProviderSummary => ({
   host,
   kind: "bitbucket" as PullRequestProviderSummary["kind"],
@@ -52,7 +57,7 @@ describe("host read results", () => {
 
   it("does not replay cached failures after refresh clears availability", () => {
     const cleared = new Map([
-      [environmentId, { observedAt: 100, hosts: new Map<string, boolean>() }],
+      [environmentId, { observedAt: 100, ...hostAvailability(new Map<string, boolean>()) }],
     ]);
     expect(
       rememberPullRequestHosts(cleared, [
@@ -74,6 +79,23 @@ describe("host read results", () => {
         [environmentId, { providers: [provider("bitbucket.org", false)] }, 100],
       ]),
     ).toBe(readable);
+  });
+
+  it("remembers each project's resolved host when a later read omits it", () => {
+    const projectId = "ssh" as ProjectId;
+    const first = rememberPullRequestHosts(new Map(), [
+      [
+        environmentId,
+        { providers: [{ ...provider("FORGE.example:3000", false), projectIds: [projectId] }] },
+        100,
+      ],
+    ]);
+    const next = rememberPullRequestHosts(first, [
+      [environmentId, { providers: [provider("forge.example:4000", true)] }, 200],
+    ]);
+    expect(next.get(environmentId)!.projectHosts.get(projectId)).toBe("forge.example:3000");
+    expect(next.get(environmentId)!.hosts.get("forge.example:3000")).toBe(false);
+    expect(next.get(environmentId)!.hosts.get("forge.example:4000")).toBe(true);
   });
 });
 
@@ -114,7 +136,7 @@ describe("one server per repository", () => {
       ],
       envs("env-1", "env-2"),
       "env-1" as EnvironmentId,
-      new Map([["env-1" as EnvironmentId, new Map([["bitbucket.org", false]])]]),
+      new Map([["env-1" as EnvironmentId, hostAvailability(new Map([["bitbucket.org", false]]))]]),
     );
     expect(plain(assignment)).toEqual({ "env-1": ["b1"], "env-2": ["a2"] });
   });
@@ -126,14 +148,17 @@ describe("one server per repository", () => {
       project("a3", "env-3", "git.example.com/acme/app"),
     ];
     const availability = new Map([
-      ["env-1" as EnvironmentId, new Map([["git.example.com", false]])],
+      ["env-1" as EnvironmentId, hostAvailability(new Map([["git.example.com", false]]))],
     ]);
     expect(
       plain(
         assignProjectsToEnvironments(projects, envs("env-1", "env-2", "env-3"), null, availability),
       ),
     ).toEqual({ "env-2": ["a2"] });
-    availability.set("env-2" as EnvironmentId, new Map([["git.example.com", false]]));
+    availability.set(
+      "env-2" as EnvironmentId,
+      hostAvailability(new Map([["git.example.com", false]])),
+    );
     expect(
       plain(
         assignProjectsToEnvironments(projects, envs("env-1", "env-2", "env-3"), null, availability),
@@ -148,7 +173,10 @@ describe("one server per repository", () => {
       project("only1", "env-1", "bitbucket.org/acme/only"),
     ];
     const availability = new Map(
-      envs("env-1", "env-2").map((id) => [id, new Map([["bitbucket.org", false]])]),
+      envs("env-1", "env-2").map((id) => [
+        id,
+        hostAvailability(new Map([["bitbucket.org", false]])),
+      ]),
     );
     expect(
       plain(
@@ -182,6 +210,89 @@ describe("one server per repository", () => {
       "env-1" as EnvironmentId,
     );
     expect(assignment.has("env-2" as EnvironmentId)).toBe(false);
+  });
+
+  it("checks the owner's HTTP authority using its own identity in either project order", () => {
+    const projects = [
+      {
+        ...project("a1", "env-1", "forge.example/team/repo"),
+        repositoryIdentity: {
+          canonicalKey: "forge.example/team/repo",
+          provider: "forgejo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://forge.example:3000/team/repo.git",
+          },
+        },
+      },
+      {
+        ...project("a2", "env-2", "forge.example/team/repo"),
+        repositoryIdentity: {
+          canonicalKey: "forge.example/team/repo",
+          provider: "forgejo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@forge.example:team/repo.git",
+          },
+        },
+      },
+    ] as const;
+    const availability = new Map([
+      ["env-1" as EnvironmentId, hostAvailability(new Map([["forge.example:3000", false]]))],
+    ]);
+    for (const copies of [projects, projects.toReversed()]) {
+      expect(
+        plain(
+          assignProjectsToEnvironments(
+            copies,
+            envs("env-1", "env-2"),
+            "env-1" as EnvironmentId,
+            availability,
+          ),
+        ),
+      ).toEqual({ "env-2": ["a2"] });
+    }
+  });
+
+  it("uses a server-resolved host for SSH without conflating ports on that host", () => {
+    const projects = envs("env-1", "env-2").map((environmentId) => ({
+      ...project(`a-${environmentId}`, environmentId, "ssh.forge.example/team/repo"),
+      repositoryIdentity: {
+        canonicalKey: "ssh.forge.example/team/repo",
+        provider: "forgejo",
+        locator: {
+          source: "git-remote" as const,
+          remoteName: "origin",
+          remoteUrl: "ssh://git@ssh.forge.example:2222/team/repo.git",
+        },
+      },
+    }));
+    const availability = rememberPullRequestHosts(new Map(), [
+      [
+        "env-1" as EnvironmentId,
+        {
+          providers: [
+            { ...provider("forge.example:3000", false), projectIds: ["a-env-1" as ProjectId] },
+            { ...provider("forge.example:4000", true), projectIds: ["unrelated" as ProjectId] },
+          ],
+        },
+        100,
+      ],
+    ]);
+    for (const copies of [projects, projects.toReversed()]) {
+      expect(
+        plain(
+          assignProjectsToEnvironments(
+            copies,
+            envs("env-1", "env-2"),
+            "env-1" as EnvironmentId,
+            availability,
+          ),
+        ),
+      ).toEqual({ "env-2": ["a-env-2"] });
+    }
   });
 
   it("keeps every copy of a project that has no identity to compare", () => {

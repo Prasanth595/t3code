@@ -116,6 +116,7 @@ function answer(environmentId: EnvironmentId): PullRequestListResult {
         kind: "bitbucket" as never,
         searchesOnHost: false,
         projectCount: 1,
+        projectIds: [projectId],
         configured,
         detail: configured ? null : "Bitbucket rejected the configured credentials.",
       },

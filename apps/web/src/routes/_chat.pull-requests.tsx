@@ -371,10 +371,7 @@ function PullRequestsRouteView() {
     linkedSelection,
     expectedHosts,
     projectsKnown,
-  } = usePullRequestScope(
-    search,
-    new Map([...hostReads].map(([environmentId, read]) => [environmentId, read.hosts])),
-  );
+  } = usePullRequestScope(search, hostReads);
   const rightPanelRef = capableEnvironments.length === 0 ? null : PULL_REQUESTS_PANEL_REF;
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(rightPanelRef);
   const rightPanelState = useRightPanelStore((state) =>

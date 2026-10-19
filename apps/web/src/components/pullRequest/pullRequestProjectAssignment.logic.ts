@@ -17,11 +17,15 @@ export interface AssignableProject {
     | undefined;
 }
 
-export type PullRequestHostAvailability = ReadonlyMap<EnvironmentId, ReadonlyMap<string, boolean>>;
+export type PullRequestHostAvailability = ReadonlyMap<
+  EnvironmentId,
+  Pick<PullRequestHostRead, "hosts" | "projectHosts">
+>;
 
 export type PullRequestHostRead = {
   readonly observedAt: number;
   readonly hosts: ReadonlyMap<string, boolean>;
+  readonly projectHosts: ReadonlyMap<ProjectId, string>;
 };
 
 export function rememberPullRequestHosts(
@@ -39,8 +43,13 @@ export function rememberPullRequestHosts(
     const before = next.get(environmentId);
     if (before !== undefined && observedAt <= before.observedAt) continue;
     const hosts = new Map(before?.hosts);
-    for (const provider of providers) hosts.set(provider.host.toLowerCase(), provider.configured);
-    next = new Map(next).set(environmentId, { observedAt, hosts });
+    const projectHosts = new Map(before?.projectHosts);
+    for (const provider of providers) {
+      const host = provider.host.toLowerCase();
+      hosts.set(host, provider.configured);
+      for (const projectId of provider.projectIds ?? []) projectHosts.set(projectId, host);
+    }
+    next = new Map(next).set(environmentId, { observedAt, hosts, projectHosts });
   }
   return next;
 }
@@ -56,16 +65,17 @@ export function assignProjectsToEnvironments(
   hostAvailability?: PullRequestHostAvailability,
 ): Map<EnvironmentId, ProjectId[]> {
   const rank = new Map(environmentIds.map((id, index) => [id, index] as const));
-  const owner = new Map<string, EnvironmentId>();
-  const unreadable = (project: AssignableProject, environmentId: EnvironmentId) =>
-    hostAvailability
-      ?.get(environmentId)
-      ?.get(
-        pullRequestHostOf(
-          project.repositoryIdentity,
-          (project.repositoryIdentity?.provider ?? "unknown") as SourceControlProviderKind,
-        ),
-      ) === false;
+  const owner = new Map<string, AssignableProject>();
+  const unreadable = (project: AssignableProject) => {
+    const availability = hostAvailability?.get(project.environmentId);
+    const host =
+      availability?.projectHosts.get(project.id) ??
+      pullRequestHostOf(
+        project.repositoryIdentity,
+        (project.repositoryIdentity?.provider ?? "unknown") as SourceControlProviderKind,
+      );
+    return availability?.hosts.get(host) === false;
+  };
   for (const project of projects) {
     const key = repositoryKey(project);
     if (!key) continue;
@@ -73,28 +83,28 @@ export function assignProjectsToEnvironments(
     if (environmentRank === undefined) continue;
     const current = owner.get(key);
     if (current === undefined) {
-      owner.set(key, project.environmentId);
+      owner.set(key, project);
       continue;
     }
-    const currentUnreadable = unreadable(project, current);
-    const candidateUnreadable = unreadable(project, project.environmentId);
+    const currentUnreadable = unreadable(current);
+    const candidateUnreadable = unreadable(project);
     if (currentUnreadable !== candidateUnreadable) {
-      if (currentUnreadable) owner.set(key, project.environmentId);
+      if (currentUnreadable) owner.set(key, project);
       continue;
     }
-    if (current === preferredEnvironmentId) continue;
+    if (current.environmentId === preferredEnvironmentId) continue;
     if (
       project.environmentId === preferredEnvironmentId ||
-      environmentRank < (rank.get(current) ?? Number.MAX_SAFE_INTEGER)
+      environmentRank < (rank.get(current.environmentId) ?? Number.MAX_SAFE_INTEGER)
     ) {
-      owner.set(key, project.environmentId);
+      owner.set(key, project);
     }
   }
   const assignment = new Map<EnvironmentId, ProjectId[]>();
   for (const project of projects) {
     if (!rank.has(project.environmentId)) continue;
     const key = repositoryKey(project);
-    if (key && owner.get(key) !== project.environmentId) continue;
+    if (key && owner.get(key)?.environmentId !== project.environmentId) continue;
     const listed = assignment.get(project.environmentId);
     if (listed === undefined) assignment.set(project.environmentId, [project.id]);
     else listed.push(project.id);

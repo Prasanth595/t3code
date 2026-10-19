@@ -8,6 +8,8 @@ import {
   PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
+  PullRequestOperationError,
+  PullRequestUnavailableError,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
   pullRequestHostOf,
@@ -100,6 +102,40 @@ describe("PullRequestListResult", () => {
     const decoded = Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(LIST_RESULT));
 
     expect(decoded).toStrictEqual(LIST_RESULT);
+  });
+
+  it("round-trips resolved host project IDs while accepting older host summaries", () => {
+    const result = {
+      ...LIST_RESULT,
+      providers: LIST_RESULT.providers.map((provider) => ({
+        ...provider,
+        projectIds: ["ssh-project" as PullRequestListResult["entries"][number]["projectId"]],
+      })),
+    };
+    const codec = Schema.toCodecJson(PullRequestListResult);
+    expect(Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(result))).toStrictEqual(result);
+    expect(decodeListResult(LIST_RESULT)).toStrictEqual(LIST_RESULT);
+  });
+
+  it("carries list observations through both typed errors' JSON codecs", () => {
+    const unavailable = new PullRequestUnavailableError({
+      reason: "cli-unauthenticated",
+      listResult: LIST_RESULT,
+    });
+    const unavailableCodec = Schema.toCodecJson(PullRequestUnavailableError);
+    expect(
+      Schema.decodeSync(unavailableCodec)(Schema.encodeUnknownSync(unavailableCodec)(unavailable))
+        .listResult,
+    ).toStrictEqual(LIST_RESULT);
+    const failed = new PullRequestOperationError({
+      operation: "list",
+      detail: "HTTP 403",
+      listResult: LIST_RESULT,
+    });
+    const failedCodec = Schema.toCodecJson(PullRequestOperationError);
+    expect(
+      Schema.decodeSync(failedCodec)(Schema.encodeUnknownSync(failedCodec)(failed)).listResult,
+    ).toStrictEqual(LIST_RESULT);
   });
 
   it("keys a viewer by host, so two hosts of one kind stay separate accounts", () => {
