@@ -47,6 +47,8 @@ interface FileBrowserPanelProps {
   projectName: string;
   selectedPath: string | null;
   selectedPathRevealId: number;
+  selectedPathRevealHandled: boolean;
+  onSelectedPathRevealHandled: () => void;
   onOpenFile: (relativePath: string) => void;
   /**
    * Set when `cwd` is a host folder outside the workspace rather than the
@@ -146,6 +148,8 @@ export default function FileBrowserPanel({
   projectName,
   selectedPath,
   selectedPathRevealId,
+  selectedPathRevealHandled,
+  onSelectedPathRevealHandled,
   onOpenFile,
   onRefreshSelectedFile,
   workspaceMutationId,
@@ -340,32 +344,38 @@ export default function FileBrowserPanel({
     search.close();
   };
   const expandedPathsRef = useRef(new Set<string>());
-  // The panel unmounts with its right-panel tab, so the remembered folders live
-  // in storage. The panel is keyed by workspace, so these are read once.
+  // The panel is keyed by workspace. Read storage after the previous panel's
+  // cleanup so a pending toggle survives a switch to another surface.
   const expansionStorageKey = `t3code.fileTreeExpanded:${environmentId}:${cwd}`;
-  const [persistedExpansion] = useState(() => {
-    const persisted = readExpandedPaths(expansionStorageKey);
-    return { persisted, pendingRestore: new Set(persisted) };
-  });
+  const persistedExpansionRef = useRef<{
+    persisted: Set<string>;
+    pendingRestore: Set<string>;
+  } | null>(null);
   useEffect(() => {
+    if (persistedExpansionRef.current === null) {
+      const persisted = readExpandedPaths(expansionStorageKey);
+      persistedExpansionRef.current = { persisted, pendingRestore: new Set(persisted) };
+    }
+    const { persisted, pendingRestore } = persistedExpansionRef.current;
     const currentPaths = new Set(directoryPaths);
     for (const path of expandedPathsRef.current) {
       if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
     }
+    let active = true;
+    let scheduled = false;
+    let reconciling = false;
+    const syncExpansion = () => {
+      if (model.isSearchOpen()) return;
+      return syncPersistedExpansion({
+        model,
+        directoryPaths,
+        loadedDirectories,
+        persisted,
+        pendingRestore,
+      });
+    };
     const loadExpanded = () => {
       if (model.isSearchOpen()) return;
-      const { persisted, pendingRestore } = persistedExpansion;
-      if (
-        syncPersistedExpansion({
-          model,
-          directoryPaths,
-          loadedDirectories,
-          persisted,
-          pendingRestore,
-        })
-      ) {
-        writeExpandedPaths(expansionStorageKey, persisted);
-      }
       for (const path of directoryPaths) {
         const item = model.getItem(path);
         if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
@@ -379,9 +389,32 @@ export default function FileBrowserPanel({
         }
       }
     };
-    loadExpanded();
-    return model.subscribe(loadExpanded);
-  }, [directoryPaths, expansionStorageKey, load, loadedDirectories, model, persistedExpansion]);
+    const flush = () => {
+      if (!active) return;
+      scheduled = false;
+      reconciling = true;
+      const changed = syncExpansion();
+      loadExpanded();
+      reconciling = false;
+      if (changed) writeExpandedPaths(expansionStorageKey, persisted);
+    };
+    const schedule = () => {
+      if (scheduled || reconciling) return;
+      scheduled = true;
+      queueMicrotask(flush);
+    };
+    schedule();
+    const unsubscribe = model.subscribe(schedule);
+    return () => {
+      unsubscribe();
+      // Capture a final toggle before the panel disappears; queued work must not
+      // overwrite a newer panel's state or start directory loads after unmount.
+      if (scheduled && syncExpansion()) {
+        writeExpandedPaths(expansionStorageKey, persisted);
+      }
+      active = false;
+    };
+  }, [directoryPaths, expansionStorageKey, load, loadedDirectories, model]);
   useEffect(() => {
     model.setGitStatus(
       entries
@@ -393,13 +426,13 @@ export default function FileBrowserPanel({
     );
   }, [entries, model]);
   useEffect(() => {
-    if (!selectedPath) return;
+    if (!selectedPath || selectedPathRevealHandled) return;
     const controller = new AbortController();
     void loadFileAncestors(selectedPath, load, { signal: controller.signal });
     return () => {
       controller.abort();
     };
-  }, [load, selectedPath]);
+  }, [load, selectedPath, selectedPathRevealHandled]);
   const handleSearchValueChange = (value: string) => {
     setQuery(value);
     if (value.trim().length === 0) {
@@ -441,7 +474,7 @@ export default function FileBrowserPanel({
   }, [directoryPaths, expandAll, model, query]);
 
   useEffect(() => {
-    if (!selectedPath) {
+    if (!selectedPath || selectedPathRevealHandled) {
       handledRevealRef.current = null;
       return;
     }
@@ -474,10 +507,12 @@ export default function FileBrowserPanel({
     if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
       treeSelectionPathRef.current = null;
       handledRevealRef.current = revealRequest;
+      onSelectedPathRevealHandled();
       return;
     }
     treeSelectionPathRef.current = null;
     handledRevealRef.current = revealRequest;
+    onSelectedPathRevealHandled();
 
     syncingSelectionRef.current = true;
     setQuery("");
@@ -505,7 +540,14 @@ export default function FileBrowserPanel({
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [entryKinds, model, selectedPath, selectedPathRevealId]);
+  }, [
+    entryKinds,
+    model,
+    selectedPath,
+    selectedPathRevealId,
+    selectedPathRevealHandled,
+    onSelectedPathRevealHandled,
+  ]);
 
   // The capture phase runs before the tree's own dragstart handler selects
   // the dragged row, so the drag flag is up before that selection emits.

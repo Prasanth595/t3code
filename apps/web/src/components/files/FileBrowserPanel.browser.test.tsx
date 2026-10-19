@@ -1,9 +1,42 @@
-import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId, type ProjectEntry } from "@t3tools/contracts";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+
+const threadRef = scopeThreadRef(
+  EnvironmentId.make("test-environment"),
+  ThreadId.make("files-test"),
+);
+
+type PanelProps = Omit<
+  ComponentProps<typeof FileBrowserPanel>,
+  "selectedPathRevealHandled" | "onSelectedPathRevealHandled"
+>;
+
+function TestPanel(props: PanelProps) {
+  const surface = useRightPanelStore((state) =>
+    selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces.find(
+      (entry) => entry.kind === "file" && entry.relativePath === props.selectedPath,
+    ),
+  );
+  return (
+    <FileBrowserPanel
+      {...props}
+      selectedPathRevealHandled={surface?.kind === "file" && surface.explorerRevealHandled === true}
+      onSelectedPathRevealHandled={() => {
+        if (props.selectedPath) {
+          useRightPanelStore
+            .getState()
+            .markExplorerRevealHandled(threadRef, props.selectedPath, props.selectedPathRevealId);
+        }
+      }}
+    />
+  );
+}
 
 const files = vi.hoisted(() => ({
   directoryEntries: [] as ProjectEntry[],
@@ -63,7 +96,7 @@ describe("Files panel", () => {
     workspaceMutationId: null,
   };
 
-  async function render(overrides: Partial<ComponentProps<typeof FileBrowserPanel>> = {}) {
+  async function render(overrides: Partial<PanelProps> = {}) {
     if (!container) {
       container = document.body.appendChild(document.createElement("div"));
       // The tree virtualizes its rows, so it needs a real viewport to render any.
@@ -72,14 +105,26 @@ describe("Files panel", () => {
       root = createRoot(container);
     }
     const panelProps = { ...props, ...overrides };
-    await act(async () =>
+    await act(async () => {
+      if (panelProps.selectedPath) {
+        const store = useRightPanelStore.getState();
+        const surface = selectThreadRightPanelState(store.byThreadKey, threadRef).surfaces.find(
+          (entry) => entry.kind === "file" && entry.relativePath === panelProps.selectedPath,
+        );
+        if (
+          surface?.kind !== "file" ||
+          surface.revealRequestId !== panelProps.selectedPathRevealId
+        ) {
+          store.openFile(threadRef, panelProps.selectedPath);
+        }
+      }
       root!.render(
-        <FileBrowserPanel key={`${panelProps.environmentId}:${panelProps.cwd}`} {...panelProps} />,
-      ),
-    );
+        <TestPanel key={`${panelProps.environmentId}:${panelProps.cwd}`} {...panelProps} />,
+      );
+    });
   }
 
-  async function remount(overrides: Partial<ComponentProps<typeof FileBrowserPanel>> = {}) {
+  async function remount(overrides: Partial<PanelProps> = {}) {
     await act(async () => root!.unmount());
     root = createRoot(container!);
     await render(overrides);
@@ -125,6 +170,7 @@ describe("Files panel", () => {
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     localStorage.clear();
+    useRightPanelStore.setState({ byThreadKey: {} });
     vi.clearAllMocks();
     files.loadedDirectories = new Set(["", "src"]);
     files.loadingDirectories = new Set();
@@ -225,6 +271,16 @@ describe("Files panel", () => {
     ).toEqual(["src"]);
     await remount();
     expect(visiblePaths()).toContain("src/app.ts");
+    await act(async () => {
+      container!
+        .querySelector("file-tree-container")!
+        .shadowRoot!.querySelector<HTMLButtonElement>('button[data-item-path="src/"]')!
+        .click();
+      root!.render(<TestPanel key="replacement" {...props} />);
+    });
+    expect(visiblePaths()).not.toContain("src/app.ts");
+    expect(localStorage.getItem("t3code.fileTreeExpanded:test-environment:/workspace")).toBeNull();
+    await toggleFolder("src");
 
     await render({ environmentId: EnvironmentId.make("other-environment") });
     expect(visiblePaths()).not.toContain("src/app.ts");
@@ -248,6 +304,24 @@ describe("Files panel", () => {
     expect(localStorage.getItem("t3code.fileTreeExpanded:test-environment:/workspace")).toBeNull();
 
     await render({ ...retainedSelection, selectedPathRevealId: 2 });
+    expect(visiblePaths()).toContain("src/app.ts");
+    await toggleFolder("src");
+    await act(async () => root!.unmount());
+    // Reload the persisted surface as well as the tree, then open a new surface
+    // whose reveal counter starts over at one.
+    const savedSurfaceState = localStorage.getItem("t3code:right-panel-state:v2")!;
+    useRightPanelStore.setState({ byThreadKey: {} });
+    localStorage.setItem("t3code:right-panel-state:v2", savedSurfaceState);
+    await useRightPanelStore.persist.rehydrate();
+    root = createRoot(container!);
+    await render({ ...retainedSelection, selectedPathRevealId: 2 });
+    expect(visiblePaths()).not.toContain("src/app.ts");
+    await act(async () => {
+      root!.unmount();
+      useRightPanelStore.getState().closeAllSurfaces(threadRef);
+    });
+    root = createRoot(container!);
+    await render(retainedSelection);
     expect(visiblePaths()).toContain("src/app.ts");
   });
 
@@ -291,7 +365,14 @@ describe("Files panel", () => {
 
     files.directoryEntries = [...files.directoryEntries, { path: "src/app.ts", kind: "file" }];
     files.loadedDirectories = new Set(["", "src"]);
-    await render({ selectedPath: "src/app.ts", selectedPathRevealId: 1 });
+    const storageWrite = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+    try {
+      await render({ selectedPath: "src/app.ts", selectedPathRevealId: 1 });
+    } finally {
+      storageWrite.mockRestore();
+    }
     expect(visiblePaths()).toContain("src/app.ts");
     const selected = container!
       .querySelector("file-tree-container")!

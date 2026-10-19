@@ -56,6 +56,8 @@ export type RightPanelSurface =
       relativePath: string;
       revealLine: number | null;
       revealRequestId: number;
+      /** Survives explorer remounts; a new openFile request clears it. */
+      explorerRevealHandled?: boolean;
       attachment?: ChatFileAttachment;
       /**
        * Set when breadcrumbs moved a folder browser up from a deeper path: the
@@ -128,6 +130,11 @@ interface RightPanelStoreState {
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  markExplorerRevealHandled: (
+    ref: ScopedThreadRef,
+    relativePath: string,
+    requestId: number,
+  ) => void;
   /**
    * Moves the folder browser in `surfaceId` to `relativePath` in place, so walking
    * the breadcrumbs does not leave a tab behind per folder. `""` is the workspace
@@ -718,6 +725,33 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
+      markExplorerRevealHandled: (ref, relativePath, requestId) => {
+        try {
+          set((state) =>
+            automaticUpdate(state, scopedThreadKey(ref), (current) => {
+              const surface = current.surfaces.find(
+                (entry) => entry.id === `file:${relativePath}` && entry.kind === "file",
+              );
+              if (
+                surface?.kind !== "file" ||
+                surface.revealRequestId !== requestId ||
+                surface.explorerRevealHandled === true
+              ) {
+                return current;
+              }
+              return {
+                ...current,
+                surfaces: current.surfaces.map((entry) =>
+                  entry === surface ? { ...surface, explorerRevealHandled: true } : entry,
+                ),
+              };
+            }),
+          );
+        } catch {
+          // Zustand applies the in-memory acknowledgment before writing storage;
+          // blocked storage must not interrupt the reveal.
+        }
+      },
       navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
