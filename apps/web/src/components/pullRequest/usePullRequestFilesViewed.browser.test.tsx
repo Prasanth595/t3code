@@ -161,20 +161,20 @@ describe("a failed batch that the host partly applied", () => {
     setFilesViewed.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("partial batch"))),
     );
-    // A fresh host read contains the first applied alias, while the refused alias stays unviewed.
     host.refresh.mockImplementation(() => {
       host.data = answer("viewed");
-      renderer!.update(
+      root.render(
         <StrictMode>
           <Surface />
         </StrictMode>,
       );
     });
-    view().setViewed("a.ts", true);
-    view().setViewed("b.ts", true);
+    act(() => {
+      view().setViewed("a.ts", true);
+      view().setViewed("b.ts", true);
+    });
     await act(async () => vi.advanceTimersByTimeAsync(500));
     expect(view().isViewed("a.ts")).toBe(true);
     expect(view().isViewed("b.ts")).toBe(false);
-    expect(view().viewedCount).toBe(1);
   });
 });

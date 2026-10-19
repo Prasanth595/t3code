@@ -6214,8 +6214,9 @@ it.effect("names the signed-in account in the detail, and says nothing where the
   }),
 );
 
-it.effect("host viewed write errors discard cached marks after a partial mutation", () =>
+it.effect("partial host viewed writes invalidate marks but keep the diff cached", () =>
   Effect.gen(function* () {
+    let diffReads = 0;
     const states = new Map<string, "viewed" | "unviewed">([
       ["a.ts", "unviewed"],
       ["b.ts", "unviewed"],
@@ -6228,6 +6229,11 @@ it.effect("host viewed write errors discard cached marks after a partial mutatio
             ...fakeProvider(SourceControlProviderKind.make("github")).capabilities,
             viewedFiles: "host",
           },
+          getDiff: () =>
+            Effect.sync(() => {
+              diffReads += 1;
+              return { patch: "@@", truncated: false, nextCursor: null };
+            }),
           getFilesViewed: () =>
             Effect.sync(() => ({
               files: [...states].map(([path, state]) => ({ path, state })),
@@ -6247,6 +6253,7 @@ it.effect("host viewed write errors discard cached marks after a partial mutatio
       ],
     });
     const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 10 };
+    yield* service.diff(ref);
     assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
       { path: "a.ts", state: "unviewed" },
       { path: "b.ts", state: "unviewed" },
@@ -6257,6 +6264,8 @@ it.effect("host viewed write errors discard cached marks after a partial mutatio
         files: [...states.keys()].map((path) => ({ path, viewed: true })),
       }),
     );
+    yield* service.diff(ref);
+    assert.strictEqual(diffReads, 1);
     assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
       { path: "a.ts", state: "viewed" },
       { path: "b.ts", state: "unviewed" },
