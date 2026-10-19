@@ -3270,9 +3270,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ...tracked,
           upstreamRef: "refs/remotes/team/upstream/feature/a",
         });
-        const fileSystem = yield* FileSystem.FileSystem;
         const aliasCwd = pathService.join(cwd, "worktree-alias");
-        yield* fileSystem.symlink(worktreePath, aliasCwd);
+        NodeFS.symlinkSync(worktreePath, aliasCwd, "junction");
         const aliased = yield* driver.listRefs({ cwd: aliasCwd });
         const expected = [
           { ...complete, isAtRepositoryRoot: false },
