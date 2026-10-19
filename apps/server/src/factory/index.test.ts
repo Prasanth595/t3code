@@ -17,6 +17,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -26,6 +27,7 @@ import { Attention, type NewItem } from "./attention.ts";
 import {
   timeLimitOnlyProjectConfig,
   type MachineConfig,
+  type RepoConfigReading,
   type WatchedListing,
   type WatchedProject,
 } from "./config.ts";
@@ -736,6 +738,7 @@ describe("liveWorld", () => {
       machine,
       "/factory-test/data",
       process,
+      NodeServices.layer,
       stubSessions,
       () => NOW,
       "mac-mini",
@@ -1098,36 +1101,101 @@ describe("liveWorld", () => {
       }),
   );
 
-  /** gh answers for `.dw/config.yml` on a default branch `main` whose config names `base`. */
-  const baseConfigGh = (base: string) => {
+  const configText = (base: string) =>
+    `factory:\n  instructors: [tomkaczocha]\n  base: ${base}\n  provision: []\n  gate: [make]\n  limits: { minutes: 1, gate_retries: 0 }\n  autonomy: pr\n`;
+
+  /**
+   * gh answers for `.dw/config.yml` on a default branch `main`: the file naming `base`, or the
+   * contents call failing with `stderr` (a 404 is GitHub saying the file is not there). `ref`
+   * fails the branch's tip call with a 404 instead.
+   */
+  const baseConfigGh = (
+    file: { readonly base: string } | { readonly stderr: string },
+    ref: "ok" | "missing" = "ok",
+  ) => {
     const sha = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
-    const text = `factory:\n  instructors: [tomkaczocha]\n  base: ${base}\n  provision: []\n  gate: [make]\n  limits: { minutes: 1, gate_retries: 0 }\n  autonomy: pr\n`;
-    const content = Buffer.from(text).toString("base64");
-    return ghWith((args) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const answer = (args: ReadonlyArray<string>): string | { readonly stderr: string } => {
       const path = args[1] ?? "";
-      if (args[0] !== "api") return null;
-      if (path === `repos/${REPO}`) return '{"default_branch":"main"}';
-      if (path === `repos/${REPO}/git/ref/heads/main`) {
+      if (args[0] === "api" && path === `repos/${REPO}`) return '{"default_branch":"main"}';
+      if (args[0] === "api" && path === `repos/${REPO}/git/ref/heads/main`) {
+        if (ref === "missing") return { stderr: "gh: Not Found (HTTP 404)" };
         return JSON.stringify({ ref: "refs/heads/main", object: { sha, type: "commit" } });
       }
-      if (path.startsWith(`repos/${REPO}/contents/`)) {
+      if (args[0] === "api" && path.startsWith(`repos/${REPO}/contents/`)) {
+        if ("stderr" in file) return { stderr: file.stderr };
+        const text = configText(file.base);
         return JSON.stringify({
           name: "config.yml",
           path: ".dw/config.yml",
           sha: "abc",
           size: text.length,
           type: "file",
-          content,
+          content: Buffer.from(text).toString("base64"),
           encoding: "base64",
         });
       }
-      return null;
+      return { stderr: "gh: Server Error (HTTP 502)" };
+    };
+    const process = FactoryProcess.of({
+      run: (input: RunInput) => {
+        const args = input.args ?? [];
+        calls.push(args);
+        const reply = answer(args);
+        const failed = typeof reply !== "string";
+        return Effect.succeed({
+          exitCode: failed ? 1 : 0,
+          timedOut: false,
+          tail: failed ? "" : reply,
+          stderrTail: failed ? reply.stderr : "",
+          truncated: false,
+        } satisfies RunResult);
+      },
     });
+    return { process, calls };
+  };
+
+  const NOT_FOUND = { stderr: "gh: Not Found (HTTP 404)" };
+  const projectDirs = useTempDirs();
+
+  /** A checkout whose working tree holds `.dw/config.yml` naming `base`, or none. */
+  const checkout = (base: string | null) => {
+    const root = projectDirs("checkout");
+    if (base !== null) {
+      NodeFS.mkdirSync(NodePath.join(root, ".dw"));
+      NodeFS.writeFileSync(NodePath.join(root, ".dw", "config.yml"), configText(base));
+    }
+    return { root, file: NodePath.join(root, ".dw", "config.yml") };
+  };
+
+  /** The project config of `REPO` at `root`, and what the settings page was told about it. */
+  const readProject = (process: FactoryProcess["Service"], root: string) => {
+    const readings: Array<RepoConfigReading> = [];
+    const world = liveWorld(
+      machine,
+      "/factory-test/data",
+      process,
+      NodeServices.layer,
+      stubSessions,
+      () => NOW,
+      "mac-mini",
+      noAttention,
+      {
+        gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+        wake: Effect.void,
+        scope: Scope.makeUnsafe(),
+      },
+      undefined,
+      (_repo, reading) => readings.push(reading),
+    );
+    return Effect.result(world.project({ repo: REPO, path: root })).pipe(
+      Effect.map((result) => ({ result, readings })),
+    );
   };
 
   it.effect("a project config committed on its own base branch is loaded", () =>
     Effect.gen(function* () {
-      const { process } = baseConfigGh("main");
+      const { process } = baseConfigGh({ base: "main" });
       const project = yield* worldOf(process).project({ repo: REPO, path: "/p" });
       assert.strictEqual(project.base, "main");
     }),
@@ -1135,11 +1203,160 @@ describe("liveWorld", () => {
 
   it.effect("a project config that names another base is a config error naming both", () =>
     Effect.gen(function* () {
-      const { process } = baseConfigGh("develop");
+      const { process } = baseConfigGh({ base: "develop" });
       const error = yield* Effect.flip(worldOf(process).project({ repo: REPO, path: "/p" }));
       assert.strictEqual(error.kind, "config");
       assert.include(error.message, "`develop`");
       assert.include(error.message, "`main`");
+    }),
+  );
+
+  it.effect("the GitHub copy wins over a checkout copy that differs", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh({ base: "main" });
+      // The checkout's copy would be refused: had it been read, the read would fail.
+      const local = checkout("develop");
+      const { result } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isSuccess(result));
+      if (Result.isSuccess(result)) assert.strictEqual(result.success.base, "main");
+    }),
+  );
+
+  it.effect("a config not on GitHub is read from the checkout's working tree", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout("main");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isSuccess(result));
+      if (Result.isSuccess(result)) assert.strictEqual(result.success.base, "main");
+      assert.deepStrictEqual(
+        readings.map((r) => r.kind),
+        ["ok"],
+      );
+    }),
+  );
+
+  it.effect("a checkout config that names another base is skipped, naming the local file", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout("develop");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.kind, "config");
+        assert.include(result.failure.message, local.file);
+        assert.include(result.failure.message, "`develop`");
+        assert.include(result.failure.message, "`main`");
+        assert.include(result.failure.message, "a checkout's config must name the default branch");
+      }
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.deepStrictEqual(
+          reading.errors.map((e) => [e.file, e.field]),
+          [[local.file, "factory.base"]],
+        );
+      }
+    }),
+  );
+
+  it.effect("no config on GitHub and none in the checkout is one error saying both", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.strictEqual(result.failure.kind, "config");
+        assert.include(
+          result.failure.message,
+          `.dw/config.yml is not on main on GitHub, and cannot read ${local.file}: `,
+        );
+      }
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.deepStrictEqual(
+          reading.errors.map((e) => e.file),
+          [local.file],
+        );
+      }
+    }),
+  );
+
+  it.effect("any other GitHub failure is the pass error and the checkout is not read", () =>
+    Effect.gen(function* () {
+      // A good checkout copy: any fallback to it would load.
+      const local = checkout("main");
+      for (const gh of [
+        baseConfigGh({ stderr: "gh: Server Error (HTTP 502)" }),
+        baseConfigGh({ stderr: "API rate limit exceeded" }),
+        baseConfigGh({ base: "main" }, "missing"),
+      ]) {
+        const { result, readings } = yield* readProject(gh.process, local.root);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.include(result.failure.message, "cannot read .dw/config.yml from GitHub: ");
+          assert.notInclude(result.failure.message, local.root);
+        }
+        const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
+        if (reading?.kind === "errors") {
+          assert.deepStrictEqual(
+            reading.errors.map((e) => e.file),
+            [".dw/config.yml"],
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("a checkout config that does not parse names the local file in its errors", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      NodeFS.mkdirSync(NodePath.join(local.root, ".dw"));
+      NodeFS.writeFileSync(local.file, "factory:\n  instructors: [tomkaczocha]\n  base: main\n");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.isAbove(reading.errors.length, 0);
+        for (const error of reading.errors) assert.strictEqual(error.file, local.file);
+      }
+    }),
+  );
+
+  it.effect("a checkout config that cannot be read is one error saying both", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      // A directory where the file should be.
+      NodeFS.mkdirSync(local.file, { recursive: true });
+      const { result } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.include(
+          result.failure.message,
+          `.dw/config.yml is not on main on GitHub, and cannot read ${local.file}: `,
+        );
+      }
+    }),
+  );
+
+  it.effect("a config read from GitHub names `<branch>:.dw/config.yml` in its errors", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh({ base: "develop" });
+      const { readings } = yield* readProject(process, checkout(null).root);
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.deepStrictEqual(
+          reading.errors.map((e) => e.file),
+          ["main:.dw/config.yml"],
+        );
+      }
     }),
   );
 
@@ -1153,6 +1370,7 @@ describe("liveWorld", () => {
         machine,
         dataDir,
         process,
+        NodeServices.layer,
         stubSessions,
         () => NOW,
         "mac-mini",
@@ -1184,6 +1402,7 @@ describe("liveWorld", () => {
         machine,
         dataDir,
         process,
+        NodeServices.layer,
         stubSessions,
         () => NOW,
         "mac-mini",
@@ -1221,6 +1440,7 @@ describe("liveWorld", () => {
         machine,
         downDir,
         process,
+        NodeServices.layer,
         stubSessions,
         () => NOW,
         "mac-mini",
@@ -1335,6 +1555,7 @@ describe("the gate in the background", () => {
         background,
         dataDir,
         gh,
+        NodeServices.layer,
         Sessions.FactorySessions.of({
           ...stubSessions,
           archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
@@ -1388,6 +1609,7 @@ describe("the gate in the background", () => {
           background,
           dataDir,
           gh,
+          NodeServices.layer,
           stubSessions,
           () => 1_000,
           "mac-mini",
@@ -1468,6 +1690,7 @@ describe("the gate in the background", () => {
           gateMachine,
           dataDir,
           deadGh,
+          NodeServices.layer,
           sessions,
           () => 1_000,
           "mac-mini",
@@ -1521,6 +1744,7 @@ describe("the gate in the background", () => {
           gateMachine,
           dataDir,
           deadGh,
+          NodeServices.layer,
           sessions,
           () => 1_000,
           "mac-mini",
@@ -1549,6 +1773,7 @@ describe("the gate in the background", () => {
           gateMachine,
           dataDir,
           deadGh,
+          NodeServices.layer,
           sessions,
           () => 1_000,
           "mac-mini",
@@ -1591,6 +1816,7 @@ describe("the gate in the background", () => {
         gateMachine,
         dataDir,
         quietGh,
+        NodeServices.layer,
         sessions,
         () => 1_000,
         "mac-mini",
@@ -1641,6 +1867,7 @@ describe("the gate in the background", () => {
         gateMachine,
         dataDir,
         deadGh,
+        NodeServices.layer,
         sessions,
         () => 1_000,
         "mac-mini",
@@ -1767,6 +1994,7 @@ describe("the gate in the background", () => {
         machine,
         dataDir,
         { run: () => Effect.die("no gh") },
+        NodeServices.layer,
         stubSessions,
         () => 2_000,
         "mac-mini",
@@ -1818,6 +2046,7 @@ describe("the gate in the background", () => {
           },
           dataDir,
           { run: () => Effect.die("no gh") },
+          NodeServices.layer,
           stubSessions,
           () => 2_000,
           "mac-mini",

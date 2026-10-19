@@ -596,15 +596,19 @@ it.effect("baseConfig reads the branch, its tip and the config file at that tip"
   }),
 );
 
-it.effect("baseConfig passes on a missing file and any other failure", () =>
+it.effect("baseConfig says a missing file has no text, and passes on any other failure", () =>
   Effect.gen(function* () {
     const missing = setup(
       reply('{"default_branch":"main"}'),
       reply(refReply(BASE_SHA)),
       fail(1, "gh: Not Found (HTTP 404)"),
     );
-    const notFound = yield* missing.err(missing.github.baseConfig());
-    assert.isTrue(isNotFound(notFound));
+    const none = yield* missing.ok(missing.github.baseConfig());
+    assert.deepStrictEqual(none, { branch: "main", tip: BASE_SHA, text: null });
+
+    // A 404 on the branch's tip is not a missing file.
+    const noTip = setup(reply('{"default_branch":"main"}'), fail(1, "gh: Not Found (HTTP 404)"));
+    assert.isTrue(isNotFound(yield* noTip.err(noTip.github.baseConfig())));
 
     const server = setup(
       reply('{"default_branch":"main"}'),

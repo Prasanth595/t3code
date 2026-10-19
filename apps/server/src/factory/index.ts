@@ -179,13 +179,42 @@ interface ProjectReadError extends PassError {
   readonly errors: ReadonlyArray<ConfigError>;
 }
 
+/** The checkout's own `.dw/config.yml`, for a repo whose default branch `branch` has none on GitHub. */
+const fromCheckout = (
+  checkout: string,
+  branch: string,
+): Effect.Effect<
+  { readonly file: string; readonly text: string },
+  ProjectReadError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const file = path.join(checkout, PROJECT_CONFIG_PATH);
+    const text = yield* fs.readFileString(file).pipe(
+      Effect.mapError((error): ProjectReadError => {
+        const message = `${PROJECT_CONFIG_PATH} is not on ${branch} on GitHub, and cannot read ${file}: ${error.message}`;
+        return { kind: "config", message, errors: [{ file, message }] };
+      }),
+    );
+    return { file, text };
+  });
+
 /**
- * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub.
- * The config must name that branch as its `base`: it is committed on its own base branch.
+ * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub,
+ * or, only when GitHub says the file is not there, the copy in the watched checkout's working
+ * tree. Some repos keep the file off GitHub because their gate holds machine-specific commands.
+ * Either way the config must name the default branch as its `base`.
  */
 const projectFromBase = (
   github: ReturnType<typeof makeGitHub>,
-): Effect.Effect<ProjectConfig, ProjectReadError, FactoryProcess> =>
+  checkout: string,
+): Effect.Effect<
+  ProjectConfig,
+  ProjectReadError,
+  FactoryProcess | FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const found = yield* github.baseConfig().pipe(
       Effect.mapError((error): ProjectReadError => ({
@@ -199,8 +228,11 @@ const projectFromBase = (
         ],
       })),
     );
-    const file = `${found.branch}:${PROJECT_CONFIG_PATH}`;
-    const parsed = parseProjectConfig(found.text, file);
+    const { file, text } =
+      found.text !== null
+        ? { file: `${found.branch}:${PROJECT_CONFIG_PATH}`, text: found.text }
+        : yield* fromCheckout(checkout, found.branch);
+    const parsed = parseProjectConfig(text, file);
     if (Result.isFailure(parsed)) {
       return yield* Effect.fail<ProjectReadError>({
         kind: "config",
@@ -209,7 +241,11 @@ const projectFromBase = (
       });
     }
     if (parsed.success.base !== found.branch) {
-      const message = `${file} names base \`${parsed.success.base}\`, but the repo's default branch is \`${found.branch}\`: the config must be committed on its own base branch`;
+      const rule =
+        found.text !== null
+          ? "the config must be committed on its own base branch"
+          : "a checkout's config must name the default branch as its base";
+      const message = `${file} names base \`${parsed.success.base}\`, but the repo's default branch is \`${found.branch}\`: ${rule}`;
       return yield* Effect.fail<ProjectReadError>({
         kind: "config",
         message,
@@ -355,6 +391,8 @@ export const liveWorld = (
   machine: MachineConfig,
   dataDir: string,
   process: FactoryProcess["Service"],
+  // What a pass reads a checkout's project config through.
+  files: Layer.Layer<FileSystem.FileSystem | Path.Path>,
   sessions: T3Sessions.FactorySessions["Service"],
   clock: () => number,
   host: string,
@@ -496,7 +534,9 @@ export const liveWorld = (
     });
   return {
     project: (watched) =>
-      withProcess(projectFromBase(githubFor(watched))).pipe(
+      withProcess(
+        projectFromBase(githubFor(watched), watched.path).pipe(Effect.provide(files)),
+      ).pipe(
         Effect.tap((project) =>
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
@@ -800,6 +840,10 @@ const startFactory = (options: RuntimeOptions) =>
             machine,
             factoryDir,
             process,
+            Layer.mergeAll(
+              Layer.succeed(FileSystem.FileSystem)(fileSystem),
+              Layer.succeed(Path.Path)(path),
+            ),
             sessions,
             () => Date.now(),
             hostName(),

@@ -695,7 +695,8 @@ export interface FactoryComment {
 export interface BaseConfig {
   readonly branch: string;
   readonly tip: string;
-  readonly text: string;
+  /** Null when GitHub says the file is not at the tip. */
+  readonly text: string | null;
 }
 
 /** One pull request, as read by `gh pr view`. */
@@ -1188,13 +1189,16 @@ export const makeGitHub = (options: GitHubOptions) => {
 
   /**
    * The project config on the default branch: the branch, its tip and the file. The
-   * file is read at that tip, so the three agree. A missing file is the 404 failure.
+   * file is read at that tip, so the three agree. A missing file has a null `text`; a 404
+   * on the branch or its tip is still a failure.
    */
   const baseConfig = (): GitHubEffect<BaseConfig> =>
     Effect.gen(function* () {
       const branch = yield* defaultBranch();
       const tip = yield* branchTip(branch);
-      const text = yield* fileAt(PROJECT_CONFIG_PATH, tip);
+      const text = yield* fileAt(PROJECT_CONFIG_PATH, tip).pipe(
+        Effect.catchIf(isNotFound, () => Effect.succeed(null)),
+      );
       return { branch, tip, text };
     });
 

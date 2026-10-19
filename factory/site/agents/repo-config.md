@@ -4,10 +4,10 @@ File: `.dw/config.yml` in the repo. Parsed by [`apps/server/src/factory/config.t
 
 ## Where it is read
 
-| Purpose                     | Source                                                                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Whether the repo is watched | The T3 project's checkout on disk; falls back to `git show origin/HEAD:.dw/config.yml`. Opted in when the root and `factory` are both mappings. Not validated here. |
-| The config runs use         | The tip of the repo's default branch on GitHub, read on every pass.                                                                                                 |
+| Purpose                     | Source                                                                                                                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whether the repo is watched | The T3 project's checkout on disk; falls back to `git show origin/HEAD:.dw/config.yml`. Opted in when the root and `factory` are both mappings. Not validated here.                                                   |
+| The config runs use         | The tip of the repo's default branch on GitHub, read on every pass. Only when GitHub says the file is not there, the checkout's working tree, so a checkout-only config takes effect on the next pass without a push. |
 
 ## Schema
 
@@ -63,5 +63,5 @@ Keys the server does not read are ignored.
 | Commands    | Each `provision` command, then each `gate` command, through the shell, at the checkout root.                                                                          |
 | Timeout     | 30 minutes per command.                                                                                                                                               |
 | Pass        | Every command exits 0. Then `required_checks`, if any, must pass on the gated commit.                                                                                 |
-| Source      | The commands come from the default branch, never from the PR.                                                                                                         |
+| Source      | The commands come from the default branch on GitHub or, when the file is not there, from the checkout's working tree. Never from the PR.                              |
 | Environment | Only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `TMPDIR`, `TERM` and `LC_*` from the server. `PATH` is the LaunchAgent's, extended by `~/.config/t3fac/env`. |
