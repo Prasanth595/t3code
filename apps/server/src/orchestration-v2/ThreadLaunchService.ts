@@ -1039,9 +1039,8 @@ const make = Effect.gen(function* () {
         const projection = yield* threads
           .getThreadProjection(threadId)
           .pipe(Effect.mapError(mapError(input, "create-thread", threadId)));
-        const runIsPreparing =
-          runId !== null &&
-          projection.runs.some((run) => run.id === runId && run.status === "preparing");
+        const acceptedRun = projection.runs.find((run) => run.id === runId);
+        const runIsPreparing = acceptedRun?.status === "preparing";
         const shouldSchedule = runId === null ? Option.isNone(launchReceipt) : runIsPreparing;
         const boundWorktreePath = projection.thread.worktreePath;
         const preparationStrategy: ThreadLaunchWorkspaceStrategy =
@@ -1068,11 +1067,20 @@ const make = Effect.gen(function* () {
                       Effect.mapError(mapError(input, "update-thread", threadId)),
                     );
               if (preparationStillRequired) {
-                yield* schedulePreparation(
-                  { ...input, workspaceStrategy: preparationStrategy },
-                  threadId,
-                  runId,
-                );
+                if (acceptedRun?.workspacePreparation !== undefined) {
+                  yield* scheduleRunPreparation(
+                    { commandId: input.commandId, threadId, runId: acceptedRun.id },
+                    projection,
+                    acceptedRun,
+                    acceptedRun.workspacePreparation,
+                  );
+                } else {
+                  yield* schedulePreparation(
+                    { ...input, workspaceStrategy: preparationStrategy },
+                    threadId,
+                    runId,
+                  );
+                }
               } else {
                 yield* releasePreparation(input.commandId);
               }
