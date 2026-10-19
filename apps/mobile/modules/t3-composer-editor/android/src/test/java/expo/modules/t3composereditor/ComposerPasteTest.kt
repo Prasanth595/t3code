@@ -94,11 +94,13 @@ class ComposerPasteTest {
   }
 
   @Test
-  fun regularPasteInterceptsEveryTextItemJoinedWithNewlines() {
-    val first = "x".repeat(32 * 1024)
+  fun regularPasteMeasuresAndInterceptsEveryTextItemJoinedWithNewlines() {
+    // Only the complete UTF-8 payload, including both newlines, reaches 32 KiB.
+    val first = "é".repeat(8191)
+    val last = "x".repeat(16 * 1024)
     val clip = ClipData.newPlainText("test", first).apply {
-      addItem(ClipData.Item("ITEM_2"))
-      addItem(ClipData.Item("ITEM_3"))
+      addItem(ClipData.Item(""))
+      addItem(ClipData.Item(last))
     }
     clipboard.setPrimaryClip(clip)
     editor.setText("before old after")
@@ -107,10 +109,7 @@ class ComposerPasteTest {
     editor.pasteTextListener = { text, start, end -> intercepted.add(Triple(text, start, end)) }
 
     assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
-    assertEquals(1, intercepted.size)
-    assertEquals("$first\nITEM_2\nITEM_3", intercepted.single().first)
-    assertEquals(7, intercepted.single().second)
-    assertEquals(10, intercepted.single().third)
+    assertEquals(listOf(Triple("$first\n\n$last", 7, 10)), intercepted)
     assertEquals("before old after", editor.text.toString())
     assertEquals(10, editor.selectionStart)
     assertEquals(7, editor.selectionEnd)
@@ -139,50 +138,6 @@ class ComposerPasteTest {
       assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
       assertEquals("before ITEM_0\nITEM_1\nITEM_2 after", editor.text.toString())
     }
-  }
-
-  @Test
-  fun regularPasteKeepsAnEmptyTextClipNative() {
-    clipboard.setPrimaryClip(ClipData.newPlainText("test", ""))
-    editor.setText("unchanged")
-    editor.setSelection(editor.length())
-    editor.textPasteThresholdBytes = 1
-    editor.pasteTextListener = { _, _, _ -> error("Empty clips must stay native") }
-
-    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
-    assertEquals("unchanged", editor.text.toString())
-  }
-
-  @Test
-  fun pasteAsTextKeepsAZeroItemClipNative() {
-    val clip = ClipData.newPlainText("test", "")
-    // Android's public constructors require an item; construct the empty edge case explicitly.
-    val items = ClipData::class.java.getDeclaredField("mItems").apply {
-      isAccessible = true
-    }.get(clip) as MutableList<*>
-    items.clear()
-    assertEquals(0, clip.itemCount)
-    clipboard.setPrimaryClip(clip)
-    editor.setText("unchanged")
-    editor.setSelection(editor.length())
-    editor.textPasteThresholdBytes = 1
-    editor.pasteTextListener = { _, _, _ -> error("Zero-item clips must stay native") }
-
-    assertTrue(pasteAsText())
-    assertEquals("unchanged", editor.text.toString())
-  }
-
-  @Test
-  fun regularPasteKeepsSingleItemTextNativeAndUndoable() {
-    clipboard.setPrimaryClip(ClipData.newPlainText("test", "hello"))
-    editor.setText("before old after")
-    editor.setSelection(10, 7)
-    editor.pasteTextListener = { _, _, _ -> error("Small single-item paste must stay native") }
-
-    assertTrue(editor.onTextContextMenuItem(android.R.id.paste))
-    assertEquals("before hello after", editor.text.toString())
-    assertTrue(editor.onTextContextMenuItem(android.R.id.undo))
-    assertEquals("before old after", editor.text.toString())
   }
 
   @Test

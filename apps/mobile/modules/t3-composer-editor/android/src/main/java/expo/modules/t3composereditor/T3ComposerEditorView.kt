@@ -754,10 +754,8 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     return shouldIntercept
   }
 
-  // Android pastes every clip item, newline-separated, so measure and emit
-  // the same joined text. coerceToText opens content: URIs synchronously.
-  // Leave any URI-backed clip to Android's normal paste path so the UI thread
-  // never reads a provider, and never intercept only the text subset.
+  // Match native paste's newlines, including empty items.
+  // URI-backed clips stay native: coerceToText can read a provider synchronously.
   private fun ClipData.plainText(): String? {
     var joined: StringBuilder? = null
     for (index in 0 until itemCount) {
