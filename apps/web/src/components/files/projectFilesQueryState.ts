@@ -50,10 +50,6 @@ interface ProjectQueryState<A> {
 interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
   readonly readError: ProjectReadFileError | null;
   readonly isNotFile: boolean;
-  /**
-   * Only a read that returned contents or hit a binary file counts, so an
-   * unknown path is never taken for a file.
-   */
   readonly isFile: boolean;
 }
 
@@ -263,18 +259,19 @@ export function useProjectFileQuery(
   const result = useAtomValue(atom);
   const refreshAtom = useAtomRefresh(atom);
   const refresh = () => refreshAtom();
-  const data = Option.getOrNull(AsyncResult.value(result));
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
-  const fileData = canReadFiles ? (optimisticFile?.data ?? data) : null;
+  const data = canReadFiles
+    ? (optimisticFile?.data ?? Option.getOrNull(AsyncResult.value(result)))
+    : null;
   const isNotFile = readError?.failure === "path_not_file";
 
   return {
-    data: fileData,
+    data,
     error:
       !isQueryEnabled || fileAccess.isPending
         ? null
@@ -284,9 +281,8 @@ export function useProjectFileQuery(
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
     isNotFile,
-    // A refresh that fails keeps the last contents, so a path that became a
-    // folder is ruled out by the failure before the stale contents count.
-    isFile: !isNotFile && (fileData !== null || readError?.failure === "binary_file"),
+    // A folder error overrides cached contents retained across failed refreshes.
+    isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
     refresh,
   };
 }

@@ -219,7 +219,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
-  /** Set only when `openInCwd` is known to be a file; remote links need to tell it from a folder. */
   openInCwdIsFile?: boolean;
   presentation?: "toolbar" | "menu";
   compact?: boolean;
