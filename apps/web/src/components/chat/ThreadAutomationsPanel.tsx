@@ -30,24 +30,6 @@ import {
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
 } from "./threadDetailsPanelStyles";
 
-function scheduleSummary(task: ScheduledTask, timeZone: string | undefined) {
-  return (
-    <>
-      {scheduleLabel(task.schedule, timeZone)}
-      {task.enabled && task.nextRunAt !== null ? (
-        <>
-          {" · next "}
-          <ScheduledRelativeLabel value={task.nextRunAt} />
-        </>
-      ) : task.enabled ? (
-        ""
-      ) : (
-        " · paused"
-      )}
-    </>
-  );
-}
-
 const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   never: "bg-muted-foreground/40",
   running: "bg-sky-500",
@@ -184,20 +166,19 @@ export function ThreadAutomationsPanel(props: {
               <span className="block truncate text-sm font-medium text-foreground/80">
                 {task.title}
               </span>
-              {/* The card is narrow, so the line can cut off the zone; hover or focus shows all of it. */}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <p
-                      tabIndex={0}
-                      className="truncate rounded-sm text-2xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  {scheduleSummary(task, tasksQuery.data?.timeZone)}
-                </TooltipTrigger>
-                <TooltipPopup>{scheduleSummary(task, tasksQuery.data?.timeZone)}</TooltipPopup>
-              </Tooltip>
+              <p className="truncate text-2xs text-muted-foreground">
+                {scheduleLabel(task.schedule)}
+                {task.enabled && task.nextRunAt !== null ? (
+                  <>
+                    {" · next "}
+                    <ScheduledRelativeLabel value={task.nextRunAt} />
+                  </>
+                ) : task.enabled ? (
+                  ""
+                ) : (
+                  " · paused"
+                )}
+              </p>
             </div>
             <Tooltip>
               <TooltipTrigger
