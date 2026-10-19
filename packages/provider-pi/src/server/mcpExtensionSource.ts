@@ -91,7 +91,12 @@ function parseSseOrJson(body: string, contentType: string): JsonRpcResponse {
 function jsonSchemaToTypebox(schema: Record<string, unknown> | undefined) {
   const unsafe = (Type as { Unsafe?: (value: unknown) => unknown }).Unsafe;
   if (typeof unsafe === "function" && schema !== undefined) {
-    return unsafe(schema);
+    // Copilot's Gemini gateway rejects object tool schemas without a property map.
+    return unsafe(
+      schema.type === "object" && schema.properties === undefined
+        ? { ...schema, properties: {} }
+        : schema,
+    );
   }
   return Type.Object({}, { additionalProperties: true });
 }

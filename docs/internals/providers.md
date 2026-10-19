@@ -36,6 +36,13 @@ Forks use Pi's CLI in the destination directory because RPC session switching re
 session's cwd. Provider switches still use portable handoff summaries.
 See the [adapter](../../packages/provider-pi/src/server/adapter.ts).
 
+The [Pi MCP bridge](../../packages/provider-pi/src/server/mcpExtensionSource.ts) must
+provide an explicit `properties` map for object tool schemas, even when empty.
+Copilot's Gemini completions gateway returns HTTP 400 for parameterless tools when
+it is omitted, although the original schema is valid JSON Schema. Keep this
+normalization at the Pi boundary rather than adding fake arguments or changing
+the shared MCP contract.
+
 Antigravity separates account profiles per instance while sharing installed executables across the
 environment. It forces file-based credential storage because the native macOS keychain entry would
 otherwise be shared across instances. The launch environment removes ambient Google credentials,

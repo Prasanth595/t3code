@@ -46,6 +46,23 @@ async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
   return handlers;
 }
 
+describe("Pi MCP input schemas", () => {
+  it("declares a property map for parameterless tools without widening their input schema", async () => {
+    const inputSchema = { type: "object", additionalProperties: false };
+    const bridge = await loadMcpBridge({ modern: true, inputSchema });
+    const tool = bridge.tools.find(
+      (tool) => tool.name === "mcp__t3-code__orchestrator_capabilities",
+    )!;
+
+    assert.deepEqual(tool.parameters, {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    });
+    assert.notProperty(inputSchema, "properties");
+  });
+});
+
 describe("Pi MCP tool results", () => {
   it("returns mixed screenshot blocks and typed script output without repeating structured text", async () => {
     const content = [
