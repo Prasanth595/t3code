@@ -9,6 +9,7 @@ import {
   ThreadId,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
+  type PreviewEvent,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -178,6 +179,9 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
   const context = {
     page,
     sessions,
+    setPageUrl: (next: string) => {
+      url = next;
+    },
     newPage: async () => page as unknown as Page,
     grantPermissions: vi.fn(async () => {}),
     newCDPSession: async (target: unknown) => {
@@ -300,14 +304,35 @@ const stallViewer = (
   const output = viewer.output as unknown as Queue.Queue<ServerBrowser.ServerBrowserViewerOutput>;
   while (Queue.offerUnsafe(output, item));
 };
-const viewerInput = (tabId: string, canOperate: boolean) => ({
+const viewerInput = (tabId: string, canOperate: boolean, sessionId?: string) => ({
   threadId: scope.thread.threadId,
   tabId,
   canOperate,
+  ...(sessionId === undefined ? {} : { sessionId }),
   maxWidth: 1280,
   maxHeight: 800,
   quality: 70,
 });
+const nextLoaded = (events: PubSub.Subscription<PreviewEvent>, tabId: string) =>
+  Effect.gen(function* () {
+    while (true) {
+      const next = yield* PubSub.take(events);
+      if (
+        next.type === "navigated" &&
+        next.tabId === tabId &&
+        next.snapshot.navStatus._tag === "Success"
+      ) {
+        return next.snapshot.navStatus;
+      }
+    }
+  });
+const nextPopup = (output: Queue.Dequeue<ServerBrowser.ServerBrowserViewerOutput>) =>
+  Effect.gen(function* () {
+    while (true) {
+      const next = yield* Queue.take(output);
+      if (next._tag === "popup") return next;
+    }
+  });
 
 beforeEach(() => {
   contexts.length = 0;
@@ -739,6 +764,51 @@ it.live("applies any client's viewport, appearance, and zoom to a headless tab",
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("an adopted PDF popup reports success only after its recovery reload loads", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const reportedEvents = yield* manager.subscribeEvents;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const popup = makeContext();
+      const url = "https://environment.test/api/assets/token/guide.pdf";
+      yield* Effect.promise(() => popup.page.goto(url));
+      popup.page.goto.mockClear();
+      const reload = Promise.withResolvers<void>();
+      popup.page.reload.mockImplementationOnce(() => reload.promise);
+      contexts[0]!.page.emit("popup", popup.page);
+      let shown = yield* Queue.take(viewer.output);
+      while (shown._tag !== "popup") shown = yield* Queue.take(viewer.output);
+
+      yield* browser.attachViewer(viewerInput(shown.tabId, true));
+      expect(popup.page.reload).toHaveBeenCalledTimes(1);
+      expect(popup.page.title).not.toHaveBeenCalled();
+
+      popup.page.emit("load");
+      reload.resolve();
+      expect(yield* nextLoaded(events, shown.tabId)).toEqual({
+        _tag: "Success",
+        url,
+        title: "test page",
+      });
+      expect(popup.page.title).toHaveBeenCalledTimes(1);
+      const successes = yield* PubSub.takeUpTo(reportedEvents, 100);
+      expect(
+        successes.filter(
+          (event) =>
+            event.type === "navigated" &&
+            event.tabId === shown.tabId &&
+            event.snapshot.navStatus._tag === "Success",
+        ),
+      ).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live(
   "takeover waits for the running agent and revokes snapshot refs before returning control",
   () =>
@@ -939,7 +1009,7 @@ it.live("the owner can close a tab while an agent action waits on its dialog", (
 it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { broker, tabId } = yield* ready;
+      const { browser, broker, tabId } = yield* ready;
       const opener = contexts[0]!.page;
       const popup = makeContext();
       opener.emit("popup", popup.page);
@@ -952,6 +1022,12 @@ it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
       const popupTab = sessions.find((session) => session.tabId !== tabId)!;
       const opened = sessions.find((session) => session.tabId === tabId)!;
       expect(popupTab).toMatchObject({ automationOwner: opened.automationOwner, reveal: false });
+      yield* browser.attachViewer(viewerInput(popupTab.tabId, false));
+      expect(
+        (yield* manager.list({ threadId: scope.thread.threadId })).sessions.find(
+          (session) => session.tabId === popupTab.tabId,
+        )?.navStatus,
+      ).toEqual({ _tag: "Idle" });
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
@@ -1008,6 +1084,75 @@ it.live.each([
         );
         expect(session?.navStatus).toMatchObject({ _tag: "Success", url });
       }
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "an adopted popup that finished loading before listeners attach reports its loaded page",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, tabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const events = yield* manager.subscribeEvents;
+        const opener = contexts[0]!.page;
+        const popup = makeContext();
+        const url = "https://example.com/popup";
+        yield* Effect.promise(() => popup.page.goto(url));
+
+        opener.emit("popup", popup.page);
+        let opened = yield* PubSub.take(events);
+        while (opened.type !== "opened" || opened.snapshot.tabId === tabId) {
+          opened = yield* PubSub.take(events);
+        }
+
+        yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
+        expect(yield* nextLoaded(events, opened.snapshot.tabId)).toEqual({
+          _tag: "Success",
+          url,
+          title: "test page",
+        });
+        expect(popup.page.goto).toHaveBeenCalledTimes(1);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("an adopted popup that is still loading is not reported as successful early", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const opener = contexts[0]!.page;
+      const popup = makeContext();
+      const url = "https://example.com/popup-loading";
+      const loadState = Promise.withResolvers<void>();
+      popup.setPageUrl(url);
+      popup.page.waitForLoadState.mockImplementationOnce(() => loadState.promise);
+
+      opener.emit("popup", popup.page);
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened" || opened.snapshot.tabId === tabId) {
+        opened = yield* PubSub.take(events);
+      }
+
+      yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
+      expect(popup.page.waitForLoadState).toHaveBeenCalledWith("load");
+      // reportLoaded reads the title first, so an early report would have called it by now.
+      expect(popup.page.title).not.toHaveBeenCalled();
+      expect(
+        (yield* manager.list({ threadId: scope.thread.threadId })).sessions.find(
+          (session) => session.tabId === opened.snapshot.tabId,
+        )?.navStatus,
+      ).toEqual({ _tag: "Loading", url, title: "" });
+
+      loadState.resolve();
+      expect(yield* nextLoaded(events, opened.snapshot.tabId)).toEqual({
+        _tag: "Success",
+        url,
+        title: "test page",
+      });
     }),
   ).pipe(Effect.provide(layer)),
 );
@@ -1223,6 +1368,300 @@ it.live("a popup from a person's click is shown to that person, with its opener 
         false,
       );
       expect(opener.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a popup a person opens from their own tab reports its page once loaded", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const events = yield* manager.subscribeEvents;
+      const opener = contexts[0]!.page;
+      const popup = makeContext();
+      const url = "https://example.com/sign-in";
+      yield* Effect.promise(() => popup.page.goto(url));
+
+      opener.emit("popup", popup.page);
+      let shown = yield* Queue.take(viewer.output);
+      while (shown._tag !== "popup") shown = yield* Queue.take(viewer.output);
+      yield* browser.attachViewer(viewerInput(shown.tabId, true));
+      expect(yield* nextLoaded(events, shown.tabId)).toEqual({
+        _tag: "Success",
+        url,
+        title: "test page",
+      });
+      expect(popup.page.goto).toHaveBeenCalledTimes(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("the person who opens a popup from an agent tab controls the popup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const sessionId = "opener-session";
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true, sessionId));
+      yield* viewer.input({ type: "takeControl" });
+      yield* Queue.clear(viewer.output);
+      const popup = makeContext();
+      const waitingForPopup = yield* nextPopup(viewer.output).pipe(Effect.forkScoped);
+      const events = yield* manager.subscribeEvents;
+      const opener = contexts[0]!.page;
+      opener.emit("popup", popup.page);
+      const shown = yield* Fiber.join(waitingForPopup);
+      const popupTabId = PreviewTabId.make(shown.tabId);
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened") opened = yield* PubSub.take(events);
+      const openerTab = (yield* manager.list({ threadId: scope.thread.threadId })).sessions.find(
+        (session) => session.tabId === tabId,
+      );
+      expect(openerTab?.automationOwner).toBeDefined();
+      expect(opened.snapshot).toMatchObject({
+        tabId: popupTabId,
+        automationOwner: openerTab?.automationOwner,
+      });
+      expect(opened.snapshot.reveal).toBeUndefined();
+
+      const popupViewer = yield* browser.attachViewer(viewerInput(popupTabId, true, sessionId));
+      let control = yield* Queue.take(popupViewer.output);
+      while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
+      expect(control).toMatchObject({ controller: "you" });
+
+      popup.page.openFileChooser();
+      let offered = yield* Queue.take(popupViewer.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(popupViewer.output);
+      expect(popup.page.nativeFileChooser).not.toHaveBeenCalled();
+
+      const refused = yield* broker
+        .invoke<void>({
+          scope,
+          tabId: popupTabId,
+          operation: "evaluate",
+          input: { expression: "read()" },
+        })
+        .pipe(Effect.flip);
+      expect(refused).toMatchObject({ reason: "humanControl" });
+      const sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      expect(sessions.find((session) => session.tabId === popupTabId)?.automationOwner).toBe(
+        sessions.find((session) => session.tabId === tabId)?.automationOwner,
+      );
+      expect((yield* Queue.clear(watcher.output)).some((item) => item._tag === "popup")).toBe(
+        false,
+      );
+      expect(opener.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a watcher from the handoff session does not consume the popup handoff", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const sessionId = "opener-session";
+      const opener = yield* browser.attachViewer(viewerInput(tabId, true, sessionId));
+      yield* opener.input({ type: "takeControl" });
+      yield* Queue.clear(opener.output);
+      const waitingForPopup = yield* nextPopup(opener.output).pipe(Effect.forkScoped);
+      contexts[0]!.page.emit("popup", makeContext().page);
+      const shown = yield* Fiber.join(waitingForPopup);
+
+      const watcher = yield* browser.attachViewer(viewerInput(shown.tabId, false, sessionId));
+      let control = yield* Queue.take(watcher.output);
+      while (control._tag !== "control") control = yield* Queue.take(watcher.output);
+      expect(control).toMatchObject({ controller: "agent" });
+
+      const otherSession = yield* browser.attachViewer(
+        viewerInput(shown.tabId, true, "other-session"),
+      );
+      control = yield* Queue.take(otherSession.output);
+      while (control._tag !== "control") control = yield* Queue.take(otherSession.output);
+      expect(control).toMatchObject({ controller: "agent" });
+
+      const operator = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      control = yield* Queue.take(operator.output);
+      while (control._tag !== "control") control = yield* Queue.take(operator.output);
+      expect(control).toMatchObject({ controller: "you" });
+
+      yield* operator.input({ type: "releaseControl" });
+      const later = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      control = yield* Queue.take(later.output);
+      while (control._tag !== "control") control = yield* Queue.take(later.output);
+      expect(control).toMatchObject({ controller: "agent" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "a clicker who releases the opener lets the agent keep the popup (e.g. saved-password login)",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, broker, tabId } = yield* ready;
+        const sessionId = "opener-session";
+        const opener = yield* browser.attachViewer(viewerInput(tabId, true, sessionId));
+        yield* opener.input({ type: "takeControl" });
+        yield* Queue.clear(opener.output);
+        const waitingForPopup = yield* nextPopup(opener.output).pipe(Effect.forkScoped);
+        contexts[0]!.page.emit("popup", makeContext().page);
+        const shown = yield* Fiber.join(waitingForPopup);
+
+        yield* opener.input({ type: "releaseControl" });
+        const popupViewer = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+        let control = yield* Queue.take(popupViewer.output);
+        while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
+        expect(control).toMatchObject({ controller: "agent" });
+
+        expect(
+          yield* broker.invoke({
+            scope,
+            tabId: shown.tabId,
+            operation: "evaluate",
+            input: { expression: "savedPasswordLogin()" },
+          }),
+        ).toBe("evaluated");
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("a controlled agent popup opens when its agent is at the tab limit", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true, "opener-session"));
+      yield* viewer.input({ type: "takeControl" });
+      for (let index = 1; index < 8; index++) {
+        yield* broker.invoke({
+          scope,
+          tabId,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+      }
+      const events = yield* (yield* Manager.PreviewManager).subscribeEvents;
+      const popup = makeContext();
+      contexts[0]!.page.emit("popup", popup.page);
+      expect(popup.page.close).not.toHaveBeenCalled();
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened" || opened.snapshot.tabId === tabId) {
+        opened = yield* PubSub.take(events);
+      }
+      expect(opened.snapshot.automationOwner).toBeDefined();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("an uncontrolled agent tab at the limit closes its popup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      for (let index = 1; index < 8; index++) {
+        yield* broker.invoke({
+          scope,
+          tabId,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+      }
+      const before = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      expect(before).toHaveLength(8);
+
+      const popup = makeContext();
+      contexts[0]!.page.emit("popup", popup.page);
+      expect(popup.page.close).toHaveBeenCalled();
+      expect(
+        (yield* manager.list({ threadId: scope.thread.threadId })).sessions.map(
+          (session) => session.tabId,
+        ),
+      ).toEqual(before.map((session) => session.tabId));
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a watcher alone does not reveal or receive an agent popup", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const events = yield* manager.subscribeEvents;
+      contexts[0]!.page.emit("popup", makeContext().page);
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened") opened = yield* PubSub.take(events);
+      expect(opened.snapshot).toMatchObject({ reveal: false });
+      expect((yield* Queue.clear(watcher.output)).some((item) => item._tag === "popup")).toBe(
+        false,
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "releasing control before a popup keeps it hidden and does not switch the released viewer",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { browser, tabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+        yield* viewer.input({ type: "takeControl" });
+        yield* viewer.input({ type: "releaseControl" });
+        yield* Queue.clear(viewer.output);
+        const events = yield* manager.subscribeEvents;
+        contexts[0]!.page.emit("popup", makeContext().page);
+        let opened = yield* PubSub.take(events);
+        while (opened.type !== "opened") opened = yield* PubSub.take(events);
+        expect(opened.snapshot).toMatchObject({ reveal: false });
+        expect((yield* Queue.clear(viewer.output)).some((item) => item._tag === "popup")).toBe(
+          false,
+        );
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("a popup stays hidden after its controlling viewer detaches", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const controllerScope = yield* Scope.make();
+      yield* Effect.addFinalizer(() => Scope.close(controllerScope, Exit.void));
+      const controller = yield* browser
+        .attachViewer(viewerInput(tabId, true, "opener-session"))
+        .pipe(Effect.provideService(Scope.Scope, controllerScope));
+      yield* controller.input({ type: "takeControl" });
+      yield* Queue.clear(controller.output);
+      yield* Scope.close(controllerScope, Exit.void);
+
+      const popup = makeContext();
+      const events = yield* manager.subscribeEvents;
+      contexts[0]!.page.emit("popup", popup.page);
+
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened") opened = yield* PubSub.take(events);
+      expect(opened.snapshot).toMatchObject({ reveal: false });
+      expect((yield* Queue.clear(watcher.output)).some((item) => item._tag === "popup")).toBe(
+        false,
+      );
+      expect((yield* Queue.clear(controller.output)).some((item) => item._tag === "popup")).toBe(
+        false,
+      );
+
+      const popupViewer = yield* browser.attachViewer(
+        viewerInput(opened.snapshot.tabId, true, "opener-session"),
+      );
+      let control = yield* Queue.take(popupViewer.output);
+      while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
+      expect(control).toMatchObject({ controller: "agent" });
     }),
   ).pipe(Effect.provide(layer)),
 );

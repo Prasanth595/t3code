@@ -215,6 +215,7 @@ export class ServerBrowser extends Context.Service<
       readonly maxHeight: number;
       readonly quality: number;
       readonly canOperate: boolean;
+      readonly sessionId?: string;
     }) => Effect.Effect<
       ServerBrowserViewer,
       ServerBrowserTabNotFoundError | ServerBrowserLaunchError,
@@ -246,6 +247,7 @@ export class ServerBrowser extends Context.Service<
 interface ViewerState {
   readonly id: string;
   readonly canOperate: boolean;
+  readonly sessionId: string | undefined;
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
   readonly push: (output: ServerBrowserViewerOutput) => void;
@@ -288,6 +290,8 @@ interface ServerTab {
   agentOperating: boolean;
   fileChooserIntercepted: boolean;
   readonly onFileChooser: (chooser: FileChooser) => void;
+  // Only the session that opened this popup can take its initial human handoff.
+  handoffSessionId: string | null;
 
   readonly isolatedContext: boolean;
 
@@ -470,7 +474,14 @@ const make = Effect.gen(function* () {
   const pendingTabs = new Map<string, Promise<ServerTab>>();
 
   const closedPendingTabs = new Set<string>();
-  const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
+  const adoptedPages = new Map<
+    string,
+    {
+      readonly page: Page;
+      readonly openerTabId: string;
+      readonly handoffSessionId: string | null;
+    }
+  >();
   const closedSessions = new Set<string>();
   let hostConnectionId: string | null = null;
   let viewerResizeOrder = 0;
@@ -763,6 +774,7 @@ const make = Effect.gen(function* () {
       agentOperating: false,
       fileChooserIntercepted: false,
       onFileChooser: (chooser) => void offerFileChooser(tab, chooser),
+      handoffSessionId: adopted?.handoffSessionId ?? null,
       isolatedContext,
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
@@ -900,6 +912,12 @@ const make = Effect.gen(function* () {
       ).then(constVoid);
 
       void tab.initialNavigation.catch(constVoid);
+    } else if (adopted) {
+      // Popup navigation can finish during setup, before this tab's listeners exist.
+      void page
+        .waitForLoadState("load")
+        .then(() => reportLoaded(tab))
+        .catch(constVoid);
     }
     return tab;
   };
@@ -1176,34 +1194,40 @@ const make = Effect.gen(function* () {
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     const agentId = opener.control.agentId;
-    if (opener.closing || (agentId !== null && atTabLimit(agentId))) {
+    const humanId = opener.control.controller;
+    const controller = [...opener.viewers].find((viewer) => viewer.id === humanId);
+    if (
+      opener.closing ||
+      (agentId !== null && (controller === undefined ? atTabLimit(agentId) : atServerTabLimit()))
+    ) {
       await popup.close().catch(constVoid);
       return;
     }
     const url = popup.url();
 
-    const controller = [...opener.viewers].find(
-      (viewer) => viewer.id === opener.control.controller,
-    );
     await Effect.runPromise(
       manager.open({
         threadId: opener.threadId,
         ...(/^https?:/i.test(url) ? { url } : {}),
         runtime: "server",
         ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
-        ...(opener.control.agentId === null
+        ...(agentId === null
           ? {}
-          : { automationOwner: opener.control.agentId, reveal: false }),
+          : {
+              automationOwner: agentId,
+              // ChatView hides server surfaces with reveal:false, including the one we switch to.
+              ...(controller === undefined ? { reveal: false } : {}),
+            }),
         beforePublish: (snapshot) =>
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
             openerTabId: opener.tabId,
+            handoffSessionId: controller?.sessionId ?? null,
           }),
       }),
     ).then(
       (snapshot) => {
-        if (opener.control.agentId === null)
-          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+        if (controller !== undefined) controller.push({ _tag: "popup", tabId: snapshot.tabId });
       },
       async () => {
         await popup.close().catch(constVoid);
@@ -1250,8 +1274,9 @@ const make = Effect.gen(function* () {
       });
     });
 
+  const atServerTabLimit = () => tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT;
   const atTabLimit = (agentSessionId: string) =>
-    tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT ||
+    atServerTabLimit() ||
     [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
       AGENT_TAB_LIMIT;
 
@@ -2266,6 +2291,7 @@ const make = Effect.gen(function* () {
       const viewer: ViewerState = {
         id: NodeCrypto.randomUUID(),
         canOperate: input.canOperate,
+        sessionId: input.sessionId,
         pressedKeys: new Map(),
         pressedButtons: new Map(),
         push: (next) => {
@@ -2307,7 +2333,12 @@ const make = Effect.gen(function* () {
             reportLiveTabs();
           }),
       );
-      if (input.canOperate && tab.control.agentId === null && tab.control.controller === null) {
+      if (
+        input.canOperate &&
+        tab.control.controller === null &&
+        (tab.control.agentId === null || input.sessionId === tab.handoffSessionId)
+      ) {
+        tab.handoffSessionId = null;
         yield* Effect.promise(() => tab.control.take(viewer.id));
       }
       broadcastControl(tab);
@@ -2394,6 +2425,17 @@ const make = Effect.gen(function* () {
                 await taking;
                 pushFileChooser(tab);
               } else if (message.type === "releaseControl") {
+                // Do not disarm on disconnect: the opener stream may drop while switching tabs.
+                if (viewer.id === tab.control.controller) {
+                  for (const candidate of tabs.values()) {
+                    if (
+                      candidate.openerTabId === tab.tabId &&
+                      candidate.handoffSessionId === viewer.sessionId
+                    ) {
+                      candidate.handoffSessionId = null;
+                    }
+                  }
+                }
                 const releasing = tab.control.release(viewer.id, () =>
                   releaseViewerInput(viewer, session),
                 );
