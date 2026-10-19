@@ -309,7 +309,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     lifecycleLock.withPermit,
   );
 
-  // The local host only starts its hub when at least one platform can run there.
   const cannotRunLocally = (summary: DeviceHostSummary) =>
     summary.kind === "local" && !summary.platforms.some((platform) => platform.available);
 
@@ -476,26 +475,35 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       (host) =>
         Effect.gen(function* () {
           const summary = yield* host.summary;
-          // The probe can be slow; device support may have been turned off meanwhile.
-          if (!(yield* readDeviceSettings).enabled) return;
+          if (!(yield* readDeviceSettings).enabled || hosts.get(host.id) !== host) return;
           if (!cannotRunLocally(summary)) {
             yield* refresh(yield* readiness(host.id));
             return;
           }
-          // A host with nothing it can run never starts, so republish its platform
-          // reasons here; otherwise a refresh keeps showing the reasons from before.
-          yield* publish((state) => ({
-            ...state,
-            hosts: state.hosts.map((candidate) =>
-              candidate.id === summary.id ? summary : candidate,
-            ),
-          }));
+          // Unavailable local hosts never start a hub, so refresh their diagnostics here.
+          yield* lifecycleLock.withPermit(
+            Effect.gen(function* () {
+              if (!(yield* readDeviceSettings).enabled || hosts.get(host.id) !== host) return;
+              yield* publish((state) => ({
+                ...state,
+                hosts: state.hosts.map((candidate) =>
+                  candidate.id === summary.id ? summary : candidate,
+                ),
+              }));
+            }),
+          );
         }).pipe(
           Effect.catch((error) =>
-            setHostStatus(host.id, {
-              status: "failed",
-              detail: error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
-            }),
+            lifecycleLock.withPermit(
+              Effect.gen(function* () {
+                if (!(yield* readDeviceSettings).enabled || hosts.get(host.id) !== host) return;
+                yield* setHostStatus(host.id, {
+                  status: "failed",
+                  detail:
+                    error._tag === "DeviceHostUnavailableError" ? error.reason : error.message,
+                });
+              }),
+            ),
           ),
         ),
       { concurrency: 4 },

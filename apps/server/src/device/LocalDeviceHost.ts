@@ -18,7 +18,6 @@ import {
   type NodeRuntimeUnavailableError,
 } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
-import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -27,6 +26,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -107,12 +107,55 @@ interface RunningHost {
 
 const platformReason = Effect.fn("LocalDeviceHost.platformReason")(function* (
   platform: DevicePlatform,
-): Effect.fn.Return<string | null, never, FileSystem.FileSystem | Path.Path> {
+): Effect.fn.Return<
+  string | null,
+  never,
+  FileSystem.FileSystem | Path.Path | ProcessRunner.ProcessRunner
+> {
   const hostPlatform = yield* HostProcess.Platform;
   if (platform === "ios") {
     if (hostPlatform !== "darwin") return "iOS Simulators need macOS with Xcode.";
-    if (!(yield* isCommandAvailable("xcrun"))) return "Xcode command line tools were not found.";
-    return null;
+    // Command Line Tools include xcrun but cannot run the simulator utilities.
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const result = yield* runner
+      .run({ command: "xcrun", args: ["simctl", "help"], timeout: Duration.seconds(15) })
+      .pipe(Effect.result);
+    if (result._tag === "Failure") {
+      const error = result.failure;
+      if (error._tag === "ProcessSpawnError" && PlatformError.isPlatformError(error.cause)) {
+        if (error.cause.reason._tag === "NotFound")
+          return "Xcode command line tools were not found.";
+        if (error.cause.reason._tag === "PermissionDenied")
+          return "Could not run xcrun simctl: permission denied. Check your Xcode command line tools permissions.";
+      }
+      return `Could not run xcrun simctl: ${error.message}`;
+    }
+    const { code, stderr, timedOut } = result.success;
+    if (timedOut) return "Could not run xcrun simctl: the check timed out.";
+    if (code === 0) return null;
+    if (stderr.includes('unable to find utility "simctl"')) {
+      const fs = yield* FileSystem.FileSystem;
+      const applications = yield* fs
+        .readDirectory("/Applications")
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const xcodes = applications
+        .filter((name) => /^Xcode.*\.app$/.test(name))
+        .toSorted((a, b) => (a === "Xcode.app" ? -1 : b === "Xcode.app" ? 1 : a.localeCompare(b)));
+      for (const xcode of xcodes) {
+        const developerPath = `/Applications/${xcode}/Contents/Developer`;
+        if (!(yield* fs.exists(developerPath).pipe(Effect.orElseSucceed(() => false)))) continue;
+        const quotedPath = `'${developerPath.replaceAll("'", "'\"'\"'")}'`;
+        return `xcrun cannot find simctl. Select the installed Xcode developer directory by running sudo xcode-select -s ${quotedPath}, then check again.`;
+      }
+      return "xcrun cannot find simctl. Install Xcode, or if it is installed outside /Applications, run sudo xcode-select -s with its Contents/Developer path, then check again.";
+    }
+    if (/license agreements?/i.test(stderr))
+      return "xcrun simctl failed: the Xcode license agreements have not been accepted. Open Xcode to review and accept them, then check again.";
+    if (/permission denied|operation not permitted/i.test(stderr))
+      return "xcrun simctl failed: permission denied. Check your Xcode command line tools permissions.";
+    return code === null
+      ? "xcrun simctl ended without an exit code. Run xcrun simctl help in Terminal for details."
+      : `xcrun simctl failed (exit code ${code}). Run xcrun simctl help in Terminal for details.`;
   }
   const sdk = yield* androidSdk;
   if (!sdk.root)
@@ -251,6 +294,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const reason = yield* platformReason(platform).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
     );
     return reason === null ? { platform, available: true } : { platform, available: false, reason };
   });
