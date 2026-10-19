@@ -1886,7 +1886,7 @@ describe("PreviewManager", () => {
     const sendCommand = vi.fn<(method: string, params?: unknown) => Promise<unknown>>(
       async () => undefined,
     );
-    const debuggerListeners = new Map<string, Set<() => void>>();
+    const detachListeners = new Set<() => void>();
     let chromiumDetaches = 0;
     let devToolsOpen = false;
     let destroyed = false;
@@ -1922,34 +1922,29 @@ describe("PreviewManager", () => {
         detach,
         sendCommand,
         on: (event: string, listener: () => void) => {
-          const listeners = debuggerListeners.get(event) ?? new Set();
-          listeners.add(listener);
-          debuggerListeners.set(event, listeners);
+          if (event === "detach") detachListeners.add(listener);
         },
         off: (event: string, listener: () => void) => {
-          debuggerListeners.get(event)?.delete(listener);
+          if (event === "detach") detachListeners.delete(listener);
         },
       },
     };
-    // Snapshot like an EventEmitter, so a listener added during emit waits for the next one.
-    const emitDebuggerDetach = () => {
-      for (const listener of Array.from(debuggerListeners.get("detach") ?? [])) listener();
+    /** Chromium dropping the debugger without a detach() call. */
+    const chromiumDetach = () => {
+      chromiumDetaches += 1;
+      // Snapshot like an EventEmitter, so a listener added during emit waits for the next one.
+      for (const listener of Array.from(detachListeners)) listener();
     };
     return {
       wc: wc as unknown as Electron.WebContents,
       attach,
       detach,
       sendCommand,
-      /** Chromium dropping the debugger without a detach() call. */
-      chromiumDetach: () => {
-        chromiumDetaches += 1;
-        emitDebuggerDetach();
-      },
-      /** DevTools opened outside the manager, e.g. from the app menu. */
+      chromiumDetach,
+      /** DevTools opened outside the manager, e.g. from the app menu, take the debugger. */
       openDevTools: () => {
         devToolsOpen = true;
-        chromiumDetaches += 1;
-        emitDebuggerDetach();
+        chromiumDetach();
       },
       closeDevTools: () => {
         devToolsOpen = false;
