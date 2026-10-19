@@ -211,7 +211,7 @@ export function buildEnvironmentCaptureCommand(
   names: ReadonlyArray<string>,
 ): string {
   const executableName = NodePath.basename(shell).toLowerCase();
-  const isNushell = executableName === "nu" || executableName === "nu.exe";
+  const isNushell = executableName.startsWith("nu");
 
   return names
     .map((name) => {
@@ -220,9 +220,13 @@ export function buildEnvironmentCaptureCommand(
       }
 
       if (isNushell) {
+        const value =
+          name === "PATH"
+            ? "$env.PATH? | default [] | str join (char esep)"
+            : `$env.${name}? | default ''`;
         return [
           `print '${envCaptureStart(name)}'`,
-          `try { printenv ${name} } catch { print '' }`,
+          `print (${value})`,
           `print '${envCaptureEnd(name)}'`,
         ].join("; ");
       }
