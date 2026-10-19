@@ -6,7 +6,7 @@ import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
 import type { ThreadPullRequestLink } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import type { VcsStatusResult } from "@t3tools/contracts";
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 import {
   buildMenuItems,
   requiresDefaultBranchConfirmation,
@@ -253,6 +253,7 @@ describe("linked PR git actions", () => {
       state: "open",
       title: "Existing PR",
       headBranch: "feature/test",
+      headRepositoryNameWithOwner: "team/repo",
       baseBranch: "main",
       isDraft: true,
       updatedAt: null,
@@ -261,39 +262,56 @@ describe("linked PR git actions", () => {
   };
 
   it("updates the linked PR from quick actions and menus, and restores creation after unlinking", () => {
-    for (const hasWorkingTreeChanges of [true, false]) {
-      const original = status({
-        hasWorkingTreeChanges,
-        aheadCount: 1,
-        repositoryKey: "github.com/team/repo",
-      });
-      const resolved = resolveThreadGitStatus(original, [linked]);
-      const action = hasWorkingTreeChanges ? "commit_push" : "push";
-      assert.equal(resolveQuickAction(resolved, false).action, action);
-      assert.equal(resolveMobileQuickAction(resolved, false).action, action);
-      assert.equal(resolved?.pr?.url, linked.url);
-      assert.equal(resolved?.pr?.isDraft, true);
-      assert.deepEqual(
-        buildMenuItems(resolved, false).map((item) => item.id),
-        ["commit", "push"],
-      );
-      assert.equal(
-        buildMobileMenuItems(resolved, false).find((item) => item.id === "pr")?.kind,
-        "open_pr",
-      );
+    for (const [candidate, repositoryKey] of [
+      [linked, "github.com/team/repo"],
+      [
+        {
+          ...linked,
+          snapshot: { ...linked.snapshot!, headRepositoryNameWithOwner: "contributor/repo" },
+        },
+        "github.com/contributor/repo",
+      ],
+      [
+        {
+          ...linked,
+          host: "github.example.com",
+          url: "https://github.example.com:8443/team/repo/pull/42",
+        },
+        "github.example.com:8443/team/repo",
+      ],
+    ] as const) {
+      for (const hasWorkingTreeChanges of [true, false]) {
+        const original = status({
+          hasWorkingTreeChanges,
+          aheadCount: 1,
+          repositoryKey,
+        });
+        const resolved = resolveThreadGitStatus(original, [candidate]);
+        const action = hasWorkingTreeChanges ? "commit_push" : "push";
+        expect.soft(resolveQuickAction(resolved, false).action).toBe(action);
+        expect.soft(resolveMobileQuickAction(resolved, false).action).toBe(action);
+        expect.soft(resolved?.pr?.url).toBe(candidate.url);
+        expect.soft(resolved?.pr?.isDraft).toBe(true);
+        expect
+          .soft(buildMenuItems(resolved, false).map((item) => item.id))
+          .toEqual(["commit", "push"]);
+        expect
+          .soft(buildMobileMenuItems(resolved, false).find((item) => item.id === "pr")?.kind)
+          .toBe("open_pr");
 
-      const unlinked = resolveThreadGitStatus(original, []);
-      assert.equal(original.pr, null);
-      assert.equal(
-        resolveQuickAction(unlinked, false).action,
-        hasWorkingTreeChanges ? "commit_push_pr" : "create_pr",
-      );
-      assert.equal(
-        resolveMobileQuickAction(unlinked, false).action,
-        hasWorkingTreeChanges ? "commit_push_pr" : "create_pr",
-      );
-      assert.equal(buildMenuItems(unlinked, false).at(-1)?.dialogAction, "create_pr");
-      assert.equal(buildMobileMenuItems(unlinked, false).at(-1)?.dialogAction, "create_pr");
+        const unlinked = resolveThreadGitStatus(original, []);
+        assert.equal(original.pr, null);
+        assert.equal(
+          resolveQuickAction(unlinked, false).action,
+          hasWorkingTreeChanges ? "commit_push_pr" : "create_pr",
+        );
+        assert.equal(
+          resolveMobileQuickAction(unlinked, false).action,
+          hasWorkingTreeChanges ? "commit_push_pr" : "create_pr",
+        );
+        assert.equal(buildMenuItems(unlinked, false).at(-1)?.dialogAction, "create_pr");
+        assert.equal(buildMobileMenuItems(unlinked, false).at(-1)?.dialogAction, "create_pr");
+      }
     }
   });
 
@@ -308,14 +326,57 @@ describe("linked PR git actions", () => {
       { ...linked, snapshot: null },
       { ...linked, source: "stack-dismissed" as const },
       { ...linked, snapshot: { ...linked.snapshot!, headBranch: "other" } },
-      { ...linked, repository: "other/repo", url: "https://github.com/other/repo/pull/42" },
+      { ...linked, snapshot: { ...linked.snapshot!, headRepositoryNameWithOwner: "other/repo" } },
+      { ...linked, snapshot: { ...linked.snapshot!, headRepositoryNameWithOwner: undefined } },
+      { ...linked, snapshot: { ...linked.snapshot!, headRepositoryNameWithOwner: null } },
+      { ...linked, url: "https://github.com:8443/team/repo/pull/42" },
       {
         ...linked,
         host: "github.example.com",
         url: "https://github.example.com/team/repo/pull/42",
       },
     ]) {
-      assert.equal(resolveThreadGitStatus(original, [candidate]), original);
+      expect.soft(resolveThreadGitStatus(original, [candidate])).toBe(original);
+    }
+    for (const refName of ["feature/test", "main"]) {
+      const checkout = status({
+        refName,
+        isDefaultRef: refName === "main",
+        hasWorkingTreeChanges: true,
+        repositoryKey: "github.com/team/repo",
+      });
+      const foreignFork = {
+        ...linked,
+        snapshot: {
+          ...linked.snapshot!,
+          headBranch: refName,
+          headRepositoryNameWithOwner: "contributor/repo",
+        },
+      };
+      const resolved = resolveThreadGitStatus(checkout, [foreignFork]);
+      expect.soft(resolved).toBe(checkout);
+      expect
+        .soft(resolveQuickAction(resolved, false, checkout.isDefaultRef))
+        .toEqual(resolveQuickAction(checkout, false, checkout.isDefaultRef));
+      expect
+        .soft(resolveMobileQuickAction(resolved, false, checkout.isDefaultRef))
+        .toEqual(resolveMobileQuickAction(checkout, false, checkout.isDefaultRef));
+      expect.soft(buildMenuItems(resolved, false)).toEqual(buildMenuItems(checkout, false));
+      expect
+        .soft(buildMobileMenuItems(resolved, false))
+        .toEqual(buildMobileMenuItems(checkout, false));
+    }
+    const portLink = {
+      ...linked,
+      host: "github.example.com",
+      url: "https://github.example.com:8443/team/repo/pull/42",
+    };
+    for (const repositoryKey of [
+      "github.example.com/team/repo",
+      "github.example.com:9443/team/repo",
+    ]) {
+      const checkout = status({ hasWorkingTreeChanges: true, repositoryKey });
+      expect.soft(resolveThreadGitStatus(checkout, [portLink])).toBe(checkout);
     }
     for (const repositoryKey of ["github.com/team/unrelated", undefined]) {
       const checkout = status({ hasWorkingTreeChanges: true, repositoryKey });

@@ -537,7 +537,13 @@ describe("PullRequestSyncReactor", () => {
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
           summary: (input) =>
-            Effect.succeed(makeSummary(input, { title: "Ship it", isDraft: true })),
+            Effect.succeed(
+              makeSummary(input, {
+                title: "Ship it",
+                isDraft: true,
+                headRepositoryNameWithOwner: "contributor/repository",
+              }),
+            ),
         });
 
         yield* Effect.gen(function* () {
@@ -564,6 +570,7 @@ describe("PullRequestSyncReactor", () => {
                   state: "open",
                   title: "Ship it",
                   headBranch: "feature",
+                  headRepositoryNameWithOwner: "contributor/repository",
                   baseBranch: "main",
                   isDraft: true,
                   updatedAt: "2026-08-27T00:00:00.000Z",
