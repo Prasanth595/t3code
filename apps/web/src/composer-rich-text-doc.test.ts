@@ -1160,20 +1160,22 @@ describe("caret stops at styled edges", () => {
 
 describe("surroundSelectionWithMark", () => {
   it.each([
-    ["`", "say `hello` now"],
-    ["*", "say *hello* now"],
-    ["_", "say *hello* now"],
-  ])("formats a selection with %s like typed markers", (marker, expected) => {
+    ["`", "hello", "say `hello` now"],
+    ["*", "hello", "say *hello* now"],
+    ["_", "hello", "say *hello* now"],
+    ["`", "   ", "say `   ` now"],
+  ])("formats a selection with %s like typed markers (%j)", (marker, selected, expected) => {
     const doc = schema.node("doc", null, [
-      schema.node("paragraph", null, schema.text("say hello now")),
+      schema.node("paragraph", null, schema.text(`say ${selected} now`)),
     ]);
-    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 5, 10) });
-    const tr = surroundSelectionWithMark(state, 5, 10, marker);
+    const to = 5 + selected.length;
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 5, to) });
+    const tr = surroundSelectionWithMark(state, 5, to, marker);
     expect(tr).not.toBeNull();
     const formatted = state.apply(tr!);
     const typed = ProseMirrorNode.fromJSON(
       schema,
-      buildDocJson(`say ${marker}hello${marker} now`, (name) => ({
+      buildDocJson(`say ${marker}${selected}${marker} now`, (name) => ({
         label: name,
         description: null,
       })),
@@ -1181,8 +1183,20 @@ describe("surroundSelectionWithMark", () => {
     expect(formatted.doc.eq(typed)).toBe(true);
     expect(serializeEditorDoc(formatted.doc).value).toBe(expected);
     expect(formatted.doc.textBetween(formatted.selection.from, formatted.selection.to)).toBe(
-      "hello",
+      selected,
     );
+  });
+
+  it.each([
+    ["*", "   "],
+    ["_", "   "],
+    ["*", "a*b"],
+    ["`", "foo`bar"],
+  ])("leaves %s around %j to literal wrapping when the mark cannot round-trip", (marker, text) => {
+    const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text(text))]);
+    const to = 1 + text.length;
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 1, to) });
+    expect(surroundSelectionWithMark(state, 1, to, marker)).toBeNull();
   });
 
   it.each([

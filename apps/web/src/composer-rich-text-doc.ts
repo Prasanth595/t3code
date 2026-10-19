@@ -72,7 +72,26 @@ export function surroundSelectionWithMark(
     return !crossesLine;
   });
   if (crossesLine) return null;
-  return state.tr.addMark(from, to, markType.create());
+  const tr = state.tr.addMark(from, to, markType.create());
+  // Nearby delimiters can change how the saved span parses. Atoms are opaque
+  // to inline markdown, so use a placeholder instead of parsing their sources.
+  const children: ProseMirrorNode[] = [];
+  tr.doc.resolve(from).parent.forEach((node) => {
+    children.push(
+      node.isAtom && !node.isText && node.type.name !== "hardBreak"
+        ? state.schema.text("\uFFFC", node.marks)
+        : node,
+    );
+  });
+  const paragraph = state.schema.nodes.paragraph!.create(null, children);
+  const markdown = serializeEditorDoc(state.doc.type.create(null, paragraph)).value;
+  const rebuilt = markdown.split("\n").flatMap((line, index) => {
+    const inline = parseInlineMarkdown(line).map((span) =>
+      state.schema.nodeFromJSON(textJsonForSpan(span.text, span.marks)),
+    );
+    return index ? [state.schema.nodes.hardBreak!.create(), ...inline] : inline;
+  });
+  return paragraph.content.eq(Fragment.from(rebuilt)) ? tr : null;
 }
 
 /**
