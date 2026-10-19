@@ -5,8 +5,10 @@ import {
   ThreadId,
   type ClientSettings,
   type DesktopPreviewBridge,
+  type PreviewEvent,
   type PreviewSessionSnapshot,
 } from "@t3tools/contracts";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -19,6 +21,31 @@ const mocks = vi.hoisted(() => ({
   registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
 }));
+
+// Every preview event of the primary environment, for any thread.
+const primary = vi.hoisted(() => ({
+  environmentId: "host-primary",
+  events: null as unknown as Atom.Writable<AsyncResult.AsyncResult<PreviewEvent>>,
+}));
+
+vi.mock(import("~/state/primaryEnvironment"), async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { primaryEnvironmentIdAtom: Atom.make(primary.environmentId as EnvironmentId) };
+});
+
+vi.mock(import("~/state/preview"), async (original) => {
+  const actual = await original();
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  primary.events = Atom.make<AsyncResult.AsyncResult<PreviewEvent>>(AsyncResult.initial());
+  return {
+    ...actual,
+    previewEnvironment: {
+      ...actual.previewEnvironment,
+      events: () => primary.events,
+      list: () => Atom.make(AsyncResult.initial()),
+    } as never,
+  };
+});
 
 vi.mock(import("~/env"), async (original) => ({ ...(await original()), isElectron: true }));
 
@@ -56,7 +83,7 @@ import {
   ensureClientSettingsHydrated,
 } from "~/hooks/useSettings";
 import { reconcilePreviewServerSessions, resetPreviewStateForTests } from "~/previewStateStore";
-import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
 import { ElectronBrowserHost } from "./ElectronBrowserHost";
 
 const threadRef = scopeThreadRef(
@@ -159,5 +186,45 @@ describe("ElectronBrowserHost", () => {
     const after = webviews();
     expect(after).toHaveLength(2);
     expect(after.every((node, index) => node.isSameNode(before[index]!))).toBe(true);
+  });
+
+  it("hosts a server tab an agent opens in a thread the user is not viewing", async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <AppAtomRegistryProvider>
+          <ElectronBrowserHost />
+        </AppAtomRegistryProvider>,
+      );
+      await ensureClientSettingsHydrated();
+    });
+
+    const backgroundThreadId = ThreadId.make("thread-agent-background");
+    await act(async () => {
+      appAtomRegistry.set(
+        primary.events,
+        AsyncResult.success({
+          type: "opened",
+          threadId: backgroundThreadId,
+          tabId: "tab_1",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          serverEpoch: "server-a",
+          revision: 1,
+          snapshot: {
+            threadId: backgroundThreadId,
+            tabId: "tab_1",
+            runtime: "server",
+            automationOwner: "agent-session",
+            navStatus: { _tag: "Loading", url: "https://example.com/", title: "Example" },
+            canGoBack: false,
+            canGoForward: false,
+            updatedAt: "2026-01-01T00:00:00.000Z",
+          },
+        } as PreviewEvent),
+      );
+    });
+
+    const webviews = [...container.querySelectorAll("[data-electron-browser-host] webview")];
+    expect(webviews.map((node) => node.getAttribute("data-preview-server-tab"))).toEqual(["tab_1"]);
   });
 });
