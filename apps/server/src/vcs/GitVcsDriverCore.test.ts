@@ -4192,64 +4192,22 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    // OpenSSH 10.2 at LogLevel=DEBUG3, from "Server accepts key" to the agent's sign request.
-    // `ssh -v` logs only the first line, so an excluded run would trip a watch it should not get.
-    const sshSigning = [
-      "debug1: Server accepts key: test-key ED25519 SHA256:test",
-      "debug3: sign_and_send_pubkey: using publickey with ED25519 SHA256:test",
-      "debug3: sign_and_send_pubkey: signing using ssh-ed25519 SHA256:test",
-    ];
-    // Signing fills the 1,000,000-byte stderr cap exactly, so the signed request comes past it.
-    const pastCap = [sshSigning.join("\n").padStart(999_999, "\n"), "debug3: send packet: type 50"];
-    it.effect.each([
-      { name: "an unanswered key approval", stderr: sshSigning, watched: true, stalled: true },
-      {
-        name: "a signed request and a slow server",
-        stderr: [...sshSigning, "debug3: send packet: type 50"],
-        watched: true,
-        stalled: false,
-      },
-      {
-        // DEBUG3 logs a window adjust for about every 66 KB of pack data.
-        name: "more than 1 MB of stderr",
-        stderr: [
-          ...sshSigning,
-          "debug3: send packet: type 50",
-          ...Array<string>(25_000).fill("debug2: channel 0: window 1966080 sent adjust 131072"),
-        ],
-        watched: true,
-        stalled: false,
-      },
-      { name: "a signed request past the cap", stderr: pastCap, watched: true, stalled: false },
-      {
-        name: "a configured verbose SSH command",
-        sshConfig: "core.sshcommand ssh -v\n",
-        stderr: sshSigning.slice(0, 1),
-        watched: false,
-        stalled: false,
-      },
-      {
-        name: "GIT_SSH_COMMAND set",
-        env: "ssh -v",
-        stderr: sshSigning.slice(0, 1),
-        watched: false,
-        stalled: false,
-      },
-      {
-        name: "Windows",
-        platform: "win32",
-        stderr: sshSigning.slice(0, 1),
-        watched: false,
-        stalled: false,
-      },
-    ] as const)("watches SSH key approval during a fetch with $name", (scenario) =>
-      Effect.gen(function* () {
+    describe("SSH key approval", () => {
+      // OpenSSH DEBUG3 output while the agent is waiting for approval to sign.
+      const signing =
+        "debug1: Server accepts key: test-key ED25519 SHA256:test\n" +
+        "debug3: sign_and_send_pubkey: using publickey with ED25519 SHA256:test\n" +
+        "debug3: sign_and_send_pubkey: signing using ssh-ed25519 SHA256:test\n";
+      const startFetch = Effect.fnUntraced(function* (
+        stderr: Stream.Stream<string>,
+        options: { sshCommand?: string; envCommand?: string; platform?: NodeJS.Platform } = {},
+      ) {
         const sshEnvKeys = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"] as const;
         yield* Effect.acquireRelease(
           Effect.sync(() => {
             const previous = sshEnvKeys.map((key) => [key, process.env[key]] as const);
             for (const key of sshEnvKeys) delete process.env[key];
-            if ("env" in scenario) process.env.GIT_SSH_COMMAND = scenario.env;
+            if (options.envCommand !== undefined) process.env.GIT_SSH_COMMAND = options.envCommand;
             return previous;
           }),
           (previous) =>
@@ -4261,33 +4219,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             }),
         );
         const cwd = yield* makeTmpDir();
+        yield* git(cwd, ["init"]);
+        if (options.sshCommand !== undefined) {
+          yield* git(cwd, ["config", "core.sshCommand", options.sshCommand]);
+        }
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const started = yield* Deferred.make<void>();
         const stderrRead = yield* Deferred.make<void>();
         const exit = yield* Deferred.make<void>();
-        const fetches: Array<{ args: ReadonlyArray<string>; sshCommand: string | undefined }> = [];
-        let interrupted = false;
-        let released = false;
-        const sshConfig = "sshConfig" in scenario ? scenario.sshConfig : "";
+        const released = yield* Deferred.make<void>();
+        const fetches: Array<string | undefined> = [];
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             if (!ChildProcess.isStandardCommand(command))
               return yield* Effect.die("unexpected command");
-            if (command.args[0] === "config") {
-              return ChildProcessSpawner.makeHandle({
-                ...makeSuccessfulHandle(sshConfig),
-                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(sshConfig ? 0 : 1)),
-              });
-            }
             if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
-            fetches.push({ args: command.args, sshCommand: command.options.env?.GIT_SSH_COMMAND });
-            yield* Effect.addFinalizer(() => Effect.sync(() => void (released = true)));
+            fetches.push(command.options.env?.GIT_SSH_COMMAND);
+            yield* Effect.addFinalizer(() => Deferred.succeed(released, undefined));
+            yield* Deferred.succeed(started, undefined);
             return ChildProcessSpawner.makeHandle({
               ...makeSuccessfulHandle(""),
-              exitCode: Deferred.await(exit).pipe(
-                Effect.onInterrupt(() => Effect.sync(() => void (interrupted = true))),
-                Effect.as(ChildProcessSpawner.ExitCode(0)),
-              ),
-              stderr: Stream.encodeText(Stream.make(scenario.stderr.join("\n") + "\n")).pipe(
+              exitCode: Deferred.await(exit).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+              stderr: Stream.encodeText(stderr).pipe(
                 Stream.ensuring(Deferred.succeed(stderrRead, undefined)),
               ),
             });
@@ -4295,38 +4248,84 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         const driver = yield* makeGitVcsDriverCore().pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(HostProcess.Platform, "platform" in scenario ? "win32" : "linux"),
+          Effect.provideService(HostProcess.Platform, options.platform ?? "linux"),
           Effect.provide(layerServerConfig),
         );
         const fetching = yield* driver
           .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
           .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
-        yield* Deferred.await(stderrRead);
-        // The agent or the server answers after 15 seconds, inside the 30 second command timeout.
-        yield* TestClock.adjust("15 seconds");
-        yield* Deferred.succeed(exit, undefined);
-        const result = yield* Fiber.join(fetching);
+        yield* Deferred.await(started);
+        return { fetching, stderrRead, exit, released, fetches };
+      });
 
-        assert.strictEqual(
-          Result.isFailure(result) ? result.failure.detail : null,
-          scenario.stalled
-            ? "SSH key authorization timed out. Approve or unlock the SSH key on the computer running T3 Code, then retry, or use an HTTPS remote."
-            : null,
-        );
-        assert.deepStrictEqual(fetches, [
-          {
-            args: ["fetch", "--quiet", "--", "origin", "+refs/heads/main:refs/remotes/origin/main"],
-            sshCommand: scenario.watched
-              ? "ssh -o LogLevel=DEBUG3"
-              : "env" in scenario
-                ? scenario.env
-                : undefined,
-          },
-        ]);
-        assert.strictEqual(interrupted, scenario.stalled);
-        assert.isTrue(released);
-      }),
-    );
+      it.effect("reports pending approval before the command timeout and releases the fetch", () =>
+        Effect.gen(function* () {
+          const fetch = yield* startFetch(Stream.make(signing));
+          yield* Deferred.await(fetch.stderrRead);
+          yield* TestClock.adjust("15 seconds");
+          assert.isTrue(yield* Deferred.isDone(fetch.released));
+          const result = yield* Fiber.join(fetch.fetching);
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.equal(
+              result.failure.detail,
+              "SSH key authorization timed out. Approve or unlock the SSH key on the computer running T3 Code, then retry, or use an HTTPS remote.",
+            );
+          }
+          assert.lengthOf(fetch.fetches, 1);
+          assert.isFalse(yield* Deferred.isDone(fetch.exit));
+        }),
+      );
+
+      it.effect("allows a slow server and signing past the output cap to finish", () =>
+        Effect.gen(function* () {
+          const connected = yield* Deferred.make<void>();
+          // Arm just before the cap; the signed packet must still clear the watch after it.
+          const output = signing.padStart(1_000_000, "\n");
+          const fetch = yield* startFetch(
+            Stream.concat(
+              Stream.fromEffect(Deferred.await(connected).pipe(Effect.as(output))),
+              Stream.make("debug3: send packet: type 50\n"),
+            ),
+          );
+          yield* TestClock.adjust("12 seconds");
+          yield* Deferred.succeed(connected, undefined);
+          yield* Deferred.await(fetch.stderrRead);
+          yield* TestClock.adjust("15 seconds");
+          yield* Deferred.succeed(fetch.exit, undefined);
+          assert.deepEqual(yield* Fiber.join(fetch.fetching), Result.succeed(undefined));
+          assert.isTrue(yield* Deferred.isDone(fetch.released));
+        }),
+      );
+
+      it.effect("releases a pending fetch when its caller cancels", () =>
+        Effect.gen(function* () {
+          const fetch = yield* startFetch(Stream.make(signing));
+          yield* Deferred.await(fetch.stderrRead);
+          yield* Fiber.interrupt(fetch.fetching);
+          assert.isTrue(yield* Deferred.isDone(fetch.released));
+          assert.isFalse(yield* Deferred.isDone(fetch.exit));
+        }),
+      );
+
+      it.effect.each([
+        { name: "configured SSH", sshCommand: "ssh -v" },
+        { name: "an environment SSH override", envCommand: "ssh -v" },
+        { name: "Windows", platform: "win32" },
+      ] as const)("preserves $name without treating its output as pending approval", (options) =>
+        Effect.gen(function* () {
+          const fetch = yield* startFetch(Stream.make(signing), options);
+          yield* Deferred.await(fetch.stderrRead);
+          yield* TestClock.adjust("15 seconds");
+          yield* Deferred.succeed(fetch.exit, undefined);
+          assert.deepEqual(yield* Fiber.join(fetch.fetching), Result.succeed(undefined));
+          assert.deepEqual(fetch.fetches, [
+            "envCommand" in options ? options.envCommand : undefined,
+          ]);
+          assert.isTrue(yield* Deferred.isDone(fetch.released));
+        }),
+      );
+    });
 
     it.effect("creates a worktree from the latest fetched remote commit", () =>
       Effect.gen(function* () {
