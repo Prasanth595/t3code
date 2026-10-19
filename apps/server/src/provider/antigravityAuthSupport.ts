@@ -87,7 +87,6 @@ export interface AntigravityProfile {
   readonly tokenPath: string;
   readonly tempDirectory: string;
   readonly browserCommand: string;
-  /** The system CA bundle for the agent on Linux, when one exists. */
   readonly caBundlePath?: string;
 }
 
@@ -193,39 +192,6 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
   } satisfies AntigravityInstanceDirectories;
 });
 
-/**
- * The agent's bundled Python looks for CA certificates only where its own build put them. NixOS
- * and some other distributions have nothing there, so without `SSL_CERT_FILE` the agent trusts no
- * server and every request fails TLS verification.
- */
-const LINUX_CA_BUNDLE_PATHS = [
-  "/etc/ssl/certs/ca-bundle.crt",
-  "/etc/ssl/certs/ca-certificates.crt",
-  "/etc/pki/tls/certs/ca-bundle.crt",
-  "/etc/ssl/cert.pem",
-];
-
-/**
- * The first CA bundle that exists: Nix's own setting, then the usual system paths. A relative path
- * is skipped, because the agent runs in the project directory and would read a different file.
- */
-export const findLinuxCaBundle = Effect.fn("findLinuxCaBundle")(function* (
-  baseEnv: NodeJS.ProcessEnv,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  for (const candidate of [baseEnv.NIX_SSL_CERT_FILE, ...LINUX_CA_BUNDLE_PATHS]) {
-    if (
-      candidate &&
-      path.isAbsolute(candidate) &&
-      (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
-    ) {
-      return candidate;
-    }
-  }
-  return undefined;
-});
-
 function quoteBrowserArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -256,7 +222,9 @@ function antigravityEnvironment(
   return {
     ...environment,
     ...credential,
-    ...(profile.caBundlePath !== undefined && !baseEnv.SSL_CERT_FILE && !baseEnv.SSL_CERT_DIR
+    ...(profile.caBundlePath !== undefined &&
+    baseEnv.SSL_CERT_FILE === undefined &&
+    baseEnv.SSL_CERT_DIR === undefined
       ? { SSL_CERT_FILE: profile.caBundlePath }
       : {}),
     GEMINI_HOME: profile.geminiHome,
@@ -365,8 +333,27 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
   const tempDirectory = input.tempDirectory ?? path.join(acpDirectory, "tmp");
-  const caBundlePath =
-    platform === "linux" ? yield* findLinuxCaBundle(input.baseEnv ?? process.env) : undefined;
+  let caBundlePath: string | undefined;
+  if (platform === "linux") {
+    // Bundled Python may look for certificates at paths absent on this distribution.
+    // Relative paths would resolve differently when the agent runs in the project directory.
+    for (const candidate of [
+      (input.baseEnv ?? process.env).NIX_SSL_CERT_FILE,
+      "/etc/ssl/certs/ca-bundle.crt",
+      "/etc/ssl/certs/ca-certificates.crt",
+      "/etc/pki/tls/certs/ca-bundle.crt",
+      "/etc/ssl/cert.pem",
+    ]) {
+      if (
+        candidate &&
+        path.isAbsolute(candidate) &&
+        (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+      ) {
+        caBundlePath = candidate;
+        break;
+      }
+    }
+  }
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
