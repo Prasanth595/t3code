@@ -75,7 +75,7 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
   return {
     on: vi.fn((name: string, listener: () => void) => events.on(name, listener)),
-    emit: (name: string) => events.emit(name),
+    emit: (name: string, ...args: unknown[]) => events.emit(name, ...args),
     detach: vi.fn(async () => {}),
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
@@ -1802,7 +1802,7 @@ it.live("a desktop page that comes back reconnects without waiting for a viewer"
   ).pipe(Effect.provide(layer)),
 );
 
-it.live.each(["pause", "capture", "resume"] as const)(
+it.live.each(["wait", "pause", "capture", "resume"] as const)(
   "a stalled snapshot %s releases the tab queue and capture lock without leaking a paused viewer",
   (stage) =>
     Effect.scoped(
@@ -1821,7 +1821,8 @@ it.live.each(["pause", "capture", "resume"] as const)(
         session.send.mockImplementation(async (method, input) => {
           if (
             !stalled &&
-            ((stage === "pause" && method === "Page.stopScreencast") ||
+            ((stage === "wait" && method === "Page.captureScreenshot") ||
+              (stage === "pause" && method === "Page.stopScreencast") ||
               (stage === "resume" && method === "Page.startScreencast"))
           ) {
             stalled = true;
@@ -1847,12 +1848,26 @@ it.live.each(["pause", "capture", "resume"] as const)(
             vi.useRealTimers();
           }),
         );
+        if (stage === "wait") {
+          session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: 1 });
+          session.emit("Page.screencastFrame", { data: "ZnJhbWU=", sessionId: 2 });
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(200));
+          yield* Effect.promise(() => blocked.promise);
+        }
         const snapshot = yield* broker
           .invoke<PreviewAutomationSnapshot>({ scope, tabId, operation: "snapshot", input: {} })
           .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
         yield* Effect.promise(() => blocked.promise);
         // The complete capture must answer within the action budget, before broker eviction.
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(15_000));
+        if (stage === "wait") {
+          yield* Effect.yieldNow;
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+          // Exercise simultaneous expiry before the queued capture can start.
+          yield* Effect.sync(() => vi.advanceTimersByTime(15_000));
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
+        } else {
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(15_000));
+        }
         expect.soft(snapshot.pollUnsafe()).toMatchObject({
           _tag: "Success",
           value: {
@@ -1892,6 +1907,10 @@ it.live.each(["pause", "capture", "resume"] as const)(
         yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
         expect(streaming || session.detach.mock.calls.length > 0).toBe(true);
         if (replacement) expect(replacement.detach).not.toHaveBeenCalled();
+        if (stage === "wait") {
+          expect(page.ariaSnapshot).toHaveBeenCalledTimes(1);
+          expect(yield* Queue.clear(viewer.output)).toEqual([]);
+        }
       }),
     ).pipe(Effect.provide(layer)),
 );

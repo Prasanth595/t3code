@@ -1507,33 +1507,37 @@ const make = Effect.gen(function* () {
   };
 
   // Scaled captures repaint every screencast; pause them to avoid leaking that frame.
-  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
-    withCaptureLock(tab, async () => {
+  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> => {
+    let expired = false;
+    let capturing = false;
+    let recording: Recording | null = null;
+    const endCapture = () => {
+      if (!capturing) return;
+      capturing = false;
+      tab.capturing -= 1;
+    };
+    const timeout = new ServerBrowserPage.ServerBrowserOperationError(
+      "PreviewAutomationTimeoutError",
+      "The browser did not finish pausing, capturing, and resuming its screencasts in time.",
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        endCapture();
+        // Retire the sessions: a late stop must never pause a recovered viewer.
+        for (const viewer of tab.viewers) viewer.disconnect();
+        // Keep the encoder so recordingStop can still return the frames already captured.
+        void recording?.session.detach().catch(constVoid);
+        reject(timeout);
+      }, SNAPSHOT_TIMEOUT_MS);
+    });
+    const locked = withCaptureLock(tab, () => {
+      // The deadline also covers waiting for a viewer's still capture.
+      if (expired) throw timeout;
+      capturing = true;
       tab.capturing += 1;
-      const recording = tab.recording;
-      let expired = false;
-      let capturing = true;
-      const endCapture = () => {
-        if (!capturing) return;
-        capturing = false;
-        tab.capturing -= 1;
-      };
-      const timeout = new ServerBrowserPage.ServerBrowserOperationError(
-        "PreviewAutomationTimeoutError",
-        "The browser did not finish pausing, capturing, and resuming its screencasts in time.",
-      );
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const deadline = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          expired = true;
-          endCapture();
-          // Retire the sessions: a late stop must never pause a recovered viewer.
-          for (const viewer of tab.viewers) viewer.disconnect();
-          // Keep the encoder so recordingStop can still return the frames already captured.
-          void recording?.session.detach().catch(constVoid);
-          reject(timeout);
-        }, SNAPSHOT_TIMEOUT_MS);
-      });
+      recording = tab.recording;
       const captured = (async () => {
         try {
           await Promise.all([
@@ -1556,8 +1560,10 @@ const make = Effect.gen(function* () {
           }
         }
       })();
-      return Promise.race([captured, deadline]).finally(() => clearTimeout(timer));
+      return Promise.race([captured, deadline]);
     });
+    return Promise.race([locked, deadline]).finally(() => clearTimeout(timer));
+  };
 
   const stopRecording = (tab: ServerTab) =>
     withCaptureLock(tab, async () => {
@@ -2345,13 +2351,24 @@ const make = Effect.gen(function* () {
       // Full scale: a scaled capture would flash in every other viewer.
       const pushStill = async () => {
         if (disconnected) return;
-        const data = await withCaptureLock(tab, () =>
-          ServerBrowserPage.captureViewport(tab.page, session, {
-            format: "jpeg",
-            quality,
-            scale: 1,
-          }),
-        ).catch(() => null);
+        const data = await withCaptureLock(tab, () => {
+          if (disconnected) return Promise.resolve(null);
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const deadline = new Promise<null>((resolve) => {
+            timer = setTimeout(() => {
+              viewer.disconnect();
+              resolve(null);
+            }, SNAPSHOT_TIMEOUT_MS);
+          });
+          return Promise.race([
+            ServerBrowserPage.captureViewport(tab.page, session, {
+              format: "jpeg",
+              quality,
+              scale: 1,
+            }),
+            deadline,
+          ]).finally(() => clearTimeout(timer));
+        }).catch(() => null);
         if (data && !disconnected)
           viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });
       };
