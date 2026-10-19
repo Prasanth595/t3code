@@ -910,6 +910,7 @@ export const layerWithOptions = (
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfIdleRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
         Effect.gen(function* () {
           const key = sessionKey(input.providerSessionId);
@@ -922,6 +923,12 @@ export const layerWithOptions = (
               const existing = current.get(key);
               if (existing !== candidate) {
                 return [existing === undefined ? "gone" : "changed", current] as const;
+              }
+              if (
+                input.onlyIfIdleRuntime !== undefined &&
+                (existing.runtime !== input.onlyIfIdleRuntime || existing.busyTurns.size > 0)
+              ) {
+                return ["kept", current] as const;
               }
               if (
                 input.onlyIfIdleGeneration !== undefined &&
@@ -988,6 +995,7 @@ export const layerWithOptions = (
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
+        readonly onlyIfIdleRuntime?: ProviderAdapter.ProviderAdapterV2SessionRuntime;
         readonly gracefulSubscribers?: boolean;
       }) =>
         Effect.acquireUseRelease(
@@ -1176,7 +1184,7 @@ export const layerWithOptions = (
         });
 
       // Renewed launch credentials require a restart, even with background work.
-      // releaseEntry rechecks busy turns and idle generation after the probe yields.
+      // releaseEntry rechecks runtime identity and busy turns after the probe yields.
       const releaseIfStaleCredentials = Effect.fnUntraced(
         function* (entry: LiveSessionEntry) {
           const runtime = entry.runtime;
@@ -1186,7 +1194,7 @@ export const layerWithOptions = (
             providerSessionId: runtime.providerSessionId,
             reason: "manual_shutdown",
             detail: "Provider credentials were renewed.",
-            onlyIfIdleGeneration: entry.idleGeneration,
+            onlyIfIdleRuntime: runtime,
           });
         },
         (effect, entry) => effect.pipe(logReleaseFailure(entry.runtime.providerSessionId)),

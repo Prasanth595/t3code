@@ -331,6 +331,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly credentialRevision?: Ref.Ref<number>;
+    readonly beforeCredentialProbe?: Effect.Effect<void>;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
@@ -425,7 +426,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           ...(credentialRevision === undefined
             ? {}
             : {
-                hasStaleCredentials: Ref.get(credentialRevision).pipe(
+                hasStaleCredentials: (options.beforeCredentialProbe ?? Effect.void).pipe(
+                  Effect.andThen(Ref.get(credentialRevision)),
                   Effect.map((revision) => revision !== launchedRevision),
                 ),
               }),
@@ -491,6 +493,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly credentialRevision?: Ref.Ref<number>;
+  readonly beforeCredentialProbe?: Effect.Effect<void>;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
@@ -523,6 +526,9 @@ function layerTest(input: {
       ...(input.credentialRevision === undefined
         ? {}
         : { credentialRevision: input.credentialRevision }),
+      ...(input.beforeCredentialProbe === undefined
+        ? {}
+        : { beforeCredentialProbe: input.beforeCredentialProbe }),
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
@@ -3041,6 +3047,8 @@ it.effect(
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const credentialRevision = yield* Ref.make(1);
+      const probeEntered = yield* Deferred.make<void>();
+      const probeGate = yield* Deferred.make<void>();
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3128,7 +3136,25 @@ it.effect(
         yield* Fiber.join(settled);
 
         // Renewal currently takes precedence over background commands after the turn settles.
-        const replacement = yield* open(siblingId);
+        const reopening = yield* open(siblingId).pipe(Effect.forkScoped);
+        yield* Deferred.await(probeEntered);
+        const activitySubscription = yield* Effect.acquireRelease(
+          first.subscribeEvents!,
+          (sub) => sub.close,
+        );
+        const activityProcessed = yield* activitySubscription.events.pipe(
+          Stream.filter((event) => event.type === "provider_session.updated"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        yield* Queue.offer((yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!, {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: first.providerSession,
+        });
+        assert.isTrue(Option.isSome(yield* Fiber.join(activityProcessed)));
+        yield* Deferred.succeed(probeGate, undefined);
+        const replacement = yield* Fiber.join(reopening);
         assert.notStrictEqual(replacement, first);
         assert.equal((yield* Ref.get(state)).openCount, 2);
         assert.equal((yield* Ref.get(state)).closeCount, 1);
@@ -3154,6 +3180,11 @@ it.effect(
             state,
             idleTimeoutMs: 60_000,
             credentialRevision,
+            beforeCredentialProbe: Effect.gen(function* () {
+              if ((yield* Ref.get(credentialRevision)) === 1) return;
+              yield* Deferred.succeed(probeEntered, undefined);
+              yield* Deferred.await(probeGate);
+            }),
             hasPendingBackgroundWork: Effect.succeed(true),
           }),
         ),
