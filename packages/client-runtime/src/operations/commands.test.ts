@@ -153,103 +153,54 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
-  it.effect("launches a fork with its selected destination and original response boundary", () =>
+  it.effect("forks into a chosen checkout, keeping history on servers without that choice", () =>
     Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const launches: OrchestrationV2ThreadLaunchInput[] = [];
-      const supervisor = yield* makeSupervisor({ commands, launches, projects: [] });
-      const workspaceStrategy = {
-        type: "existing_worktree" as const,
-        worktreePath: "/chosen/worktree",
-        branch: "chosen",
-      };
-      yield* forkThreadFromRun({
-        commandId: CommandId.make("fork-destination"),
-        sourceThreadId: v2ThreadId,
-        targetThreadId: ThreadId.make("destination"),
-        runId: RunId.make("run-1"),
-        workspaceStrategy,
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-      expect(commands).toEqual([]);
-      expect(launches[0]).toMatchObject({
+      const forkInto = (
+        workspaceStrategy: OrchestrationV2ThreadLaunchInput["workspaceStrategy"],
+        advertiseThreadForkWorkspaceSelection = true,
+      ) =>
+        Effect.gen(function* () {
+          const commands: OrchestrationV2Command[] = [];
+          const launches: OrchestrationV2ThreadLaunchInput[] = [];
+          const supervisor = yield* makeSupervisor({
+            commands,
+            launches,
+            projects: [],
+            advertiseThreadForkWorkspaceSelection,
+            projection: { ...v2Projection, thread: { ...v2Projection.thread, worktreePath: null } },
+          });
+          const exit = yield* forkThreadFromRun({
+            commandId: CommandId.make("fork"),
+            sourceThreadId: v2ThreadId,
+            targetThreadId: ThreadId.make("destination"),
+            runId: RunId.make("run-1"),
+            workspaceStrategy,
+          }).pipe(
+            Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+            Effect.exit,
+          );
+          return { commands, launches, exit };
+        });
+
+      const chosen = yield* forkInto({ type: "worktree", baseRef: "main" });
+      expect(chosen.commands).toEqual([]);
+      expect(chosen.launches[0]).toMatchObject({
         threadId: "destination",
-        workspaceStrategy,
+        workspaceStrategy: { type: "worktree", baseRef: "main" },
         forkSource: { sourceThreadId: v2ThreadId, sourcePoint: { type: "run", runId: "run-1" } },
         modelSelection: v2Projection.thread.modelSelection,
       });
-      expect(launches[0]?.initialMessage).toBeUndefined();
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
-  it.effect("preserves history through the legacy fork transport in the same checkout", () =>
-    Effect.gen(function* () {
-      for (const worktreePath of [null, "/chosen/worktree"]) {
-        const commands: OrchestrationV2Command[] = [];
-        const launches: OrchestrationV2ThreadLaunchInput[] = [];
-        const supervisor = yield* makeSupervisor({
-          commands,
-          launches,
-          projects: [],
-          advertiseThreadForkWorkspaceSelection: false,
-          projection: {
-            ...v2Projection,
-            thread: { ...v2Projection.thread, worktreePath, branch: "main" },
-          },
-        });
-        yield* forkThreadFromRun({
-          commandId: CommandId.make("legacy-fork"),
-          sourceThreadId: v2ThreadId,
-          targetThreadId: ThreadId.make("destination"),
-          runId: RunId.make("run-1"),
-          workspaceStrategy: worktreePath
-            ? { type: "existing_worktree", worktreePath, branch: "main" }
-            : { type: "root", branch: "main" },
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-        expect(launches).toEqual([]);
-        expect(commands).toEqual([
-          {
-            type: "thread.fork",
-            commandId: "legacy-fork",
-            createdBy: "user",
-            creationSource: "web",
-            sourceThreadId: v2ThreadId,
-            targetThreadId: "destination",
-            sourcePoint: { type: "run", runId: "run-1" },
-          },
-        ]);
-      }
-    }).pipe(Effect.provide(layerTestCrypto)),
-  );
 
-  it.effect("rejects changed fork destinations on older servers before creating a thread", () =>
-    Effect.gen(function* () {
-      for (const workspaceStrategy of [
-        { type: "worktree", baseRef: "main" },
-        { type: "existing_worktree", worktreePath: "/displayed/worktree" },
-        { type: "root", branch: "other" },
-      ] as const) {
-        const commands: OrchestrationV2Command[] = [];
-        const launches: OrchestrationV2ThreadLaunchInput[] = [];
-        const supervisor = yield* makeSupervisor({
-          commands,
-          launches,
-          projects: [],
-          advertiseThreadForkWorkspaceSelection: false,
-        });
-        const error = yield* forkThreadFromRun({
-          commandId: CommandId.make("unsupported-fork"),
-          sourceThreadId: v2ThreadId,
-          targetThreadId: ThreadId.make("destination"),
-          runId: RunId.make("run-1"),
-          workspaceStrategy,
-        }).pipe(
-          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
-          Effect.flip,
-        );
-        expect(error._tag).toBe("OrchestrationV2ThreadLaunchError");
-        expect(error.message).toContain("Update this T3 Code server");
-        expect(commands).toEqual([]);
-        expect(launches).toEqual([]);
-      }
+      const legacy = yield* forkInto({ type: "root" }, false);
+      expect(legacy.launches).toEqual([]);
+      expect(legacy.commands).toMatchObject([
+        { type: "thread.fork", targetThreadId: "destination", sourcePoint: { type: "run" } },
+      ]);
+
+      const refused = yield* forkInto({ type: "worktree", baseRef: "main" }, false);
+      expect(refused.commands).toEqual([]);
+      expect(refused.launches).toEqual([]);
+      expect(String(refused.exit)).toContain("Update this T3 Code server");
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

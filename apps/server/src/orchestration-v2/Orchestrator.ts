@@ -141,7 +141,6 @@ import {
   forkableSourceRunStatusError,
   isForkableSourceRunStatus,
   ThreadForkServiceV2,
-  runForSourcePoint,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -617,6 +616,39 @@ function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
   return queuedRunsInDeliveryOrder(projection)[0];
+}
+
+function latestStableRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs">,
+): OrchestrationV2Run | null {
+  return (
+    projection.runs
+      .filter((run) => run.status === "completed" && run.checkpointId !== null)
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null
+  );
+}
+
+export function runForSourcePoint(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
+  sourcePoint: Extract<
+    OrchestrationV2Command,
+    { readonly type: "thread.fork" | "thread.merge_back" }
+  >["sourcePoint"],
+): OrchestrationV2Run | null {
+  switch (sourcePoint.type) {
+    case "latest_stable":
+      return latestStableRun(projection);
+    case "run":
+      return projection.runs.find((run) => run.id === sourcePoint.runId) ?? null;
+    case "checkpoint": {
+      const checkpoint = projection.checkpoints.find(
+        (candidate) => candidate.id === sourcePoint.checkpointId,
+      );
+      return checkpoint?.runId === null || checkpoint === undefined
+        ? null
+        : (projection.runs.find((run) => run.id === checkpoint.runId) ?? null);
+    }
+  }
 }
 
 function providerThreadForRun(
@@ -4569,24 +4601,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       const preparationCommandId = projection.thread.workspacePreparationCommandId;
+      // Forks have no preparing run. The fork-ready receipt gates every sender,
+      // including other clients, and honors the setup script's wait policy.
       if (preparationCommandId !== undefined) {
-        // Forks have no preparing run. The fork-ready receipt gates every sender,
-        // including other clients, and honors the setup script's wait policy.
-        const ready = yield* commandReceipts
-          .getByCommandId(CommandId.make(`${preparationCommandId}:fork-ready`))
-          .pipe(mapDispatchError(command));
-        if (
-          Option.isNone(ready) ||
-          ready.value.status !== "accepted" ||
-          ready.value.threadId !== command.threadId
-        ) {
+        const ready = Option.getOrUndefined(
+          yield* commandReceipts
+            .getByCommandId(CommandId.make(`${preparationCommandId}:fork-ready`))
+            .pipe(mapDispatchError(command)),
+        );
+        if (ready?.status !== "accepted" || ready.threadId !== command.threadId)
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
             cause:
               "The fork's workspace is not ready. Wait for preparation to finish, or create a new fork if preparation failed.",
           });
-        }
       }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);

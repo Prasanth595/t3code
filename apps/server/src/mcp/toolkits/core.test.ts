@@ -10,9 +10,9 @@ import {
   EnvironmentId,
   NodeId,
   OrchestratorMcpThreadReadResult,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProjectId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -40,7 +40,6 @@ import * as ProviderAdapterRegistry from "../../orchestration-v2/ProviderAdapter
 import * as ThreadLaunchService from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
-import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as PreviewBrowser from "../../preview/PreviewBrowser.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
@@ -88,11 +87,24 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
-const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-  Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
-);
+const layerThreadToolkitWith = (
+  launch?: ThreadLaunchService.ThreadLaunchService["Service"]["launch"],
+) =>
+  McpHttpServer.layerThreadToolkit.pipe(
+    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)(launch ? { launch } : {})),
+    Layer.provide(
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () => Effect.succeedSome({ workspaceRoot: "/repo" } as never),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({ listWorktreePaths: () => Effect.succeed(["/repo"]) }),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
+const layerThreadToolkit = layerThreadToolkitWith();
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
@@ -235,6 +247,74 @@ it.effect("returns a bounded public failure without serializing storage causes",
   ),
 );
 
+it.effect("maps fork launch failures and foreign worktrees to public MCP failures", () =>
+  Effect.gen(function* () {
+    const failure = (cause: unknown) =>
+      new ThreadLaunchService.ThreadLaunchError({
+        operation: "create-thread",
+        commandId: CommandId.make("mcp-core-fork"),
+        projectId: ProjectId.make("project:mcp-test"),
+        cause,
+      });
+    for (const [cause, worktreePath, code, message] of [
+      [
+        new OrchestratorDispatchError({
+          commandId: CommandId.make("mcp-core-fork"),
+          commandType: "thread.fork",
+          cause: "The source run is still running.",
+        }),
+        "/repo",
+        "orchestration_error",
+        "The source run is still running.",
+      ],
+      [
+        "private-storage-path",
+        "/repo",
+        "orchestration_error",
+        "Thread launch mcp-core-fork failed during create-thread.",
+      ],
+      [
+        undefined,
+        "/outside",
+        "invalid_request",
+        "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
+      ],
+    ] as const) {
+      const result = yield* Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        return yield* server.callTool({
+          name: "t3_thread_fork",
+          arguments: {
+            sourcePoint: { type: "latest_stable" },
+            workspaceStrategy: { type: "existing_worktree", worktreePath },
+          },
+        });
+      }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.provide(
+          layerThreadToolkitWith(() => Effect.fail(failure(cause))).pipe(
+            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provide(NodeCrypto.layer),
+            Layer.provide(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+                getProjectThreadRecords: ({ threadId }) =>
+                  Effect.succeed(
+                    McpToolAccessTestkit.idleThreadProjection(
+                      McpToolAccessTestkit.liveThreadShell(threadId),
+                    ),
+                  ),
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(declaredFailure(result)).toEqual({ _tag: "OrchestratorMcpFailure", code, message });
+    }
+  }),
+);
+
 it("bounds public command rejections and redacts internal dispatch causes", () => {
   const command = { commandId: CommandId.make("mcp-core-command"), commandType: "thread.settle" };
   expect(
@@ -270,118 +350,6 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
     message: "The operation could not be completed.",
   });
 });
-
-it.effect(
-  "preserves public fork rejections and workspace validation through MCP registration",
-  () =>
-    Effect.gen(function* () {
-      const command = { commandId: CommandId.make("mcp-core-fork"), commandType: "thread.fork" };
-      const projectId = ProjectId.make("project:mcp-test");
-      for (const { error, code, message } of [
-        {
-          error: new ThreadLaunch.ThreadLaunchError({
-            operation: "create-thread",
-            commandId: command.commandId,
-            projectId,
-            cause: new OrchestratorDispatchError({
-              ...command,
-              cause: "No stable source run was found for fork source run.",
-            }),
-          }),
-          code: "orchestration_error",
-          message: "No stable source run was found for fork source run.",
-        },
-        {
-          error: new ThreadLaunch.ThreadLaunchError({
-            operation: "create-thread",
-            commandId: command.commandId,
-            projectId,
-            cause: new OrchestratorCommandRejectedError({
-              ...command,
-              cause: "The source run is still running.",
-            }),
-          }),
-          code: "orchestration_error",
-          message: "The source run is still running.",
-        },
-        {
-          error: new ThreadLaunch.ThreadLaunchError({
-            operation: "create-thread",
-            commandId: command.commandId,
-            projectId,
-            cause: new OrchestratorDispatchError({
-              ...command,
-              cause: new Error("private-storage-path"),
-            }),
-          }),
-          code: "orchestration_error",
-          message: "The operation could not be completed.",
-        },
-        {
-          error: new ThreadLaunch.ThreadLaunchError({
-            operation: "create-thread",
-            commandId: command.commandId,
-            projectId,
-            cause: { _tag: "OrchestratorDispatchError", cause: "private-storage-path" },
-          }),
-          code: "orchestration_error",
-          message: "Thread launch mcp-core-fork failed during create-thread.",
-        },
-        {
-          error: new ThreadLaunch.ThreadForkWorkspaceInvalidError({
-            projectId,
-            worktreePath: "/outside",
-          }),
-          code: "invalid_request",
-          message:
-            "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
-        },
-      ]) {
-        yield* Effect.gen(function* () {
-          const server = yield* McpServer.McpServer;
-          const result = yield* server
-            .callTool({
-              name: "t3_thread_fork",
-              arguments: { sourcePoint: { type: "latest_stable" } },
-            })
-            .pipe(
-              Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-              Effect.provideService(McpSchema.McpServerClient, client),
-            );
-          expect(declaredFailure(result)).toEqual({
-            _tag: "OrchestratorMcpFailure",
-            code,
-            message,
-          });
-          expect(result.isError).toBe(true);
-          expect(result.structuredContent).toBeUndefined();
-        }).pipe(
-          Effect.provide(
-            McpHttpServer.layerThreadToolkit.pipe(
-              Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-              Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-              Layer.provide(
-                Layer.mock(ThreadLaunch.ThreadLaunchService)({ fork: () => Effect.fail(error) }),
-              ),
-              Layer.provideMerge(McpServer.McpServer.layer),
-              Layer.provide(NodeCrypto.layer),
-              Layer.provide(
-                Layer.mock(ThreadManagement.ThreadManagementService)({
-                  getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
-                  getProjectThreadRecords: ({ threadId }) =>
-                    Effect.succeed(
-                      McpToolAccessTestkit.idleThreadProjection(
-                        McpToolAccessTestkit.liveThreadShell(threadId),
-                      ),
-                    ),
-                }),
-              ),
-            ),
-          ),
-        );
-      }
-    }),
-);
 
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
@@ -553,14 +521,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
     });
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerThreadToolkit.pipe(
-        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-        Layer.provide(
-          Layer.mock(ThreadLaunch.ThreadLaunchService)({
-            fork: ({ targetThreadId }) => Effect.succeed({ sequence: 1, targetThreadId }),
-          }),
-        ),
+      layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(

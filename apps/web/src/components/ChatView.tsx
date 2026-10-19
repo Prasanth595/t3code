@@ -80,6 +80,7 @@ import {
   ProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
   RuntimeMode,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
@@ -1285,14 +1286,12 @@ export default function ChatView(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  const [forkSource, setForkSource] = useState<{ sourceThreadId: ThreadId; runId: RunId } | null>(
-    null,
-  );
-  const [forkSourceThreadKey, setForkSourceThreadKey] = useState(routeThreadKey);
-  if (forkSourceThreadKey !== routeThreadKey) {
-    setForkSourceThreadKey(routeThreadKey);
-    setForkSource(null);
-  }
+  // Keyed by thread so the fork dialog closes when the route changes.
+  const [forkSource, setForkSource] = useState<{
+    sourceThreadId: ThreadId;
+    runId: RunId;
+    threadKey: string;
+  } | null>(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
@@ -5857,13 +5856,13 @@ export default function ChatView(props: ChatViewProps) {
     readonly runId: RunId;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
-    setForkSource({ ...input });
+    setForkSource({ ...input, threadKey: routeThreadKey });
   };
   const onForkWorkspaceSelected = async (
-    workspaceStrategy: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
-    if (forkSource === null) return;
+    if (forkSource?.threadKey !== routeThreadKey) return;
     const targetThreadId = newThreadId();
     const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
     const sourceThreadRef = scopeThreadRef(environmentId, activeThread.id);
@@ -5893,8 +5892,8 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
     const result = await pendingResult;
+    setForkSource((current) => (current === forkSource ? null : current));
     if (result._tag === "Failure") {
-      setForkSource((current) => (current === forkSource ? null : current));
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
       const message = error instanceof Error ? error.message : "Failed to fork this response.";
@@ -5923,7 +5922,6 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    setForkSource((current) => (current === forkSource ? null : current));
     if (openedEarly) return;
     const targetThreadReady = await waitForThreadShell(targetThreadRef);
     if (!targetThreadReady) {
@@ -7899,7 +7897,7 @@ export default function ChatView(props: ChatViewProps) {
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
-      {forkSource && activeThread ? (
+      {forkSource?.threadKey === routeThreadKey && activeThread ? (
         <ForkThreadDialog
           worktreePath={activeThread.worktreePath}
           branch={activeThread.branch}

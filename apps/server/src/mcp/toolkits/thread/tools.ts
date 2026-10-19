@@ -21,11 +21,14 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
+import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ProjectService from "../../../project/ProjectService.ts";
+import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -213,7 +216,13 @@ const ThreadForkTool = Tool.make("t3_thread_fork", {
     title: Schema.optional(TrimmedNonEmptyString),
   }),
   success: transferResult,
-  dependencies: [...commandTool.dependencies, ThreadLaunch.ThreadLaunchService],
+  dependencies: [
+    ...commandTool.dependencies,
+    ThreadLaunch.ThreadLaunchService,
+    ProjectService.ProjectService,
+    GitVcsDriver.GitVcsDriver,
+    FileSystem.FileSystem,
+  ],
 }).annotate(Tool.Destructive, true);
 const ThreadMergeBackTool = Tool.make("t3_thread_merge_back", {
   ...commandTool,

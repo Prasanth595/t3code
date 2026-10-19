@@ -19,6 +19,8 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as Project from "../../../project/ProjectService.ts";
+import { assertProjectWorktree } from "../project/handlers.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -115,44 +117,65 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_fork: writesThread((input) =>
     Effect.gen(function* () {
-      const { projection } = yield* readThread(input.threadId);
+      const { threads, projection } = yield* readThread(input.threadId);
       const commandId = yield* newCommandId();
       const targetThreadId = ThreadId.make(`${commandId}:fork`);
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      return yield* launches
-        .fork({
-          commandId,
-          targetThreadId,
-          sourceThreadId: projection.thread.id,
-          sourcePoint: input.sourcePoint,
-          projectId: projection.thread.projectId,
-          ...(input.title === undefined ? {} : { title: input.title }),
-          ...(input.workspaceStrategy === undefined
-            ? {}
-            : { workspaceStrategy: input.workspaceStrategy }),
-          createdBy: "agent",
-          creationSource: "mcp",
-        })
-        .pipe(
-          Effect.catchTags({
-            ThreadForkWorkspaceInvalidError: (error) =>
-              Effect.fail(
-                new OrchestratorMcpFailure({
-                  code: "invalid_request",
-                  message: error.message,
-                }),
-              ),
-            ThreadLaunchError: (error) =>
-              Effect.fail(
-                Orchestrator.isOrchestratorV2Error(error.cause)
+      const { thread } = projection;
+      const strategy = input.workspaceStrategy;
+      if (strategy !== undefined) {
+        if (strategy.type === "existing_worktree") {
+          const project = yield* Project.ProjectService.pipe(
+            Effect.flatMap((projects) => projects.getById(thread.projectId)),
+            Effect.flatMap(Effect.fromOption),
+            Effect.mapError(unavailable),
+          );
+          yield* assertProjectWorktree(project.workspaceRoot, strategy.worktreePath);
+        }
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        yield* launches
+          .launch({
+            commandId,
+            threadId: targetThreadId,
+            projectId: thread.projectId,
+            title: input.title ?? `${thread.title} fork`,
+            modelSelection: thread.modelSelection,
+            runtimeMode: thread.runtimeMode,
+            interactionMode: thread.interactionMode,
+            workspaceStrategy: strategy,
+            forkSource: { sourceThreadId: thread.id, sourcePoint: input.sourcePoint },
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              error._tag !== "ThreadLaunchError"
+                ? dispatchFailure(error)
+                : Orchestrator.isOrchestratorV2Error(error.cause)
                   ? dispatchFailure(error.cause)
                   : new OrchestratorMcpFailure({
                       code: "orchestration_error",
                       message: error.message,
                     }),
-              ),
-          }),
-        );
+            ),
+          );
+        const sequence = yield* threads
+          .getThreadEventSequence(targetThreadId)
+          .pipe(Effect.mapError(unavailable));
+        return { sequence, targetThreadId };
+      }
+      const result = yield* threads
+        .dispatch({
+          type: "thread.fork",
+          commandId,
+          sourceThreadId: projection.thread.id,
+          targetThreadId,
+          sourcePoint: input.sourcePoint,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          createdBy: "agent",
+          creationSource: "mcp",
+        })
+        .pipe(Effect.mapError(dispatchFailure));
+      return { sequence: result.sequence, targetThreadId };
     }),
   ),
   t3_thread_merge_back: McpToolAccess.writesThreads(

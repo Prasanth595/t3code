@@ -10,6 +10,7 @@ import {
   WS_METHODS,
   type ChatAttachment,
   type MessageId,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
@@ -212,7 +213,7 @@ export interface ForkThreadFromRunInput extends CommandMetadata {
   readonly targetThreadId: ThreadId;
   readonly runId: RunId;
   readonly title?: string;
-  readonly workspaceStrategy?: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy;
+  readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy;
 }
 
 export interface MergeThreadBackInput extends CommandMetadata {

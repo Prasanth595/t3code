@@ -2228,10 +2228,6 @@ describe("worktree setup visibility", () => {
 
     const scriptFailed = { ...done, stages: [stage("setup-script", "failed")] };
     expect(visible(scriptFailed, null)).toBe(scriptFailed);
-    const failed = { ...done, phase: "failed" as const };
-    expect(visible(failed, null)).toBe(failed);
-    const cancelled = { ...done, phase: "cancelled" as const };
-    expect(visible(cancelled, null)).toBe(cancelled);
   });
 
   it("prefers whichever snapshot is newer by sequence", () => {

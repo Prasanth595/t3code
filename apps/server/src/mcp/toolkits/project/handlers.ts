@@ -27,7 +27,7 @@ function projectFailure(error: Project.ProjectServiceError) {
 /**
  * Without this check a launch could point an agent at any directory on the machine.
  */
-const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
+export const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   workspaceRoot: string,
   worktreePath: string,
 ) {
