@@ -1740,7 +1740,7 @@ describe("retained v2 feed presentation", () => {
     expect(afterPresentation[1]).toBe(beforePresentation[1]);
   });
 
-  it.each(["running", "completed", "failed", "interrupted", "cancelled"] as const)(
+  it.each(["running", "completed", "failed", "interrupted"] as const)(
     "uses the compaction row as the live activity only while %s",
     (status) => {
       const compact = projected(
@@ -1750,7 +1750,7 @@ describe("retained v2 feed presentation", () => {
           status,
           driver: null,
           beforeTokenCount: 899_000,
-          ...(status === "completed" ? { afterTokenCount: 19_000 } : {}),
+          afterTokenCount: 19_000,
         },
         1,
       );

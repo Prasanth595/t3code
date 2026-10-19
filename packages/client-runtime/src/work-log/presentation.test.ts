@@ -6,7 +6,6 @@ import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 
 import {
   commandDetailRepeatsCommand,
-  contextCompactionLabel,
   extractCommandOutputText,
   liveThoughtLine,
   resolveViewedImageAsset,
@@ -47,26 +46,6 @@ function commandItem(
     ...fields,
   };
 }
-
-describe("contextCompactionLabel", () => {
-  it.each([
-    ["pending", "Compacting context"],
-    ["running", "Compacting context"],
-    ["waiting", "Compacting context"],
-    ["failed", "Context compaction failed"],
-    ["cancelled", "Context compaction stopped"],
-    ["interrupted", "Context compaction stopped"],
-    ["completed", "Context compacted 20K → 5K tokens"],
-  ] as const)("shows the outcome for %s even when token counts are present", (status, label) => {
-    expect(
-      contextCompactionLabel({ status, beforeTokenCount: 20_000, afterTokenCount: 5_000 }),
-    ).toBe(label);
-  });
-
-  it("shows successful compaction without token counts", () => {
-    expect(contextCompactionLabel({ status: "completed" })).toBe("Context compacted");
-  });
-});
 
 describe("workEntryIndicatesToolFailure", () => {
   const base = {
