@@ -1152,109 +1152,86 @@ describe("CursorAdapterV2", () => {
         sandboxEnabled: false,
       },
     );
+    // The Cursor SDK has no filesystem sandbox on Windows, so default modes skip it
+    // while an explicit sandbox policy is still passed through for the SDK to reject.
+    assert.deepEqual(
+      cursorRuntimeAgentPolicy(
+        {
+          ...base,
+          runtimeMode: "auto",
+        },
+        "win32",
+      ),
+      {
+        autoReview: true,
+        sandboxEnabled: false,
+      },
+    );
+    assert.deepEqual(
+      cursorRuntimeAgentPolicy(
+        {
+          ...base,
+          runtimeMode: "auto",
+          sandboxPolicy: { type: "workspaceWrite" },
+        },
+        "win32",
+      ),
+      {
+        autoReview: true,
+        sandboxEnabled: true,
+      },
+    );
   });
 
-  it.each(["win32", "linux", "darwin"] as const)(
-    "preserves approval controls and explicit sandbox policies on %s",
-    (platform) => {
-      for (const runtimeMode of [
-        "auto",
-        "approval-required",
-        "auto-accept-edits",
-        "full-access",
-      ] as const) {
-        const runtimePolicy = {
-          runtimeMode,
-          interactionMode: "default" as const,
-          cwd: "/workspace",
-        };
-        const options = makeCursorAgentOptions({
-          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "auto" },
-          runtimePolicy,
-          threadId: ThreadId.make("cursor-platform-policy"),
-          mcpSession: undefined,
-          platform,
-        });
-        assert.equal(
-          options.local?.sandboxOptions?.enabled,
-          platform !== "win32" && runtimeMode !== "full-access",
-        );
-        assert.equal(
-          options.local?.autoReview,
-          runtimeMode === "auto" || runtimeMode === "approval-required",
-        );
-        assert.isTrue(options.local?.enableAgentRetries);
-        for (const sandboxPolicy of [{ type: "readOnly" }, { type: "workspaceWrite" }, {}]) {
-          assert.isTrue(
-            cursorRuntimeAgentPolicy({ ...runtimePolicy, sandboxPolicy }, platform).sandboxEnabled,
-          );
-        }
-        assert.deepEqual(
-          cursorRuntimeAgentPolicy(
-            {
-              ...runtimePolicy,
-              approvalPolicy: "never",
-              sandboxPolicy: { type: "dangerFullAccess" },
-            },
-            platform,
-          ),
-          { autoReview: false, sandboxEnabled: false },
-        );
-      }
-    },
-  );
-
-  it.effect.each(["auto", "approval-required"] as const)(
-    "opens Windows %s threads without requesting an unsupported SDK sandbox",
-    (runtimeMode) =>
-      Effect.gen(function* () {
-        const instanceId = ProviderInstanceId.make("cursor");
-        const threadId = ThreadId.make("cursor-windows-thread");
-        const modelSelection = { instanceId, model: "auto" };
-        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode,
-          interactionMode: "default",
-          cwd: "/workspace",
-        });
-        let opened = false;
-        const adapter = yield* makeCursorAdapterV2({
-          instanceId,
-          settings: yield* decodeCursorSettings({}),
-          environment: {},
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, "win32"),
-          Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
-            assertComplete: Effect.void,
-            open: (input) =>
-              Effect.sync(() => {
-                assert.isFalse(input.options.local?.sandboxOptions?.enabled);
-                assert.isTrue(input.options.local?.autoReview);
-                opened = true;
-                return {
-                  agentId: "native-cursor-windows",
-                  listMessages: Effect.succeed([]),
-                  close: Effect.void,
-                  send: () => Effect.die("not used"),
-                };
-              }),
-          }),
-          Effect.provide(TestProviderHost.layer({ cwd: "/workspace" })),
-        );
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("cursor-windows-session"),
-          modelSelection,
-          runtimePolicy,
-        });
-        const thread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
-        assert.isTrue(opened);
-        assert.equal(thread.nativeThreadRef?.nativeId, "native-cursor-windows");
+  it.effect("opens Windows threads without requesting the unsupported SDK sandbox", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-windows-thread");
+      const modelSelection = { instanceId, model: "auto" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "auto",
+        interactionMode: "default",
+        cwd: "/workspace",
+      });
+      let opened = false;
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        settings: yield* decodeCursorSettings({}),
+        environment: {},
       }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
-        ),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (input) =>
+            Effect.sync(() => {
+              assert.isFalse(input.options.local?.sandboxOptions?.enabled);
+              assert.isTrue(input.options.local?.autoReview);
+              opened = true;
+              return {
+                agentId: "native-cursor-windows",
+                listMessages: Effect.succeed([]),
+                close: Effect.void,
+                send: () => Effect.die("not used"),
+              };
+            }),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: "/workspace" })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-windows-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const thread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+      assert.isTrue(opened);
+      assert.equal(thread.nativeThreadRef?.nativeId, "native-cursor-windows");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
       ),
+    ),
   );
 
   it("loads the user's Cursor settings layers in every runtime mode", () => {

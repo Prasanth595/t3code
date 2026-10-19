@@ -196,8 +196,9 @@ export function cursorRuntimeAgentPolicy(
       runtimePolicy.approvalPolicy === undefined
         ? runtimePolicy.runtimeMode === "approval-required" || runtimePolicy.runtimeMode === "auto"
         : runtimePolicy.approvalPolicy !== "never",
-    // Cursor only implements filesystem sandboxing on Linux/macOS. Keep explicit
-    // sandbox requirements intact so the SDK rejects them rather than widening access.
+    // The Cursor SDK has no filesystem sandbox on Windows, so the default would
+    // fail before the turn starts. An explicit sandboxPolicy is still requested
+    // as-is: the SDK rejecting it beats silently widening access.
     sandboxEnabled:
       runtimePolicy.sandboxPolicy === undefined
         ? platform !== "win32" && runtimePolicy.runtimeMode !== "full-access"
@@ -2137,7 +2138,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             !(yield* Ref.getAndSet(warnedUnsupportedSandbox, true))
           ) {
             yield* Effect.logWarning(
-              "Cursor SDK filesystem sandbox is unavailable on Windows; running without filesystem isolation. Auto-review follows the selected approval policy.",
+              "Cursor cannot sandbox the filesystem on Windows; this thread runs without filesystem isolation.",
             );
           }
           const sdkSession = yield* runner
