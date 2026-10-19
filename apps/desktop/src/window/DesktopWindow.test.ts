@@ -296,7 +296,6 @@ function layerTest(input: {
     destroyAll: input.destroyAll ?? Effect.void,
     syncAllAppearance: (sync) => sync(input.window),
   } satisfies ElectronWindow.ElectronWindow["Service"]);
-  const desktopStateLayer = DesktopState.layer;
 
   return DesktopWindow.layer.pipe(
     Layer.provide(
@@ -311,7 +310,7 @@ function layerTest(input: {
         layerDesktopAppSettings,
         layerDesktopClientSettings,
         layerDesktopServerExposure,
-        desktopStateLayer,
+        DesktopState.layer,
         layerElectronApp,
         Layer.succeed(ElectronMenu.ElectronMenu, {
           setApplicationMenu: () => Effect.void,
@@ -350,7 +349,7 @@ function layerTest(input: {
         }),
       ),
     ),
-    Layer.merge(desktopStateLayer),
+    Layer.merge(DesktopState.layer),
   );
 }
 
@@ -932,211 +931,138 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("does not create the connecting splash after shutdown starts", () =>
+  it.effect("does not open main or splash windows once quitting has started", () =>
     Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
+      const fake = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
-
       yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
+        const windows = yield* DesktopWindow.DesktopWindow;
+        const state = yield* DesktopState.DesktopState;
+        yield* Ref.set(state.quitting, true);
 
-        yield* Ref.set(desktopState.quitting, true);
-        yield* desktopWindow.showConnectingSplash;
+        yield* windows.showConnectingSplash;
+        yield* windows.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* windows.activate;
+        yield* windows.dispatchMenuAction("open-settings");
+        for (const creation of [
+          windows.createMain,
+          windows.ensureMain,
+          windows.revealOrCreateMain,
+        ]) {
+          assert.isTrue(Exit.isFailure(yield* Effect.exit(creation)));
+        }
 
         assert.equal(yield* Ref.get(createCount), 0);
-      }).pipe(Effect.provide(layer));
+        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+        assert.equal(fake.send.mock.calls.length, 0);
+      }).pipe(Effect.provide(layerTest({ window: fake.window, createCount, mainWindow })));
     }),
   );
 
-  it.effect("destroys a connecting splash whose creation finishes after shutdown starts", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const destroyCount = yield* Ref.make(0);
-      const desktopStateRef = yield* Ref.make<DesktopState.DesktopState["Service"] | null>(null);
-      const layer = layerTest({
-        window: fakeWindow.window,
-        createCount,
-        mainWindow,
-        destroyAll: Ref.update(destroyCount, (count) => count + 1),
-        onWindowCreate: Effect.gen(function* () {
-          const state = yield* Ref.get(desktopStateRef);
-          if (state !== null) {
-            yield* Ref.set(state.quitting, true);
-          }
-        }),
-      });
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-        yield* Ref.set(desktopStateRef, desktopState);
-
-        yield* desktopWindow.showConnectingSplash;
-
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(yield* Ref.get(destroyCount), 1);
-        // The destroyed splash is never loaded or shown.
-        assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
-        assert.isFalse(fakeWindow.windowListeners.has("ready-to-show"));
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect.each([false, true])(
-    "quietly cancels setup after shutdown (destroyed: %s)",
-    (destroyed) =>
+  it.effect.each(["main", "splash"] as const)(
+    "destroys a %s window when quit races native creation without loading or revealing it",
+    (kind) =>
       Effect.gen(function* () {
-        const fakeWindow = makeFakeBrowserWindow();
-        fakeWindow.openDevTools.mockImplementation(() => {
-          if (fakeWindow.window.isDestroyed()) throw new Error("Object has been destroyed");
-        });
+        const fake = makeFakeBrowserWindow();
         const createCount = yield* Ref.make(0);
         const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-        const previewStarted = yield* Deferred.make<void>();
-        const releasePreview = yield* Deferred.make<void>();
-        const destroyCount = yield* Ref.make(0);
+        const creationStarted = yield* Deferred.make<void>();
+        const releaseCreation = yield* Deferred.make<void>();
+        const reveal = vi.fn();
         const layer = layerTest({
-          window: fakeWindow.window,
+          window: fake.window,
           createCount,
           mainWindow,
-          setPreviewMainWindow: () =>
-            Deferred.succeed(previewStarted, undefined).pipe(
-              Effect.andThen(Deferred.await(releasePreview)),
-              Effect.asVoid,
-            ),
-          destroyAll: Ref.update(destroyCount, (count) => count + 1),
+          onWindowCreate: Deferred.succeed(creationStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseCreation)),
+          ),
+          destroyAll: Effect.sync(() => fake.isDestroyed.mockReturnValue(true)),
+          onReveal: reveal,
         });
 
         yield* Effect.gen(function* () {
-          const desktopWindow = yield* DesktopWindow.DesktopWindow;
-          const desktopState = yield* DesktopState.DesktopState;
-          const creation = yield* desktopWindow
-            .handleBackendReady(new URL("http://127.0.0.1:3773"))
-            .pipe(Effect.forkChild({ startImmediately: true }));
-
-          yield* Deferred.await(previewStarted);
-          yield* Ref.set(desktopState.quitting, true);
-          fakeWindow.isDestroyed.mockReturnValue(destroyed);
-          yield* Deferred.succeed(releasePreview, undefined);
-          assert.isTrue(Exit.isSuccess(yield* Fiber.await(creation)));
-
+          const windows = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          const fiber = yield* (
+            kind === "splash"
+              ? windows.showConnectingSplash
+              : windows.handleBackendReady(new URL("http://127.0.0.1:3773"))
+          ).pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(creationStarted);
+          yield* Ref.set(state.quitting, true);
+          yield* Deferred.succeed(releaseCreation, undefined);
+          assert.isTrue(Exit.isSuccess(yield* Fiber.await(fiber)));
+          assert.equal(yield* Ref.get(createCount), 1);
+          assert.isTrue(fake.window.isDestroyed());
           assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
-          assert.equal(yield* Ref.get(destroyCount), 1);
-          assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
-          assert.equal(fakeWindow.openDevTools.mock.calls.length, 0);
+          assert.equal(fake.loadURL.mock.calls.length, 0);
+          assert.equal(fake.openDevTools.mock.calls.length, 0);
+          assert.equal(reveal.mock.calls.length, 0);
         }).pipe(Effect.provide(layer));
       }),
   );
 
-  it.effect("destroys a main window whose creation finishes after shutdown starts", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const destroyCount = yield* Ref.make(0);
-      const previewCount = yield* Ref.make(0);
-      const quitting = yield* Ref.make<Ref.Ref<boolean> | null>(null);
-      const layer = layerTest({
-        window: fakeWindow.window,
-        createCount,
-        mainWindow,
-        // Shutdown begins while the native window is being constructed.
-        onWindowCreate: Ref.get(quitting).pipe(
-          Effect.flatMap((ref) => (ref === null ? Effect.void : Ref.set(ref, true))),
-        ),
-        setPreviewMainWindow: () => Ref.update(previewCount, (count) => count + 1),
-        destroyAll: Ref.update(destroyCount, (count) => count + 1),
-      });
+  it.effect.each(["backend ready", "activation", "renderer event"] as const)(
+    "quietly cancels %s when quit races preview cleanup",
+    (entry) =>
+      Effect.gen(function* () {
+        const fake = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const previewStarted = yield* Deferred.make<void>();
+        const releasePreview = yield* Deferred.make<void>();
+        const reveal = vi.fn();
+        const warnings: unknown[] = [];
+        const logger = Logger.make(({ logLevel, message }) => {
+          if (logLevel === "Warn" || logLevel === "Error") warnings.push(message);
+        });
+        const layer = layerTest({
+          window: fake.window,
+          createCount,
+          mainWindow,
+          desktopSettings: {
+            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+            localEnvironmentEnabled: false,
+          },
+          setPreviewMainWindow: () =>
+            Deferred.succeed(previewStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releasePreview)),
+            ),
+          destroyAll: Effect.sync(() => fake.isDestroyed.mockReturnValue(true)),
+          onReveal: reveal,
+        });
 
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-        yield* Ref.set(quitting, desktopState.quitting);
-        const exit = yield* desktopWindow
-          .handleBackendReady(new URL("http://127.0.0.1:3773"))
-          .pipe(Effect.exit);
+        yield* Effect.gen(function* () {
+          const windows = yield* DesktopWindow.DesktopWindow;
+          const state = yield* DesktopState.DesktopState;
+          const creation =
+            entry === "backend ready"
+              ? windows.handleBackendReady(new URL("http://127.0.0.1:3773"))
+              : entry === "activation"
+                ? windows.activate
+                : windows.dispatchMenuAction("open-settings");
+          const fiber = yield* creation.pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(previewStarted);
+          yield* Ref.set(state.quitting, true);
+          // Cover both an already-destroyed window and one shutdown has yet to destroy.
+          fake.isDestroyed.mockReturnValue(entry !== "backend ready");
+          yield* Deferred.succeed(releasePreview, undefined);
 
-        assert.isTrue(Exit.isSuccess(exit));
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(yield* Ref.get(destroyCount), 1);
-        assert.equal(yield* Ref.get(previewCount), 0);
-        assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
-        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("does not start main window creation after shutdown starts", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-
-        yield* Ref.set(desktopState.quitting, true);
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-
-        assert.equal(yield* Ref.get(createCount), 0);
-        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("drops a renderer event instead of opening a window after shutdown starts", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
-        yield* Ref.set(mainWindow, Option.none());
-        yield* Ref.set(desktopState.quitting, true);
-
-        const exit = yield* Effect.exit(desktopWindow.dispatchMenuAction("open-settings"));
-
-        assert.isTrue(Exit.isSuccess(exit));
-        assert.equal(yield* Ref.get(createCount), 1);
-        assert.equal(fakeWindow.send.mock.calls.length, 0);
-      }).pipe(Effect.provide(layer));
-    }),
-  );
-
-  it.effect("cancels direct window creation paths once shutdown starts", () =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
-
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-        yield* Ref.set(desktopState.quitting, true);
-
-        for (const creation of [
-          desktopWindow.createMain,
-          desktopWindow.ensureMain,
-          desktopWindow.revealOrCreateMain,
-        ]) {
-          assert.isTrue(Exit.hasInterrupts(yield* Effect.exit(creation)));
-        }
-        assert.equal(yield* Ref.get(createCount), 0);
-        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
-      }).pipe(Effect.provide(layer));
-    }),
+          assert.isTrue(Exit.isSuccess(yield* Fiber.await(fiber)));
+          assert.isTrue(fake.window.isDestroyed());
+          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+          assert.equal(fake.loadURL.mock.calls.length, 0);
+          assert.equal(fake.openDevTools.mock.calls.length, 0);
+          assert.equal(fake.send.mock.calls.length, 0);
+          assert.equal(reveal.mock.calls.length, 0);
+          assert.deepEqual(warnings, []);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(layer, Logger.layer([logger], { mergeWithExisting: false })),
+          ),
+        );
+      }),
   );
 
   it.effect("restores the persisted maximized state", () =>

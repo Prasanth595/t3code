@@ -1,4 +1,3 @@
-import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -349,9 +348,10 @@ export const make = Effect.gen(function* () {
   });
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (): Effect.fn.Return<
-    Electron.BrowserWindow,
+    Option.Option<Electron.BrowserWindow>,
     DesktopWindowError
   > {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
@@ -380,8 +380,7 @@ export const make = Effect.gen(function* () {
     if (persistedBounds !== null && initialBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE) {
       yield* logWindowWarning("saved main window bounds could not be restored; using defaults");
     }
-    // The reads above can wait; shutdown may have started meanwhile.
-    if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
+    if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -410,10 +409,9 @@ export const make = Effect.gen(function* () {
         disableHtmlFullscreenWindowResize: true,
       },
     });
-    // Quit may have begun while the window was being created.
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
-      return yield* Effect.interrupt;
+      return Option.none();
     }
 
     yield* rendererHistory.register(window.webContents, { surface: "main" });
@@ -508,11 +506,9 @@ export const make = Effect.gen(function* () {
     flushMainWindowBounds = flushBoundsPersist;
 
     yield* previewManager.setMainWindow(window);
-    // Preview setup can wait for cleanup from the previous main window.
-    // Shutdown may have destroyed this window while that work was pending.
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
-      return yield* Effect.interrupt;
+      return Option.none();
     }
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
@@ -852,42 +848,35 @@ export const make = Effect.gen(function* () {
       void runPromise(electronWindow.clearMain(Option.some(window)));
     });
 
-    return window;
+    return Option.some(window);
   });
 
   const createMain = Effect.gen(function* () {
-    if (yield* Ref.get(desktopState.quitting)) return yield* Effect.interrupt;
     const window = yield* createWindow();
-    yield* electronWindow.setMain(window);
-    yield* logWindowInfo("main window created");
+    if (Option.isSome(window)) {
+      yield* electronWindow.setMain(window.value);
+      yield* logWindowInfo("main window created");
+    }
     return window;
   }).pipe(Effect.withSpan("desktop.window.createMain"));
 
   const ensureMain = Effect.gen(function* () {
+    if (yield* Ref.get(desktopState.quitting)) return Option.none<Electron.BrowserWindow>();
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) {
-      return existingWindow.value;
+      return existingWindow;
     }
     return yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
 
-  // Window creation stops with an interrupt once shutdown starts. Callers that
-  // can go without the window get None for that case; other failures still fail.
-  const unlessShuttingDown = <A, E>(creation: Effect.Effect<A, E>) =>
-    creation.pipe(
-      Effect.map(Option.some),
-      Effect.catchCause((cause) =>
-        Effect.gen(function* () {
-          if (Cause.hasInterruptsOnly(cause) && (yield* Ref.get(desktopState.quitting))) {
-            return Option.none<A>();
-          }
-          return yield* Effect.failCause(cause);
-        }),
-      ),
-    );
+  const requireWindow = (window: Option.Option<Electron.BrowserWindow>) =>
+    Option.match(window, {
+      onNone: () => Effect.interrupt,
+      onSome: Effect.succeed,
+    });
 
   const revealOrCreateMain = Effect.gen(function* () {
-    const window = yield* ensureMain;
+    const window = yield* ensureMain.pipe(Effect.flatMap(requireWindow));
     yield* electronWindow.reveal(window);
     return window;
   }).pipe(Effect.withSpan("desktop.window.revealOrCreateMain"));
@@ -902,7 +891,7 @@ export const make = Effect.gen(function* () {
     if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
-    yield* unlessShuttingDown(createMain);
+    yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
@@ -913,6 +902,7 @@ export const make = Effect.gen(function* () {
     if (Option.isSome(existingWindow)) return;
 
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
+    if (yield* Ref.get(desktopState.quitting)) return;
     const splash = yield* electronWindow.create({
       width: 360,
       height: 220,
@@ -932,8 +922,6 @@ export const make = Effect.gen(function* () {
         sandbox: true,
       },
     });
-    // Quit may have begun while the splash was being created; destroy it
-    // instead of registering a window that outlives shutdown's destroyAll.
     if (yield* Ref.get(desktopState.quitting)) {
       yield* electronWindow.destroyAll;
       return;
@@ -962,11 +950,10 @@ export const make = Effect.gen(function* () {
     payload: unknown,
     { reveal = true }: { readonly reveal?: boolean } = {},
   ) {
+    if (yield* Ref.get(desktopState.quitting)) return;
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
-    const window = Option.isSome(existingWindow)
-      ? existingWindow
-      : yield* unlessShuttingDown(ensureMain);
+    const window = Option.isSome(existingWindow) ? existingWindow : yield* ensureMain;
     if (Option.isNone(window) || window.value.isDestroyed()) return;
     const targetWindow = window.value;
     const send = Effect.sync(() => {
@@ -985,8 +972,8 @@ export const make = Effect.gen(function* () {
   });
 
   return DesktopWindow.of({
-    createMain,
-    ensureMain,
+    createMain: createMain.pipe(Effect.flatMap(requireWindow)),
+    ensureMain: ensureMain.pipe(Effect.flatMap(requireWindow)),
     revealOrCreateMain,
     prepareCaptureReveal: Effect.gen(function* () {
       const existingWindow = yield* currentMainWindow;
@@ -995,6 +982,7 @@ export const make = Effect.gen(function* () {
       }
     }),
     activate: Effect.gen(function* () {
+      if (yield* Ref.get(desktopState.quitting)) return;
       const existingWindow = yield* currentMainWindow;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
