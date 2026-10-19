@@ -31,6 +31,32 @@ Add another ChatGPT account in **Settings → Providers**, then select the accou
 from the thread's model picker. Compatible accounts can continue the same thread.
 Connecting accounts through T3 Code leaves your CLI login unchanged.
 
+Upgrading older account shadow homes can report **SQLite recovery is required**
+on any platform, including macOS and Linux. T3 Code refuses all legacy SQLite
+symlinks, including dangling or orphaned sidecar links, until you recover the
+data and manually remove those links.
+
+For accounts connected through T3 Code, generated shadow homes normally live at
+`~/.t3/userdata/providers/codex/<provider-instance-id>/shadow` on macOS and Linux,
+or `%USERPROFILE%\.t3\userdata\providers\codex\<provider-instance-id>\shadow` on
+Windows. On the environment's macOS or Linux machine, list the account directories
+with:
+
+```bash
+ls -d ~/.t3/userdata/providers/codex/*/shadow
+```
+
+If the server uses `T3CODE_HOME` or `--base-dir`, replace `~/.t3` with that T3 home;
+keep the `userdata` directory in the path. For a configured **Shadow home path**,
+use the path in **Settings → Providers** instead. For a remote environment, these
+paths are on the server's machine.
+
+Before removing links, stop every Codex process using either the shared or shadow
+home and back up both directories. Recover or checkpoint any shadow WAL/journal
+data, then remove only the old shadow SQLite symlinks. Do not delete real
+databases or sidecars to force startup. T3 Code does not repair or merge them
+automatically.
+
 ### Multiple CLI logins
 
 A shared Codex home with a shadow home lets work and personal accounts continue
