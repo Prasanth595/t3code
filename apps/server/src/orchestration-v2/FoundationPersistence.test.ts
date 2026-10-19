@@ -1,5 +1,6 @@
 import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
+import { applyOrchestrationV2ProjectionEvent } from "../../../../packages/client-runtime/src/state/orchestrationV2Projection.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -170,8 +171,8 @@ function runProjectionFixture(now: DateTime.Utc) {
   const attemptCreated = (
     run: OrchestrationV2Run,
     attemptOrdinal: number,
-  ): OrchestrationV2DomainEvent => ({
-    id: EventId.make(`event:attempt:${attemptOrdinal}`),
+  ): Extract<OrchestrationV2DomainEvent, { readonly type: "run-attempt.created" }> => ({
+    id: EventId.make(`event:attempt:${run.id}:${attemptOrdinal}`),
     type: "run-attempt.created",
     threadId: thread.id,
     runId: run.id,
@@ -280,6 +281,7 @@ it.effect("preserves a completed run and checkpoint when stale delivery metadata
 it.effect("keeps the newer attempt while accepting metadata from an older run snapshot", () =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
     const { created, completed, updated, attemptCreated } = runProjectionFixture(
       yield* DateTime.now,
     );
@@ -290,22 +292,99 @@ it.effect("keeps the newer attempt while accepting metadata from an older run sn
       providerInstanceId: ProviderInstanceId.make("claude"),
       modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet-4-6" },
       providerThreadId: ProviderThreadId.make("provider-thread:new"),
-      status: "running",
+      status: "waiting",
       startedAt: DateTime.add(completed.startedAt!, { seconds: 1 }),
       completedAt: null,
       checkpointId: null,
     };
-    const delegatedCompletion = { disposition: "open", nextGeneration: 2, delivery: null } as const;
-    const events = [
+    const oldAttempt = attemptCreated(completed, 1);
+    const currentAttempt = attemptCreated(restarted, 2);
+    const events: Array<OrchestrationV2DomainEvent> = [
       created,
       updated("event:completed", completed),
-      attemptCreated(completed, 1),
+      {
+        ...oldAttempt,
+        payload: {
+          ...oldAttempt.payload,
+          status: "superseded",
+          completedAt: completed.completedAt,
+        },
+      },
       updated("event:restart", restarted),
-      attemptCreated(restarted, 2),
-      updated("event:late-delivery", { ...completed, delegatedCompletion }),
+      currentAttempt,
     ];
+    for (const run of [
+      restarted,
+      {
+        ...completed,
+        id: RunId.make("run:unrelated-history"),
+        ordinal: 2,
+        activeAttemptId: RunAttemptId.make("attempt:unrelated-history"),
+      },
+      {
+        ...completed,
+        id: RunId.make("run:recent"),
+        ordinal: 3,
+        activeAttemptId: RunAttemptId.make("attempt:recent"),
+      },
+    ]) {
+      if (run.id !== restarted.id) {
+        const attempt = attemptCreated(run, 1);
+        events.push(updated(`event:${run.id}`, run), {
+          ...attempt,
+          payload: { ...attempt.payload, status: "completed", completedAt: completed.completedAt },
+        });
+      }
+      events.push({
+        id: EventId.make(`event:item:${run.id}`),
+        type: "turn-item.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        occurredAt: run.requestedAt,
+        payload: {
+          id: TurnItemId.make(`item:${run.id}`),
+          threadId: run.threadId,
+          runId: run.id,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: run.ordinal,
+          status: "completed",
+          title: null,
+          startedAt: run.requestedAt,
+          completedAt: run.requestedAt,
+          updatedAt: run.requestedAt,
+          type: "command_execution",
+          input: "echo ok",
+          output: "ok",
+          exitCode: 0,
+        },
+      });
+    }
     yield* sink.write({ events });
+    const snapshot = yield* store.getThreadSnapshotWindow(completed.threadId, { rowLimit: 1 });
+    assert.deepEqual(
+      snapshot.projection.turnItems.map((item) => item.runId),
+      [RunId.make("run:recent")],
+    );
+    assert.deepEqual(
+      snapshot.projection.runs.map((run) => run.id),
+      [restarted.id, RunId.make("run:recent")],
+    );
+
+    const delegatedCompletion = { disposition: "open", nextGeneration: 2, delivery: null } as const;
+    const lateDelivery = updated("event:late-delivery", { ...completed, delegatedCompletion });
     const expected = { ...restarted, delegatedCompletion };
+    const client = applyOrchestrationV2ProjectionEvent(snapshot.projection, lateDelivery);
+    assert.deepEqual(client?.runs[0], expected);
+    assert.deepEqual(
+      snapshot.projection.attempts.map((attempt) => attempt.id),
+      [RunAttemptId.make("attempt:recent"), completed.activeAttemptId, restarted.activeAttemptId],
+    );
+    yield* sink.write({ events: [lateDelivery] });
+    events.push(lateDelivery);
     yield* assertRunProjection(events, expected);
     const preattempt = updated("event:pre-attempt", { ...completed, activeAttemptId: null });
     yield* sink.write({ events: [preattempt] });

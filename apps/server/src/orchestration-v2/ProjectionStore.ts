@@ -3059,7 +3059,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json FROM orchestration_v2_projection_run_attempts
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
+                OR run_id IN (
+                  -- Retained runs need prior ordinals to reject delayed snapshots after reconnect.
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE thread_id = ${threadId}
+                    AND (status IN ('queued','preparing','starting','running','waiting')
+                      OR run_id = ${window.requiredRunId ?? null})
+                ))
             ORDER BY run_id ASC, attempt_ordinal ASC
           `,
           fields !== undefined && !fields.includes("nodes")
