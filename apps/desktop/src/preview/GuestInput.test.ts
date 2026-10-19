@@ -19,6 +19,8 @@ const makeGuest = ({
     focusedFrame: focused ? {} : null,
     insertText: vi.fn(async () => {}),
     sendInputEvent: vi.fn(),
+    reload: vi.fn(),
+    reloadIgnoringCache: vi.fn(),
   };
   return {
     webContents,
@@ -76,6 +78,15 @@ describe("preview guest input", () => {
     const scripts = guest.sendCommand.mock.calls.map(([, params]) => params?.expression ?? "");
     expect(scripts.some((script) => script.includes('["selectAll"]'))).toBe(true);
     expect(scripts.some((script) => script.includes("paste"))).toBe(false);
+  });
+
+  it("reloads the guest itself, never the app window around it", async () => {
+    const guest = makeGuest({ focused: false });
+    await guest.send("Page.reload", {});
+    await guest.send("Page.reload", { ignoreCache: true });
+    expect(guest.webContents.reload).toHaveBeenCalledTimes(1);
+    expect(guest.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
+    expect(guest.sendCommand).not.toHaveBeenCalled();
   });
 
   it("does not run other page commands through the guest's direct input", async () => {

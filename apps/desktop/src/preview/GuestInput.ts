@@ -115,13 +115,19 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
-/** Sends one command to the guest's page, keeping key and text input inside it. */
+/** Sends one command to the guest's page, keeping reloads and key and text input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
   debuggee: Electron.Debugger,
   method: string,
   params: Record<string, unknown>,
 ): Promise<unknown> => {
+  // CDP reloads a guest's outermost page, which for a `<webview>` is the whole app window.
+  if (method === "Page.reload") {
+    if (params["ignoreCache"] === true) webContents.reloadIgnoringCache();
+    else webContents.reload();
+    return {};
+  }
   if (!FOCUS_ROUTED_INPUT.has(method) || webContents.focusedFrame) {
     return debuggee.sendCommand(method, params);
   }
