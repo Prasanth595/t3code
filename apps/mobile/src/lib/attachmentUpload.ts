@@ -230,11 +230,8 @@ async function composerImageAttachmentDataUrl(
   }
 }
 
-/**
- * Longest one transfer may run. The outbox sends one message at a time, so a
- * transfer that never settles would hold every queued message behind it.
- */
-export const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180_000;
+// One stalled transfer must not hold every thread's serialized outbox.
+const ATTACHMENT_UPLOAD_TIMEOUT_MS = 180_000;
 
 async function uploadFileBytes(
   environmentId: EnvironmentId,
@@ -260,13 +257,7 @@ async function uploadFileBytes(
   const transfer = new AbortController();
   const cancelTransfer = () => transfer.abort();
   signal.addEventListener("abort", cancelTransfer, { once: true });
-  const timedOut = Promise.withResolvers<never>();
-  const timer = setTimeout(() => {
-    // Settled before the abort, so the race reports the timeout and not the
-    // cancellation the abort produces.
-    timedOut.reject(new Error(`'${attachment.name}' took too long to upload. Try a smaller file.`));
-    transfer.abort();
-  }, ATTACHMENT_UPLOAD_TIMEOUT_MS);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     if (fileUri === undefined && inlineDataUrl !== undefined) {
       file.create();
@@ -274,6 +265,15 @@ async function uploadFileBytes(
         encoding: "base64",
       });
     }
+    if (signal.aborted) throw new Error("Upload cancelled.");
+    const timedOut = Promise.withResolvers<never>();
+    timer = setTimeout(() => {
+      // Native cancellation can reject synchronously, so settle the timeout first.
+      timedOut.reject(
+        new Error(`'${attachment.name}' took too long to upload. Try a smaller file.`),
+      );
+      transfer.abort();
+    }, ATTACHMENT_UPLOAD_TIMEOUT_MS);
     const upload = file.upload(url, {
       httpMethod: "POST",
       uploadType: UploadType.BINARY_CONTENT,
@@ -282,15 +282,12 @@ async function uploadFileBytes(
       ...(onProgress
         ? {
             onProgress: ({ bytesSent, totalBytes }) => {
-              if (totalBytes > 0) onProgress(bytesSent / totalBytes);
+              if (!transfer.signal.aborted && totalBytes > 0) onProgress(bytesSent / totalBytes);
             },
           }
         : {}),
     });
-    // Raced, not just aborted: the bound must hold even if the native task
-    // never reports the cancellation. The abort also ends the transfer on
-    // iOS, whose background session otherwise replays a failed one on its own.
-    upload.catch(() => undefined);
+    // Native cancellation may never settle the upload promise.
     const result = await Promise.race([upload, timedOut.promise]);
     if (result.status < 200 || result.status >= 300) {
       throw new Error(`Upload failed for '${attachment.name}' (${result.status}).`);

@@ -66,7 +66,7 @@ vi.mock("expo-file-system", () => ({
     }
     create() {}
     write(bytes: string, options: unknown) {
-      mocks.writeFile(this.uri, bytes, options);
+      return mocks.writeFile(this.uri, bytes, options);
     }
     delete() {
       mocks.deleteFile(this.uri);
@@ -90,13 +90,13 @@ vi.mock("expo-file-system", () => ({
 }));
 
 import {
-  ATTACHMENT_UPLOAD_TIMEOUT_MS,
   prepareTurnAttachments,
   releasePendingAttachmentUploads,
   withUploadedMobileAttachmentReferences,
   validateDraftFileAttachments,
 } from "./attachmentUpload";
 import type { DraftComposerAttachment } from "./composerImages";
+import { shouldRetryThreadOutboxDelivery } from "../state/thread-outbox-model";
 
 const environmentId = EnvironmentId.make("environment-1");
 const MINTED_ID = "pending-00000000-0000-4000-8000-000000000001-pdf";
@@ -380,33 +380,110 @@ describe("prepareTurnAttachments", () => {
     },
   );
 
-  it("fails a transfer that never settles, so the outbox is not held behind it", async () => {
+  it("does not start a transfer deadline while staging or upload after cancellation", async () => {
     vi.useFakeTimers();
     try {
-      let nativeSignal: AbortSignal | undefined;
-      mocks.upload.mockImplementation(
-        (_uri: string, _url: string, options: { readonly signal: AbortSignal }) => {
-          nativeSignal = options.signal;
-          // Rejects on the abort at once, as the native task may: the timeout
-          // must still be the error the caller sees.
-          return new Promise((_resolve, reject) => {
-            options.signal.addEventListener("abort", () => reject(new Error("Upload cancelled.")));
-          });
-        },
-      );
+      const staging = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      const controller = new AbortController();
+      mocks.writeFile.mockImplementation(() => {
+        started.resolve();
+        return staging.promise;
+      });
+      const outcome = vi.fn();
       const preparing = prepareTurnAttachments({
         environmentId,
-        attachments: [fileBackedImage],
+        attachments: [image],
         supportsImageUploads: true,
-      });
-      const failure = expect(preparing).rejects.toThrow("'photo.png' took too long to upload.");
-      await vi.advanceTimersByTimeAsync(ATTACHMENT_UPLOAD_TIMEOUT_MS);
-      await failure;
-      expect(nativeSignal?.aborted).toBe(true);
+        signal: controller.signal,
+      }).then(outcome, outcome);
+      await started.promise;
+
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(outcome).not.toHaveBeenCalled();
+      expect(mocks.upload).not.toHaveBeenCalled();
+      controller.abort();
+      staging.resolve();
+      await preparing;
+
+      expect(outcome).toHaveBeenCalledExactlyOnceWith({ status: "abandoned" });
+      expect(mocks.upload).not.toHaveBeenCalled();
+      expect(mocks.deleteFile).toHaveBeenCalledExactlyOnceWith("file:///cache/t3-upload-uuid");
+      expect(removeCallsFor(MINTED_ID)).toBe(1);
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
   });
+
+  it.each(["ignores abort", "rejects on abort"])(
+    "times out after three minutes when the native upload %s",
+    async (nativeBehavior) => {
+      vi.useFakeTimers();
+      try {
+        const started = Promise.withResolvers<{
+          signal: AbortSignal;
+          onProgress: (progress: { bytesSent: number; totalBytes: number }) => void;
+        }>();
+        const persist = vi.fn(async () => "persisted" as const);
+        const progress = vi.fn();
+        const native = Promise.withResolvers<{ status: number }>();
+        mocks.upload.mockImplementation(
+          (
+            _uri: string,
+            _url: string,
+            options: {
+              signal: AbortSignal;
+              onProgress: (progress: { bytesSent: number; totalBytes: number }) => void;
+            },
+          ) => {
+            if (nativeBehavior === "rejects on abort") {
+              options.signal.addEventListener("abort", () =>
+                native.reject(new Error("Upload cancelled.")),
+              );
+            }
+            started.resolve(options);
+            return native.promise;
+          },
+        );
+        const outcome = vi.fn();
+        const preparing = prepareTurnAttachments({
+          environmentId,
+          attachments: [image],
+          supportsImageUploads: true,
+          persistUploadedReferences: persist,
+          onUploadProgress: progress,
+        }).then(outcome, outcome);
+        const { signal, onProgress } = await started.promise;
+        onProgress({ bytesSent: 1, totalBytes: 3 });
+        expect(progress).toHaveBeenCalledExactlyOnceWith(image.id, 1 / 3);
+        progress.mockClear();
+
+        await vi.advanceTimersByTimeAsync(179_999);
+        expect(outcome).not.toHaveBeenCalled();
+        expect(signal.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+
+        expect(outcome).toHaveBeenCalledExactlyOnceWith(
+          new Error("'screenshot.png' took too long to upload. Try a smaller file."),
+        );
+        await preparing;
+        expect(signal.aborted).toBe(true);
+        expect(vi.getTimerCount()).toBe(0);
+        onProgress({ bytesSent: 3, totalBytes: 3 });
+        native.resolve({ status: 204 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(progress).not.toHaveBeenCalled();
+        expect(outcome).toHaveBeenCalledOnce();
+        expect(shouldRetryThreadOutboxDelivery(outcome.mock.calls[0]?.[0])).toBe(false);
+        expect(persist).not.toHaveBeenCalled();
+        expect(removeCallsFor(MINTED_ID)).toBe(1);
+        expect(mocks.deleteFile).toHaveBeenCalledExactlyOnceWith("file:///cache/t3-upload-uuid");
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("uploads a file-backed image from its owned copy without staging base64", async () => {
     const prepared = await prepareTurnAttachments({
