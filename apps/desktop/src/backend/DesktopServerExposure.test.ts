@@ -462,56 +462,65 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
-  it.effect("re-reads the MagicDNS name when Tailscale connects after a cached status read", () => {
-    // `read` hands back this object, so mutating it simulates an interface change.
-    const networkInterfaces: Record<
-      string,
-      readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
-    > = { ...lanNetworkInterfaces };
-    let tailscaleConnected = false;
-    let statusReads = 0;
-    const spawnerLayer = layerMockSpawner(() => {
-      statusReads += 1;
-      return tailscaleConnected ? `{"Self":{"DNSName":"desktop.tail.ts.net."}}` : "{}";
-    });
+  it.effect(
+    "refreshes Tailscale status when addresses change and caches unchanged addresses",
+    () => {
+      const networkInterfaces: Record<
+        string,
+        readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+      > = { ...lanNetworkInterfaces };
+      let statusJson = "{}";
+      let statusReads = 0;
 
-    return withHarness(
-      networkInterfaces,
-      Effect.gen(function* () {
-        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-        yield* serverExposure.configureFromSettings({ port: 4173 });
-        yield* serverExposure.setMode("network-accessible");
+      return withHarness(
+        networkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+          yield* serverExposure.setMode("network-accessible");
 
-        const beforeConnect = yield* serverExposure.getAdvertisedEndpoints;
-        assert.deepEqual(
-          beforeConnect.map((endpoint) => endpoint.httpBaseUrl),
-          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
-        );
-        assert.equal(statusReads, 1);
+          const initial = yield* serverExposure.getAdvertisedEndpoints;
+          assert.deepEqual(
+            initial.map((endpoint) => endpoint.httpBaseUrl),
+            ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+          );
+          assert.equal(statusReads, 1);
 
-        Object.assign(networkInterfaces, tailnetNetworkInterfaces);
-        tailscaleConnected = true;
+          for (const [address, dnsName] of [
+            ["100.90.1.2", "desktop.tail.ts.net"],
+            ["100.90.1.3", "desktop.other-tail.ts.net"],
+          ] as const) {
+            networkInterfaces.vpn0 = [{ address, family: "IPv4", internal: false }];
+            statusJson = JSON.stringify({
+              Self: { DNSName: `${dnsName}.`, TailscaleIPs: [address] },
+            });
+            const previousReads = statusReads;
 
-        const afterConnect = yield* serverExposure.getAdvertisedEndpoints;
-        assert.deepEqual(
-          afterConnect.map((endpoint) => endpoint.httpBaseUrl),
-          [
-            "http://127.0.0.1:4173/",
-            "http://192.168.1.20:4173/",
-            "http://100.90.1.2:4173/",
-            "https://desktop.tail.ts.net/",
-          ],
-        );
-        assert.equal(statusReads, 2);
-
-        // Unchanged interfaces keep serving the cached status.
-        yield* serverExposure.getAdvertisedEndpoints;
-        assert.equal(statusReads, 2);
-      }),
-      {},
-      spawnerLayer,
-    );
-  });
+            const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+            assert.deepEqual(
+              endpoints.map((endpoint) => endpoint.httpBaseUrl),
+              [
+                "http://127.0.0.1:4173/",
+                "http://192.168.1.20:4173/",
+                `http://${address}:4173/`,
+                `https://${dnsName}/`,
+              ],
+            );
+            assert.equal(statusReads, previousReads + 1);
+            assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+            assert.equal(statusReads, previousReads + 1);
+          }
+        }),
+        {},
+        layerMockSpawner(
+          () => statusJson,
+          () => {
+            statusReads += 1;
+          },
+        ),
+      );
+    },
+  );
 
   it.effect("does not spawn the tailscale CLI while server exposure is local-only", () =>
     withHarness(
