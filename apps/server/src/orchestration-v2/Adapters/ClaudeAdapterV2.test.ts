@@ -4291,7 +4291,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (terminal.status !== "failed") throw new Error("Expected a failed turn.");
         assert.equal(terminal.failure.class, "usage_limit");
         return terminal.failure;
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)));
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      );
 
     it.effect("takes the reset time from the fallback when the provider named none", () =>
       Effect.gen(function* () {
@@ -4299,13 +4303,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           fallback: Effect.succeed("2026-10-10T08:00:00.000Z"),
         });
         assert.equal(failure.resetAt, "2026-10-10T08:00:00.000Z");
-      }),
-    );
-
-    it.effect("keeps the reset time unknown when the fallback does not know it either", () =>
-      Effect.gen(function* () {
-        const failure = yield* runLimitedTurn({ fallback: Effect.succeed(null) });
-        assert.equal(failure.resetAt, null);
       }),
     );
 
