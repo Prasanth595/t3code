@@ -485,7 +485,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
           yield* fs.writeFileString(
             file,
             file === binaryPath && layout === "wrapper"
-              ? '#!/bin/sh\nmise use -g --quiet "codex" || exit 1\nexec mise x "codex" -- "codex" "$@"\n'
+              ? '#!/bin/sh\nexec mise x "codex" -- "codex" "$@"\n'
               : "#!/bin/sh\n",
           );
           yield* fs.chmod(file, 0o755);

@@ -104,9 +104,10 @@ the instance environment the probe used. Like Homebrew, its latest version comes
 `mise latest <tool>` applies mise's settings, such as `minimum_release_age`, which npm's registry
 cannot. Mise may go to the network for that answer, so it is asked lazily through
 `lookupLatestVersion` and never while update checks are off. A pinned tool stays manual-only, so T3
-Code never edits a mise config, and so does a wrapper that picks its own version
-(`mise x claude@2`), since `mise which` answers for mise's config. OpenCode 1.x stays manual too,
-since mise's `opencode` follows releases into 2.x. npm globals under mise's own Node remain npm's.
+Code never edits a mise config. A wrapper counts only when its one command is a `mise x` that names
+no version: `mise which` answers for mise's config, and anything else in the script could change
+what mise runs. OpenCode 1.x stays manual too, since mise's `opencode` follows releases into 2.x.
+npm globals under mise's own Node remain npm's.
 See the [resolver](../../packages/provider-core/src/server/maintenanceResolver.ts).
 
 Ownership is cached per instance and re-read immediately before an update runs. The

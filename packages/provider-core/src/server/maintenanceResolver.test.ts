@@ -1262,7 +1262,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         NodeFS.mkdirSync(NodePath.dirname(wrapperPath), { recursive: true });
         NodeFS.writeFileSync(
           wrapperPath,
-          '#!/bin/sh\nmise use -g --quiet "native-package-tool" || exit 1\nexec mise x "native-package-tool" -- "native-package-tool" "$@"\n',
+          '#!/bin/sh\nexec mise x "native-package-tool" -- "native-package-tool" "$@"\n',
         );
         NodeFS.chmodSync(wrapperPath, 0o755);
         const resolve = resolveProviderMaintenanceCapabilitiesEffect(nativePackageToolUpdate, {
@@ -1308,12 +1308,16 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         );
         expect(native.update).toMatchObject({ lockKey: "nativePackageTool-native" });
 
-        // A wrapper that picks its own version runs an install `mise upgrade` never touches.
+        // A wrapper that may not follow mise's config could run an install
+        // `mise upgrade` never touches, so only a lone `mise x` counts.
         for (const script of [
           'exec mise x "native-package-tool@1.9.0" -- "native-package-tool" "$@"',
           'exec mise x "$TOOL" -- "native-package-tool" "$@"',
           'export MISE_NATIVE_PACKAGE_TOOL_VERSION=1.9.0\nexec mise x native-package-tool -- native-package-tool "$@"',
           '. "$HOME/.native-package-tool-env"\nexec mise x native-package-tool -- native-package-tool "$@"',
+          'if [ -f "$HOME/.env" ]; then . "$HOME/.env"; fi\nexec mise x native-package-tool -- native-package-tool "$@"',
+          'MISE_NATIVE_PACKAGE_TOOL_VERSION=1.9.0 exec mise x native-package-tool -- native-package-tool "$@"',
+          'mise use -g --quiet "native-package-tool" || exit 1\nexec mise x "native-package-tool" -- "native-package-tool" "$@"',
         ]) {
           NodeFS.writeFileSync(wrapperPath, `#!/bin/sh\n${script}\n`);
           const asked: Array<ReadonlyArray<string>> = [];

@@ -497,9 +497,9 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     if (!isInstall && !isShim && !resolvedPath.includes("/mise/shims/") && wrapper === null) {
       return null;
     }
-    // `mise which` answers for mise's config, so a wrapper that picks its own
-    // version may run an install `mise upgrade` never touches.
-    if (wrapper === "chooses-version") {
+    // `mise which` answers for mise's config, so a wrapper that may not follow
+    // it could run an install `mise upgrade` never touches.
+    if (wrapper === "unproven") {
       return makeManualOnlyProviderMaintenanceCapabilities({
         ...owner,
         installPath: context.realCommandPath,
@@ -783,18 +783,25 @@ export const resolveHomebrewProviderMaintenance = Effect.fn("resolveHomebrewProv
 );
 
 const MISE_EXEC = /\bmise\s+(?:x|exec)\b/;
-// The probe cannot see either: `MISE_<TOOL>_VERSION` overrides the config's
-// version, and a sourced file can export it.
-const WRAPPER_PICKS_VERSION = /\bMISE_[A-Z0-9_]+_VERSION=|^\s*(?:source|\.)\s+\S/;
+// `[VAR=value ...] [exec] mise x <tools> -- <command>`, capturing the
+// assignments and the tool list.
+const MISE_EXEC_COMMAND =
+  /^((?:[A-Za-z_]\w*=\S*\s+)*)(?:exec\s+)?mise\s+(?:x|exec)\s(.*?)(?:\s--(?:\s|$)|$)/;
 
 /**
- * Whether a `mise x` line picks the tool's version itself (`claude@2`) or
- * builds its tool list at run time. Scoped npm names (`npm:@scope/pkg`) and
- * `@latest` follow mise's config like a bare name.
+ * Whether a wrapper's commands are just one `mise x` that follows mise's
+ * config. The probe asks mise with the server's environment, so anything else
+ * the script does (a pinned `claude@2`, a `MISE_*` variable, a sourced file,
+ * a `cd`) could change what mise runs. Scoped npm names (`npm:@scope/pkg`) and
+ * `@latest` follow the config like a bare name.
  */
-function miseExecChoosesVersion(line: string): boolean {
-  const tools = line.slice(line.search(MISE_EXEC)).split(/\s--(?:\s|$)/, 1)[0] ?? "";
-  return /[$`]/.test(tools) || /[\w./-]@(?!latest\b)/.test(tools);
+function miseWrapperFollowsConfig(commands: ReadonlyArray<string>): boolean {
+  const match = commands.length === 1 ? MISE_EXEC_COMMAND.exec(commands[0] ?? "") : null;
+  return (
+    match !== null &&
+    !/\bMISE_/.test(match[1] ?? "") &&
+    !/[$`;&|]|[\w./-]@(?!latest\b)/.test(match[2] ?? "")
+  );
 }
 
 /**
@@ -818,14 +825,14 @@ const readMiseWrapper = Effect.fn("readMiseWrapper")(function* (
   if (!script.startsWith("#!")) {
     return null;
   }
-  const code = script.split("\n").filter((line) => !line.trimStart().startsWith("#"));
-  const lines = code.filter((line) => MISE_EXEC.test(line));
-  if (lines.length === 0) {
+  const commands = script
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"));
+  if (!commands.some((line) => MISE_EXEC.test(line))) {
     return null;
   }
-  return code.some((line) => WRAPPER_PICKS_VERSION.test(line)) || lines.some(miseExecChoosesVersion)
-    ? "chooses-version"
-    : "follows-config";
+  return miseWrapperFollowsConfig(commands) ? "follows-config" : "unproven";
 });
 
 /**
