@@ -2044,7 +2044,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   };
 
-  const handleCopy = (value: string, title: string) => {
+  const handleCopy = (resolveValue: () => Promise<string>, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
         stackedThreadToast({
@@ -2056,12 +2056,22 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       return;
     }
 
-    void navigator.clipboard.writeText(value).then(
-      () => {
+    const value = resolveValue();
+    // Start the write before workspace lookup finishes so Safari retains the user gesture.
+    const write =
+      typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined"
+        ? navigator.clipboard.write([
+            new ClipboardItem({
+              "text/plain": value.then((text) => new Blob([text], { type: "text/plain" })),
+            }),
+          ])
+        : value.then((text) => navigator.clipboard.writeText(text));
+    void Promise.all([write, value]).then(
+      ([, text]) => {
         toastManager.add({
           type: "success",
           title: `${title} copied`,
-          description: value,
+          description: text,
         });
       },
       (error) => {
@@ -2116,9 +2126,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
       if (clicked === "copy-relative" || clicked === "copy-full") {
-        const paths = await resolveCopyPaths();
         handleCopy(
-          clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
+          () =>
+            resolveCopyPaths().then((paths) =>
+              clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
+            ),
           clicked === "copy-relative" ? "Relative path" : "Full path",
         );
       }
