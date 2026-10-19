@@ -12,6 +12,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { expandSshHostAlias } from "./sshHostAlias.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -91,7 +92,9 @@ function pickPrimaryRemote(
 
 function repositoryPathOf(canonicalKey: string, remoteUrl: string): string {
   const canonicalPath = canonicalKey.split("/").slice(1).join("/");
-  const displayPath = repositoryPathFromRemoteUrl(remoteUrl);
+  const displayPath = repositoryPathFromRemoteUrl(
+    remoteUrl.replace(/^(?:git\+ssh|ssh\+git):/i, "ssh:"),
+  );
   return displayPath?.toLowerCase() === canonicalPath ? displayPath : canonicalPath;
 }
 
@@ -109,12 +112,15 @@ function buildRepositoryOrigin(
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
+  readonly resolvedRemoteUrl: string;
   readonly originUrl: string | undefined;
   readonly rootPath: string;
 }): RepositoryIdentity {
-  const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
-  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.remoteUrl);
-  const repositoryPath = repositoryPathOf(canonicalKey, input.remoteUrl);
+  const canonicalKey = normalizeGitRemoteUrl(input.resolvedRemoteUrl);
+  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(
+    input.resolvedRemoteUrl,
+  );
+  const repositoryPath = repositoryPathOf(canonicalKey, input.resolvedRemoteUrl);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
   const repositoryName = repositoryPathSegments.at(-1);
@@ -179,9 +185,21 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
 
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
   const remote = pickPrimaryRemote(remotes);
-  return remote
-    ? buildRepositoryIdentity({ ...remote, originUrl: remotes.get("origin"), rootPath: cacheKey })
-    : null;
+  if (!remote) return null;
+  const resolvedRemoteUrl = yield* expandSshHostAlias(remote.remoteUrl, cacheKey);
+  const originUrl = remotes.get("origin");
+  const resolvedOriginUrl =
+    originUrl === remote.remoteUrl
+      ? resolvedRemoteUrl
+      : originUrl
+        ? yield* expandSshHostAlias(originUrl, cacheKey)
+        : undefined;
+  return buildRepositoryIdentity({
+    ...remote,
+    resolvedRemoteUrl,
+    originUrl: resolvedOriginUrl,
+    rootPath: cacheKey,
+  });
 });
 
 export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (

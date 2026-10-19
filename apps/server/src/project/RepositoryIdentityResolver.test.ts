@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -38,6 +39,51 @@ const layerRepositoryIdentityResolverTest = (options: {
       ...options,
     }),
   ).pipe(Layer.provide(ProcessRunner.layer));
+
+const processOutput = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(code),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+const layerRemoteResolver = (
+  remotes: Readonly<Record<string, string>>,
+  ssh: ProcessRunner.ProcessRunner["Service"]["run"],
+) =>
+  Layer.effect(
+    RepositoryIdentityResolver.RepositoryIdentityResolver,
+    RepositoryIdentityResolver.make(),
+  ).pipe(
+    Layer.provide(
+      Layer.succeed(ProcessRunner.ProcessRunner, {
+        run: (input) => {
+          if (input.command === "ssh") return ssh(input);
+          if (input.args.includes("config")) return Effect.succeed(processOutput("", 1));
+          expect(input.command).toBe("git");
+          return Effect.succeed(
+            processOutput(
+              input.args.includes("rev-parse")
+                ? "/repo\n"
+                : Object.entries(remotes)
+                    .map(([name, url]) => `${name}\t${url} (fetch)\n`)
+                    .join(""),
+            ),
+          );
+        },
+      }),
+    ),
+  );
+
+const resolveRemote = (remoteUrl: string, ssh: ProcessRunner.ProcessRunner["Service"]["run"]) =>
+  Effect.gen(function* () {
+    const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    return yield* resolver.resolve("/repo");
+  }).pipe(Effect.provide(layerRemoteResolver({ origin: remoteUrl }, ssh)));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("refreshes the Git root only when requested", () => {
@@ -174,6 +220,260 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       ]);
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
+
+  it.effect("resolves an alias to its forge while preserving transport, casing, and cache", () => {
+    let sshCalls = 0;
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve("/repo");
+      expect(identity).toMatchObject({
+        canonicalKey: "github.com/t3tools/t3code",
+        provider: "github",
+        displayName: "T3Tools/T3Code",
+        owner: "T3Tools",
+        name: "T3Code",
+        locator: { remoteName: "origin", remoteUrl: "gh:T3Tools/T3Code.git" },
+      });
+      expect(yield* resolver.resolve("/repo")).toEqual(identity);
+      expect(sshCalls).toBe(1);
+    }).pipe(
+      Effect.provide(
+        layerRemoteResolver({ origin: "gh:T3Tools/T3Code.git" }, () => {
+          sshCalls++;
+          return Effect.succeed(
+            processOutput("hostname ssh.github.com\nuser localuser\nport 443\n"),
+          );
+        }),
+      ),
+    );
+  });
+
+  it.effect.each([
+    {
+      origin: "gh:Alice/Fork.git",
+      fork: { canonicalKey: "github.com/alice/fork", displayName: "Alice/Fork" },
+    },
+    { origin: "https://github.com/T3Tools/T3Code.git", fork: undefined },
+  ])("compares origin $origin with the resolved upstream", ({ origin, fork }) =>
+    Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve("/repo");
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.origin).toEqual(fork);
+      expect(identity?.locator).toMatchObject({
+        remoteName: "upstream",
+        remoteUrl: "gh:T3Tools/T3Code.git",
+      });
+    }).pipe(
+      Effect.provide(
+        layerRemoteResolver({ origin, upstream: "gh:T3Tools/T3Code.git" }, () =>
+          Effect.succeed(processOutput("hostname github.com\nuser git\n")),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("keeps ambiguous personal-login aliases and absolute filesystem paths", () =>
+    Effect.gen(function* () {
+      const alice = () => Effect.succeed(processOutput("hostname server.test\nuser alice\n"));
+      const bob = () =>
+        Effect.succeed(processOutput("hostname server.test\nuser bob@corp.example\n"));
+      expect((yield* resolveRemote("alice-box:app.git", alice))?.canonicalKey).toBe(
+        "alice-box:app",
+      );
+      expect((yield* resolveRemote("bob-box:app.git", bob))?.canonicalKey).toBe("bob-box:app");
+      const forge = yield* resolveRemote("forgejo@code.example.org:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname code.example.org\nuser forgejo\nport 22\n")),
+      );
+      expect(forge).toMatchObject({
+        canonicalKey: "code.example.org/team/app",
+        displayName: "Team/App",
+        owner: "Team",
+        name: "App",
+      });
+      const absolute = yield* resolveRemote("alice-box:/srv/app.git", alice);
+      const shared = () => Effect.succeed(processOutput("hostname server.test\nuser git\n"));
+      expect((yield* resolveRemote("git-box:srv/app.git", shared))?.canonicalKey).not.toBe(
+        (yield* resolveRemote("git-box:/srv/app.git", shared))?.canonicalKey,
+      );
+      expect(absolute?.canonicalKey).toBe("alice-box:/srv/app");
+      expect(
+        (yield* resolveRemote("ssh://bob@server.test/srv/app.git", bob))?.canonicalKey,
+      ).not.toBe(absolute?.canonicalKey);
+    }),
+  );
+
+  it.effect("passes the remote login and port to a bounded SSH configuration lookup", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveRemote("git+ssh://git@review:2222/Team/App.git", (input) => {
+        expect(input.args).toEqual(["-G", "-l", "git", "-p", "2222", "review"]);
+        expect(Duration.toMillis(Duration.fromInputUnsafe(input.timeout!))).toBe(5_000);
+        expect(input.timeoutBehavior).toBe("timedOutResult");
+        const hostname = input.cwd === "/repo" ? "gitlab.com" : "github.com";
+        return Effect.succeed(processOutput(`hostname ${hostname}\nuser git\nport 2222\n`));
+      });
+      expect(identity?.canonicalKey).toBe("gitlab.com/team/app");
+      expect(identity?.provider).toBe("gitlab");
+      expect(identity?.displayName).toBe("Team/App");
+      expect(identity?.owner).toBe("Team");
+      expect(identity?.name).toBe("App");
+      expect(identity?.locator.remoteUrl).toBe("git+ssh://git@review:2222/Team/App.git");
+    }),
+  );
+
+  it.effect("keeps aliases distinct for loopback tunnels and ambiguous server ports", () =>
+    Effect.gen(function* () {
+      const tunnel = () => Effect.succeed(processOutput("hostname 127.0.0.1\nuser git\n"));
+      expect((yield* resolveRemote("git@tunnel-a:Team/App.git", tunnel))?.canonicalKey).toBe(
+        "tunnel-a/team/app",
+      );
+      expect((yield* resolveRemote("git@tunnel-b:Team/App.git", tunnel))?.canonicalKey).toBe(
+        "tunnel-b/team/app",
+      );
+
+      const forge = yield* resolveRemote("git@gitlab.corp.example:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname 10.1.2.3\nuser git\n")),
+      );
+      expect(forge).toMatchObject({
+        canonicalKey: "gitlab.corp.example/team/app",
+        provider: "gitlab",
+      });
+      const ip = yield* resolveRemote("git@code.example.org:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname 203.0.113.7\nuser git\n")),
+      );
+      expect(ip?.canonicalKey).toBe("code.example.org/team/app");
+      const proxied = yield* resolveRemote("client-a:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname internal.test\nuser git\nproxyjump bastion-a\n")),
+      );
+      const commanded = yield* resolveRemote("client-b:Team/App.git", () =>
+        Effect.succeed(
+          processOutput("hostname internal.test\nuser git\nproxycommand ssh -W %h:%p bastion-b\n"),
+        ),
+      );
+      expect([proxied?.canonicalKey, commanded?.canonicalKey]).toEqual([
+        "client-a/team/app",
+        "client-b/team/app",
+      ]);
+      const dev1 = yield* resolveRemote("git@dev1:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname server.test\nuser git\nport 2222\n")),
+      );
+      const dev2 = yield* resolveRemote("git@dev2:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname server.test\nuser git\nport 2223\n")),
+      );
+      expect([dev1?.canonicalKey, dev2?.canonicalKey]).toEqual(["dev1/team/app", "dev2/team/app"]);
+    }),
+  );
+
+  it.effect("does not probe HTTPS or public SSH forges", () =>
+    Effect.gen(function* () {
+      let sshCalls = 0;
+      const ssh = () => {
+        sshCalls++;
+        return Effect.succeed(processOutput("hostname wrong.test\nuser wrong\n"));
+      };
+      for (const remote of [
+        "https://github.com/Team/App.git",
+        "git+ssh://git@github.com/Team/App.git",
+        "git@github.com:Team/App.git",
+        "git@ssh.github.com:Team/App.git",
+      ]) {
+        const identity = yield* resolveRemote(remote, ssh);
+        expect(identity?.canonicalKey).toBe("github.com/team/app");
+        expect(identity?.displayName).toBe("Team/App");
+      }
+      expect(sshCalls).toBe(0);
+    }),
+  );
+
+  it.effect("never exposes unsafe remote hosts or logins to SSH Match exec", () =>
+    Effect.gen(function* () {
+      let sshCalls = 0;
+      const ssh = () => {
+        sshCalls++;
+        return Effect.succeed(processOutput("hostname github.com\nuser git\n"));
+      };
+      for (const remote of [
+        "-oProxyCommand=calc:Team/App.git",
+        "x;id@gh:Team/App.git",
+        "ssh://x%3Bid@gh/Team/App.git",
+      ]) {
+        expect((yield* resolveRemote(remote, ssh))?.locator.remoteUrl).toBe(remote);
+      }
+      expect(sshCalls).toBe(0);
+    }),
+  );
+
+  it.effect.each(["exit", "timeout", "missing"] as const)(
+    "keeps fallback identities when SSH lookup fails with %s",
+    (failure) =>
+      Effect.gen(function* () {
+        const ssh = () =>
+          failure === "missing"
+            ? Effect.fail(
+                new ProcessRunner.ProcessSpawnError({
+                  command: "ssh",
+                  argumentCount: 2,
+                  cause: new Error("ENOENT"),
+                }),
+              )
+            : Effect.succeed({
+                ...processOutput("", 255),
+                timedOut: failure === "timeout",
+                code: failure === "timeout" ? null : ChildProcessSpawner.ExitCode(255),
+              });
+        expect((yield* resolveRemote("gh:Team/App.git", ssh))?.canonicalKey).toBe("gh/team/app");
+        expect((yield* resolveRemote("alice@server.test:app.git", ssh))?.canonicalKey).toBe(
+          "alice@server.test:app",
+        );
+      }),
+  );
+
+  it.effect("keeps alias identity when Git uses a custom SSH command", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ssh-override-" });
+      yield* git(cwd, ["init"]);
+      const remoteUrl = "git@work:Team/App.git";
+      yield* git(cwd, ["remote", "add", "origin", remoteUrl]);
+      yield* git(cwd, ["config", "core.sshCommand", "ssh -F /custom/config"]);
+      const runner = yield* ProcessRunner.ProcessRunner;
+      let sshCalls = 0;
+      const resolver = yield* RepositoryIdentityResolver.make().pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command !== "ssh") return runner.run(input);
+            sshCalls++;
+            return Effect.succeed(processOutput("hostname github.com\nuser git\n"));
+          },
+        }),
+      );
+      const configured = yield* resolver.resolve(cwd);
+      expect(configured?.canonicalKey).toBe("work/team/app");
+      expect(configured?.locator.remoteUrl).toBe(remoteUrl);
+      yield* git(cwd, ["config", "--unset", "core.sshCommand"]);
+      const environment = yield* resolver.resolve(cwd, { refresh: true }).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ...process.env,
+          GIT_SSH_COMMAND: "ssh -F /another/config",
+        }),
+      );
+      expect(environment?.canonicalKey).toBe("work/team/app");
+      expect(sshCalls).toBe(0);
+      const standard = yield* resolver.resolve(cwd, { refresh: true });
+      expect(standard?.canonicalKey).toBe("github.com/team/app");
+      expect(sshCalls).toBe(1);
+    }).pipe(Effect.provide(ProcessRunner.layer)),
+  );
+
+  it.effect("resolves a host named constructor without reading inherited endpoint mappings", () =>
+    Effect.gen(function* () {
+      const identity = yield* resolveRemote("git@constructor:repo.git", () =>
+        Effect.succeed(processOutput("hostname constructor\nuser git\n")),
+      );
+      expect(identity?.canonicalKey).toBe("git@constructor:repo");
+      expect(identity?.locator.remoteUrl).toBe("git@constructor:repo.git");
+    }),
+  );
 
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {

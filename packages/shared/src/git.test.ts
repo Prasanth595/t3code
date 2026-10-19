@@ -85,6 +85,33 @@ describe("normalizeGitRemoteUrl", () => {
       "ssh.dev.azure.com/v3/t3tools/t3code",
     );
   });
+
+  it("keeps absolute SSH paths distinct from relative SCP paths", () => {
+    expect(normalizeGitRemoteUrl("forge:App.git")).toBe("forge:app");
+    expect(normalizeGitRemoteUrl("deploy@forge:/App.git")).toBe("deploy@forge:/app");
+    expect(normalizeGitRemoteUrl("ssh://deploy@forge/App.git")).toBe("ssh://deploy@forge/app");
+    expect(normalizeGitRemoteUrl("alice@server.test:app.git")).not.toBe(
+      normalizeGitRemoteUrl("bob@server.test:app.git"),
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@server.test/app.git")).not.toBe(
+      normalizeGitRemoteUrl("git@server.test:app.git"),
+    );
+    expect(normalizeGitRemoteUrl("git@server.test:srv/app.git")).not.toBe(
+      normalizeGitRemoteUrl("git@server.test:/srv/app.git"),
+    );
+  });
+
+  it("accepts a one-letter SSH host without reinterpreting local drive paths", () => {
+    expect(normalizeGitRemoteUrl("git@g:Owner/Repo.git")).toBe("g/owner/repo");
+    expect(normalizeGitRemoteUrl("ssh://git@g/Owner/Repo.git")).toBe("g/owner/repo");
+    expect(normalizeGitRemoteUrl("C:/repos/T3Code")).toBe("c:/repos/t3code");
+    expect(normalizeGitRemoteUrl("file:///srv/git/App.git")).toBe("file:///srv/git/app");
+  });
+
+  it("normalizes Git's compound SSH schemes to the same repository key", () => {
+    expect(normalizeGitRemoteUrl("git+ssh://git@forge/Team/App.git")).toBe("forge/team/app");
+    expect(normalizeGitRemoteUrl("ssh+git://git@forge/Team/App.git")).toBe("forge/team/app");
+  });
 });
 
 describe("parseOriginUrlFromGitConfig", () => {
