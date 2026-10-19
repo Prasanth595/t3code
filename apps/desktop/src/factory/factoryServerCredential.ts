@@ -57,6 +57,16 @@ export const readFactoryServerBearer = Effect.gen(function* () {
   Effect.withSpan("desktop.factoryServer.readBearer"),
 );
 
+const wrap = (cause: unknown) => new FactoryServerCredentialStoreError({ cause });
+
+/** Fails when a bearer could not be kept, so pairing can stop before it spends a one-time link. */
+export const ensureFactoryServerBearerStorable = Effect.gen(function* () {
+  const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  if (!(yield* safeStorage.isEncryptionAvailable.pipe(Effect.mapError(wrap)))) {
+    return yield* wrap("Secure storage is unavailable.");
+  }
+});
+
 export const writeFactoryServerBearer = Effect.fn("desktop.factoryServer.writeBearer")(function* (
   bearer: string,
 ) {
@@ -64,16 +74,24 @@ export const writeFactoryServerBearer = Effect.fn("desktop.factoryServer.writeBe
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const file = yield* credentialPath;
-  const wrap = (cause: unknown) => new FactoryServerCredentialStoreError({ cause });
-  if (!(yield* safeStorage.isEncryptionAvailable.pipe(Effect.mapError(wrap)))) {
-    return yield* wrap("Secure storage is unavailable.");
-  }
+  yield* ensureFactoryServerBearerStorable;
+  const tempPath = `${file}.${process.pid}.tmp`;
   yield* Effect.gen(function* () {
     const encryptedBearer = Base64.encode(yield* safeStorage.encryptString(bearer));
     const encoded = yield* encodeDocument({ version: 1, encryptedBearer });
-    const tempPath = `${file}.${process.pid}.tmp`;
     yield* fileSystem.makeDirectory(path.dirname(file), { recursive: true });
     yield* fileSystem.writeFileString(tempPath, `${encoded}\n`);
     yield* fileSystem.rename(tempPath, file);
-  }).pipe(Effect.mapError(wrap));
+  }).pipe(
+    Effect.mapError(wrap),
+    Effect.ensuring(
+      fileSystem
+        .remove(tempPath, { force: true })
+        .pipe(
+          Effect.catch((error) =>
+            logWarning("could not remove a temporary factory server credential file", { error }),
+          ),
+        ),
+    ),
+  );
 });
