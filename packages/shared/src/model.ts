@@ -465,12 +465,6 @@ export function createModelSelection(
   return selections.length > 0 ? { ...base, options: selections } : base;
 }
 
-/**
- * The selection a model picker pick produces, starting the picked model from
- * `options` (for example its remembered options). Returns null when the pick
- * names the current instance and model, so confirming the model already in use
- * keeps the options it runs with.
- */
 export function resolveModelPick(
   current: ModelSelection | null | undefined,
   instanceId: ProviderInstanceId,

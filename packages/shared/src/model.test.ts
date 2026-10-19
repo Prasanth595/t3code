@@ -230,11 +230,12 @@ describe("resolveModelPick", () => {
   ]);
   const remembered = [{ id: "effort", value: "high" }];
 
-  it("changes nothing when the current model is picked again", () => {
+  it("preserves the current selection when re-picked with different or no remembered options", () => {
     expect(resolveModelPick(current, claude, "claude-opus-5-5", remembered)).toBeNull();
+    expect(resolveModelPick(current, claude, "claude-opus-5-5")).toBeNull();
   });
 
-  it("starts any other model from the given options", () => {
+  it("initializes a different model or instance from remembered options or defaults", () => {
     expect(resolveModelPick(current, claude, "claude-sonnet-5-5", remembered)).toEqual({
       instanceId: "claudeAgent",
       model: "claude-sonnet-5-5",

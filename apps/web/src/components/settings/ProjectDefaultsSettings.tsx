@@ -173,8 +173,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     search: { environmentId: representative.environmentId, instanceId },
                   });
               }}
-              // Re-picking the current model still writes it, which pins an
-              // automatic default and unifies a mixed scope without losing traits.
               onInstanceModelChange={(instanceId, model) =>
                 setModel(resolveModelPick(selection, instanceId, model) ?? selection)
               }
