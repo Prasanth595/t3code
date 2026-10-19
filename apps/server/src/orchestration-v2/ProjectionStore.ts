@@ -6247,16 +6247,18 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     : [],
                 ),
               );
-              const latestUserAuthoredRunCompletedAt =
-                projection.runs
-                  .flatMap((run) =>
-                    userAuthoredRunIds.has(run.id) && run.completedAt !== null
-                      ? [run.completedAt]
-                      : [],
-                  )
-                  .toSorted(
-                    (left, right) => DateTime.toEpochMillis(right) - DateTime.toEpochMillis(left),
-                  )[0] ?? null;
+              let latestUserAuthoredRunCompletedAt: DateTime.Utc | null = null;
+              for (const run of projection.runs) {
+                if (
+                  userAuthoredRunIds.has(run.id) &&
+                  run.completedAt !== null &&
+                  (latestUserAuthoredRunCompletedAt === null ||
+                    DateTime.toEpochMillis(run.completedAt) >
+                      DateTime.toEpochMillis(latestUserAuthoredRunCompletedAt))
+                ) {
+                  latestUserAuthoredRunCompletedAt = run.completedAt;
+                }
+              }
               return {
                 ...shell,
                 lastSnoozeWakeAt: projection.thread.lastSnoozeWakeAt ?? null,
