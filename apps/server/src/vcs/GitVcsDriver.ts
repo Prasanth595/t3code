@@ -787,6 +787,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // Batch mode writes out the new objects of one command and flushes the disk
   // once before it publishes them, instead of once per object: a turn can add
   // thousands of files. Refs still get a full flush each.
+  // On macOS, VcsProcess retries unsupported full flushes with plain fsync.
   const durableWrite = [
     "-c",
     "core.fsync=objects,reference",
