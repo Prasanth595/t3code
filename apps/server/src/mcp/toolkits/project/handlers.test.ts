@@ -504,3 +504,39 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
     expect(launched).toHaveLength(1);
   }),
 );
+
+it.effect("a non-Git worktree refusal points the caller to the project folder", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      checkWorktreeBase: ({ projectId }) =>
+        Effect.fail(
+          new ThreadLaunch.ThreadLaunchNotRepositoryError({
+            projectId,
+            projectTitle: "Plain folder",
+            workspaceRoot: "/plain",
+          }),
+        ),
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const replies = yield* toolkit
+      .handle("t3_thread_launch", {
+        title: "Fix",
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: "main" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(replies.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message:
+        'Project "Plain folder" (/plain) is not a Git repository. No thread was created. Use workspaceStrategy {type:"root"} for this project.',
+    });
+    expect(launched).toHaveLength(0);
+  }),
+);
