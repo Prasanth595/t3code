@@ -7,6 +7,7 @@ import {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
+import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
 import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -21,6 +22,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+const LABEL_LINES = 2;
 
 type BackgroundWorkTarget = { readonly environmentId: EnvironmentId; readonly threadId: ThreadId };
 
@@ -117,6 +119,11 @@ function BackgroundWorkRow(props: {
 }) {
   const { item } = props;
   const childThreadId = item.childThreadId;
+  const [labelLineCount, setLabelLineCount] = useState(0);
+  const [expanded, setExpanded] = useState(false);
+  // An untitled command is labeled with its raw input, which can be a whole script, so long
+  // labels stay clamped until tapped. Subagent rows open their thread instead.
+  const canExpand = childThreadId === undefined && labelLineCount > LABEL_LINES;
   const row = (
     <View className="flex-row items-center gap-3 border-b border-border py-3.5">
       <SymbolView
@@ -132,18 +139,50 @@ function BackgroundWorkRow(props: {
         type="monochrome"
       />
       <View className="min-w-0 flex-1">
-        <Text className="font-t3-medium text-sm text-foreground" numberOfLines={2}>
+        <Text
+          className="font-t3-medium text-sm text-foreground"
+          numberOfLines={canExpand && expanded ? undefined : LABEL_LINES}
+        >
           {item.label}
         </Text>
         <Text className="text-xs text-foreground-muted">{KIND_LABELS[item.kind]}</Text>
+        {childThreadId === undefined ? (
+          // A clamped Text reports only its visible lines, so an unclamped copy measures overflow.
+          <Text
+            aria-hidden
+            onTextLayout={(event) => setLabelLineCount(event.nativeEvent.lines.length)}
+            className="absolute inset-x-0 top-0 -z-[1] font-t3-medium text-sm opacity-0"
+          >
+            {item.label}
+          </Text>
+        ) : null}
       </View>
       {childThreadId !== undefined ? (
         <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+      ) : canExpand ? (
+        <SymbolView
+          name={expanded ? "chevron.up" : "chevron.down"}
+          size={12}
+          tintColorClassName="accent-icon-subtle"
+        />
       ) : null}
     </View>
   );
 
-  if (childThreadId === undefined) return <View accessible>{row}</View>;
+  if (childThreadId === undefined) {
+    if (!canExpand) return <View accessible>{row}</View>;
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        accessibilityHint={expanded ? "Shortens the name" : "Shows the full name"}
+        onPress={() => setExpanded((current) => !current)}
+        className="active:opacity-70"
+      >
+        {row}
+      </Pressable>
+    );
+  }
   return (
     <Pressable
       accessibilityRole="link"
