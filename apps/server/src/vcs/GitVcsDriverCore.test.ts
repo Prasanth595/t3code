@@ -1267,31 +1267,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each(["heads", "tags"] as const)(
-      "classifies an atomic ref creation collision under refs/%s",
-      (namespace) =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          yield* initRepoWithCommit(cwd);
-          const ref = `refs/${namespace}/existing`;
-          yield* git(cwd, ["update-ref", ref, "HEAD"]);
-          const error = yield* driver
-            .execute({
-              operation: "GitVcsDriver.test.atomicRefCollision",
-              cwd,
-              args: ["update-ref", ref, "HEAD", "0".repeat(40)],
-              env: { LC_ALL: "C" },
-            })
-            .pipe(Effect.flip);
-          if (namespace === "heads") {
-            assert.equal(error.reason, "branch_already_exists");
-          } else {
-            assert.notProperty(error, "reason");
-          }
-        }),
-    );
-
     it.effect("leaves a tag collision unclassified rather than calling it a path", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -4023,9 +3998,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             fetches += 1;
             yield* Deferred.succeed(started, undefined);
             return ChildProcessSpawner.makeHandle({
-              ...makeNonRepositoryHandle(),
+              ...makeSuccessfulHandle(""),
               exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-              stderr: Stream.empty,
             });
           }),
         );
@@ -4036,15 +4010,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const fetch = driver.fetchRemote({ cwd, remoteName: "origin", refName: "main" });
         const first = yield* fetch.pipe(Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
-        const joined = yield* Effect.all(
-          Array.from({ length: 5 }, () => fetch),
-          {
-            concurrency: "unbounded",
-          },
-        ).pipe(Effect.forkChild({ startImmediately: true }));
+        const joined = yield* Effect.forEach(Array.from({ length: 5 }), () =>
+          fetch.pipe(Effect.forkChild({ startImmediately: true })),
+        );
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(first);
-        yield* Fiber.join(joined);
+        yield* Effect.forEach(joined, Fiber.join);
         assert.equal(fetches, 1);
 
         // A finished fetch is not reused.

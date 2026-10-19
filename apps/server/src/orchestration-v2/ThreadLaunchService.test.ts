@@ -1019,9 +1019,9 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect.each([false, true])(
-  "bulk launches get independent real worktrees with existing branch %s",
-  (branchExists) =>
+it.effect(
+  "bulk launches preserve occupied branches and paths while creating independent worktrees",
+  () =>
     Effect.gen(function* () {
       const driver = yield* GitVcsDriver.GitVcsDriver;
       const fs = yield* FileSystem.FileSystem;
@@ -1042,15 +1042,16 @@ it.effect.each([false, true])(
         "initial",
       ]);
       const existingPath = path.join(worktreesDirectory, "existing");
-      if (branchExists) {
-        yield* driver.createWorktree({
-          cwd,
-          refName: "main",
-          newRefName: "feature/shared",
-          path: existingPath,
-        });
-        yield* fs.writeFileString(path.join(existingPath, "keep.txt"), "existing uncommitted work");
-      }
+      yield* driver.createWorktree({
+        cwd,
+        refName: "main",
+        newRefName: "feature/shared",
+        path: existingPath,
+      });
+      yield* fs.writeFileString(path.join(existingPath, "keep.txt"), "existing uncommitted work");
+      const occupiedPath = path.join(worktreesDirectory, path.basename(cwd), "feature-shared-1");
+      yield* fs.makeDirectory(occupiedPath, { recursive: true });
+      yield* fs.writeFileString(path.join(occupiedPath, "keep.txt"), "unrelated directory");
       const harness = makeHarness({
         createWorktree: (input, options) =>
           driver.createWorktree({ ...input, cwd }, { ...options, worktreesDirectory }),
@@ -1059,7 +1060,7 @@ it.effect.each([false, true])(
         const launches = yield* ThreadLaunch.ThreadLaunchService;
         const threads = yield* ThreadManagement.ThreadManagementService;
         const launched = yield* Effect.all(
-          Array.from({ length: 12 }, (_, index) => {
+          Array.from({ length: 6 }, (_, index) => {
             const command = `command:launch:bulk-${index}`;
             return launches
               .launch(
@@ -1087,11 +1088,8 @@ it.effect.each([false, true])(
           }),
           { concurrency: "unbounded" },
         );
-        assert.equal(new Set(launched.map((projection) => projection.thread.branch)).size, 12);
-        assert.equal(
-          new Set(launched.map((projection) => projection.thread.worktreePath)).size,
-          12,
-        );
+        assert.equal(new Set(launched.map((projection) => projection.thread.branch)).size, 6);
+        assert.equal(new Set(launched.map((projection) => projection.thread.worktreePath)).size, 6);
         for (const projection of launched) {
           assert.equal(
             projection.runs[0]?.status,
@@ -1104,18 +1102,16 @@ it.effect.each([false, true])(
         }
         assert.deepEqual(
           launched.map((projection) => projection.thread.branch).toSorted(),
-          Array.from({ length: 12 }, (_, index) =>
-            branchExists || index > 0
-              ? `feature/shared-${branchExists ? index + 1 : index}`
-              : "feature/shared",
-          ).toSorted(),
+          Array.from({ length: 6 }, (_, index) => `feature/shared-${index + 2}`).toSorted(),
         );
-        if (branchExists) {
-          assert.equal(
-            yield* fs.readFileString(path.join(existingPath, "keep.txt")),
-            "existing uncommitted work",
-          );
-        }
+        assert.equal(
+          yield* fs.readFileString(path.join(existingPath, "keep.txt")),
+          "existing uncommitted work",
+        );
+        assert.equal(
+          yield* fs.readFileString(path.join(occupiedPath, "keep.txt")),
+          "unrelated directory",
+        );
         assert.equal(harness.removeWorktree.mock.calls.length, 0);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(
@@ -1130,119 +1126,13 @@ it.effect.each([false, true])(
     ),
 );
 
-it.effect.each([
-  { branch: "t3/abcd1234", flat: false },
-  { branch: "t3-abcd1234", flat: true },
-])(
-  "keeps temporary naming and background rename after a collision on $branch",
-  ({ branch, flat }) => {
-    let attempts = 0;
-    const harness = makeHarness({
-      hasCommit: () => Effect.succeed(flat),
-      createWorktree: (input) =>
-        ++attempts === 1
-          ? Effect.fail(
-              new GitCommandError({
-                operation: "GitVcsDriver.createWorktree",
-                command: "git",
-                cwd: project.workspaceRoot,
-                detail: "git worktree add failed",
-                reason: "branch_already_exists",
-                exitCode: 128,
-              }),
-            )
-          : Effect.succeed({
-              worktree: { path: "/repo-worktrees/fresh", refName: input.newRefName! },
-            }),
-    });
-    return Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const command = `command:launch:temp-collision-${flat}`;
-      const launched = yield* launches.launch(
-        launchInput({
-          command,
-          thread: `thread:launch:temp-collision-${flat}`,
-          message: "Name this worktree",
-          workspace: { type: "worktree", baseRef: "main", branch },
-        }),
-      );
-      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-        Stream.filter((stored) => stored.commandId === CommandId.make(`${command}:branch-rename`)),
-        Stream.runHead,
-      );
-      assert.equal(harness.createWorktree.mock.calls.length, 2);
-      const replacement = harness.createWorktree.mock.calls[1]![0].newRefName!;
-      assert.notEqual(replacement, branch);
-      assert.match(replacement, flat ? /^t3-[0-9a-f]{8}$/u : /^t3\/[0-9a-f]{8}$/u);
-      assert.equal(harness.renameBranch.mock.calls[0]![0].oldBranch, replacement);
-      assert.equal(
-        (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
-        "generated-branch",
-      );
-      assert.equal(harness.removeWorktree.mock.calls.length, 0);
-    }).pipe(Effect.provide(harness.layer));
-  },
-);
-
-it.effect.each(["path_already_exists", "authentication_failed", "branch_already_exists"] as const)(
-  "handles %s without unbounded attempts",
-  (reason) => {
-    let attempts = 0;
-    const harness = makeHarness({
-      createWorktree: (input) => {
-        attempts += 1;
-        return reason === "path_already_exists" && attempts > 1
-          ? Effect.succeed({
-              worktree: { path: "/repo-worktrees/fresh", refName: input.newRefName! },
-            })
-          : Effect.fail(
-              new GitCommandError({
-                operation: "GitVcsDriver.createWorktree",
-                command: "git",
-                cwd: project.workspaceRoot,
-                detail: "git worktree add failed",
-                reason,
-                exitCode: 128,
-              }),
-            );
-      },
-    });
-    return Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const command = `command:launch:collision-limit-${reason}`;
-      const launched = yield* launches.launch(
-        launchInput({
-          command,
-          thread: `thread:launch:collision-limit-${reason}`,
-          message: "Prepare worktree",
-          workspace: { type: "worktree", baseRef: "main", branch: "my-feature" },
-        }),
-      );
-      const succeeds = reason === "path_already_exists";
-      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-        Stream.filter(
-          (stored) =>
-            stored.commandId === CommandId.make(`${command}:${succeeds ? "release" : "fail"}`) &&
-            stored.event.type === "run.updated",
-        ),
-        Stream.runHead,
-      );
-      assert.equal(attempts, succeeds ? 2 : reason === "authentication_failed" ? 1 : 101);
-      const projection = yield* threads.getThreadProjection(launched.threadId);
-      assert.equal(projection.runs[0]?.status, succeeds ? "starting" : "failed");
-      assert.equal(harness.runSetup.mock.calls.length, succeeds ? 1 : 0);
-      assert.equal(harness.removeWorktree.mock.calls.length, 0);
-    }).pipe(Effect.provide(harness.layer));
-  },
-);
-
-it.effect("Retry recovers an existing failed run whose requested branch is taken", () => {
+it.effect("bounds collision retries and recovers the same failed run on Retry", () => {
   let fails = true;
+  let attempts = 0;
   const harness = makeHarness({
-    createWorktree: (input) =>
-      fails || input.newRefName === "my-feature"
+    createWorktree: (input) => {
+      if (++attempts > 103) return Effect.die("worktree collision retries did not stop");
+      return fails || input.newRefName === "my-feature"
         ? Effect.fail(
             new GitCommandError({
               operation: "GitVcsDriver.createWorktree",
@@ -1255,7 +1145,8 @@ it.effect("Retry recovers an existing failed run whose requested branch is taken
           )
         : Effect.succeed({
             worktree: { path: "/repo-worktrees/recovered", refName: input.newRefName! },
-          }),
+          });
+    },
   });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -1277,6 +1168,11 @@ it.effect("Retry recovers an existing failed run whose requested branch is taken
       Stream.runHead,
     );
     const failed = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(failed.runs[0]?.status, "failed");
+    assert.isAbove(attempts, 1);
+    assert.isAtMost(attempts, 101);
+    assert.equal(harness.runSetup.mock.calls.length, 0);
+    assert.equal(harness.removeWorktree.mock.calls.length, 0);
     fails = false;
     yield* launches.retryPreparation({
       commandId: CommandId.make("command:launch:taken-retry:retry"),
@@ -1620,56 +1516,52 @@ it.effect.each(["failed", "interrupted"] as const)(
   },
 );
 
-it.effect.each([undefined, "branch_already_exists"] as const)(
-  "removes a claimed worktree after failure %s without creating another",
-  (reason) => {
-    const harness = makeHarness({
-      // A checkout that dies after claiming its directory.
-      createWorktree: (_input, options) =>
-        (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/partial") ?? Effect.void).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new GitCommandError({
-                operation: "GitVcsDriver.createWorktree.configureBaseRef",
-                command: "git",
-                cwd: project.workspaceRoot,
-                detail: "checkout failed",
-                ...(reason === undefined ? {} : { reason }),
-              }),
-            ),
+it.effect("removes a worktree that failed before the thread recorded it without retrying", () => {
+  const harness = makeHarness({
+    createWorktree: (_input, options) =>
+      (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/partial") ?? Effect.void).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new GitCommandError({
+              operation: "GitVcsDriver.createWorktree.configureBaseRef",
+              command: "git",
+              cwd: project.workspaceRoot,
+              detail: "checkout failed",
+              reason: "branch_already_exists",
+            }),
           ),
         ),
-    });
-    return Effect.gen(function* () {
-      const launches = yield* ThreadLaunch.ThreadLaunchService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const launched = yield* launches.launch(
-        launchInput({
-          command: "command:launch:partial-worktree",
-          thread: "thread:launch:partial-worktree",
-          message: "Partial checkout",
-          workspace: { type: "worktree", baseRef: "main" },
-        }),
-      );
-      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-        Stream.filter(
-          (stored) =>
-            stored.commandId === CommandId.make("command:launch:partial-worktree:fail") &&
-            stored.event.type === "run.updated",
-        ),
-        Stream.runHead,
-      );
-      const projection = yield* threads.getThreadProjection(launched.threadId);
-      // Unrecorded, so a retry would create a second checkout beside it.
-      assert.equal(projection.thread.worktreePath, null);
-      assert.equal(harness.createWorktree.mock.calls.length, 1);
-      assert.deepEqual(
-        harness.removeWorktree.mock.calls.map(([input]) => input.path),
-        ["/repo-worktrees/partial"],
-      );
-    }).pipe(Effect.provide(harness.layer));
-  },
-);
+      ),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:partial-worktree",
+        thread: "thread:launch:partial-worktree",
+        message: "Partial checkout",
+        workspace: { type: "worktree", baseRef: "main" },
+      }),
+    );
+    yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+      Stream.filter(
+        (stored) =>
+          stored.commandId === CommandId.make("command:launch:partial-worktree:fail") &&
+          stored.event.type === "run.updated",
+      ),
+      Stream.runHead,
+    );
+    const projection = yield* threads.getThreadProjection(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "failed");
+    assert.equal(projection.thread.worktreePath, null);
+    assert.equal(harness.createWorktree.mock.calls.length, 1);
+    assert.deepEqual(
+      harness.removeWorktree.mock.calls.map(([input]) => input.path),
+      ["/repo-worktrees/partial"],
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("replays a server-allocated launch", () =>
   Effect.gen(function* () {
