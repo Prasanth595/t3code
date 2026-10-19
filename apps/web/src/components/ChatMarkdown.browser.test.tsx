@@ -12,6 +12,8 @@ import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { USER_MESSAGE_REMARK_PLUGINS } from "../userMessageMarkdown";
+import "../index.css";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
@@ -87,6 +89,81 @@ async function render(element: ReactElement) {
 async function renderText(text: string, props: Partial<Parameters<typeof ChatMarkdown>[0]> = {}) {
   return (await render(<ChatMarkdown cwd="/tmp/project" text={text} {...props} />)).container;
 }
+
+function copyRenderedMarkdown(container: HTMLElement) {
+  const markdown = container.querySelector(".chat-markdown")!;
+  const range = document.createRange();
+  range.selectNodeContents(markdown);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  const clipboardData = new DataTransfer();
+  markdown.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, clipboardData }));
+  selection.removeAllRanges();
+  return clipboardData.getData("text/plain");
+}
+
+describe("user message list markers", () => {
+  it.each([
+    "1. first\n3. third\n6. sixth",
+    "1. first\n\n3. third\n\n6. sixth",
+    "6. sixth\n3. third\n1. first\n1. repeated",
+    "0. zero\n003. padded\n999999999. large",
+    "1) first\n3) third\n6) sixth",
+    "1. parent\n   1. nested\n   6. nested again\n8. sibling",
+    "> 1. first\n> 3. third\n> 6. sixth",
+    "- parent\n  1. first\n  3. third\n  6. sixth",
+    "1. [x] first\n3. [ ] third\n6. [x] sixth",
+  ])("preserves authored markers when selecting and copying %s", async (text) => {
+    const container = await renderText(text, {
+      parseRawHtml: false,
+      lineBreaks: true,
+      extraRemarkPlugins: USER_MESSAGE_REMARK_PLUGINS,
+    });
+    expect(copyRenderedMarkdown(container)).toBe(text.replaceAll("\n\n", "\n"));
+  });
+
+  it("uses source positions after CRLF and formatted text", async () => {
+    const container = await renderText("**Intro**\r\n\r\n1. first\r\n3. third\r\n6. sixth", {
+      parseRawHtml: false,
+      extraRemarkPlugins: USER_MESSAGE_REMARK_PLUGINS,
+    });
+    expect(copyRenderedMarkdown(container)).toBe("**Intro**\n\n1. first\n3. third\n6. sixth");
+  });
+
+  it("keeps assistant list counters sequential", async () => {
+    const container = await renderText("1. first\n3. third\n6. sixth");
+    expect(copyRenderedMarkdown(container)).toBe("1. first\n2. third\n3. sixth");
+  });
+
+  it("renders nested and wide source markers with their authored punctuation", async () => {
+    const container = await renderText(
+      "1) parent\n   1) nested\n   6) nested again\n999) sibling",
+      {
+        parseRawHtml: false,
+        extraRemarkPlugins: USER_MESSAGE_REMARK_PLUGINS,
+      },
+    );
+    expect(
+      [...container.querySelectorAll("li")].map(
+        (item) => getComputedStyle(item, "::marker").content,
+      ),
+    ).toEqual(['"1) "', '"1) "', '"6) "', '"999) "']);
+  });
+
+  it("leaves escaped markers and code examples literal", async () => {
+    const container = await renderText(
+      "1\\. literal\n\n```text\n1. first\n3. third\n6. sixth\n```",
+      {
+        parseRawHtml: false,
+        extraRemarkPlugins: USER_MESSAGE_REMARK_PLUGINS,
+      },
+    );
+    expect(container.querySelectorAll("ol")).toHaveLength(0);
+    expect(container.querySelector("p")?.textContent).toBe("1. literal");
+    expect(container.querySelector("code")?.textContent).toContain("1. first\n3. third\n6. sixth");
+  });
+});
 
 function linkTexts(container: HTMLElement) {
   return [...container.querySelectorAll("a")].map((link) => link.textContent);

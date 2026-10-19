@@ -112,7 +112,7 @@ function serializeListItem(item: Element, ordered: boolean, index: number): stri
     ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
   );
   const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
-  const bullet = ordered ? `${index}. ` : "- ";
+  const bullet = ordered ? `${item.getAttribute("data-source-list-marker") ?? `${index}.`} ` : "- ";
   const marker = `${bullet}${task}`;
   let content = serializeChildren(item)
     .replace(/\n{3,}/g, "\n\n")
