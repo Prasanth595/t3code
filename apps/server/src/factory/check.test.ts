@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 const realScript = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts/check.sh");
 
 const SEAMS = "seams";
-const TEST = "vp test run apps/server/src/factory";
+const TEST = "vp test run apps/server/src/factory apps/mobile/src/factory";
 const SERVER_TYPECHECK = "vp run --filter t3 typecheck";
 const WEB_TYPECHECK = "vp run --filter @t3tools/web typecheck";
 const MOBILE_TYPECHECK = "vp run --filter @t3tools/mobile typecheck";

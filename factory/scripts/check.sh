@@ -13,7 +13,7 @@ step() {
 }
 
 step factory/scripts/check-seams.sh
-step vp test run apps/server/src/factory
+step vp test run apps/server/src/factory apps/mobile/src/factory
 step vp run --filter t3 typecheck
 step vp run --filter @t3tools/web typecheck
 step vp run --filter @t3tools/mobile typecheck

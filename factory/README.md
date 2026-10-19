@@ -17,7 +17,7 @@ Only `apps/server/src/factory/t3/` may import T3 internals. Other files under `a
 `factory/scripts/check.sh` runs these steps in order, printing each name first, and stops at the first failure with that step's exit code:
 
 1. `factory/scripts/check-seams.sh`
-2. `vp test run apps/server/src/factory`
+2. `vp test run apps/server/src/factory apps/mobile/src/factory`
 3. `vp run --filter t3 typecheck`
 4. `vp run --filter @t3tools/web typecheck`
 5. `vp run --filter @t3tools/mobile typecheck`
@@ -58,6 +58,20 @@ The signing secrets (`CSC_LINK`, `CSC_KEY_PASSWORD`, `MACOS_PROVISIONING_PROFILE
 Sign-in through Clerk needs the fork's redirects in the Clerk instance the app's publishable key points at, in place of upstream's `t3code://app/` and `t3code-dev://app/` from `docs/operations/connect-setup.md`: add `t3code-factory://app/` and `t3code-factory-dev://app/` to the SSO redirect allowlist and the matching origins to the Backend API `allowed_origins`. Without them Clerk rejects the desktop callback and relay sign-in fails.
 
 Linux and Windows keep upstream's identity (desktop entry, WM class, `t3code.service`, the Linux `protocols` block): the fork ships no desktop build for them, and a fork server on Linux installing its boot service would take over upstream's unit.
+
+## Mobile app
+
+The fork's mobile app installs beside upstream's T3 Code. `apps/mobile/src/factory/mobileIdentity.ts` swaps upstream's identity in `app.config.ts` for the values in `packages/shared/src/forkIdentity.ts`:
+
+| Variant       | Name                      | Bundle id and Android package                    | Scheme                      |
+| ------------- | ------------------------- | ------------------------------------------------ | --------------------------- |
+| `development` | `T3 Code Factory Dev`     | `au.com.originalsolutions.t3codefactory.dev`     | `t3code-factory-dev://`     |
+| `preview`     | `T3 Code Factory Preview` | `au.com.originalsolutions.t3codefactory.preview` | `t3code-factory-preview://` |
+| `production`  | `T3 Code Factory`         | `au.com.originalsolutions.t3codefactory`         | `t3code-factory://`         |
+
+The fork has no Expo project. The hook removes upstream's `owner` and EAS project id and turns over-the-air updates off. The `eas:*` scripts and the EAS steps in `apps/mobile/README.md` do not apply to it.
+
+Some of upstream's mobile tooling still has upstream's ids. `vp run dev:client` and the other `dev:client*` scripts start Metro with `--scheme t3code-dev`, which the fork's dev build does not register, so the dev client never connects. Run `node factory/scripts/mobile-dev-client.ts` instead, with `--clear` in place of `dev:client:reset`. `scripts/mobile-native-client.ts` looks for the installed dev client under `com.t3tools.t3code.dev` and never finds the fork's, so build and install the dev client with `vp run ios:dev` or `vp run android:dev` from `apps/mobile`.
 
 ## Logs
 
