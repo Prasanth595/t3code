@@ -41,18 +41,6 @@ function accountName(account: LimitAccount) {
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
 }
 
-/** Where even spending would sit: a solid tick taller than the bar, so it reads as a target rather than the fill's edge. */
-function PaceMark({ left }: { readonly left: number }) {
-  return (
-    <View
-      pointerEvents="none"
-      className="absolute -top-1 -bottom-1 w-0.5 -translate-x-px rounded-full bg-foreground-muted"
-      style={{ left: `${left}%` }}
-    />
-  );
-}
-
-/** The spent share comes back at reset. SVG keeps the hatching static on both platforms. */
 function AccountSegment({
   remaining,
   color,
@@ -176,9 +164,21 @@ function PoolWindowCard({
                   refillPercent={window.resetsAt ? member.refillPercent : 0}
                 />
               </View>
-              {timeLeft !== null ? <PaceMark left={timeLeft} /> : null}
-              <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+              {timeLeft !== null ? (
+                <View
+                  pointerEvents="none"
+                  className="absolute -top-1 -bottom-1 w-0.5 -translate-x-px rounded-full bg-foreground-muted"
+                  style={{ left: `${timeLeft}%` }}
+                />
+              ) : null}
+              <View
+                pointerEvents="none"
+                className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
+              >
+                <Text
+                  numberOfLines={1}
+                  className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
+                >
                   {index + 1}
                 </Text>
               </View>

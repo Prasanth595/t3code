@@ -246,13 +246,11 @@ function PoolSegment({
         }
       >
         <div aria-hidden className="absolute inset-0 overflow-hidden rounded-md">
-          {/* Translucent so the label reads over the fill for any provider colour and theme. */}
           <div
             aria-hidden
             className="absolute inset-y-0 left-0 rounded-md opacity-35"
             style={{ width: `${remaining}%`, backgroundColor: color }}
           />
-          {/* The spent share is hatched, not blank: it is what the countdown restores. */}
           {remaining < 100 && reset && refillPercent > 0 ? (
             <div
               aria-hidden
@@ -264,7 +262,6 @@ function PoolSegment({
             />
           ) : null}
         </div>
-        {/* A solid tick taller than the bar, so it reads as a target rather than the fill's edge. */}
         {timeLeft !== null ? (
           <span
             aria-hidden
@@ -274,11 +271,11 @@ function PoolSegment({
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
         >
           {index}
         </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
+        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
           {showAccountName ? (
             <AccountName
               account={account}
@@ -287,7 +284,7 @@ function PoolSegment({
           ) : null}
           <span className="shrink-0 font-semibold text-foreground tabular-nums">{remaining}%</span>
           {resetsIn || credits ? (
-            <span className="ms-auto flex shrink-0 items-center gap-1.5 rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs text-foreground tabular-nums">
+            <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
               {resetsIn?.replace("resets in ", "↻ ") ?? ""}
               {credits ? (
                 <>

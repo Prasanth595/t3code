@@ -546,7 +546,7 @@ export function elapsedShare(window: ServerProviderUsageWindow, now: number): nu
   return Math.max(0, Math.min(1, (length - (resetsAt - now)) / length));
 }
 
-/** Quota even spending would leave by now, 0..100: where a bar's pace mark sits. */
+// Bars show quota remaining, so even pace tracks time remaining.
 export function paceRemainingPercent(
   window: ServerProviderUsageWindow,
   now: number,

@@ -83,7 +83,13 @@ describe("pace", () => {
     expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
     expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
     expect(paceRemainingPercent({ ...window, resetsAt: undefined }, now)).toBeNull();
+    expect(paceRemainingPercent({ ...window, windowDurationMins: undefined }, now)).toBeNull();
     expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
+  });
+
+  it("keeps pace marks within the bar before a window starts and after it expires", () => {
+    expect(paceRemainingPercent(window, Date.parse("2026-09-03T08:00:00.000Z"))).toBe(100);
+    expect(paceRemainingPercent(window, Date.parse("2026-09-03T15:00:00.000Z"))).toBe(0);
   });
 
   it("phrases the reset as a countdown", () => {
