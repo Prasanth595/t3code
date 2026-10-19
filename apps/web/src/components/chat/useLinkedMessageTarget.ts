@@ -1,5 +1,5 @@
 import type { LegendListRef } from "@legendapp/list/react";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { TimelineEntry } from "../../session-logic";
 import type { LinkedMessageRequest } from "../promptLinks/ThreadLinkParams";
@@ -213,6 +213,6 @@ export function useLinkedMessageTarget({
   return {
     positioning,
     pinnedRowId: rowId,
-    alwaysRender: useMemo(() => (rowId === null ? undefined : { keys: [rowId] }), [rowId]),
+    alwaysRender: rowId === null ? undefined : { keys: [rowId] },
   };
 }
