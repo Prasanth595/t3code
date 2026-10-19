@@ -1,3 +1,4 @@
+import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -50,6 +51,14 @@ vi.mock("effect/SynchronizedRef", async (importOriginal) => {
   const original = await importOriginal<typeof SynchronizedRef>();
   return { ...original, make: vi.fn(original.make) };
 });
+
+// The server omits DOM types, which include TypeScript's WebAssembly declarations.
+declare const WebAssembly: {
+  instantiate(
+    bytes: ArrayBuffer,
+    imports: { env: { log: () => void } },
+  ): Promise<{ instance: { exports: Record<string, unknown> } }>;
+};
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -1701,230 +1710,144 @@ it.layer(
     }),
   );
 
-  it.effect("clears Kitty keyboard flags a dead process left in inherited history", () =>
+  it.effect("restores dead-process history without resetting a live terminal", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // Codex CLI pushes event-type reporting, then the shell dies before it
-      // can pop (server restart). The query is stripped; the push survives.
-      process.emitData("prompt % codex\n\u001b[>7u\u001b[?u");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      expect(ptyAdapter.spawnInputs).toHaveLength(2);
-      assert.equal(reopened.history, "prompt % codex\n\u001b[>7u\u001b[=0;1u");
-    }),
-  );
-
-  it.effect("resets mouse and focus modes a dead process left in inherited history", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // Claude Code tracks mouse motion and focus; replaying that into a fresh
-      // shell would make the client send reports the shell echoes as junk.
-      process.emitData("prompt % claude\n\u001b[?1004h\u001b[?1003;1006h");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(
-        reopened.history,
-        "prompt % claude\n\u001b[?1004h\u001b[?1003;1006h\u001b[?1004l\u001b[?1003l\u001b[?1006l",
+      const fs = yield* FileSystem.FileSystem;
+      const wasm = yield* fs.readFile(
+        NodeURL.fileURLToPath(
+          new URL("../../../web/src/terminal/ghostty/vendor/ghostty-vt.wasm", import.meta.url),
+        ),
       );
-    }),
-  );
-
-  it.effect("resets keypad and key encoding modes a dead process left in inherited history", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // terminfo smkx sends DECKPAM as a plain escape, not a CSI mode, and the
-      // key encoder reads modes 66, 67, and 1036 when the client syncs it.
-      process.emitData("prompt % vim\n\u001b[?1h\u001b=\u001b[?67h\u001b[?1036l");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(
-        reopened.history,
-        "prompt % vim\n\u001b[?1h\u001b=\u001b[?67h\u001b[?1036l\u001b[?1l\u001b[?66l\u001b[?67l\u001b[?1036h",
+      const { instance } = yield* Effect.promise(() =>
+        WebAssembly.instantiate(Uint8Array.from(wasm).buffer, { env: { log: () => {} } }),
       );
-    }),
-  );
-
-  it.effect("leaves the alternate screen before restoring the cursor in inherited history", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // DECSTR leaves every tracked mode alone in libghostty-vt, so it must not
-      // be mistaken for a reset.
-      process.emitData("prompt % nvim\n\u001b[?25l\u001b[?1049h\u001b[!p");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(
-        reopened.history,
-        "prompt % nvim\n\u001b[?25l\u001b[?1049h\u001b[!p\u001b[?1049l\u001b[?25h",
+      const memory = instance.exports.memory as { buffer: ArrayBuffer };
+      const call = (name: string, ...args: number[]) =>
+        (instance.exports[name] as (...args: number[]) => number)(...args);
+      const buffer = call("ghostty_wasm_alloc_u8_array", 16384);
+      new Uint8Array(memory.buffer, buffer, 16384).fill(0);
+      const view = () => new DataView(memory.buffer);
+      view().setUint16(buffer, 100, true);
+      view().setUint16(buffer + 2, 24, true);
+      view().setUint32(buffer + 4, 100, true);
+      expect(call("ghostty_terminal_new", 0, buffer + 8, buffer)).toBe(0);
+      const terminal = view().getUint32(buffer + 8, true);
+      expect(call("ghostty_key_encoder_new", 0, buffer + 12)).toBe(0);
+      expect(call("ghostty_key_event_new", 0, buffer + 16)).toBe(0);
+      const encoder = view().getUint32(buffer + 12, true);
+      const key = view().getUint32(buffer + 16, true);
+      call("ghostty_key_event_set_action", key, 0);
+      call("ghostty_key_event_set_key", key, 22); // GhosttyKey C in the vendored ABI.
+      call("ghostty_key_event_set_unshifted_codepoint", key, 99);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          call("ghostty_key_event_free", key);
+          call("ghostty_key_encoder_free", encoder);
+          call("ghostty_terminal_free", terminal);
+          call("ghostty_wasm_free_u8_array", buffer, 16384);
+        }),
       );
-    }),
-  );
 
-  it.effect("leaves inherited history alone when its process restored the terminal", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
+      // Replay the actual server snapshot in the shipped emulator, not a second mode parser.
+      const replay = (history: string) => {
+        call("ghostty_terminal_reset", terminal);
+        const bytes = new TextEncoder().encode(history);
+        expect(bytes.length).toBeLessThan(16256);
+        new Uint8Array(memory.buffer, buffer + 128, bytes.length).set(bytes);
+        call("ghostty_terminal_vt_write", terminal, buffer + 128, bytes.length);
+        const get = (name: string, field: number) => {
+          view().setUint32(buffer + 20, 0, true);
+          expect(call(name, terminal, field, buffer + 20)).toBe(0);
+          return view().getUint32(buffer + 20, true);
+        };
+        const state = {
+          cursor: [get("ghostty_terminal_get", 3), get("ghostty_terminal_get", 4)],
+          screen: get("ghostty_terminal_get", 6),
+          visible: get("ghostty_terminal_get", 7),
+          kitty: get("ghostty_terminal_get", 8),
+          mouse: get("ghostty_terminal_get", 11),
+          modes: [1, 66, 67, 1004, 1006, 1035, 1036, 2004].map((mode) =>
+            get("ghostty_terminal_mode_get", mode),
+          ),
+        };
+        call("ghostty_key_encoder_setopt_from_terminal", encoder, terminal);
+        expect(
+          call("ghostty_key_encoder_encode", encoder, key, buffer + 128, 16256, buffer + 80),
+        ).toBe(0);
+        const release = new TextDecoder().decode(
+          new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
+        );
+        view().setUint32(buffer + 32, 32, true);
+        expect(call("ghostty_terminal_select_all", terminal, buffer + 32)).toBe(0);
+        expect(call("ghostty_terminal_set", terminal, 21, buffer + 32)).toBe(0);
+        view().setUint32(buffer + 64, 16, true);
+        view().setUint8(buffer + 72, 1);
+        view().setUint8(buffer + 73, 1);
+        expect(
+          call(
+            "ghostty_terminal_selection_format_buf",
+            terminal,
+            buffer + 64,
+            buffer + 128,
+            16256,
+            buffer + 80,
+          ),
+        ).toBe(0);
+        const text = new TextDecoder().decode(
+          new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
+        );
+        return { ...state, release, text };
+      };
 
-      // A clean exit pops its flags and resets its modes; a later RIS wipes
-      // everything before it, including a dangling alternate screen.
-      process.emitData("\u001b[>7u\u001b[?1003h\u001b[<u\u001b[?1003l");
-      process.emitData("\u001b[?1049h\u001b[=1;1u\u001bc");
-      process.emitData("prompt % ");
+      const { manager, ptyAdapter, logsDir } = yield* createManager(100);
+      const logPath = yield* historyLogPath(logsDir);
+      const text = `${Array.from({ length: 30 }, (_, i) => `history ${i}\r\n`).join("")}prompt % `;
+      const dirty = `${text}\u001b[>7u\u001b[?1049h\u001b[>7u\u001b[?25l\u001b[?1;66;67;1003;1004;1006;2004h\u001b[?1035;1036ldead app`;
+      const clean = replay(text);
+      expect(clean).toMatchObject({ screen: 0, visible: 1, kitty: 0, mouse: 0, release: "" });
+      expect(clean.text).toContain("history 0");
+      expect(replay(dirty)).toMatchObject({ screen: 1, visible: 0, kitty: 7, mouse: 1 });
+      expect(replay(dirty).release).not.toBe("");
+      yield* fs.writeFileString(logPath, dirty);
 
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(
-        reopened.history,
-        "\u001b[>7u\u001b[?1003h\u001b[<u\u001b[?1003l\u001b[?1049h\u001b[=1;1u\u001bcprompt % ",
+      const events: TerminalAttachStreamEvent[] = [];
+      const outputReceived = yield* Deferred.make<void>();
+      const unsubscribe = yield* manager.attachStream(openInput(), (event) =>
+        Effect.gen(function* () {
+          events.push(event);
+          if (event.type === "output") yield* Deferred.succeed(outputReceived, undefined);
+        }),
       );
-    }),
-  );
-
-  it.effect("keeps Kitty keyboard stacks per screen while neutralizing inherited history", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // A push on the main screen survives an alternate-screen round trip even
-      // when the app pops while on the alternate screen (libghostty keeps one
-      // stack per screen), so the main screen still needs its reset.
-      process.emitData("\u001b[>7u\u001b[?1049h\u001b[<u\u001b[?1049l");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "\u001b[>7u\u001b[?1049h\u001b[<u\u001b[?1049l\u001b[=0;1u");
-    }),
-  );
-
-  it.effect("leaves the alternate screen without resetting Kitty flags pushed only there", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // Dying inside the alternate screen with flags pushed there: leaving the
-      // screen makes the untouched main stack active, so no Kitty reset is due.
-      process.emitData("\u001b[?1049h\u001b[>7u");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "\u001b[?1049h\u001b[>7u\u001b[?1049l");
-    }),
-  );
-
-  it.effect("applies Kitty set modes when tracking inherited flags", () =>
-    Effect.gen(function* () {
-      // Mode 3 clears only the named bits, so clearing none leaves 7 active.
-      const clearNone = yield* createManager();
-      yield* clearNone.manager.open(openInput());
-      clearNone.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=0;3u");
-      yield* clearNone.manager.close({ threadId: "thread-1" });
-      const afterClearNone = yield* clearNone.manager.open(openInput());
-      assert.equal(afterClearNone.history, "\u001b[>7u\u001b[=0;3u\u001b[=0;1u");
-
-      // Clearing every bit set by the push needs no reset; OR-ing bits in does.
-      const clearAll = yield* createManager();
-      yield* clearAll.manager.open(openInput());
-      clearAll.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=7;3u\u001b[=2;2u");
-      yield* clearAll.manager.close({ threadId: "thread-1" });
-      const afterOr = yield* clearAll.manager.open(openInput());
-      assert.equal(afterOr.history, "\u001b[>7u\u001b[=7;3u\u001b[=2;2u\u001b[=0;1u");
-
-      const cleared = yield* createManager();
-      yield* cleared.manager.open(openInput());
-      cleared.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=7;3u");
-      yield* cleared.manager.close({ threadId: "thread-1" });
-      const afterCleared = yield* cleared.manager.open(openInput());
-      assert.equal(afterCleared.history, "\u001b[>7u\u001b[=7;3u");
-
-      // libghostty-vt ignores set modes other than 1, 2, and 3, so the flags stay.
-      const unsupported = yield* createManager();
-      yield* unsupported.manager.open(openInput());
-      unsupported.ptyAdapter.processes[0]!.emitData("\u001b[>7u\u001b[=0;4u");
-      yield* unsupported.manager.close({ threadId: "thread-1" });
-      const afterUnsupported = yield* unsupported.manager.open(openInput());
-      assert.equal(afterUnsupported.history, "\u001b[>7u\u001b[=0;4u\u001b[=0;1u");
-    }),
-  );
-
-  it.effect("ignores the 8-bit CSI byte like the client's replay parser does", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // A U+009B introducer is not a sequence to libghostty-vt, so a "clear"
-      // written that way never happened and the push still needs its reset.
-      process.emitData("\u001b[>7u\u009b=0;1u");
-
-      yield* manager.close({ threadId: "thread-1" });
-
-      const reopened = yield* manager.open(openInput());
-      assert.equal(reopened.history, "\u001b[>7u\u009b=0;1u\u001b[=0;1u");
-    }),
-  );
-
-  it.effect("neutralizes inherited history once across repeated restarts", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open(openInput());
-      const process = ptyAdapter.processes[0];
-      expect(process).toBeDefined();
-      if (!process) return;
-
-      // Two pushes with one pop, as a TUI that spawned a child and then died leaves.
-      process.emitData("\u001b[>1u\u001b[>7u\u001b[<u\u001b[?1004h");
-
-      yield* manager.close({ threadId: "thread-1" });
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       const first = yield* manager.open(openInput());
-      yield* manager.close({ threadId: "thread-1" });
-      const second = yield* manager.open(openInput());
+      expect(replay(first.history)).toEqual(clean);
+      expect(events[0]).toMatchObject({ type: "snapshot", snapshot: { history: first.history } });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
 
-      assert.equal(
-        first.history,
-        "\u001b[>1u\u001b[>7u\u001b[<u\u001b[?1004h\u001b[?1004l\u001b[=0;1u",
-      );
-      assert.equal(second.history, first.history);
+      const freshOutput = "fresh shell\u001b[>7u\u001b[?1003;1004h";
+      ptyAdapter.processes[0]!.emitData(freshOutput);
+      yield* Deferred.await(outputReceived);
+      const active = yield* manager.open(openInput());
+      expect(active.history).toBe(first.history + freshOutput);
+      expect(replay(active.history)).toMatchObject({ kitty: 7, mouse: 1 });
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(events[1]).toMatchObject({ type: "output", data: freshOutput });
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* fs.readFileString(logPath)).toBe(active.history);
+
+      const restarted = yield* TerminalManager.makeWithOptions({
+        logsDir,
+        historyLineLimit: 100,
+        ptyAdapter,
+        processKillGraceMs: 1,
+      });
+      const second = yield* restarted.open(openInput());
+      expect(replay(second.history)).toEqual(replay(text + "fresh shell"));
+      yield* restarted.close({ threadId: "thread-1" });
+      expect(yield* fs.readFileString(logPath)).toBe(second.history);
+      const third = yield* restarted.open(openInput());
+      expect(replay(third.history)).toEqual(replay(text + "fresh shell"));
+      expect(ptyAdapter.spawnInputs).toHaveLength(3);
     }),
   );
 
