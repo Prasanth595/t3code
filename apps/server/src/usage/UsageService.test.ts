@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   UsageDay,
+  USAGE_CONTRACT_VERSION,
   type UsageSource,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
@@ -92,6 +93,38 @@ const setup = Effect.gen(function* () {
       },
     },
   };
+});
+
+const setupArchivedCodex = Effect.gen(function* () {
+  const fixture = yield* setup;
+  const codexHome = NodePath.join(fixture.home, "codex");
+  const sessions = NodePath.join(codexHome, "sessions");
+  const archived = NodePath.join(codexHome, "archived_sessions");
+  const copied = NodePath.join(sessions, "copied.jsonl");
+  const rollout = (sessionId: string, outputTokens: number) =>
+    [
+      { type: "session_meta", payload: { id: sessionId } },
+      { type: "turn_context", payload: { model: "gpt-6-astra" } },
+      {
+        type: "event_msg",
+        timestamp: "2026-08-01T10:00:00Z",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: 0, output_tokens: outputTokens } },
+        },
+      },
+    ]
+      .map((line) => encodeUnknownJsonString(line))
+      .join("\n") + "\n";
+  yield* Effect.promise(async () => {
+    await NodeFSP.mkdir(sessions, { recursive: true });
+    await NodeFSP.mkdir(archived, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(sessions, "live.jsonl"), rollout("live", 10));
+    await NodeFSP.writeFile(NodePath.join(archived, "old.jsonl"), rollout("old", 20));
+    await NodeFSP.writeFile(copied, rollout("copy", 40));
+    await NodeFSP.copyFile(copied, NodePath.join(archived, "copied.jsonl"));
+  });
+  return { ...fixture, codexHome, archived, copied };
 });
 
 const layerCursorUsageAccounts = <E, R>(
@@ -1347,7 +1380,7 @@ describe("UsageService", () => {
         assert.strictEqual(
           summary.sources.find((source) => source.fingerprint.provider === "codex")?.fingerprint
             .resolvedHomePath,
-          NodePath.join(home, "inherited-codex", "sessions"),
+          NodePath.join(home, "inherited-codex"),
         );
         assert.strictEqual(
           summary.sources.find((source) => source.fingerprint.provider === "grok")?.fingerprint
@@ -1500,6 +1533,174 @@ describe("UsageService", () => {
           ),
         );
       }).pipe(Effect.scoped),
+  );
+
+  it.live("counts archived Codex rollouts once, including one copied to both directories", () =>
+    Effect.gen(function* () {
+      const { home, settings } = yield* setupArchivedCodex;
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        assert.strictEqual(totalOutputTokens(summary), 70);
+      }).pipe(Effect.provide(layerService({ prefix: "usage-codex-archived", home, settings })));
+    }).pipe(Effect.scoped),
+  );
+
+  it.live("merges complete Codex usage over a newer partial cache after archiving a rollout", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-08-02T12:00:00Z"));
+      const { home, settings, codexHome, archived, copied } = yield* setupArchivedCodex;
+      yield* Effect.gen(function* () {
+        const cached = yield* UsageService.make;
+        const before = yield* cached.readSummary(WINDOW);
+        yield* cached.awaitPersisted;
+        yield* Effect.promise(() => NodeFSP.unlink(copied));
+
+        const complete = yield* Effect.gen(function* () {
+          const cold = yield* UsageService.make;
+          const summary = yield* cold.readSummary(WINDOW);
+          yield* cold.awaitPersisted;
+          return summary;
+        }).pipe(Effect.provide(layerService({ prefix: "usage-codex-cold", home, settings })));
+
+        yield* Effect.promise(async () => {
+          await NodeFSP.rm(archived, { recursive: true });
+          await NodeFSP.writeFile(archived, "not a directory");
+        });
+        yield* TestClock.adjust(Duration.seconds(1));
+        const partial = yield* cached.readSummary(WINDOW);
+        const merged = mergeUsage(
+          [
+            {
+              environmentId: EnvironmentId.make("partial"),
+              label: "newer cached scan",
+              summary: partial,
+            },
+            {
+              environmentId: EnvironmentId.make("complete"),
+              label: "older complete scan",
+              summary: complete,
+            },
+          ],
+          USAGE_CONTRACT_VERSION,
+        );
+        assert.strictEqual(merged.outputTokens, 70);
+        assert.strictEqual(merged.sessions, 3);
+        assert.deepStrictEqual(merged.contributingEnvironments, [EnvironmentId.make("complete")]);
+        assert.deepStrictEqual(merged.contractMismatches, []);
+        assert.strictEqual(totalOutputTokens(complete), 70);
+        assert.strictEqual(totalOutputTokens(partial), 70);
+        assert.isAbove(Date.parse(partial.readAt), Date.parse(complete.readAt));
+
+        const sources = before.sources.filter((source) => source.fingerprint.provider === "codex");
+        assert.strictEqual(sources.length, 1);
+        const fingerprint = sources[0]!.fingerprint;
+        assert.strictEqual(fingerprint.resolvedHomePath, codexHome);
+        for (const [summary, status] of [
+          [complete, "ok"],
+          [partial, "partial"],
+        ] as const) {
+          assert.deepStrictEqual(
+            summary.sources
+              .filter((source) => source.fingerprint.provider === "codex")
+              .map((source) => ({ fingerprint: source.fingerprint, status: source.status })),
+            [{ fingerprint, status }],
+          );
+          assert.deepStrictEqual(
+            [...new Set(summary.buckets.map((bucket) => bucket.sourcePath))],
+            [codexHome],
+          );
+        }
+      }).pipe(Effect.provide(layerService({ prefix: "usage-codex-cached", home, settings })));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.live("merges a v6 Codex cache once after its configured home symlink is removed", () =>
+    Effect.gen(function* () {
+      const { home, settings, codexHome, archived } = yield* setupArchivedCodex;
+      const alias = NodePath.join(home, "codex-alias");
+      yield* Effect.promise(async () => {
+        await NodeFSP.rm(archived, { recursive: true });
+        await NodeFSP.symlink(codexHome, alias, "junction");
+      });
+
+      const retained = yield* Effect.gen(function* () {
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const cachePath = NodePath.join(stateDir, "usage-scan-cache-v5.json");
+        const first = yield* UsageService.make;
+        yield* first.readSummary(WINDOW);
+        yield* first.awaitPersisted;
+
+        yield* Effect.promise(async () => {
+          const document = decodeUnknownJsonString(
+            await NodeFSP.readFile(cachePath, "utf8"),
+          ) as Record<string, unknown>;
+          const sessions = await NodeFSP.realpath(NodePath.join(alias, "sessions"));
+          const stats = await NodeFSP.stat(sessions);
+          // v6 used the same file format, but saved only the sessions root, not the Codex home.
+          await NodeFSP.writeFile(
+            cachePath,
+            encodeUnknownJsonString({
+              ...document,
+              sources: {
+                ["codex\0" + NodePath.join(alias, "sessions")]: {
+                  dir: sessions,
+                  volumeId: `${stats.dev}:${stats.ino}`,
+                },
+              },
+            }),
+          );
+          await NodeFSP.unlink(alias);
+        });
+
+        return yield* (yield* UsageService.make).readSummary(WINDOW);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-codex-v6-alias",
+            home,
+            settings: {
+              providerInstances: {
+                ...settings.providerInstances,
+                [ProviderInstanceId.make("codex")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: alias },
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const canonical = yield* Effect.gen(function* () {
+        return yield* (yield* UsageService.make).readSummary(WINDOW);
+      }).pipe(Effect.provide(layerService({ prefix: "usage-codex-canonical", home, settings })));
+      assert.strictEqual(totalOutputTokens(retained), 50);
+      assert.strictEqual(totalOutputTokens(canonical), 50);
+      const canonicalSource = canonical.sources.find(
+        (entry) => entry.fingerprint.provider === "codex",
+      )!;
+      assert.isNotEmpty(canonicalSource.fingerprint.volumeId);
+      const merged = mergeUsage(
+        [
+          { environmentId: EnvironmentId.make("retained"), label: "retained", summary: retained },
+          {
+            environmentId: EnvironmentId.make("canonical"),
+            label: "canonical",
+            summary: canonical,
+          },
+        ],
+        USAGE_CONTRACT_VERSION,
+      );
+      assert.deepStrictEqual(
+        {
+          outputTokens: merged.outputTokens,
+          sessions: merged.sessions,
+          fingerprint: retained.sources.find((entry) => entry.fingerprint.provider === "codex")
+            ?.fingerprint,
+        },
+        { outputTokens: 50, sessions: 2, fingerprint: canonicalSource.fingerprint },
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.live(
