@@ -2595,6 +2595,20 @@ function useChatMarkdownState({
     ) {
       return null;
     }
+    if (lookupPath.includes("/")) {
+      // Literal files can be unindexed and must not wait for a cold workspace index.
+      const literal = await getFilesystemMetadata({
+        environmentId,
+        input: { paths: [resolvePathLinkTarget(lookupPath, cwd)] },
+      });
+      if (
+        literal._tag !== "Success" ||
+        literal.value.entries[0]?.kind === "file" ||
+        !readEnvironmentScope(environmentId, AuthFilesystemReadScope)
+      ) {
+        return null;
+      }
+    }
     const result = await searchProjectEntries({
       environmentId,
       input: {
@@ -2604,18 +2618,9 @@ function useChatMarkdownState({
         kind: "file",
       },
     });
-    if (result._tag !== "Success") return null;
-    const match = pickWorkspaceBasenameMatch(lookupPath, result.value.entries);
-    if (match && match.replaceAll("\\", "/") !== lookupPath && lookupPath.includes("/")) {
-      if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return null;
-      // Gitignored literal files need a metadata check before an indexed hit can replace them.
-      const literal = await getFilesystemMetadata({
-        environmentId,
-        input: { paths: [resolvePathLinkTarget(lookupPath, cwd)] },
-      });
-      if (literal._tag !== "Success" || literal.value.entries[0]?.kind === "file") return null;
-    }
-    return match;
+    return result._tag === "Success"
+      ? pickWorkspaceBasenameMatch(lookupPath, result.value.entries)
+      : null;
   };
   const fileActionScope = threadRef ? scopedThreadKey(threadRef) : undefined;
   const openFileInPanel = (panelPath: string, line: number | undefined) => {

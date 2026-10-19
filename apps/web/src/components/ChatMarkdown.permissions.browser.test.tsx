@@ -401,7 +401,7 @@ it.each([
 );
 
 it("opens a real literal file without waiting for the workspace index", async () => {
-  state.search.mockReturnValue(Promise.withResolvers<ReturnType<typeof searchResult>>().promise);
+  state.search.mockReturnValue(new Promise<ReturnType<typeof searchResult>>(() => undefined));
   state.metadata.mockResolvedValue(AsyncResult.success({ entries: [{ kind: "file" }] }));
   await renderMarkdown(fileChip);
   await activateFile("panel");
