@@ -406,6 +406,7 @@ it("captures the native display viewport after page script reassigns the globals
       width: 1280,
       height: 800,
       zoom: 1,
+      offset: { x: 0, y: 0 },
     });
     const { windowId } = await cdp.send("Browser.getWindowForTarget");
     await cdp.send("Browser.setWindowBounds", {

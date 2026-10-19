@@ -1866,7 +1866,7 @@ it.live.each([
     clipY: undefined,
   },
   {
-    name: "desktop zoomed and scrolled",
+    name: "desktop zoom changes during a scrolled snapshot",
     desktop: true,
     page: { ratio: 3, width: 640, height: 400, zoom: 2 },
     scrollY: 100,
@@ -1878,7 +1878,7 @@ it.live.each([
     desktop: false,
     page: { ratio: 2, width: 1280, height: 800, zoom: 1 },
     scrollY: 0,
-    size: { width: 1280, height: 800 },
+    size: { width: 640, height: 400 },
     clipY: 0,
   },
 ])("snapshot captures the page's own viewport: $name", ({ desktop, page, scrollY, size, clipY }) =>
@@ -1888,7 +1888,8 @@ it.live.each([
       const { browser, broker, tabId } = yield* ready;
       yield* browser.attachViewer(viewerInput(tabId, false));
       const context = desktop ? desktopConnections[0]!.context : contexts[0]!;
-      const display = page.ratio / page.zoom;
+      const display = desktop ? page.ratio / page.zoom : 1;
+      let zoom = 1;
       const clips: Array<{ y: number } | undefined> = [];
       let metricsReads = 0;
       for (const session of context.sessions) {
@@ -1899,10 +1900,17 @@ it.live.each([
             String((input as { expression?: string })?.expression).includes("devicePixelRatio")
           ) {
             metricsReads += 1;
-            return { result: { value: page } };
+            const value = {
+              ratio: page.ratio * (zoom / page.zoom),
+              width: page.width * (page.zoom / zoom),
+              height: page.height * (page.zoom / zoom),
+            };
+            // Desktop zoom applies after this renderer read, before the next layout reply.
+            zoom = page.zoom;
+            return { result: { value } };
           }
           if (method === "Page.getLayoutMetrics") {
-            return { cssVisualViewport: { pageX: 0, pageY: scrollY, zoom: page.zoom } };
+            return { cssVisualViewport: { pageX: 0, pageY: scrollY, zoom } };
           }
           if (method === "Page.captureScreenshot") {
             const clip = (
@@ -1934,7 +1942,7 @@ it.live.each([
       expect(result.screenshot).toMatchObject(size);
       expect({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) }).toEqual(size);
       expect(clips.map((clip) => clip?.y)).toEqual([clipY]);
-      expect(metricsReads).toBe(desktop ? 1 : 0);
+      if (!desktop) expect(metricsReads).toBe(0);
     }),
   ).pipe(Effect.provide(layer)),
 );
