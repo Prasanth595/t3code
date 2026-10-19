@@ -55,12 +55,14 @@ import {
   ProviderInstanceId,
   ProviderInteractionMode,
   resolveProviderInstanceEnabled,
+  resolveProjectProviderInstanceEnabled,
   type ProviderSessionId,
   RunId,
   RuntimeMode,
   ThreadLinkedPullRequest,
   ThreadId,
   type TurnItemId,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import {
@@ -145,6 +147,10 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+
+const isMessageQuestionAnswer = Schema.is(
+  Schema.Union([TrimmedNonEmptyString, Schema.NonEmptyArray(TrimmedNonEmptyString)]),
+);
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -7471,6 +7477,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      const approvalTurnItem = context.item;
+      const resolvedNodeStatus =
+        command.decision === "decline" || command.decision === "cancel"
+          ? ("cancelled" as const)
+          : ("completed" as const);
+      const replies: string[] = [];
+      if (
+        runtimeRequest.responseCapability.type === "message" &&
+        resolvedNodeStatus !== "cancelled"
+      ) {
+        if (approvalTurnItem?.type !== "user_input_request") {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The question for this request was not found.",
+          });
+        }
+        const thread = yield* projectionStore
+          .getThread(command.threadId)
+          .pipe(mapDispatchError(command));
+        const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+        if (
+          !resolveProjectProviderInstanceEnabled(
+            settings,
+            thread.projectId,
+            thread.providerInstanceId,
+          )
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The provider for this project is disabled.",
+          });
+        }
+        for (const question of approvalTurnItem.questions) {
+          const answer = command.answers?.[question.id];
+          if (answer === undefined && question.required === false) continue;
+          if (!isMessageQuestionAnswer(answer)) {
+            return yield* new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause: "Answer each question before sending.",
+            });
+          }
+          const text = typeof answer === "string" ? answer : answer.join(", ");
+          replies.push(`${question.question}\n${text.trim()}`);
+        }
+        if (replies.length === 0) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Enter an answer before sending.",
+          });
+        }
+      }
+
       const now = yield* DateTime.now;
       const resolvedRequest = {
         ...runtimeRequest,
@@ -7481,10 +7543,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       };
       const emitEvent = emit(events, command);
       const requestNode = context.node;
-      const resolvedNodeStatus =
-        command.decision === "decline" || command.decision === "cancel"
-          ? ("cancelled" as const)
-          : ("completed" as const);
       yield* emitEvent({
         type: "runtime-request.updated",
         threadId: command.threadId,
@@ -7520,7 +7578,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      const approvalTurnItem = context.item;
       if (approvalTurnItem !== undefined) {
         yield* emitEvent({
           type: "turn-item.updated",
@@ -7559,37 +7616,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       if (runtimeRequest.responseCapability.type === "message") {
         if (resolvedNodeStatus === "cancelled") return;
-        if (approvalTurnItem?.type !== "user_input_request") {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "The question for this request was not found.",
-          });
-        }
-        const replies: string[] = [];
-        for (const question of approvalTurnItem.questions) {
-          const rawAnswer = command.answers?.[question.id];
-          // Multi-select questions answer with every selected option.
-          const answer = Array.isArray(rawAnswer)
-            ? rawAnswer.filter((value) => typeof value === "string").join(", ")
-            : rawAnswer;
-          if (typeof answer !== "string" || answer.trim().length === 0) {
-            if (question.required === false) continue;
-            return yield* new OrchestratorDispatchError({
-              commandId: command.commandId,
-              commandType: command.type,
-              cause: "Answer each question before sending.",
-            });
-          }
-          replies.push(`${question.question}\n${answer.trim()}`);
-        }
-        if (replies.length === 0) {
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Enter an answer before sending.",
-          });
-        }
         let dispatchMode: Extract<
           OrchestrationV2Command,
           { type: "message.dispatch" }
@@ -7635,7 +7661,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode,
         };
         yield* dispatchMessage(answer, events, effects);
-        // An answer in a delegated child is a follow-up the parent waits on.
         return yield* recordSubagentFollowup(answer, events).pipe(mapDispatchError(answer));
       }
       if (providerSessionId === null) return;
@@ -11455,7 +11480,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandThreadId(command),
         dispatchWithReceiptEffect(command),
       );
-      // Answering a message-mode question also records a follow-up.
       if (
         command.type !== "runtime-request.respond" &&
         (command.type !== "message.dispatch" ||

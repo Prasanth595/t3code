@@ -650,7 +650,7 @@ export const layerWithOptions = (
                 request.responseCapability.type === "live" &&
                 request.responseCapability.providerSessionId === providerSessionId &&
                 DateTime.isLessThanOrEqualTo(request.createdAt, input.releasedAt) &&
-                // Restart recovery keeps questions answerable by message.
+                // Shutdown reconciliation decides which questions can survive the lost callback.
                 !(input.reason === "server_shutdown" && request.kind === "user_input"),
             );
 

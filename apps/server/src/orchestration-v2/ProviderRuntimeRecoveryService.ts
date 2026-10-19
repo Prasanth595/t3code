@@ -232,9 +232,8 @@ export const make = Effect.gen(function* () {
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      // A question outlives the provider process that asked it: its answer is
-      // sent as a user message instead of through the lost callback. That needs
-      // the question text, and a thread that accepts messages.
+      // The lost provider callback cannot resume; persisted questions can be
+      // answered by a new user message in threads that accept messages.
       const questions = pendingRequests.filter(
         (request) =>
           request.kind === "user_input" &&
@@ -243,20 +242,24 @@ export const make = Effect.gen(function* () {
             (item) =>
               item.type === "user_input_request" &&
               item.requestId === request.id &&
-              item.questions.length > 0,
+              item.nodeId === request.nodeId &&
+              item.questions.length > 0 &&
+              item.questions.every((question) => question.question.trim().length > 0),
           ) &&
           !isProviderNativeSubagentThread(projection.thread),
       );
+      const recoveredRequestIds = new Set(questions.map((request) => request.id));
       const messageRequestNodeIds = new Set(
         pendingRequests
           .filter(
             (request) =>
-              request.responseCapability.type === "message" || questions.includes(request),
+              request.responseCapability.type === "message" || recoveredRequestIds.has(request.id),
           )
           .map((request) => request.nodeId),
       );
       const requests = pendingRequests.filter(
-        (request) => request.responseCapability.type !== "message" && !questions.includes(request),
+        (request) =>
+          request.responseCapability.type !== "message" && !recoveredRequestIds.has(request.id),
       );
       // Delegated task rows, items and nodes stay open: the child settles them.
       const delegatedTaskNodeIds = new Set<string>([
