@@ -199,7 +199,7 @@ describe("cloud onboarding discovery", () => {
     expect(button()?.textContent).toBe("Add");
   });
 
-  it("keeps incompatible discoveries unselected until the user enables a compatible server", async () => {
+  it("blocks incompatible discoveries but keeps connected computers selected when health disagrees", async () => {
     const base = linkedMachines.get(newMachineId)!;
     const entry = (protocolVersion: number) => ({
       ...base,
@@ -223,14 +223,24 @@ describe("cloud onboarding discovery", () => {
     );
     const onSelectionChange = vi.fn();
     const autoSelectedComputers = new Set<EnvironmentId>();
-    function Setup() {
+    function Setup({ saved = false }: { saved?: boolean }) {
       const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId>>(
         new Set([newMachineId]),
       );
       return (
         <CloudEnvironmentConnectRows
           primaryEnvironmentId={null}
-          savedEnvironments={[]}
+          savedEnvironments={
+            saved
+              ? [
+                  {
+                    environmentId: newMachineId,
+                    connection: { phase: "connected", error: null, traceId: null },
+                    relayManaged: true,
+                  },
+                ]
+              : []
+          }
           showSavedEnvironments
           selection={{
             autoSelectedComputers,
@@ -266,6 +276,24 @@ describe("cloud onboarding discovery", () => {
     expect(checked()).toBe(false);
     expect(checkbox().hasAttribute("data-disabled")).toBe(false);
     await toggle();
+    expect(discovery.register).toHaveBeenCalledTimes(1);
+    await render(<Setup saved />);
+    expect(text()).toContain("Connected");
+    expect(checked()).toBe(true);
+
+    await act(async () =>
+      publish({
+        ...discovery.state!,
+        environments: new Map([[newMachineId, entry(ORCHESTRATION_PROTOCOL_VERSION + 1)]]),
+      }),
+    );
+    expect.soft(text()).toContain("Connected");
+    expect.soft(checked()).toBe(true);
+    expect.soft(checkbox().hasAttribute("data-disabled")).toBe(false);
+    await toggle();
+    expect(checked()).toBe(false);
+    await toggle();
+    expect(checked()).toBe(true);
     expect(discovery.register).toHaveBeenCalledTimes(1);
   });
 
