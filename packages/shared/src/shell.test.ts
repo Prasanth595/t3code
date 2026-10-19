@@ -136,18 +136,22 @@ describe("readPathFromLaunchctl", () => {
 describe("readEnvironmentFromLoginShell", () => {
   // Opt in with an explicit binary, like the provider live probes; CI need not install Nu.
   it.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
-    "captures configured Nushell PATH and multiline values past missing variables",
+    "captures Nushell PATH and multiline values without external tools",
     () => {
       const shell = process.env.T3_TEST_NU_PATH!;
       const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-nu-env-"));
       try {
+        const toolPath = NodePath.join(home, "nu tools", "bin");
+        const extraToolPath = NodePath.join(home, "extra-tools", "bin");
+        NodeFS.mkdirSync(toolPath, { recursive: true });
+        NodeFS.mkdirSync(extraToolPath, { recursive: true });
         const config = NodePath.join(home, "config.nu");
         const envConfig = NodePath.join(home, "env.nu");
         NodeFS.writeFileSync(envConfig, "");
         NodeFS.writeFileSync(
           config,
           [
-            '$env.PATH = ["/nu tools/bin", "/usr/bin", "/bin"]',
+            `$env.PATH = [${JSON.stringify(toolPath)}, ${JSON.stringify(extraToolPath)}]`,
             '$env.CUSTOM_VAR = "  first\\nsecond  "',
             '$env.EMPTY_VAR = ""',
             'print "startup noise"',
@@ -164,11 +168,11 @@ describe("readEnvironmentFromLoginShell", () => {
                 ["--no-history", "--config", config, "--env-config", envConfig, ...args],
                 {
                   ...options,
-                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: "/usr/bin:/bin" },
+                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: toolPath },
                 },
               ),
           ),
-        ).toEqual({ PATH: "/nu tools/bin:/usr/bin:/bin", CUSTOM_VAR: "  first\nsecond  " });
+        ).toEqual({ PATH: `${toolPath}:${extraToolPath}`, CUSTOM_VAR: "  first\nsecond  " });
       } finally {
         NodeFS.rmSync(home, { recursive: true, force: true });
       }

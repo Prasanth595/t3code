@@ -128,26 +128,31 @@ function runShellEnvironment(input: {
 describe("DesktopShellEnvironment", () => {
   // Explicit opt-in keeps real shell coverage independent of globally installed tools.
   it.effect.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
-    "hydrates the desktop from Nushell despite missing variables and startup output",
+    "hydrates the desktop through a renamed Nushell symlink without external tools",
     () =>
       Effect.gen(function* () {
-        const shell = process.env.T3_TEST_NU_PATH!;
         const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-nu-"));
         try {
+          const toolPath = NodePath.join(home, "nu tools", "bin");
+          const extraToolPath = NodePath.join(home, "extra-tools", "bin");
+          NodeFS.mkdirSync(toolPath, { recursive: true });
+          NodeFS.mkdirSync(extraToolPath, { recursive: true });
+          const shell = NodePath.join(toolPath, "nushell");
+          NodeFS.symlinkSync(process.env.T3_TEST_NU_PATH!, shell);
           const config = NodePath.join(home, "config.nu");
           const envConfig = NodePath.join(home, "env.nu");
           NodeFS.writeFileSync(envConfig, "");
           NodeFS.writeFileSync(
             config,
             [
-              '$env.PATH = ["/nu tools/bin", "/usr/bin", "/bin"]',
+              `$env.PATH = [${JSON.stringify(toolPath)}, ${JSON.stringify(extraToolPath)}]`,
               '$env.SSH_AUTH_SOCK = "/tmp/nu-agent.sock"',
               '$env.__MISE_DIFF = "  first\\nsecond  "',
               '$env.HOMEBREW_PREFIX = ""',
               'print "startup noise"',
             ].join("\n"),
           );
-          const env: NodeJS.ProcessEnv = { SHELL: shell, PATH: "/inherited/bin:/usr/bin" };
+          const env: NodeJS.ProcessEnv = { SHELL: shell, PATH: `/inherited/bin:${extraToolPath}` };
           yield* runShellEnvironment({
             env,
             platform: "linux",
@@ -159,7 +164,7 @@ describe("DesktopShellEnvironment", () => {
                 {
                   encoding: "utf8",
                   timeout: 5000,
-                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: "/usr/bin:/bin" },
+                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: toolPath },
                 },
               );
               if (result.error) throw result.error;
@@ -167,7 +172,7 @@ describe("DesktopShellEnvironment", () => {
             },
           });
 
-          assert.equal(env.PATH, "/nu tools/bin:/usr/bin:/bin:/inherited/bin");
+          assert.equal(env.PATH, `${toolPath}:${extraToolPath}:/inherited/bin`);
           assert.equal(env.SSH_AUTH_SOCK, "/tmp/nu-agent.sock");
           assert.equal(env.__MISE_DIFF, "  first\nsecond  ");
           assert.isUndefined(env.DISPLAY);
