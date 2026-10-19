@@ -3295,7 +3295,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorClampedFor.isLiteralPendingAnswer !== isLiteralPendingAnswer
   ) {
     setCursorClampedFor({ prompt, isLiteralPendingAnswer });
-    if (!isLiteralPendingAnswer) {
+    if (!isLiteralPendingAnswer && activePendingProgress === null) {
       setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
     }
   }
@@ -3355,7 +3355,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ])
       : null;
   const composerText = activePendingProgress?.customAnswer ?? prompt;
-  const lastSyncedPendingInputRef = useRef<string | null>(null);
+  const lastSyncedDraftKeyRef = useRef<string | null>(null);
   const draftCaretsRef = useRef<{
     message: { key: string; text: string; cursor: number } | null;
     answer: { key: string; text: string; cursor: number } | null;
@@ -3363,10 +3363,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   useEffect(() => {
     // During a switch, the cursor still belongs to the draft being left.
-    if (
-      lastSyncedPendingInputRef.current !== pendingAnswerKey ||
-      promptRef.current !== composerText
-    ) {
+    if (lastSyncedDraftKeyRef.current !== pendingAnswerKey || promptRef.current !== composerText) {
       return;
     }
     draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"] = {
@@ -3377,8 +3374,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [composerCursor, composerDraftTargetKey, composerText, pendingAnswerKey, promptRef]);
 
   useEffect(() => {
-    const draftChanged = lastSyncedPendingInputRef.current !== pendingAnswerKey;
-    lastSyncedPendingInputRef.current = pendingAnswerKey;
+    const draftChanged = lastSyncedDraftKeyRef.current !== pendingAnswerKey;
+    lastSyncedDraftKeyRef.current = pendingAnswerKey;
     if (!draftChanged && (pendingAnswerKey === null || promptRef.current === composerText)) {
       return;
     }
