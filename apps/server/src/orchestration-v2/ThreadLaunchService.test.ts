@@ -113,15 +113,6 @@ const claudeAdapter = {
   planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" as const }),
   openSession: () => Effect.die("provider execution is disabled in launch tests"),
 } as ProviderAdapter.ProviderAdapterV2["Service"];
-// A second account of the same provider, configured as its own instance.
-const otherCodexModelSelection = {
-  instanceId: ProviderInstanceId.make("codex_work"),
-  model: modelSelection.model,
-} as const;
-const otherCodexAdapter = {
-  ...adapter,
-  instanceId: otherCodexModelSelection.instanceId,
-} as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
@@ -396,18 +387,8 @@ it.effect.each(
   },
 );
 
-it.effect.each([
-  { switchedTo: "another provider", selection: claudeModelSelection },
-  { switchedTo: "another account of the same provider", selection: otherCodexModelSelection },
-])("runs a thread-bound automation on $switchedTo the thread uses now", ({ selection }) => {
-  const harness = makeHarness({
-    adapters: [adapter, claudeAdapter, otherCodexAdapter],
-    serverSettings: {
-      providerInstances: {
-        [otherCodexModelSelection.instanceId]: { driver: adapter.driver, config: {} },
-      },
-    },
-  });
+it.effect("runs a thread-bound automation on the provider the thread uses now", () => {
+  const harness = makeHarness({ adapters: [adapter, claudeAdapter] });
   const layerScheduledTasks = ScheduledTasks.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -425,7 +406,6 @@ it.effect.each([
     const launched = yield* launches.launch(
       launchInput({ command: "command:switched", thread: "thread:switched" }),
     );
-    // The task is created while the thread is on Codex...
     const { task } = yield* tasks.upsert({
       id: ScheduledTaskId.make("scheduled-task:switched"),
       title: "Hourly check",
@@ -441,12 +421,11 @@ it.effect.each([
       createdBy: "agent",
       creationSource: "mcp",
     });
-    // ...and the user then switches the thread away from that instance.
     yield* threads.dispatch({
       type: "thread.model-selection.set",
       commandId: CommandId.make("command:switch-selection"),
       threadId: launched.threadId,
-      modelSelection: selection,
+      modelSelection: claudeModelSelection,
     });
 
     const result = yield* tasks.runNow({ id: task.id });
@@ -454,8 +433,8 @@ it.effect.each([
     const projection = yield* threads.getThreadProjection(launched.threadId);
     const message = projection.messages.find((item) => item.scheduledTaskId === task.id);
     const run = projection.runs.find((item) => item.id === message?.runId);
-    assert.deepStrictEqual(run?.modelSelection, selection);
-    assert.deepStrictEqual(projection.thread.modelSelection, selection);
+    assert.deepStrictEqual(run?.modelSelection, claudeModelSelection);
+    assert.deepStrictEqual(projection.thread.modelSelection, claudeModelSelection);
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
 });
 

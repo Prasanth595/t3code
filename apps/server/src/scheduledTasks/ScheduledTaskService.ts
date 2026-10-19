@@ -761,8 +761,8 @@ export const layer = Layer.effect(
                 }),
               )
             : yield* Effect.exit(
-                // No modelSelection: the run follows the thread's current
-                // provider and model, not the one the task was created with.
+                // The stored selection only seeds fresh threads. A bound run
+                // follows the thread's current provider, so it passes none.
                 threadManagement.sendToThread({
                   projectId: active.projectId,
                   commandId,
