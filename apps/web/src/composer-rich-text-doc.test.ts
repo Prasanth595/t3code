@@ -4,7 +4,6 @@ import { TaskList } from "@tiptap/extension-task-list";
 import { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
 import { splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { Transform } from "@tiptap/pm/transform";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -536,13 +535,13 @@ describe("composer rich text document model", () => {
     it("keeps every offset mapped through the blank line", () => {
       const { doc, map } = serialize(quote("quoted"), paragraph("Comment"));
       for (let flat = 0; flat <= map.docLength; flat += 1) {
-        expect(collapsedToFlat(map, flatToCollapsed(map, flat))).toBe(flat);
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
       }
       // The caret on the end of the quote stays on it, and the blank line is
       // not a place to type: it clamps to the start of the comment.
-      expect(flatToCollapsed(map, "quoted".length)).toBe("> quoted".length);
-      expect(collapsedToFlat(map, "> quoted\n".length)).toBe("quoted".length + 1);
-      expect(flatToCollapsed(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
+      expect(flatToMarkdown(map, "quoted".length)).toBe("> quoted".length);
+      expect(markdownToFlat(map, "> quoted\n".length)).toBe("quoted".length + 1);
+      expect(flatToMarkdown(map, "quoted".length + 1)).toBe("> quoted\n\n".length);
       expect(flatToPm(map, "quoted".length + 1)).toBe(doc.child(0).nodeSize + 1);
     });
   });
@@ -930,65 +929,6 @@ describe("composer rich text document model", () => {
     expect(flatToMarkdown(map, 6)).toBe(10);
     expect(markdownToFlat(map, 3)).toBe(2);
     expect(markdownToFlat(map, 9)).toBe(6);
-  });
-
-  it("chips only the skills the provider has and leaves other $names as text", () => {
-    const value = "run $babysit then echo $HOME and $notaskill done";
-    const known = (name: string) =>
-      name === "babysit" ? { label: "Babysit", description: null } : null;
-    const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, known));
-    doc.check();
-    const map = serializeEditorDoc(doc);
-    expect(map.value).toBe(value);
-    expect(map.runs.filter((run) => run.kind === "token").map((run) => run.nodeName)).toEqual([
-      "composer-skill",
-    ]);
-    expect(doc.textContent).toBe("run  then echo $HOME and $notaskill done");
-    // A caret after `$HOME` sits after the same five characters in the document.
-    const afterHome = value.indexOf("$HOME") + "$HOME".length;
-    const flat = markdownToFlat(map, afterHome);
-    expect(doc.textBetween(flatToPm(map, flat) - 5, flatToPm(map, flat))).toBe("$HOME");
-    // Any offset inside the chip source lands after the chip.
-    expect(markdownToFlat(map, value.indexOf("$babysit") + 3)).toBe("run ".length + 1);
-  });
-
-  it("re-chips for a new skill list by replacing only the affected nodes", () => {
-    const value = "run $babysit then **echo $HOME now** and $deploy done";
-    const metaFor = (known: ReadonlyArray<string>) => (name: string) =>
-      known.includes(name) ? { label: name, description: null } : null;
-    const chipNames = (doc: ProseMirrorNode) => {
-      const names: string[] = [];
-      doc.descendants((node) => {
-        if (node.type.name === "composer-skill") names.push(node.attrs.skillName);
-      });
-      return names;
-    };
-    const reconcile = (doc: ProseMirrorNode, known: ReadonlyArray<string>) => {
-      const transform = new Transform(doc);
-      for (const { from, to, node } of skillChipReplacements(doc, metaFor(known))) {
-        transform.replaceWith(from, to, node);
-      }
-      transform.doc.check();
-      return transform.doc;
-    };
-
-    const codex = ProseMirrorNode.fromJSON(schema, buildDocJson(value, metaFor(["babysit"])));
-    expect(chipNames(codex)).toEqual(["babysit"]);
-    expect(skillChipReplacements(codex, metaFor(["babysit"]))).toEqual([]);
-
-    // The next provider has $deploy and $HOME but not $babysit.
-    const claude = reconcile(codex, ["deploy", "HOME"]);
-    expect(chipNames(claude)).toEqual(["HOME", "deploy"]);
-    expect(serializeEditorDoc(claude).value).toBe(value);
-    // The new chip keeps the formatting of the text it replaced.
-    const home = claude.nodeAt(
-      serializeEditorDoc(claude).runs.find((run) => run.kind === "token")!.pmPos,
-    )!;
-    expect(home.marks.map((mark) => mark.type.name)).toEqual(["bold"]);
-
-    const none = reconcile(claude, []);
-    expect(chipNames(none)).toEqual([]);
-    expect(serializeEditorDoc(none).value).toBe(value);
   });
 });
 
