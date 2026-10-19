@@ -15,7 +15,6 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
-  type OrchestrationV2RunStatus,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
@@ -28,8 +27,6 @@ import {
   deriveCanInterruptRunningThread,
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
-  countFilesChangedAfterTurnCount,
-  hasUnrecordedChangesAfterTurnCount,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   findLatestProposedPlan,
@@ -295,115 +292,6 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
-  });
-
-  it("counts only files in the scope the rewind targets", () => {
-    const checkpoint = (turnCount: number, scope: string, paths: string[]) => ({
-      scopeId: scope as never,
-      runId: RunId.make(`run-${scope}-${turnCount}`),
-      checkpointTurnCount: turnCount,
-      checkpointRef: `checkpoint-${scope}-${turnCount}` as never,
-      status: "ready" as const,
-      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
-      assistantMessageId: null,
-      completedAt: "2026-06-20T00:00:00.000Z",
-    });
-    const checkpoints = [
-      checkpoint(1, "root", ["a.ts"]),
-      checkpoint(2, "root", ["b.ts"]),
-      checkpoint(2, "other", ["x.ts", "y.ts"]),
-      checkpoint(3, "root", ["c.ts"]),
-    ];
-
-    expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(2);
-    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(3);
-  });
-
-  it("a rewind to before the first turn counts the latest first turn's scope", () => {
-    const checkpoint = (turnCount: number, scope: string, paths: string[]) => ({
-      scopeId: scope as never,
-      runId: RunId.make(`run-${scope}-${turnCount}`),
-      checkpointTurnCount: turnCount,
-      checkpointRef: `checkpoint-${scope}-${turnCount}` as never,
-      status: "ready" as const,
-      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
-      assistantMessageId: null,
-      completedAt: "2026-06-20T00:00:00.000Z",
-    });
-    // The rewind restores the latest baseline, so the older scope's turn 1 must not win.
-    const checkpoints = [
-      checkpoint(1, "old", ["a.ts"]),
-      checkpoint(1, "new", ["x.ts", "y.ts"]),
-      checkpoint(2, "new", ["z.ts"]),
-    ];
-
-    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(3);
-  });
-
-  it("counts each file changed after the rewind point once", () => {
-    const checkpoint = (
-      turnCount: number,
-      paths: string[],
-      status: "ready" | "stale" = "ready",
-    ) => ({
-      runId: RunId.make(`run-${turnCount}`),
-      checkpointTurnCount: turnCount,
-      checkpointRef: `checkpoint-${turnCount}` as never,
-      status,
-      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
-      assistantMessageId: null,
-      completedAt: "2026-06-20T00:00:00.000Z",
-    });
-    const checkpoints = [
-      checkpoint(1, ["a.ts"]),
-      checkpoint(2, ["b.ts", "c.ts"]),
-      checkpoint(3, ["c.ts", "d.ts"]),
-      // Discarded by an earlier rewind, so its files are already restored.
-      checkpoint(4, ["e.ts"], "stale"),
-    ];
-
-    expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(3);
-    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(4);
-    expect(countFilesChangedAfterTurnCount(checkpoints, 3)).toBe(0);
-  });
-
-  it("flags changes no checkpoint recorded after the rewind point", () => {
-    const checkpoint = (turnCount: number, status: "ready" | "missing" | "error" | "stale") => ({
-      runId: RunId.make(`run-${turnCount}`),
-      checkpointTurnCount: turnCount,
-      checkpointRef: `checkpoint-${turnCount}` as never,
-      status,
-      files: [],
-      assistantMessageId: null,
-      completedAt: "2026-06-20T00:00:00.000Z",
-    });
-    const startedAt = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
-    const run = (ordinal: number, status: OrchestrationV2RunStatus, started = true) => ({
-      id: RunId.make(`run-${ordinal}`),
-      ordinal,
-      status,
-      startedAt: started ? startedAt : null,
-    });
-    const ready = [checkpoint(1, "ready"), checkpoint(2, "ready")];
-    const unrecorded = (
-      checkpoints: ReadonlyArray<ReturnType<typeof checkpoint>>,
-      runs: ReadonlyArray<ReturnType<typeof run>>,
-      turnCount: number,
-    ) => hasUnrecordedChangesAfterTurnCount({ checkpoints, runs, turnCount });
-
-    expect(unrecorded(ready, [run(1, "completed"), run(2, "completed")], 0)).toBe(false);
-    // A failed run is never captured.
-    expect(unrecorded(ready, [run(3, "failed")], 1)).toBe(true);
-    // A stopped run whose capture has not landed yet.
-    expect(unrecorded(ready, [run(3, "interrupted")], 2)).toBe(true);
-    // Runs before the rewind point, discarded by an earlier rewind, or never started do not count.
-    expect(
-      unrecorded(ready, [run(1, "failed"), run(3, "rolled_back"), run(4, "cancelled", false)], 1),
-    ).toBe(false);
-    expect(unrecorded([...ready, checkpoint(3, "error")], [], 2)).toBe(true);
-    expect(unrecorded([...ready, checkpoint(3, "stale")], [], 2)).toBe(false);
-    // A failed capture from a run an earlier rewind discarded no longer matters.
-    expect(unrecorded([...ready, checkpoint(3, "error")], [run(3, "rolled_back")], 2)).toBe(false);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

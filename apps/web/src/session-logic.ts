@@ -1035,67 +1035,6 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-/**
- * Counts distinct files the agent changed in turns a rewind to `turnCount` would undo.
- * Only the scope of the rollback target counts, matched the way `revertThreadCheckpoint`
- * picks it; a rewind to before the first turn targets the latest first turn's scope. Stale
- * checkpoints belong to history an earlier rewind already discarded. File restore resets
- * the whole workspace, so a zero here does not mean restoring files is a no-op.
- */
-export function countFilesChangedAfterTurnCount(
-  checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
-  turnCount: number,
-): number {
-  const scopeId = (
-    checkpoints.findLast((checkpoint) => checkpoint.checkpointTurnCount === turnCount) ??
-    checkpoints.findLast((checkpoint) => checkpoint.checkpointTurnCount === turnCount + 1)
-  )?.scopeId;
-  const paths = new Set<string>();
-  for (const checkpoint of checkpoints) {
-    if (checkpoint.checkpointTurnCount <= turnCount || checkpoint.status === "stale") continue;
-    if (checkpoint.scopeId !== scopeId) continue;
-    for (const file of checkpoint.files) paths.add(file.path);
-  }
-  return paths.size;
-}
-
-/**
- * Whether the agent may have changed files after `turnCount` that no checkpoint recorded,
- * so `countFilesChangedAfterTurnCount` is a lower bound. A run that started but has no
- * checkpoint either failed (never captured) or is still being captured after Stop, and
- * missing or errored captures carry no file list.
- */
-export function hasUnrecordedChangesAfterTurnCount(input: {
-  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
-  readonly runs: ReadonlyArray<
-    Pick<OrchestrationV2ThreadProjection["runs"][number], "id" | "ordinal" | "status" | "startedAt">
-  >;
-  readonly turnCount: number;
-}): boolean {
-  const capturedTurnCounts = new Set(
-    input.checkpoints.map((checkpoint) => checkpoint.checkpointTurnCount),
-  );
-  // An earlier rewind discarded these runs, so their failed captures no longer matter.
-  const rolledBackRunIds = new Set(
-    input.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
-  );
-  return (
-    input.runs.some(
-      (run) =>
-        run.ordinal > input.turnCount &&
-        run.status !== "rolled_back" &&
-        run.startedAt !== null &&
-        !capturedTurnCounts.has(run.ordinal),
-    ) ||
-    input.checkpoints.some(
-      (checkpoint) =>
-        checkpoint.checkpointTurnCount > input.turnCount &&
-        !rolledBackRunIds.has(checkpoint.runId) &&
-        (checkpoint.status === "missing" || checkpoint.status === "error"),
-    )
-  );
-}
-
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (
