@@ -401,6 +401,7 @@ const awaitPersistedProvider = (
   );
 
 const layerTestNodeServices = Layer.mergeAll(
+  ProviderLatestVersions.layer,
   NodeServices.layer,
   Layer.mock(CodexInstallation.CodexInstallation)({
     managedDirectory: "unused-managed-installation",

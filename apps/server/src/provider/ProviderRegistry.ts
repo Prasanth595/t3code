@@ -21,6 +21,7 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
@@ -61,6 +62,10 @@ export class ProviderRegistry extends Context.Service<
      */
     readonly refreshInstance: (
       instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
+    readonly refreshAfterUpdate: (
+      provider: ProviderDriverKind,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refreshWorkspaceSnapshot: (input: {
@@ -357,6 +362,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const instanceRegistry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     const manifestService = yield* ModelManifest.ModelManifest;
+    const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const serviceScope = yield* Effect.scope;
     const config = yield* ServerConfig.ServerConfig;
     const fileSystem = yield* FileSystem.FileSystem;
@@ -685,6 +691,35 @@ export const layer = Layer.effect(
       return yield* refreshOneSource(providerSource);
     });
 
+    const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
+      provider: ProviderDriverKind,
+    ) {
+      yield* manifestService.forceRefresh;
+      const instances = (yield* instanceRegistry.listInstances).filter(
+        (instance) => instance.driverKind === provider && instance.enabled,
+      );
+      // Accounts can share an installation, but discovery must use each
+      // instance's own executable, environment, and credentials.
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          Effect.gen(function* () {
+            yield* instance.invalidateCaches ?? Effect.void;
+            const maintenance = yield* instance.snapshot.resolveMaintenance({ fresh: true });
+            if (maintenance.packageName) {
+              yield* latestVersions.invalidate(maintenance.packageName);
+            }
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* Effect.forEach(
+        instances,
+        (instance) => refreshOneSource(buildSnapshotSource(instance)),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
       "getProviderMaintenanceCapabilitiesForInstance",
     )(function* (
@@ -960,6 +995,7 @@ export const layer = Layer.effect(
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshAfterUpdate,
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
