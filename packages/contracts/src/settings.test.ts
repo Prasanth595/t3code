@@ -1086,6 +1086,15 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
   });
 });
 
+describe("ServerSettings.newProjectReadmeCredit", () => {
+  it("credits T3 Code by default and accepts opt-out patches", () => {
+    expect(decodeServerSettings({}).newProjectReadmeCredit).toBe(true);
+    expect(
+      decodeServerSettingsPatch({ newProjectReadmeCredit: false }).newProjectReadmeCredit,
+    ).toBe(false);
+  });
+});
+
 describe("resolveProjectProviderInstanceEnabled", () => {
   const projectId = "project-a" as ProjectId;
   const instanceId = ProviderInstanceId.make("codex_work");

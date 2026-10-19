@@ -22,6 +22,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -177,14 +178,13 @@ function namedProjectIconSvg(name: string): string {
   ].join("\n");
 }
 
-function namedProjectReadme(name: string): string {
+function namedProjectReadme(name: string, includeCredit: boolean): string {
   return [
     `<img src="assets/icon.svg" width="64" height="64" alt="">`,
     "",
     `# ${name}`,
     "",
-    "Created in [T3 Code](https://t3.codes).",
-    "",
+    ...(includeCredit ? ["Created in [T3 Code](https://t3.codes).", ""] : []),
   ].join("\n");
 }
 
@@ -216,6 +216,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const projects = yield* ProjectService.ProjectService;
   const crypto = yield* Crypto.Crypto;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
 
   /**
    * Each folder is created without `recursive`, so creating it is the claim: of
@@ -402,7 +403,15 @@ const make = Effect.gen(function* () {
       args: ["init", `--initial-branch=${branch}`],
       timeoutMs: 10_000,
     });
-    yield* fileSystem.writeFileString(path.join(cwd, "README.md"), namedProjectReadme(name));
+    // An unreadable settings file must not block creating the project.
+    const includeCredit = yield* serverSettings.getSettings.pipe(
+      Effect.map((settings) => settings.newProjectReadmeCredit),
+      Effect.orElseSucceed(() => true),
+    );
+    yield* fileSystem.writeFileString(
+      path.join(cwd, "README.md"),
+      namedProjectReadme(name, includeCredit),
+    );
     yield* fileSystem.makeDirectory(path.join(cwd, "assets"));
     yield* fileSystem.writeFileString(
       path.join(cwd, "assets", "icon.svg"),

@@ -394,6 +394,20 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
                     />
                   </SettingsSection>
+                  <SettingsSection title="New projects">
+                    <SettingsSwitchRow
+                      icon="doc.text"
+                      label="Credit T3 Code in READMEs"
+                      subtitle={
+                        projectSelected
+                          ? "Environment-wide setting. Select All projects to change it."
+                          : 'Add a "Created in T3 Code" line to the README of projects started from a name.'
+                      }
+                      value={uniform("newProjectReadmeCredit")}
+                      disabled={disabledFor("newProjectReadmeCredit")}
+                      onValueChange={(value) => write({ newProjectReadmeCredit: value })}
+                    />
+                  </SettingsSection>
                 </>
               ) : null}
 
