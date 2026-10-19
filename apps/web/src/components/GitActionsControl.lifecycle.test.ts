@@ -337,17 +337,20 @@ function preview(insertions = 13): ReviewDiffPreviewResult {
   };
 }
 
+function changesElement(workspaceMutationId: string | null = null) {
+  return createElement(GitActionsControl, {
+    ...props("changes", "/repo"),
+    displayMode: "panel",
+    onOpenChanges: () => {},
+    workspaceMutationId,
+  });
+}
+
 async function mountChanges() {
   const renderer = createRenderer();
   renderers.push(renderer);
   await act(async () => {
-    renderer.update(
-      createElement(GitActionsControl, {
-        ...props("changes", "/repo"),
-        displayMode: "panel",
-        onOpenChanges: () => {},
-      }),
-    );
+    renderer.update(changesElement());
   });
   return renderer;
 }
@@ -412,6 +415,9 @@ describe("Changes totals for the selected comparison", () => {
       await act(async () => {
         useDiffPanelStore.getState().selectBranchBaseRef(threadRef, null);
       });
+      await act(async () => {
+        renderer.update(changesElement("workspace-change"));
+      });
       expect(changesText(renderer)).toBe("Changes+20-10");
       expect(state.previewRequests).toHaveBeenCalledTimes(1);
     },
@@ -432,17 +438,24 @@ describe("Changes totals for the selected comparison", () => {
     expect(changesText(reopened)).toBe("Changes+14-6");
   });
 
-  it("eventually shows fresh counts when status changes during a pending preview", async () => {
-    const pending = pendingPreview();
-    state.previewRequests.mockReturnValueOnce(pending.promise).mockResolvedValue(preview(14));
-    useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "origin/release");
-    const renderer = await mountChanges();
-    await act(async () => {
-      registry.set(state.status!, AsyncResult.success(gitStatus(21)));
-    });
-    await act(async () => {
-      pending.resolve(preview());
-    });
-    expect(changesText(renderer)).toBe("Changes+14-6");
-  });
+  it.each(["status", "workspace mutation"])(
+    "eventually shows fresh counts when %s changes during a pending preview",
+    async (change) => {
+      const pending = pendingPreview();
+      state.previewRequests.mockReturnValueOnce(pending.promise).mockResolvedValue(preview(14));
+      useDiffPanelStore.getState().selectBranchBaseRef(threadRef, "origin/release");
+      const renderer = await mountChanges();
+      await act(async () => {
+        if (change === "status") {
+          registry.set(state.status!, AsyncResult.success(gitStatus(21)));
+        } else {
+          renderer.update(changesElement("workspace-change"));
+        }
+      });
+      await act(async () => {
+        pending.resolve(preview());
+      });
+      expect(changesText(renderer)).toBe("Changes+14-6");
+    },
+  );
 });

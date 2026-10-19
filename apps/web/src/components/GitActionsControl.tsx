@@ -135,6 +135,7 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
+  workspaceMutationId?: string | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -964,7 +965,8 @@ function ThreadChangesControl({
   activeThreadRef,
   gitStatus,
   onOpenChanges,
-}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef"> & {
+  workspaceMutationId = null,
+}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef" | "workspaceMutationId"> & {
   gitStatus: VcsStatusResult | null;
   onOpenChanges: GitActionsControlProps["onOpenChanges"];
 }) {
@@ -972,43 +974,43 @@ function ThreadChangesControl({
     selectThreadDiffPanelBaseRef(state, activeThreadRef),
   );
   const ignoreWhitespace = useClientSettings((settings) => settings.diffIgnoreWhitespace);
-  // Status totals use the automatic base; a base picked in the diff panel needs its preview.
   const useDiffPreview = baseRef !== null;
   const { canReadFiles } = useFilesystemReadAccess(
     useDiffPreview ? (activeThreadRef?.environmentId ?? null) : null,
   );
-  // Same atom and key as the diff panel, so with matching whitespace settings an open or
-  // recently closed panel's result is reused.
-  const changesDiffPreview = useEnvironmentQuery(
-    canReadFiles && useDiffPreview && activeThreadRef && gitCwd
+  const previewAtom =
+    canReadFiles && baseRef !== null && activeThreadRef && gitCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThreadRef.environmentId,
-          input: {
-            cwd: gitCwd,
-            ...(baseRef ? { baseRef } : {}),
-            ignoreWhitespace,
-          },
+          input: { cwd: gitCwd, baseRef, ignoreWhitespace },
         })
-      : null,
-  );
-  // The diff panel refreshes the preview on workspace changes only while it is mounted, so
-  // follow git status here. A preview already in flight covers the change.
-  const statusTotalsKey = gitStatus
-    ? JSON.stringify([
-        gitStatus.branchChanges ?? null,
-        gitStatus.workingTree.insertions,
-        gitStatus.workingTree.deletions,
-        gitStatus.workingTree.files.length,
-      ])
-    : null;
-  const lastStatusTotalsKeyRef = useRef(statusTotalsKey);
-  const refreshChangesDiffPreview = changesDiffPreview.refresh;
-  const isChangesDiffPreviewPending = changesDiffPreview.isPending;
+      : null;
+  const changesDiffPreview = useEnvironmentQuery(previewAtom);
+  const lastRefreshRef = useRef<{
+    atom: typeof previewAtom;
+    gitStatus: typeof gitStatus;
+    workspaceMutationId: string | null;
+  } | null>(null);
+  const { refresh, isPending } = changesDiffPreview;
   useEffect(() => {
-    if (lastStatusTotalsKeyRef.current === statusTotalsKey) return;
-    lastStatusTotalsKeyRef.current = statusTotalsKey;
-    if (useDiffPreview && !isChangesDiffPreviewPending) refreshChangesDiffPreview();
-  }, [isChangesDiffPreviewPending, refreshChangesDiffPreview, statusTotalsKey, useDiffPreview]);
+    if (previewAtom === null) {
+      lastRefreshRef.current = null;
+      return;
+    }
+    const previous = lastRefreshRef.current;
+    if (previous?.atom === previewAtom) {
+      if (
+        previous.gitStatus === gitStatus &&
+        previous.workspaceMutationId === workspaceMutationId
+      ) {
+        return;
+      }
+      // A change during the fetch still needs a refresh after it settles.
+      if (isPending) return;
+    }
+    lastRefreshRef.current = { atom: previewAtom, gitStatus, workspaceMutationId };
+    if (!isPending) refresh();
+  }, [previewAtom, gitStatus, workspaceMutationId, isPending, refresh]);
   const changesTotals = resolveChangesTotals({
     gitStatus,
     useDiffPreview,
@@ -1046,6 +1048,7 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
+  workspaceMutationId = null,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -1920,6 +1923,7 @@ export default function GitActionsControl({
           activeThreadRef={activeThreadRef}
           gitStatus={gitStatusForActions}
           onOpenChanges={onOpenChanges}
+          workspaceMutationId={workspaceMutationId}
         />
       ) : null}
 

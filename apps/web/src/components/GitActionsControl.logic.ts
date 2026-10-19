@@ -502,11 +502,9 @@ export function resolveChangesTotals(input: {
   readonly useDiffPreview: boolean;
   readonly diffPreview: ReviewDiffPreviewResult | null;
 }) {
-  // Older servers only report uncommitted totals.
   const statusTotals = input.gitStatus?.branchChanges ?? input.gitStatus?.workingTree;
   if (!input.useDiffPreview) return statusTotals;
   const source = input.diffPreview?.sources.find((source) => source.kind === "branch-range");
-  // Keep the status totals on screen until the preview loads rather than showing zeros.
   if (!source) return statusTotals;
   if (source.files) {
     return source.files.reduce(
