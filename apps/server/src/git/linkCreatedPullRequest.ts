@@ -32,6 +32,9 @@ export function createdPullRequestKey(
   }
   const parsed = parseChangeRequestUrl(url);
   if (parsed !== null) return { ...parsed, url };
+  if (!URL.canParse(url)) return null;
+  const { protocol } = new URL(url);
+  if (protocol !== "http:" && protocol !== "https:") return null;
   const identity = project?.repositoryIdentity;
   const kind = identity?.provider as SourceControlProviderKind | undefined;
   const repository = sourceControlRepositorySelector(identity);
