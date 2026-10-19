@@ -1,3 +1,5 @@
+import * as ServerSettings from "../serverSettings.ts";
+import { DelegationPolicyError, nativeSpawnEnforcementError } from "./DelegationPolicy.ts";
 import {
   ModelSelection,
   OrchestrationV2AppThread,
@@ -28,7 +30,10 @@ export class RuntimePolicyResolveError extends Schema.TaggedError<RuntimePolicyR
   }
 }
 
-export const RuntimePolicyV2Error = Schema.Union([RuntimePolicyResolveError]);
+export const RuntimePolicyV2Error = Schema.Union([
+  RuntimePolicyResolveError,
+  DelegationPolicyError,
+]);
 export type RuntimePolicyV2Error = typeof RuntimePolicyV2Error.Type;
 
 export const RuntimePolicyV2Override = Schema.Struct({
@@ -73,15 +78,32 @@ function providerRuntimeMode(
 export const layerFromProjectStore: Layer.Layer<
   RuntimePolicyV2,
   never,
-  ProjectStore.ProjectStoreV2 | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | ProjectStore.ProjectStoreV2
+  | ProviderInstanceRegistry.ProviderInstanceRegistry
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(
   RuntimePolicyV2,
   Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
+        const delegationPolicy = (yield* settings.getSettings.pipe(
+          Effect.mapError(
+            (cause) =>
+              new RuntimePolicyResolveError({
+                projectId: input.thread.projectId,
+                providerInstanceId: input.modelSelection.instanceId,
+                cause,
+              }),
+          ),
+        )).delegationPolicy;
+        if (delegationPolicy !== null) {
+          const refusal = nativeSpawnEnforcementError(instance?.driverKind ?? "unknown");
+          if (refusal !== undefined) return yield* refusal;
+        }
         const supportedRuntimeModes =
           instance === undefined
             ? undefined
@@ -112,6 +134,7 @@ export const layerFromProjectStore: Layer.Layer<
             ),
           ));
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...(delegationPolicy === null ? {} : { nativeSpawningDisabled: true }),
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,

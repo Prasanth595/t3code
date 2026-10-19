@@ -753,13 +753,14 @@ describe("CodexAdapterV2 process spawning", () => {
           ProviderEventLoggers.NoOpProviderEventLoggers,
         ),
       );
-      const open = (environment: NodeJS.ProcessEnv) =>
+      const open = (environment: NodeJS.ProcessEnv, governed = false) =>
         factory
           .open({
             instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
             threadId: ThreadId.make("thread-launch-args"),
             providerSessionId: ProviderSessionId.make("provider-session-launch-args"),
             runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              ...(governed ? { nativeSpawningDisabled: true } : {}),
               runtimeMode: "full-access",
               interactionMode: "default",
               cwd: "/workspace",
@@ -775,9 +776,21 @@ describe("CodexAdapterV2 process spawning", () => {
       yield* open({});
       yield* open({ T3CODE_CODEX_LAUNCH_ARGS: " --enable env-feature " });
 
+      yield* open({}, true);
+
       assert.deepEqual(spawnedArgs, [
         ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed"],
         ["app-server", "--enable", "env-feature"],
+        [
+          "app-server",
+          "--strict-config",
+          "-c",
+          "model_reasoning_summary=detailed",
+          "-c",
+          "features.multi_agent=false",
+          "-c",
+          "features.multi_agent_v2=false",
+        ],
       ]);
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
@@ -9533,4 +9546,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
   });
+});
+
+it("disables both native agent features in governed thread start/resume/fork config", () => {
+  const config = CodexAdapterV2.codexThreadRuntimeParams({
+    mcpSession: undefined,
+    runtimePolicy: {
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: null,
+      nativeSpawningDisabled: true,
+    },
+  }).config;
+  assert.equal(config["features.multi_agent"], false);
+  assert.equal(config["features.multi_agent_v2"], false);
+  assert.isUndefined(
+    CodexAdapterV2.codexThreadRuntimeParams({ mcpSession: undefined }).config[
+      "features.multi_agent"
+    ],
+  );
 });

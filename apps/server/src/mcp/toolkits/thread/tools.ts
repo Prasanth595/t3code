@@ -1,3 +1,4 @@
+import * as ServerSettings from "../../../serverSettings.ts";
 import {
   ScheduledTaskId,
   ScheduledTask,
@@ -54,6 +55,7 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ServerSettings.ServerSettingsService,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],
@@ -68,6 +70,7 @@ const commandTool = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ServerSettings.ServerSettingsService,
     ThreadManagementService.ThreadManagementService,
     Crypto.Crypto,
   ],

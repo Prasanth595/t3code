@@ -55,6 +55,7 @@ const RenameTool = Tool.make("rename", {
   failureMode: "return",
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ServerSettings.ServerSettingsService,
     ThreadManagement.ThreadManagementService,
   ],
 });
@@ -142,6 +143,7 @@ const renameRacingTheUser = (threadId: ThreadId, userRaises: boolean) =>
       Effect.provide(
         McpHttpServer.toolkitRegistration(RenameToolkit, handlers).pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(ServerSettings.layerTest()),
         ),
       ),
     );

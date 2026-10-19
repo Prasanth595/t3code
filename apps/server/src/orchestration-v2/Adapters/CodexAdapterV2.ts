@@ -1311,6 +1311,12 @@ export function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(input.runtimePolicy?.nativeSpawningDisabled === true
+        ? {
+            "features.multi_agent": false,
+            "features.multi_agent_v2": false,
+          }
+        : {}),
       ...(mcpSession === undefined
         ? {}
         : {
@@ -1397,7 +1403,12 @@ const layerCodexAppServerClientFactoryCommand = (
             const scope = yield* Scope.Scope;
             const command = yield* makeCodexAppServerSpawnCommand({
               command: options.command,
-              args: [...(options.args ?? [])],
+              args: [
+                ...(options.args ?? []),
+                ...(input.runtimePolicy.nativeSpawningDisabled === true
+                  ? ["-c", "features.multi_agent=false", "-c", "features.multi_agent_v2=false"]
+                  : []),
+              ],
               ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
               ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
             });
@@ -1516,9 +1527,14 @@ export const layerAppServerClientFactory: Layer.Layer<
           };
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: codexAppServerArgs(
-              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-            ),
+            args: [
+              ...codexAppServerArgs(
+                resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+              ),
+              ...(input.runtimePolicy.nativeSpawningDisabled === true
+                ? ["-c", "features.multi_agent=false", "-c", "features.multi_agent_v2=false"]
+                : []),
+            ],
             env: environment,
             threadId: input.threadId,
           }).pipe(Effect.provideService(AgentScope, agentScope));
@@ -1690,6 +1706,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     openSession: (input) =>
       Effect.gen(function* () {
+        const sessionRuntimePolicy = input.runtimePolicy;
         const scope = yield* Scope.Scope;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
@@ -2978,6 +2995,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                           .request("thread/resume", {
                             threadId: input.nativeThreadId,
                             excludeTurns: true,
+                            ...codexThreadRuntimeParams({
+                              mcpSession: undefined,
+                              runtimePolicy: sessionRuntimePolicy,
+                            }),
                           })
                           .pipe(Effect.flatMap(decodeCodexChildModel))
                       : Effect.succeed(response),

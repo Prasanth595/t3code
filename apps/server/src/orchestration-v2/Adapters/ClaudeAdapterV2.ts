@@ -1844,7 +1844,11 @@ function permissionModeForClaudeRuntimePolicy(
   }
 }
 
+// SDK denylist is enforced even in bypassPermissions; canUseTool alone is not.
+const GOVERNED_CLAUDE_DISALLOWED_TOOLS = ["Agent", "Task", "TeamCreate", "Teammate"] as const;
+
 export interface ClaudeRuntimeQueryPolicy {
+  readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode: PermissionMode;
   readonly tools?: ClaudeAgentSdkQueryTools;
   readonly allowedTools?: ReadonlyArray<string>;
@@ -1875,6 +1879,9 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
   if (permissionMode === "plan") {
     return {
       permissionMode,
+      ...(runtimePolicy.nativeSpawningDisabled === true
+        ? { disallowedTools: GOVERNED_CLAUDE_DISALLOWED_TOOLS }
+        : {}),
       ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
       installPermissionCallback,
@@ -1883,6 +1890,9 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
 
   return {
     permissionMode,
+    ...(runtimePolicy.nativeSpawningDisabled === true
+      ? { disallowedTools: GOVERNED_CLAUDE_DISALLOWED_TOOLS }
+      : {}),
     ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
     ...(allowedTools === undefined ? {} : { allowedTools }),
     ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
@@ -1903,6 +1913,7 @@ function requiresClaudeApproval(context: ActiveClaudeTurnContext): boolean {
 function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
   return JSON.stringify({
     permissionMode: policy.permissionMode,
+    disallowedTools: policy.disallowedTools,
     tools: policy.tools,
     allowedTools: policy.allowedTools,
     allowDangerouslySkipPermissions: policy.allowDangerouslySkipPermissions,
@@ -8109,6 +8120,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             } satisfies PermissionResult;
           }
 
+          if (
+            context.input.runtimePolicy.nativeSpawningDisabled === true &&
+            GOVERNED_CLAUDE_DISALLOWED_TOOLS.some((name) => name === toolName)
+          ) {
+            return {
+              behavior: "deny",
+              message: "Native spawning is disabled by server policy.",
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
           const nativeRequestId = callbackOptions.toolUseID;
           const nativeToolInput = claudeNativeToolInputFromRecord(toolInput);
           const heldForEcho = context.heldRootFrames.length > 0;
@@ -8534,6 +8555,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { mcpServers: mcpOverrides.mcpServers }),
             permissionMode: queryPolicy.permissionMode,
+            ...(queryPolicy.disallowedTools === undefined
+              ? {}
+              : { disallowedTools: queryPolicy.disallowedTools }),
             ...(queryPolicy.allowDangerouslySkipPermissions === undefined
               ? {}
               : {

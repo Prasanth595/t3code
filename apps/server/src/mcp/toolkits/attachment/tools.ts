@@ -1,3 +1,4 @@
+import * as ServerSettings from "../../../serverSettings.ts";
 import { McpAttachmentInput } from "./input.ts";
 import {
   AttachmentCreateUploadUrlInput,
@@ -23,6 +24,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ServerSettings.ServerSettingsService,
     ThreadManagementService.ThreadManagementService,
     ServerConfig.ServerConfig,
     ServerSecretStore.ServerSecretStore,

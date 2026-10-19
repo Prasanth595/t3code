@@ -137,7 +137,7 @@ describe("OrchestratorMcpService", () => {
               ),
             ),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
@@ -237,7 +237,7 @@ describe("OrchestratorMcpService", () => {
               : Effect.succeed(awaitsRestart),
           dispatch: () => Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
@@ -321,7 +321,7 @@ describe("OrchestratorMcpService", () => {
               Effect.as({} as never),
             ),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
@@ -398,7 +398,7 @@ describe("OrchestratorMcpService", () => {
               Effect.andThen(Effect.fail(new Error("simulated stop failure") as never)),
             ),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
@@ -483,7 +483,7 @@ describe("OrchestratorMcpService", () => {
             ),
           stopDelegatedTasks: () => Effect.void,
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
@@ -569,7 +569,7 @@ describe("OrchestratorMcpService", () => {
             ),
           stopDelegatedTasks: () => Effect.void,
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
@@ -702,7 +702,7 @@ describe("OrchestratorMcpService", () => {
               yield* Ref.set(stoppedBelow, true);
             }),
         }),
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({ delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),

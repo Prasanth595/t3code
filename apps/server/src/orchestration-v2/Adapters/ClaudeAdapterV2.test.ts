@@ -1047,6 +1047,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           },
         });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          nativeSpawningDisabled: true,
           runtimeMode: "auto-accept-edits",
           interactionMode: "default",
           cwd: "/workspace",
@@ -1076,6 +1077,12 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           }),
         );
         assert.equal(openedOptions?.permissionMode, "acceptEdits");
+        assert.deepEqual(openedOptions?.disallowedTools, [
+          "Agent",
+          "Task",
+          "TeamCreate",
+          "Teammate",
+        ]);
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
 
@@ -15651,5 +15658,24 @@ describe("ClaudeAdapterV2 query message stream", () => {
       yield* Scope.close(scope, Exit.void);
       assert.isTrue(closed);
     }),
+  );
+});
+
+it("keeps the SDK spawning denylist in bypassPermissions and changes the query reuse key", () => {
+  const runtimePolicy = {
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    cwd: null,
+  };
+  const unrestricted = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy);
+  const governed = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy({
+    ...runtimePolicy,
+    nativeSpawningDisabled: true,
+  });
+  assert.equal(governed.permissionMode, "bypassPermissions");
+  assert.deepEqual(governed.disallowedTools, ["Agent", "Task", "TeamCreate", "Teammate"]);
+  assert.notEqual(
+    ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(governed, {}),
+    ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(unrestricted, {}),
   );
 });
