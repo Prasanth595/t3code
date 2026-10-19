@@ -573,20 +573,31 @@ describe("pull request list errors", () => {
     expect(grouped.repositories).toEqual([]);
   });
 
-  it("hides cached errors from disconnected environments", () => {
+  it("hides cached details from disconnected environments but keeps their failure", () => {
+    const connectedId = EnvironmentId.make("environment-2");
     const failedProvider = {
       ...provider({ detail: "GitHub could not be reached." }),
       environmentId,
     };
+    const connectedRepository = { ...repository(2), environmentId: connectedId };
 
-    const grouped = groupPullRequestListErrors(
-      [repository(1)],
+    const cached = groupPullRequestListErrors(
+      [repository(1), connectedRepository],
       [failedProvider],
-      new Set([EnvironmentId.make("environment-2")]),
+      new Set([connectedId]),
     );
-    expect(grouped.environments).toEqual([]);
-    expect(grouped.providers).toEqual([]);
-    expect(grouped.repositories).toEqual([]);
+    expect(cached.environments).toEqual([]);
+    expect(cached.providers).toEqual([]);
+    expect(cached.repositories).toEqual([connectedRepository]);
+
+    const offline = { environmentId, projectTitle: "", message: "Disconnected." };
+    const failed = groupPullRequestListErrors(
+      [repository(1), offline, connectedRepository],
+      [failedProvider],
+      new Set([connectedId]),
+    );
+    expect(failed.environments).toEqual([offline]);
+    expect(failed.repositories).toEqual([connectedRepository]);
   });
 
   it("summarizes many repository failures in one line", () => {

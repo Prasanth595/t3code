@@ -115,6 +115,8 @@ export function mergeEnvironmentPullRequestPages(
 
 /**
  * Prefer the provider's actionable cause over the generic repository errors it produced.
+ * A failed environment always keeps its own line; `connectedEnvironmentIds` only hides the
+ * cached provider and repository details of environments that are no longer connected.
  */
 export function groupPullRequestListErrors<
   ListError extends {
@@ -136,7 +138,6 @@ export function groupPullRequestListErrors<
   const environments: ListError[] = [];
   const failedEnvironments = new Set<EnvironmentId>();
   for (const error of errors) {
-    if (connectedEnvironmentIds && !connectedEnvironmentIds.has(error.environmentId)) continue;
     if (error.projectTitle) continue;
     environments.push(error);
     failedEnvironments.add(error.environmentId);
