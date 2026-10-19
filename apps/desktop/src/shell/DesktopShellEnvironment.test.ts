@@ -128,15 +128,17 @@ function runShellEnvironment(input: {
 describe("DesktopShellEnvironment", () => {
   // Explicit opt-in keeps real shell coverage independent of globally installed tools.
   it.effect.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
-    "hydrates the desktop through a renamed Nushell symlink without external tools",
+    "hydrates the desktop through a renamed Nushell symlink with native export conversions",
     () =>
       Effect.gen(function* () {
         const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-nu-"));
         try {
           const toolPath = NodePath.join(home, "nu tools", "bin");
           const extraToolPath = NodePath.join(home, "extra-tools", "bin");
+          const convertedToolPath = NodePath.join(home, "converted-tools", "bin");
           NodeFS.mkdirSync(toolPath, { recursive: true });
           NodeFS.mkdirSync(extraToolPath, { recursive: true });
+          NodeFS.mkdirSync(convertedToolPath, { recursive: true });
           const shell = NodePath.join(toolPath, "nushell");
           NodeFS.symlinkSync(process.env.T3_TEST_NU_PATH!, shell);
           const config = NodePath.join(home, "config.nu");
@@ -149,6 +151,13 @@ describe("DesktopShellEnvironment", () => {
               '$env.SSH_AUTH_SOCK = "/tmp/nu-agent.sock"',
               '$env.__MISE_DIFF = "  first\\nsecond  "',
               '$env.HOMEBREW_PREFIX = ""',
+              "$env.ENV_CONVERSIONS = {",
+              "  PATH: {",
+              "    from_string: {|value| $value | split row (char esep) },",
+              '    to_string: {|value| $value | str join (char esep) | str replace "nu tools" "converted-tools" }',
+              "  },",
+              "  __MISE_DIFF: { from_string: {|value| $value }, to_string: {|value| $value | str upcase } }",
+              "}",
               'print "startup noise"',
             ].join("\n"),
           );
@@ -172,9 +181,14 @@ describe("DesktopShellEnvironment", () => {
             },
           });
 
-          assert.equal(env.PATH, `${toolPath}:${extraToolPath}:/inherited/bin`);
+          assert.deepEqual(
+            { PATH: env.PATH, __MISE_DIFF: env.__MISE_DIFF },
+            {
+              PATH: `${convertedToolPath}:${extraToolPath}:/inherited/bin`,
+              __MISE_DIFF: "  FIRST\nSECOND  ",
+            },
+          );
           assert.equal(env.SSH_AUTH_SOCK, "/tmp/nu-agent.sock");
-          assert.equal(env.__MISE_DIFF, "  first\nsecond  ");
           assert.isUndefined(env.DISPLAY);
           assert.isUndefined(env.HOMEBREW_PREFIX);
         } finally {
