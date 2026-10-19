@@ -848,6 +848,55 @@ describe("DesktopBackendManager", () => {
       ),
   );
 
+  it.effect("reports a port collision when the child exits before the descriptor responds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const requestStarted = yield* Deferred.make<void>();
+        const exitObserved = yield* Deferred.make<void>();
+        const respond = yield* Deferred.make<void>();
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                exitCode: Deferred.await(requestStarted).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(1)),
+                ),
+              }),
+            ),
+          ),
+        );
+        const layerHttp = layerHttpClient((request) =>
+          Deferred.succeed(requestStarted, void 0).pipe(
+            Effect.andThen(Deferred.await(respond)),
+            Effect.as(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ desktopLaunchId: "another-launch" }),
+              ),
+            ),
+          ),
+        );
+        const run = yield* DesktopBackendManager.runBackendProcess({
+          ...baseConfig,
+          desktopTelemetryStream: Stream.empty,
+          onExitObserved: () => Deferred.succeed(exitObserved, void 0).pipe(Effect.asVoid),
+        }).pipe(
+          Effect.provide(Layer.merge(layerSpawner, layerHttp)),
+          Effect.scoped,
+          Effect.forkChild,
+        );
+
+        yield* Deferred.await(exitObserved);
+        // Let exit handling settle while the descriptor request is still pending.
+        yield* TestClock.adjust(Duration.zero);
+        yield* Deferred.succeed(respond, void 0);
+
+        assert.isTrue((yield* Fiber.join(run)).portTaken);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
   it.effect("restarts on the port the spec moves to after another server took its port", () =>
     Effect.scoped(
       Effect.gen(function* () {
