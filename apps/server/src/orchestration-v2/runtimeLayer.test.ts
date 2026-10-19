@@ -6396,6 +6396,26 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.equal(held.thread.settledOverride, waiting.settledOverride);
 
         yield* TestClock.adjust("1 minute");
+        if (scenario === "snoozed") {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`recovery:wake-after-reset:${scenario}`),
+            threadId,
+            messageId: MessageId.make(`recovery:wake-after-reset:${scenario}`),
+            text: "More background work arrived.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          const afterReset = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            afterReset.runs.map((run) => run.status),
+            ["failed", "queued", "queued"],
+          );
+          assert.deepEqual(afterReset.thread.limitRecovery, waiting.limitRecovery);
+          assert.deepEqual(afterReset.thread.snoozedUntil, waiting.snoozedUntil);
+        }
         const resume = limitRecoveryCommand(
           (yield* shellOf)!,
           true,
@@ -6423,7 +6443,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(
           resumed.runs.map((run) => run.status),
-          ["failed", "queued", "starting"],
+          scenario === "snoozed"
+            ? ["failed", "queued", "queued", "starting"]
+            : ["failed", "queued", "starting"],
         );
         assert.isNull(resumed.thread.snoozedUntil);
         assert.isNull(resumed.thread.settledOverride);

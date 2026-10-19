@@ -4712,10 +4712,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.dispatchMode,
         command.deliveryIntent,
       );
-      // Queued work must preserve the failure for recovery and leave the
-      // thread snoozed or settled until it actually resumes.
-      const limitedRun =
+      let limitedRun =
         dispatchMode.type === "queue_after_active" ? limitBlockingRun(projection) : null;
+      if (limitedRun !== null) {
+        const failure = latestRootProviderFailure(limitedRun, projection.turnItems);
+        const resetMs = Date.parse(failure?.resetAt ?? "");
+        const recovery = projection.thread.limitRecovery;
+        const autoResumePending =
+          recovery?.autoResume === true &&
+          recovery.runId === limitedRun.id &&
+          recovery.resetAt === failure?.resetAt &&
+          resetMs > DateTime.toEpochMillis(limitedRun.completedAt ?? projection.thread.updatedAt) &&
+          projection.thread.archivedAt === null &&
+          projection.thread.deletedAt === null &&
+          projection.thread.settledOverride !== "settled" &&
+          projection.thread.providerInstanceId === limitedRun.providerInstanceId &&
+          !projection.runtimeRequests.some((request) => request.status === "pending");
+        // After a known reset, only a valid pending continuation takes priority
+        // over new work. Unknown reset times keep the existing queue protection.
+        if (
+          Number.isFinite(resetMs) &&
+          resetMs <= DateTime.toEpochMillis(yield* DateTime.now) &&
+          !autoResumePending
+        ) {
+          limitedRun = null;
+        }
+      }
       if (projection.thread.settledOverride !== null && limitedRun === null) {
         const now = yield* DateTime.now;
         const thread: OrchestrationV2AppThread = {
