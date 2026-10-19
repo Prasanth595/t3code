@@ -1348,7 +1348,7 @@ export function deriveMessagesTimelineRows(input: {
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: timelineEntries,
         checkpoints: input.turnDiffSummaries,
-        hasMoreHistory: input.hasMoreHistory,
+        hasMoreHistory: input.hasMoreHistory === true,
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];

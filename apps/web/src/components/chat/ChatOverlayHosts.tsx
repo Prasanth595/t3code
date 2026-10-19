@@ -194,7 +194,7 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
-  readonly checkpoints?: OrchestrationV2ThreadProjection["checkpoints"];
+  readonly checkpoints?: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
