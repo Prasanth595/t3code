@@ -215,8 +215,7 @@ export function resolveBranchTriggerLabel(input: {
     return "Select ref";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    // The server starts from the base branch's own remote, which the client
-    // cannot name from the ref alone, so mark it without inventing one.
+    // Only the server can determine a local branch's configured remote.
     return startFromOrigin && resolvedActiveBranchIsRemote === false
       ? `From ${resolvedActiveBranch} (remote)`
       : `From ${resolvedActiveBranch}`;

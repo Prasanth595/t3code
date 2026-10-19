@@ -78,8 +78,7 @@ export function resolveNewTaskBranchLabel(input: {
     return input.branchName;
   }
 
-  // The server starts from the base branch's own remote, which the client
-  // cannot name from the ref alone, so mark it without inventing one.
+  // Only the server can determine a local branch's configured remote.
   return input.startFromOrigin ? `From ${input.branchName} (remote)` : `From ${input.branchName}`;
 }
 

@@ -269,7 +269,7 @@ const make = Effect.gen(function* () {
         return undefined;
       if (
         strategy.startFromOrigin === true &&
-        (yield* git.remoteExists({ cwd, remoteName: "origin" }))
+        (yield* git.resolveWorktreeBaseRemote({ cwd, refName: baseRef })) !== null
       )
         return undefined;
       // `git worktree add` also starts from a remote-tracking branch of that
@@ -390,7 +390,7 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
         }
         let startRef = input.workspaceStrategy.baseRef;
-        // No remote holding the base branch falls back to the local base.
+        let baseRefName = input.workspaceStrategy.baseRef;
         const startFromOrigin = input.workspaceStrategy.startFromOrigin === true;
         yield* setupTracker.stageStatus(threadId, "fetch", startFromOrigin ? "running" : "skipped");
         if (startFromOrigin) {
@@ -400,7 +400,10 @@ const make = Effect.gen(function* () {
               refName: input.workspaceStrategy.baseRef,
             })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-          if (remoteBase !== null) startRef = remoteBase.commitSha;
+          if (remoteBase !== null) {
+            startRef = remoteBase.commitSha;
+            baseRefName = `refs/remotes/${remoteBase.remoteRefName}`;
+          }
         }
         if (startFromOrigin) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         if (
@@ -422,7 +425,7 @@ const make = Effect.gen(function* () {
               cwd: project.workspaceRoot,
               refName: startRef,
               newRefName: branch!,
-              baseRefName: input.workspaceStrategy.baseRef,
+              baseRefName,
               path: null,
             },
             {

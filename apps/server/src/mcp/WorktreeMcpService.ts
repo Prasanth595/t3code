@@ -210,6 +210,7 @@ const make = Effect.gen(function* () {
     const startFromOrigin = input.startFromOrigin ?? (yield* readDefaultStartFromOrigin);
 
     let worktreeBaseRef = baseRef;
+    let baseRefName = baseRef;
     let startedFromOrigin = false;
     if (startFromOrigin) {
       const resolvedRemoteBase = yield* gitWorkflow
@@ -217,6 +218,7 @@ const make = Effect.gen(function* () {
         .pipe(asOperationFailed(`Unable to fetch the remote base of '${baseRef}'`));
       if (resolvedRemoteBase !== null) {
         worktreeBaseRef = resolvedRemoteBase.commitSha;
+        baseRefName = `refs/remotes/${resolvedRemoteBase.remoteRefName}`;
         startedFromOrigin = true;
       }
     }
@@ -239,7 +241,7 @@ const make = Effect.gen(function* () {
               cwd: projectCwd,
               refName: worktreeBaseRef,
               newRefName: input.branch,
-              baseRefName: baseRef,
+              baseRefName,
               path: null,
             })
             .pipe(asOperationFailed("Unable to create the worktree")),

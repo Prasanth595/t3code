@@ -376,12 +376,10 @@ export class GitVcsDriver extends Context.Service<
     readonly resolveRemoteTrackingCommit: (
       input: GitResolveRemoteTrackingCommitInput,
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult, GitCommandError>;
-    /**
-     * Fetches the remote a worktree base ref belongs to and resolves its
-     * remote-tracking commit: the ref's own remote when it names one, else
-     * the local branch's configured upstream, else `origin`. Null when no
-     * remote holds the branch, so callers can fall back to the local ref.
-     */
+    readonly resolveWorktreeBaseRemote: (
+      input: GitFetchWorktreeBaseCommitInput,
+    ) => Effect.Effect<{ remoteName: string; branchName: string } | null, GitCommandError>;
+    /** Fetches the configured upstream, explicit remote ref, or origin; null uses the local base. */
     readonly fetchWorktreeBaseCommit: (
       input: GitFetchWorktreeBaseCommitInput,
     ) => Effect.Effect<GitResolveRemoteTrackingCommitResult | null, GitCommandError>;

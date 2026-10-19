@@ -186,7 +186,7 @@ function makeHarness(options: HarnessOptions = {}) {
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
-      remoteExists: () => Effect.succeed(true),
+      resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       removeWorktree,
       ...options.git,
     }),
@@ -1523,7 +1523,7 @@ it.effect.each(["stable", "upstream/release"])(
             Effect.orElseSucceed(() => false),
           ),
         git: {
-          remoteExists: (input) => git.remoteExists({ ...input, cwd }),
+          resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
           hasRefNamed: () => Effect.succeed(false),
         },
         fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
@@ -2842,7 +2842,8 @@ it.effect.each([
     const harness = makeHarness({
       hasCommit: ({ refName }) => Effect.succeed(refName === "HEAD"),
       git: {
-        remoteExists: () => Effect.succeed(testCase.origin),
+        resolveWorktreeBaseRemote: () =>
+          Effect.succeed(testCase.origin ? { remoteName: "origin", branchName: "main" } : null),
         hasRefNamed: () => Effect.succeed(false),
       },
     });
