@@ -1,14 +1,9 @@
-import { ListTodoIcon } from "lucide-react";
+import { CheckIcon, CircleDotIcon, CircleIcon, ListTodoIcon } from "lucide-react";
 import { memo, type ComponentProps } from "react";
 
 import { formatDuration } from "../../session-logic";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
-import {
-  ComposerActivityIcon,
-  ComposerActivityLabel,
-  type ComposerActivityStatus,
-} from "./ComposerActivityStatus";
 
 export interface ComposerTasksProgress {
   readonly step: string;
@@ -23,6 +18,12 @@ export interface ComposerTaskStep {
 }
 
 const MAX_TASK_SEGMENTS = 10;
+
+const taskStatusLabels = {
+  pending: "Pending",
+  inProgress: "Running",
+  completed: "Completed",
+} satisfies Record<ComposerTaskStep["status"], string>;
 
 function keyedTaskSteps(steps: readonly ComposerTaskStep[]) {
   const occurrences = new Map<string, number>();
@@ -65,29 +66,18 @@ function TaskSummary({
   expanded,
   progress,
   steps,
-  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
-  readonly activityStatus: ComposerActivityStatus | undefined;
 }) {
   return (
     <>
-      {activityStatus !== undefined ? (
-        <ComposerActivityIcon status={activityStatus} />
-      ) : (
-        <ComposerBanner.Icon>
-          <ListTodoIcon />
-        </ComposerBanner.Icon>
-      )}
+      <ComposerBanner.Icon>
+        <ListTodoIcon />
+      </ComposerBanner.Icon>
       <ComposerBanner.Content>
-        {activityStatus !== undefined ? (
-          <ComposerActivityLabel status={activityStatus} />
-        ) : (
-          <span className="shrink-0 text-muted-foreground">Tasks</span>
-        )}
-        {activityStatus !== undefined ? <ComposerBanner.Separator /> : null}
+        <span className="shrink-0 text-muted-foreground">Tasks</span>
         <span
           className="min-w-0 flex-1 truncate text-left font-medium text-foreground/80"
           data-composer-task-current="true"
@@ -102,7 +92,7 @@ function TaskSummary({
         >
           {progress.completedSteps}/{progress.totalSteps}
         </ComposerBanner.Count>
-        <TaskSegments className="hidden w-20 sm:flex" steps={steps} />
+        <TaskSegments className="hidden w-20 @min-[560px]:flex" steps={steps} />
         <ComposerBanner.ToggleIcon expanded={expanded} />
       </ComposerBanner.Actions>
     </>
@@ -115,14 +105,12 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
   placement = "tab",
   progress,
   steps,
-  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly placement?: "inline" | "tab";
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
-  readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   if (progress.totalSteps <= 0) return null;
 
@@ -135,18 +123,15 @@ export const ComposerTasksBadge = memo(function ComposerTasksBadge({
       onClick={onToggle}
       onPointerDown={(event) => event.preventDefault()}
     >
-      <TaskSummary
-        expanded={expanded}
-        progress={progress}
-        steps={steps}
-        activityStatus={activityStatus}
-      />
+      <TaskSummary expanded={expanded} progress={progress} steps={steps} />
     </ComposerBanner.Row>
   );
   return placement === "inline" ? (
     row
   ) : (
-    <ComposerBanner.Root data-composer-shoulder-tab>{row}</ComposerBanner.Root>
+    <ComposerBanner.Root density="comfortable" data-composer-shoulder-tab>
+      {row}
+    </ComposerBanner.Root>
   );
 });
 
@@ -155,13 +140,11 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
   onToggle,
   progress,
   steps,
-  activityStatus,
 }: {
   readonly expanded: boolean;
   readonly onToggle: () => void;
   readonly progress: ComposerTasksProgress;
   readonly steps: readonly ComposerTaskStep[];
-  readonly activityStatus?: ComposerActivityStatus | undefined;
 }) {
   return (
     <div
@@ -174,20 +157,19 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
         placement="inline"
         progress={progress}
         steps={steps}
-        activityStatus={activityStatus}
       />
       {expanded ? (
         <ComposerBanner.Scroll data-composer-tasks-scroll="true">
           <ComposerBanner.Children
-            render={<ul />}
+            render={<ul role="list" />}
             aria-label={`Task list. ${progress.completedSteps} of ${progress.totalSteps} complete.`}
             data-composer-tasks-list="true"
           >
             {keyedTaskSteps(steps).map(({ key, step }) => (
-              <ComposerBanner.Row key={key} render={<li />}>
+              <ComposerBanner.Row key={key} render={<li />} className="items-start py-1 pe-2">
                 <ComposerBanner.Icon
                   className={cn(
-                    "font-mono text-[10px]",
+                    "h-4",
                     step.status === "completed"
                       ? "text-success"
                       : step.status === "inProgress"
@@ -195,10 +177,17 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                         : "text-muted-foreground/40",
                   )}
                 >
-                  {step.status === "completed" ? "✓" : step.status === "inProgress" ? "●" : "○"}
+                  {step.status === "completed" ? (
+                    <CheckIcon />
+                  ) : step.status === "inProgress" ? (
+                    <CircleDotIcon />
+                  ) : (
+                    <CircleIcon />
+                  )}
                 </ComposerBanner.Icon>
                 <ComposerBanner.Content
                   className={cn(
+                    "block wrap-anywhere",
                     step.status === "completed"
                       ? "text-muted-foreground/55"
                       : step.status === "inProgress"
@@ -206,11 +195,12 @@ export const ComposerTasksContent = memo(function ComposerTasksContent({
                         : "text-muted-foreground/70",
                   )}
                 >
+                  <span className="sr-only">{taskStatusLabels[step.status]}: </span>
                   {step.step}
                 </ComposerBanner.Content>
                 <ComposerBanner.Actions>
                   <span
-                    className="w-10 text-right text-[10px] text-muted-foreground/45 tabular-nums"
+                    className="w-12 text-right text-3xs/4 text-muted-foreground/45 tabular-nums"
                     data-composer-task-duration="true"
                   >
                     {step.durationMs !== undefined

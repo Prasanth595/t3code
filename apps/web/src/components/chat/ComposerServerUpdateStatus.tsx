@@ -1,11 +1,26 @@
+import { Spinner } from "~/components/ui/spinner";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
+import { CircleAlertIcon, DownloadIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { serverUpdateStageLabel } from "../ServerUpdateAction";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerBanner } from "./ComposerBanner";
 
-/** One text line, clipped at the end so the error detail never squeezes its title. */
+export function ComposerServerUpdateIcon({
+  status,
+}: {
+  readonly status: ServerUpdateState["status"];
+}) {
+  if (status === "running") {
+    return <Spinner aria-hidden />;
+  }
+  if (status === "failed") {
+    return <CircleAlertIcon aria-hidden className="text-error" />;
+  }
+  return <DownloadIcon aria-hidden />;
+}
+
 export function ComposerServerUpdateStatus({
   state,
   serverLabel = "server",
@@ -31,7 +46,7 @@ export function ComposerServerUpdateStatus({
             <button
               type="button"
               aria-label={`${title}: ${detail}`}
-              className="block max-w-full cursor-help truncate rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="block max-w-full cursor-help truncate rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => setDetailsOpen(true)}
             >
               {title}
@@ -40,7 +55,7 @@ export function ComposerServerUpdateStatus({
             </button>
           }
         />
-        <TooltipPopup side="top" className="max-w-80">
+        <TooltipPopup side="top">
           {title}: {detail}
         </TooltipPopup>
       </Tooltip>
