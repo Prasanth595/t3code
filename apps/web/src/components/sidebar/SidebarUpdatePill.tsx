@@ -238,9 +238,7 @@ function SidebarUpdateControl() {
     showCheckIcon,
   });
   const idleTooltip =
-    !runsEverything && !showUpdateDetails && !showCheckIcon
-      ? getDesktopUpdateIdleTooltip(state)
-      : null;
+    !showUpdateDetails && !showCheckIcon ? getDesktopUpdateIdleTooltip(state) : null;
   const tooltip = runsEverything
     ? everything.summary
     : showUpdateDetails

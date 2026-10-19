@@ -410,9 +410,6 @@ describe("disabled update reason", () => {
       title: "Updates unavailable",
       detail: "Automatic updates are only available in packaged production builds.",
     });
-  });
-
-  it("falls back to a generic reason when the desktop app sent none", () => {
     expect(getDesktopUpdateDisabledReason({ ...disabledState, message: null })).toBe(
       "Automatic updates are not available in this build.",
     );
