@@ -2,6 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { applyForkMobileIdentity } from "./src/factory/mobileIdentity.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -495,5 +496,7 @@ const config: ExpoConfig = {
     reactCompiler: true,
   },
 };
+
+applyForkMobileIdentity(config);
 
 export default config;

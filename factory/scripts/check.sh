@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The one check for this fork. Runs the seam check, the factory tests and the two
+# The one check for this fork. Runs the seam check, the factory tests and the three
 # typechecks in order, printing each step first, and stops at the first failure
 # with that step's exit code. Run by people, by the factory gate and by factory-ci.
 set -euo pipefail
@@ -13,6 +13,7 @@ step() {
 }
 
 step factory/scripts/check-seams.sh
-step vp test run apps/server/src/factory
+step vp test run apps/server/src/factory apps/mobile/src/factory
 step vp run --filter t3 typecheck
 step vp run --filter @t3tools/web typecheck
+step vp run --filter @t3tools/mobile typecheck

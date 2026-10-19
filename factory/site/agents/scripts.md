@@ -6,25 +6,25 @@ All under `factory/scripts/`, run from a clone of the repo. Each uses `set -euo 
 
 The fork's one check: the factory gate and the `Check` job of `factory-ci`.
 
-|        |                                                                                                                                   |
-| ------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Usage  | `factory/scripts/check.sh`                                                                                                        |
-| Steps  | `check-seams.sh`; `vp test run apps/server/src/factory`; `vp run --filter t3 typecheck`; `vp run --filter @t3tools/web typecheck` |
-| Prints | `check: <command>` before each step                                                                                               |
-| 0      | Every step passed.                                                                                                                |
-| other  | The first failing step's exit code.                                                                                               |
+|        |                                                                                                                                                                                                        |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Usage  | `factory/scripts/check.sh`                                                                                                                                                                             |
+| Steps  | `check-seams.sh`; `vp test run apps/server/src/factory apps/mobile/src/factory`; `vp run --filter t3 typecheck`; `vp run --filter @t3tools/web typecheck`; `vp run --filter @t3tools/mobile typecheck` |
+| Prints | `check: <command>` before each step                                                                                                                                                                    |
+| 0      | Every step passed.                                                                                                                                                                                     |
+| other  | The first failing step's exit code.                                                                                                                                                                    |
 
 ## check-seams.sh
 
 Fails when a committed file differs from the upstream commit in `factory/UPSTREAM` and is neither factory-owned nor listed in `factory/SEAMS`.
 
-|               |                                                                                                                                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Usage         | `factory/scripts/check-seams.sh`                                                                                                                                                                             |
-| Factory-owned | `apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `factory/`, `.dw/`, `apps/web/src/routes/factory*`, `apps/web/src/routes/settings.factory*`, `.github/workflows/factory-*` |
-| Prints        | `check-seams: not a listed seam: <path>` per offender                                                                                                                                                        |
-| 0             | No offender.                                                                                                                                                                                                 |
-| 1             | At least one offender.                                                                                                                                                                                       |
+|               |                                                                                                                                                                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Usage         | `factory/scripts/check-seams.sh`                                                                                                                                                                                                         |
+| Factory-owned | `apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `apps/mobile/src/factory/`, `factory/`, `.dw/`, `apps/web/src/routes/factory*`, `apps/web/src/routes/settings.factory*`, `.github/workflows/factory-*` |
+| Prints        | `check-seams: not a listed seam: <path>` per offender                                                                                                                                                                                    |
+| 0             | No offender.                                                                                                                                                                                                                             |
+| 1             | At least one offender.                                                                                                                                                                                                                   |
 
 ## deploy.sh
 
@@ -149,3 +149,13 @@ Run by `.github/workflows/factory-desktop.yml` on every push to `main`. `desktop
 | `desktop-notarize-dmg.sh <dmg> <manifest>` | Signs, notarizes and staples the dmg, then runs `desktop-restamp-dmg.ts`.                                                                             | Any step fails.                                                                        |
 | `desktop-restamp-dmg.ts <dmg> <manifest>`  | Rebuilds `<dmg>.blockmap` and rewrites the dmg's `sha512` and `size` in the update manifest, after stapling changed the dmg. Run with `node`.         | The manifest does not list the dmg (nothing written).                                  |
 | `desktop-verify.sh <dmg> <zip>`            | `xcrun stapler validate` on the dmg; `codesign --verify --deep --strict` and `spctl -a -vv` on the `.app` in the zip and in the dmg.                  | Any check fails.                                                                       |
+
+## mobile-dev-client.ts
+
+Starts Metro for the fork's development dev client, in place of upstream's `vp run dev:client`, whose `--scheme t3code-dev` the fork's dev build does not register.
+
+|       |                                                                                                         |
+| ----- | ------------------------------------------------------------------------------------------------------- |
+| Usage | `node factory/scripts/mobile-dev-client.ts [expo start args]`, e.g. `--clear`                           |
+| Runs  | `expo start --dev-client --scheme t3code-factory-dev --lan` in `apps/mobile`, `APP_VARIANT=development` |
+| Exit  | Expo's exit code.                                                                                       |
