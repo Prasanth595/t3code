@@ -64,6 +64,7 @@ import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
+import { mapCodexModelCapabilities } from "../../provider/CodexProvider.ts";
 import { makeReplayServerConfig, withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
@@ -642,6 +643,50 @@ describe("CodexAdapterV2 runtime policy", () => {
         });
         assert.equal(managed.serviceTier, undefined);
       }),
+  );
+
+  it.effect("uses Astra's advertised effort default while preserving explicit selections", () =>
+    Effect.gen(function* () {
+      const model = "gpt-6-astra";
+      const capabilities = mapCodexModelCapabilities({
+        id: model,
+        model,
+        displayName: model,
+        description: "Test model",
+        hidden: false,
+        isDefault: true,
+        defaultReasoningEffort: "low",
+        supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({
+          reasoningEffort,
+          description: reasoningEffort,
+        })),
+        additionalSpeedTiers: [],
+      });
+      const advertised = capabilities.optionDescriptors?.find(
+        (option) => option.id === "reasoningEffort",
+      )?.currentValue;
+      assert.equal(advertised, "medium");
+      for (const selected of [undefined, "high"] as const) {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-astra-effort",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model,
+            ...(selected ? { options: [{ id: "reasoningEffort", value: selected }] } : {}),
+          },
+          hasT3Mcp: true,
+        });
+        const expected = selected ?? advertised;
+        assert.equal(params.effort, expected);
+        assert.equal(params.collaborationMode?.settings.reasoning_effort, expected);
+        assert.include(
+          params.additionalContext?.t3_code_runtime?.value ?? "",
+          `${expected} reasoning effort`,
+        );
+      }
+    }),
   );
 
   it.effect.each(["default", "plan"] as const)(
