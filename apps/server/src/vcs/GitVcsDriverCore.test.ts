@@ -4604,6 +4604,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-remote-");
+        const upstream = yield* makeTmpDir("git-upstream-");
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* git(cwd, ["branch", "-M", "main"]);
@@ -4613,7 +4614,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["checkout", "-b", "dev"]);
         yield* git(cwd, ["push", "-u", "origin", "dev"]);
         const devSha = yield* git(cwd, ["rev-parse", "HEAD"]);
-        yield* git(cwd, ["checkout", "-b", "feature/x", "origin/dev"]);
+        yield* git(upstream, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "upstream", upstream]);
+        yield* writeTextFile(cwd, "upstream.txt", "upstream work\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* driver.commit(cwd, "Add upstream update", "");
+        yield* git(cwd, ["push", "upstream", "dev"]);
+        const upstreamDevSha = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["checkout", "-b", "feature/x", "upstream/dev"]);
         yield* writeTextFile(cwd, "feature.txt", "feature\n");
         yield* git(cwd, ["add", "-A"]);
         yield* driver.commit(cwd, "Add feature", "");
@@ -4631,11 +4639,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "Add feature",
         );
         assert.equal(yield* git(remote, ["--git-dir=.", "rev-parse", "dev"]), devSha);
+        assert.equal(yield* git(upstream, ["--git-dir=.", "rev-parse", "dev"]), upstreamDevSha);
         assert.equal(
           yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
           "origin/feature/x",
         );
         assert.equal(yield* driver.readConfigValue(cwd, "branch.feature/x.gh-merge-base"), "dev");
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.deepStrictEqual(changes.files, [
+          { path: "feature.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.equal(changes.baseRef, "upstream/dev");
       }),
     );
 
