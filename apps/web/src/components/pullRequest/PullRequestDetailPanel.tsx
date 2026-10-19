@@ -2874,6 +2874,7 @@ export function PullRequestDetailPanel({
                     reference={reference}
                     detail={detail}
                     selectedCommitOid={selectedCodeCommitOid}
+                    commitsPending={activityPending}
                     onSelectedCommitChange={selectCodeCommit}
                     pendingFinding={handoff}
                     fixFindingLabel={handoffLabels.fixFinding}

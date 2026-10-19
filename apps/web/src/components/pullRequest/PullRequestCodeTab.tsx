@@ -263,6 +263,7 @@ function PullRequestCodeTab({
   reference,
   detail,
   selectedCommitOid,
+  commitsPending = false,
   onSelectedCommitChange,
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
@@ -279,6 +280,7 @@ function PullRequestCodeTab({
   reference: PullRequestRef;
   detail: PullRequestDetailView;
   selectedCommitOid: string | null;
+  commitsPending?: boolean;
   onSelectedCommitChange: (oid: string | null) => void;
   pendingFinding?: string | null;
   fixFindingLabel?: string;
@@ -331,11 +333,16 @@ function PullRequestCodeTab({
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
   const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
+  // Only for the diff it was read in: an asked-for reveal, or another commit, wins over it.
+  const [restoredFile, setRestoredFile] = useState(() =>
+    initialFile !== null && revealRequest === null ? { ...initialFile, scopeKey } : null,
+  );
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
+    setRestoredFile(null);
     setDraft(null);
     setSelectedLines(null);
     setToggledFiles(new Set());
@@ -460,10 +467,6 @@ function PullRequestCodeTab({
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
   const answeredReveal = useRef<number | null>(null);
-  // Only for the diff it was read in: an asked-for reveal, or another commit, wins over it.
-  const [restoredFile] = useState(() =>
-    initialFile !== null && revealRequest === null ? { ...initialFile, scopeKey } : null,
-  );
   const pendingRestore = useRef(restoredFile);
   // Scrolling fires every frame, so the position goes out once the reader settles.
   const pendingFileReport = useRef<PendingFileReport | null>(null);
@@ -1378,10 +1381,11 @@ function PullRequestCodeTab({
     };
   };
   useEffect(() => {
-    if (commit !== null && selectedCommit === undefined) {
+    // A commit restored from an earlier visit is not missing yet while the commit list loads.
+    if (commit !== null && !commitsPending && selectedCommit === undefined) {
       onSelectedCommitChange(null);
     }
-  }, [commit, onSelectedCommitChange, selectedCommit]);
+  }, [commit, commitsPending, onSelectedCommitChange, selectedCommit]);
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
@@ -1545,7 +1549,7 @@ function PullRequestCodeTab({
               ariaLabel={`Pull request #${detail.number} files`}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
-              selectedPath={restoredFile?.scopeKey === scopeKey ? restoredFile.path : null}
+              selectedPath={restoredFile?.path ?? null}
               footer={
                 nextCursor === null ? null : (
                   <div className="shrink-0 border-t border-border/60 p-2">
