@@ -230,7 +230,6 @@ interface ResolvedPullRequest {
 }
 
 interface PullRequestHeadRemoteInfo {
-  /** The remote ref the host publishes the pull request's head under. */
   headRef?: string | undefined;
   isCrossRepository?: boolean | undefined;
   headRepositoryNameWithOwner?: string | null | undefined;
@@ -2680,13 +2679,14 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
-      const headRemoteInfo = {
+      const pullRequestWithRemoteInfo = {
+        ...pullRequest,
         ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-        headRef: provider.changeRequestHeadRef?.(pullRequestSummary.number),
+        headRef: provider.changeRequestHeadRef?.(pullRequest.number),
       };
 
       if (input.mode === "local") {
-        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
+        yield* provider.checkoutChangeRequest({
           cwd: input.cwd,
           reference: normalizedReference,
           force: true,
@@ -2694,10 +2694,7 @@ export const make = Effect.gen(function* () {
         const details = yield* gitCore.statusDetails(input.cwd);
         yield* configurePullRequestHeadUpstream(
           input.cwd,
-          {
-            ...pullRequest,
-            ...headRemoteInfo,
-          },
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
         return {
@@ -2714,18 +2711,11 @@ export const make = Effect.gen(function* () {
         const details = yield* gitCore.statusDetails(worktreePath);
         yield* configurePullRequestHeadUpstream(
           worktreePath,
-          {
-            ...pullRequest,
-            ...headRemoteInfo,
-          },
+          pullRequestWithRemoteInfo,
           details.branch ?? pullRequest.headBranch,
         );
       });
 
-      const pullRequestWithRemoteInfo = {
-        ...pullRequest,
-        ...headRemoteInfo,
-      } as const;
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
@@ -2768,7 +2758,7 @@ export const make = Effect.gen(function* () {
           .fetchPullRequestHeadCommit({
             cwd: worktreePath,
             prNumber: pullRequest.number,
-            headRef: headRemoteInfo.headRef,
+            headRef: pullRequestWithRemoteInfo.headRef,
           })
           .pipe(
             // A host that publishes no pull request head ref leaves the remote-tracking branch,
