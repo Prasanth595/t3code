@@ -18,7 +18,7 @@ export function factoryEnvironmentChoice(
   if (connections.length === 0) return { kind: "none" };
   const direct = connections
     .filter((connection) => !isRelayManagedConnection(connection))
-    .toSorted((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
+    .sort((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
   if (direct.length === 0) return { kind: "relay-only" };
   if (direct.length === 1) return { kind: "one", connection: direct[0]! };
   return { kind: "several", connections: direct };
