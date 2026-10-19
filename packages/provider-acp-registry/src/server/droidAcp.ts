@@ -1,4 +1,4 @@
-import type { OrchestrationV2UserInputQuestion } from "@t3tools/contracts";
+import { type OrchestrationV2UserInputQuestion, TrimmedNonEmptyString } from "@t3tools/contracts";
 import type { AcpAdapterV2Flavor } from "@t3tools/provider-acp/server/adapter";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
@@ -12,12 +12,12 @@ const isDroidForm = Schema.is(
 const isDroidQuestion = Schema.is(
   Schema.Struct({
     type: Schema.Literal("string"),
-    title: Schema.String,
-    description: Schema.String,
+    title: TrimmedNonEmptyString,
+    description: TrimmedNonEmptyString,
     oneOf: Schema.Array(
       Schema.Struct({
         const: Schema.String.check(Schema.isPattern(/^(?:option_\d+|other)$/)),
-        title: Schema.String,
+        title: TrimmedNonEmptyString,
       }),
     ),
   }),
