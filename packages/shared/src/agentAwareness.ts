@@ -65,7 +65,11 @@ export function projectThreadAwarenessV2(
     return null;
   }
   // Resolve the phase first so live or waiting work stays visible after settlement.
-  if (thread.settledOverride === "settled" && (phase === "completed" || phase === "failed")) {
+  if (
+    thread.settledOverride === "settled" &&
+    (phase === "completed" || phase === "failed") &&
+    !backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
+  ) {
     return null;
   }
   const detail =

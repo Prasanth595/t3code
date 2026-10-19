@@ -800,56 +800,61 @@ describe("AgentAwarenessRelay", () => {
   );
 
   it.effect.each([
-    { work: "running", phase: "running" },
-    { work: "user input", phase: "waiting_for_input" },
-    { work: "monitor", phase: "running" },
-  ] as const)("keeps settled $work visible until it finishes", ({ work, phase }) =>
-    Effect.gen(function* () {
-      const { relay, currentShell, publications } = yield* makeTestRelay();
-      const active = shell({
-        status: work === "running" ? "running" : "completed",
-        latestRunCompletedAt: DateTime.add(yield* DateTime.now, { seconds: 1 }),
-        pendingRuntimeRequest:
-          work === "user input"
-            ? {
-                id: RuntimeRequestId.make("waiting"),
-                kind: "user_input",
-                createdAt: yield* DateTime.now,
-              }
-            : null,
-        pendingBackgroundTasks: work === "monitor" ? [{ taskId: "watch", kind: "monitor" }] : [],
-      });
-      yield* Ref.set(currentShell, active);
-      yield* relay.publishThread(THREAD_ID);
-      assert.deepEqual(
-        publications.map(({ state }) => state?.phase),
-        [phase],
-      );
+    { work: "running", status: "running", phase: "running" },
+    { work: "user input", status: "completed", phase: "waiting_for_input" },
+    { work: "monitor", status: "completed", phase: "running" },
+    { work: "monitor", status: "failed", phase: "failed" },
+  ] as const)(
+    "keeps settled $work visible until it finishes ($status run)",
+    ({ work, status, phase }) =>
+      Effect.gen(function* () {
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        const active = shell({
+          status,
+          latestRunCompletedAt: DateTime.add(yield* DateTime.now, { seconds: 1 }),
+          pendingRuntimeRequest:
+            work === "user input"
+              ? {
+                  id: RuntimeRequestId.make("waiting"),
+                  kind: "user_input",
+                  createdAt: yield* DateTime.now,
+                }
+              : null,
+          pendingBackgroundTasks: work === "monitor" ? [{ taskId: "watch", kind: "monitor" }] : [],
+        });
+        yield* Ref.set(currentShell, active);
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase),
+          [phase],
+        );
 
-      yield* Ref.set(currentShell, { ...active, settledOverride: "settled" });
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.deepEqual(
-        publications.map(({ state }) => state?.phase),
-        [phase],
-      );
+        yield* Ref.set(currentShell, { ...active, settledOverride: "settled" });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase),
+          [phase],
+        );
 
-      yield* Ref.set(currentShell, {
-        ...active,
-        settledOverride: "settled",
-        status: "completed",
-        pendingRuntimeRequest: null,
-        pendingBackgroundTasks: [],
-      });
-      yield* relay.publishThread(THREAD_ID);
-      yield* TestClock.adjust("5 seconds");
-      yield* relay.drain;
-      assert.deepEqual(
-        publications.map(({ state }) => state?.phase ?? null),
-        [phase, null],
-      );
-    }),
+        yield* Ref.set(currentShell, {
+          ...active,
+          settledOverride: "settled",
+          status: status === "running" ? "completed" : status,
+          pendingRuntimeRequest: null,
+          pendingBackgroundTasks: [],
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase ?? null),
+          [phase, null],
+        );
+      }),
   );
 
   it.effect("confirms a first completed state and respects disabling during confirmation", () =>
