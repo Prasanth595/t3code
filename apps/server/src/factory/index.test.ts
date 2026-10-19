@@ -1296,12 +1296,47 @@ describe("liveWorld", () => {
           assert.notInclude(result.failure.message, local.root);
         }
         const reading = readings[0];
+        assert.strictEqual(reading?.kind, "errors");
         if (reading?.kind === "errors") {
           assert.deepStrictEqual(
             reading.errors.map((e) => e.file),
             [".dw/config.yml"],
           );
         }
+      }
+    }),
+  );
+
+  it.effect("a checkout config that does not parse names the local file in its errors", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      NodeFS.mkdirSync(NodePath.join(local.root, ".dw"));
+      NodeFS.writeFileSync(local.file, "factory:\n  instructors: [tomkaczocha]\n  base: main\n");
+      const { result, readings } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      const reading = readings[0];
+      assert.strictEqual(reading?.kind, "errors");
+      if (reading?.kind === "errors") {
+        assert.isAbove(reading.errors.length, 0);
+        for (const error of reading.errors) assert.strictEqual(error.file, local.file);
+      }
+    }),
+  );
+
+  it.effect("a checkout config that cannot be read is one error saying both", () =>
+    Effect.gen(function* () {
+      const { process } = baseConfigGh(NOT_FOUND);
+      const local = checkout(null);
+      // A directory where the file should be.
+      NodeFS.mkdirSync(local.file, { recursive: true });
+      const { result } = yield* readProject(process, local.root);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.include(
+          result.failure.message,
+          `.dw/config.yml is not on main on GitHub, and cannot read ${local.file}: `,
+        );
       }
     }),
   );
