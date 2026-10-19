@@ -259,7 +259,7 @@ export const bufferLiveStream = <A extends object, E, R>(
     }),
   );
 
-/** For ordered full-state sources, keep only the latest queued state per aggregate while awaiting ACK. */
+/** Coalesce queued full states; delivered states stay charged until the next pull ACKs them. */
 export const bufferLatestLiveStream = <A extends { readonly sequence: number }, E, R>(
   source: Stream.Stream<A, E, R>,
   key: (value: A) => string,
@@ -268,12 +268,12 @@ export const bufferLatestLiveStream = <A extends { readonly sequence: number }, 
   Stream.unwrap(
     Effect.gen(function* () {
       const budget = yield* makeLiveStreamBudget(limits);
-      const ready = yield* Queue.unbounded<void, E | LiveStreamBufferError | Cause.Done>();
+      const ready = yield* Queue.bounded<void, E | LiveStreamBufferError | Cause.Done>(1);
       const mutex = yield* Semaphore.make(1);
       const pending = new Map<string, RetainedLiveItem<A>>();
       let closed = false;
       const close = (error?: LiveStreamBufferError) =>
-        mutex.withPermits(1)(
+        mutex.withPermit(
           Effect.gen(function* () {
             if (closed) return;
             closed = true;
@@ -290,7 +290,7 @@ export const bufferLatestLiveStream = <A extends { readonly sequence: number }, 
       );
       yield* source.pipe(
         Stream.runForEach((value) =>
-          mutex.withPermits(1)(
+          mutex.withPermit(
             Effect.gen(function* () {
               yield* budget.check;
               if (closed) return;
@@ -300,8 +300,8 @@ export const bufferLatestLiveStream = <A extends { readonly sequence: number }, 
               const wasEmpty = pending.size === 0;
               const [item] = yield* budget.replace(previous ? [previous] : [], [value]);
               pending.set(identity, item!);
-              // One wakeup per pending batch, not per update. Replacements
-              // cannot leave an unbounded queue of obsolete keys behind.
+              // Only the empty-to-nonempty transition needs a wakeup; replacements
+              // must not leave another token after this batch has drained.
               if (wasEmpty) yield* Queue.offer(ready, undefined);
             }).pipe(Effect.uninterruptible),
           ),
@@ -318,14 +318,13 @@ export const bufferLatestLiveStream = <A extends { readonly sequence: number }, 
           Effect.succeed(
             Queue.take(ready).pipe(
               Effect.andThen(
-                mutex.withPermits(1)(
+                mutex.withPermit(
                   Effect.sync(() => {
                     const items = Array.from(pending.values()).sort(
                       (left, right) => left.value.sequence - right.value.sequence,
                     );
                     pending.clear();
-                    // The wakeup exists only for a nonempty pending batch.
-                    // Delivery now owns these items until the next ACK.
+                    // Moving to delivery preserves the budget charge until ACK.
                     return items as Arr.NonEmptyArray<RetainedLiveItem<A>>;
                   }),
                 ),

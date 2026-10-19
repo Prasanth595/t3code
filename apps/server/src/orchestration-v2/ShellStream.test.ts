@@ -418,6 +418,47 @@ describe("shellStreamItemsFromResumeSnapshot", () => {
 });
 
 describe("composeShellStreamWithEnrichment", () => {
+  it.effect("keeps a merged shell batch charged while the client withholds its ACK", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const update = yield* Deferred.make<void>();
+        const closed = yield* Deferred.make<void>();
+        const initial = {
+          kind: "thread.removed" as const,
+          sequence: 1,
+          location: "active" as const,
+          threadId: ThreadId.make("thread-a"),
+        };
+        const pull = yield* Stream.toPull(
+          composeShellStreamWithEnrichment({
+            initial: Stream.empty,
+            tail: bufferShellLiveStream(
+              Stream.concat(
+                Stream.succeed(initial),
+                Stream.fromEffect(Deferred.await(update)).pipe(
+                  Stream.map(() => ({ ...initial, sequence: 2 })),
+                ),
+              ).pipe(Stream.ensuring(Deferred.succeed(closed, undefined))),
+              { maxItems: 1 },
+            ),
+            enrichment: Stream.empty,
+          }),
+        );
+        expect(yield* pull).toEqual([initial]);
+        // Let the merge producer run while the client still withholds its ACK.
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(update, undefined);
+        yield* Deferred.await(closed);
+        const result = yield* Stream.fromPull(Effect.succeed(pull)).pipe(
+          Stream.runDrain,
+          Effect.result,
+        );
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
+      }),
+    ),
+  );
+
   it.effect(
     "emits every initial item before enrichment even when enrichment is already ready",
     () =>
