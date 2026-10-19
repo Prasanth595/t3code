@@ -91,7 +91,7 @@ const threadA = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-1"),
 };
-// The panel keeps its key across both kinds of switch, so both must reset it.
+// The panel stays mounted across both kinds of switch.
 const switches = [
   ["another thread", { environmentId: threadA.environmentId, threadId: ThreadId.make("thread-2") }],
   [
@@ -100,6 +100,7 @@ const switches = [
   ],
 ] as const;
 const threadB = switches[0][1];
+const otherEnvironment = switches[1][1];
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
 const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
   id: "device:phone",
@@ -153,21 +154,25 @@ afterEach(async () => {
 });
 
 describe("DevicePanel thread switches", () => {
-  it.each(
-    switches.flatMap(
-      ([label, target]) =>
-        [
-          [`a pending pick, switching to ${label}`, target, () => deferred().promise],
-          [`a failed pick, switching to ${label}`, target, () => Promise.resolve(failed)],
-        ] as const,
-    ),
-  )("does not carry %s", async (_, target, result) => {
-    mocks.open.mockImplementation(result);
+  it.each(switches)("does not carry a pending or failed pick to %s", async (_, target) => {
+    const pick = deferred();
+    mocks.open.mockReturnValue(pick.promise);
     await show(threadA);
     await click(startButton());
+    expect(startButton()).toBeNull();
 
     await show(target);
+    expect(startButton()?.disabled).toBe(false);
 
+    await act(async () => pick.settle(failed));
+    expect(errors()).toHaveLength(0);
+    expect(mocks.openDevice).not.toHaveBeenCalled();
+
+    await show(threadA);
+    expect(startButton()?.disabled).toBe(false);
+    expect(errors()).toHaveLength(1);
+
+    await show(target);
     expect(startButton()?.disabled).toBe(false);
     expect(errors()).toHaveLength(0);
   });
@@ -188,19 +193,34 @@ describe("DevicePanel thread switches", () => {
       () => expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(threadA, streaming.id),
     ],
   ] as const)(
-    "applies a %s that settles after a switch to the thread it started in",
+    "applies a late %s to its starting thread after switching environments with the same thread id",
     async (_, surface, command, start, expectApplied) => {
       const late = deferred();
       command().mockReturnValue(late.promise);
       await show(threadA, surface);
       await start();
 
-      await show(threadB, surface);
+      await show(otherEnvironment, surface);
       await act(async () => late.settle(opened));
 
       expectApplied();
     },
   );
+
+  it("keeps a late power-off error in the environment that started it", async () => {
+    const powerOff = deferred();
+    mocks.close.mockReturnValue(powerOff.promise);
+    await show(threadA, streaming);
+    await click(container.querySelector("button"));
+
+    await show(otherEnvironment, streaming);
+    await act(async () => powerOff.settle(failed));
+
+    expect(errors()).toHaveLength(0);
+    expect(mocks.closeSurface).not.toHaveBeenCalled();
+    await show(threadA, streaming);
+    expect(errors()).toHaveLength(1);
+  });
 
   it("keeps a thread's own pick pending when another thread's pick settles", async () => {
     const first = deferred();
@@ -215,5 +235,13 @@ describe("DevicePanel thread switches", () => {
 
     expect(startButton()).toBeNull();
     expect(mocks.openDevice.mock.calls).toEqual([[threadA, phoneTarget]]);
+
+    await act(async () => second.settle(opened));
+
+    expect(startButton()?.disabled).toBe(false);
+    expect(mocks.openDevice.mock.calls).toEqual([
+      [threadA, phoneTarget],
+      [threadB, phoneTarget],
+    ]);
   });
 });
