@@ -1171,6 +1171,103 @@ describe("environment shell synchronization", () => {
     }),
   );
 
+  it.effect("preserves pending HTTP links through metadata-only snapshots until saved", () =>
+    Effect.gen(function* () {
+      const link: ThreadPullRequestLink = {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 7,
+        url: "https://github.com/pingdotgg/t3code/pull/7",
+        source: "agent",
+        linkedAt: "2026-06-20T00:00:00.000Z",
+        snapshot: null,
+        stack: null,
+      };
+      const linksReady = yield* Deferred.make<void>();
+      const fillStarted = yield* Deferred.make<void>();
+      const fillEnded = yield* Deferred.make<void>();
+      const saved = yield* Queue.unbounded<OrchestrationV2ShellSnapshot>();
+      const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+      const client = {
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () => Stream.fromQueue(events),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeedNone,
+        saveShell: (_environmentId, snapshot) => Queue.offer(saved, snapshot),
+        loadThread: () => Effect.succeedNone,
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeedNone,
+        saveServerConfig: () => Effect.void,
+        loadVcsRefs: () => Effect.succeedNone,
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+      const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
+        load: () =>
+          Effect.succeedSome({
+            ...v2ShellSnapshot,
+            snapshotSequence: 3,
+            loadPullRequests: Deferred.succeed(fillStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(linksReady)),
+              Effect.as(new Map([[v2ThreadShell.id, [link]]])),
+              Effect.ensuring(Deferred.succeed(fillEnded, undefined)),
+            ),
+          }),
+      });
+      const shellState = yield* makeEnvironmentShellState().pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+      );
+      yield* Deferred.await(fillStarted);
+      yield* Queue.offerAll(events, [
+        {
+          kind: "snapshot",
+          snapshot: { ...v2ShellSnapshot, snapshotSequence: 3, threads: [] },
+          resolvedRepositoryIdentityRoots: [v2Project.workspaceRoot],
+        },
+        { kind: "synchronized" },
+      ]);
+      const resumed = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter((state) => state.status === "live"),
+        Stream.runHead,
+        Effect.map((state) => Option.getOrThrow(Option.getOrThrow(state).snapshot)),
+      );
+      expect(resumed.threads).toEqual([v2ThreadShell]);
+      expect(yield* Deferred.isDone(fillEnded)).toBe(false);
+
+      yield* TestClock.adjust("500 millis");
+      expect(yield* Queue.size(saved)).toBe(0);
+
+      yield* Deferred.succeed(linksReady, undefined);
+      const filled = yield* SubscriptionRef.changes(shellState).pipe(
+        Stream.filter(
+          (state) =>
+            Option.isSome(state.snapshot) &&
+            state.snapshot.value.threads[0]?.pullRequests !== undefined,
+        ),
+        Stream.runHead,
+        Effect.map((state) => Option.getOrThrow(Option.getOrThrow(state).snapshot)),
+      );
+      expect(filled.threads[0]?.pullRequests).toEqual([link]);
+
+      yield* TestClock.adjust("30 seconds");
+      expect(yield* Queue.take(saved)).toEqual(filled);
+    }),
+  );
+
   it.effect("drops deferred HTTP links when a replacement sends a snapshot", () =>
     Effect.gen(function* () {
       const firstLinks = yield* Deferred.make<void>();

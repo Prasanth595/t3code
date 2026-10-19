@@ -180,7 +180,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     items: ReadonlyArray<OrchestrationV2ShellStreamItem>,
     pendingLinkIds?: ReadonlySet<ThreadId>,
   ) {
-    if (pendingLinkIds === undefined && items.some((item) => item.kind === "snapshot")) {
+    const replacesPendingLinks =
+      pendingLinkIds === undefined &&
+      items.some(
+        (item) => item.kind === "snapshot" && item.resolvedRepositoryIdentityRoots === undefined,
+      );
+    if (replacesPendingLinks) {
       yield* cancelActiveFill;
     }
     const initial = yield* SubscriptionRef.get(state);
@@ -230,7 +235,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
     if (Option.isSome(next.snapshot)) {
       yield* Ref.set(latestLiveSnapshot, next.snapshot);
-      if (receivedSnapshot && pendingLinkIds === undefined) {
+      if (replacesPendingLinks) {
         pendingLinkRows = new Set();
       }
     }
