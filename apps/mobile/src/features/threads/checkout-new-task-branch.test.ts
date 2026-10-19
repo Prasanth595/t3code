@@ -42,7 +42,7 @@ type CheckoutInput = Parameters<typeof checkoutNewTaskBranch>[0];
 const decodeListRefsInput = Schema.decodeUnknownSync(VcsListRefsInput);
 const REF_PAGE_SIZE = 2;
 
-const readRefs: CheckoutInput["readRefs"] = (request) =>
+const readRefs = (request: Parameters<CheckoutInput["readRefs"]>[0]) =>
   settlePromise(async () => {
     expect(request.environmentId).toBe(environmentId);
     const input = decodeListRefsInput(request.input);
@@ -84,7 +84,7 @@ const readRefs: CheckoutInput["readRefs"] = (request) =>
       .filter((ref) => ref.name.includes(input.query ?? ""));
     const cursor = input.cursor ?? 0;
     return {
-      rootPath: rootPath.trim(),
+      isAtRepositoryRoot: (await NodeFSP.realpath(input.cwd)) === rootPath.trim(),
       refs: refs.slice(cursor, cursor + REF_PAGE_SIZE),
       isRepo: true,
       hasPrimaryRemote: false,
@@ -214,6 +214,36 @@ describe("new-task branch checkout", () => {
     );
   });
 
+  it("reuses an occupied picker worktree when the project root is a symlink", async () => {
+    const worktreePath = NodePath.join(directory, "worktree");
+    await git("worktree", "add", worktreePath, branch.name);
+    const workspaceRoot = NodePath.join(directory, "project-alias");
+    await NodeFSP.symlink(cwd, workspaceRoot, "junction");
+
+    const result = await checkoutNewTaskBranch({
+      branch: { ...branch, worktreePath },
+      project: { environmentId, workspaceRoot },
+      workspaceMode: "local",
+      readRefs,
+      switchRef: refuseSwitch,
+    });
+
+    expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
+    expect(await NodeFSP.readFile(NodePath.join(workspaceRoot, "file.txt"), "utf8")).toBe("main\n");
+    expect(
+      (await exec("git", ["-C", worktreePath, "branch", "--show-current"])).stdout.trim(),
+    ).toBe(branch.name);
+    expect(await NodeFSP.readFile(NodePath.join(worktreePath, "file.txt"), "utf8")).toBe(
+      "feature\n",
+    );
+    expect(
+      result._tag,
+      result._tag === "Failure" ? String(squashAtomCommandFailure(result)) : undefined,
+    ).toBe("Success");
+    if (result._tag !== "Success") throw new Error("Symlink-root worktree selection failed");
+    expect(result.value.worktreePath).toBe(worktreePath);
+  });
+
   it("resolves historical branch metadata to its worktree beyond a long query's first page", async () => {
     const name = `feature/${"a".repeat(120)}/${"b".repeat(150)}`;
     await git("branch", "-m", branch.name, name);
@@ -325,7 +355,7 @@ describe("new-task branch checkout", () => {
           const result = await readRefs(request);
           if (!nested && result._tag === "Success") {
             // Older servers cannot prove whether this project is at the repository root.
-            const { rootPath: _rootPath, ...value } = result.value;
+            const { isAtRepositoryRoot: _isAtRepositoryRoot, ...value } = result.value;
             return { ...result, value };
           }
           return result;

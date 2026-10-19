@@ -3270,11 +3270,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ...tracked,
           upstreamRef: "refs/remotes/team/upstream/feature/a",
         });
-        const expected = {
-          ...complete,
-          rootPath: yield* git(nestedCwd, ["rev-parse", "--show-toplevel"]),
-        };
-        assert.deepEqual(decodeVcsListRefsResult(complete), expected);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const aliasCwd = pathService.join(cwd, "worktree-alias");
+        yield* fileSystem.symlink(worktreePath, aliasCwd);
+        const aliased = yield* driver.listRefs({ cwd: aliasCwd });
+        const expected = [
+          { ...complete, isAtRepositoryRoot: false },
+          { ...aliased, isAtRepositoryRoot: true },
+        ];
+        assert.deepEqual([complete, aliased], expected);
+        assert.deepEqual(
+          [decodeVcsListRefsResult(complete), decodeVcsListRefsResult(aliased)],
+          expected,
+        );
       }),
     );
 
