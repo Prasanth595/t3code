@@ -1,18 +1,20 @@
-import { FileTree } from "@pierre/trees/react";
-import type { FileTree as FileTreeModel } from "@pierre/trees";
+import "../../index.css";
+
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { act, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { InputGroupInput } from "~/components/ui/input-group";
 import FileBrowserPanel from "./FileBrowserPanel";
 
 const files = vi.hoisted(() => ({
   directoryEntries: [] as ProjectEntry[],
+  directoryReady: true,
+  directoryPending: false,
   searchEntries: [] as ProjectEntry[],
   searchPending: false,
   searchError: null as string | null,
+  loadingDirectories: new Set<string>() as ReadonlySet<string>,
   load: vi.fn(async () => {}),
   refresh: vi.fn(),
 }));
@@ -20,11 +22,12 @@ const files = vi.hoisted(() => ({
 vi.mock("./useDirectoryEntries", () => ({
   useDirectoryEntries: () => ({
     entries: files.directoryEntries,
+    loadingDirectories: files.loadingDirectories,
     load: files.load,
     refresh: files.refresh,
-    ready: true,
+    ready: files.directoryReady,
     error: null,
-    isPending: false,
+    isPending: files.directoryPending,
   }),
 }));
 vi.mock("~/state/queries", () => ({
@@ -50,7 +53,8 @@ vi.mock("~/components/ui/tooltip", () => ({
 }));
 
 describe("Files panel search", () => {
-  let renderer: ReactTestRenderer | undefined;
+  let root: Root | undefined;
+  let container: HTMLDivElement | undefined;
   const props = {
     environmentId: EnvironmentId.make("test-environment"),
     cwd: "/workspace",
@@ -62,52 +66,119 @@ describe("Files panel search", () => {
   };
 
   async function render() {
-    await act(async () => {
-      if (renderer) renderer.update(<FileBrowserPanel {...props} />);
-      else renderer = create(<FileBrowserPanel {...props} />);
-    });
+    if (!container) {
+      container = document.body.appendChild(document.createElement("div"));
+      // The tree virtualizes its rows, so it needs a real viewport to render any.
+      container.style.cssText =
+        "display: flex; flex-direction: column; width: 320px; height: 480px;";
+      root = createRoot(container);
+    }
+    await act(async () => root!.render(<FileBrowserPanel {...props} />));
+  }
+
+  function searchInput() {
+    const input = container!.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(input).not.toBeNull();
+    return input!;
   }
 
   async function search(value: string) {
+    const input = searchInput();
+    // React tracks the last value it saw on the element, so set it through the native setter.
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => {
-      renderer!.root.findByType(InputGroupInput).props.onChange({ target: { value } });
+      input.dispatchEvent(new Event("input", { bubbles: true }));
     });
   }
 
   function visiblePaths() {
-    const trees = renderer!.root.findAllByType(FileTree);
-    if (trees.length === 0) return [];
-    const model: FileTreeModel = trees[0]!.props.model;
-    return model.getVisibleRows(0, model.getVisibleCount()).map((row) => row.path);
-  }
-
-  function hasMessage(message: string) {
-    return (
-      renderer!.root.findAll((node) => node.type === "div" && node.props.children === message)
-        .length > 0
+    const tree = container!.querySelector("file-tree-container");
+    if (!tree) return [];
+    return [...tree.shadowRoot!.querySelectorAll("[data-item-path]")].map((row) =>
+      row.getAttribute("data-item-path"),
     );
   }
 
+  function hasMessage(message: string) {
+    return [...container!.querySelectorAll("div")].some(
+      (node) => node.childNodes.length === 1 && node.textContent === message,
+    );
+  }
+
+  function expectVisibleLoadingStatus() {
+    const status = container!.querySelector<HTMLElement>('[role="status"]');
+    expect(status?.textContent).toBe("Loading files…");
+    expect(status!.checkVisibility()).toBe(true);
+    const bounds = status!.getBoundingClientRect();
+    expect(bounds.width).toBeGreaterThan(1);
+    expect(bounds.height).toBeGreaterThan(1);
+  }
+
+  function rowTop(path: string) {
+    const row = container!
+      .querySelector("file-tree-container")
+      ?.shadowRoot!.querySelector(`[data-item-path="${CSS.escape(path)}"]`);
+    expect(row, `visible row ${path}`).not.toBeNull();
+    const bounds = row!.getBoundingClientRect();
+    expect(bounds.height).toBeGreaterThan(0);
+    return bounds.top;
+  }
+
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("document", new EventTarget());
     files.directoryEntries = [
       { path: "src", kind: "directory" },
       { path: "src/app.ts", kind: "file" },
       { path: "package.json", kind: "file" },
     ];
+    files.directoryReady = true;
+    files.directoryPending = false;
     files.searchEntries = [];
     files.searchPending = false;
     files.searchError = null;
   });
 
   afterEach(async () => {
-    await act(async () => renderer?.unmount());
-    renderer = undefined;
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
+    await act(async () => root?.unmount());
+    container?.remove();
+    root = undefined;
+    container = undefined;
     vi.unstubAllGlobals();
+  });
+
+  it("keeps visible rows stationary during loading while showing initial loading status", async () => {
+    const entries = files.directoryEntries;
+    files.directoryEntries = [];
+    files.directoryReady = false;
+    files.directoryPending = true;
+    await render();
+    expect(visiblePaths()).toEqual([]);
+    expectVisibleLoadingStatus();
+
+    files.directoryEntries = entries;
+    files.directoryReady = true;
+    files.directoryPending = false;
+    await render();
+    expect(visiblePaths()).toEqual(["src/", "package.json"]);
+    const initialTop = rowTop("package.json");
+
+    files.directoryPending = true;
+    await render();
+    expect(rowTop("package.json")).toBe(initialTop);
+
+    files.directoryPending = false;
+    await search("pack");
+    expect(visiblePaths()).toEqual(["package.json"]);
+    const filteredTop = rowTop("package.json");
+
+    files.searchPending = true;
+    await search("package");
+    expect(visiblePaths()).toEqual(["package.json"]);
+    expect(rowTop("package.json")).toBe(filteredTop);
+
+    files.searchPending = false;
+    await render();
+    expect(rowTop("package.json")).toBe(filteredTop);
   });
 
   it("shows no matching files instead of the full tree when a filename is absent", async () => {
@@ -139,7 +210,7 @@ describe("Files panel search", () => {
     files.searchPending = true;
     await search("settings.ts");
     expect(visiblePaths()).toEqual([]);
-    expect(hasMessage("Loading files…")).toBe(true);
+    expectVisibleLoadingStatus();
     expect(hasMessage("No matching files.")).toBe(false);
 
     files.searchEntries = [{ path: "config/settings.ts", kind: "file" }];
@@ -154,12 +225,12 @@ describe("Files panel search", () => {
     await search("missing-file");
     expect(visiblePaths()).toEqual([]);
 
+    const input = searchInput();
+    input.focus();
     await act(async () => {
-      renderer!.root.findByType(InputGroupInput).props.onKeyDown({
-        key: "Escape",
-        currentTarget: { blur: vi.fn() },
-      });
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
+    expect(document.activeElement).not.toBe(input);
     expect(visiblePaths()).toEqual(["src/", "package.json"]);
     expect(hasMessage("No matching files.")).toBe(false);
   });
@@ -170,6 +241,6 @@ describe("Files panel search", () => {
     await search("missing-file");
     expect(visiblePaths()).toEqual([]);
     expect(hasMessage("No matching files.")).toBe(false);
-    expect(JSON.stringify(renderer!.toJSON())).toContain("Workspace search failed.");
+    expect(container!.textContent).toContain("Workspace search failed.");
   });
 });
