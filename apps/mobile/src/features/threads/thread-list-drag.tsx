@@ -1,8 +1,16 @@
 import type { LegendListRef } from "@legendapp/list/react-native";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as Haptics from "expo-haptics";
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import { View, type ViewInstance } from "react-native";
+import {
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Reanimated, {
   ReduceMotion,
@@ -13,7 +21,7 @@ import Reanimated, {
   type SharedValue,
 } from "react-native-reanimated";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -202,11 +210,11 @@ export function useThreadListDrag(props: {
   const viewport = useRef({ top: 0, height: 0 });
   const drag = useRef<Drag | null>(null);
   const frame = useRef<number | null>(null);
-  const latest = useRef(props);
-  latest.current = props;
+  // The controller outlives renders, so it reads the latest props on demand.
+  const latestProps = useEffectEvent(() => props);
 
-  const { controller, cancel } = useMemo(() => {
-    const insets = () => latest.current.edgeInsets ?? { top: 0, bottom: 0 };
+  const [{ controller, cancel }] = useState(() => {
+    const insets = () => latestProps().edgeInsets ?? { top: 0, bottom: 0 };
     const cancel = () => {
       if (frame.current !== null) cancelAnimationFrame(frame.current);
       frame.current = null;
@@ -220,13 +228,13 @@ export function useThreadListDrag(props: {
     // LegendList's current layout and the scroll offset it actually applied.
     const retarget = () => {
       const current = drag.current;
-      const list = latest.current.listRef.current;
+      const list = latestProps().listRef.current;
       if (current === null || list === null) return;
       const state = list.getState();
       const { rows, offsets } = snapshotRows(
         state,
-        latest.current.items,
-        latest.current.estimatedRowHeight,
+        latestProps().items,
+        latestProps().estimatedRowHeight,
       );
       const destination = resolveThreadDrop({
         rows,
@@ -240,7 +248,7 @@ export function useThreadListDrag(props: {
       current.destination = destination;
       const source = rows.find((row) => row.key === current.itemKey);
       const sourceOffset = source?.offset ?? 0;
-      const sourceHeight = source?.height ?? latest.current.estimatedRowHeight;
+      const sourceHeight = source?.height ?? latestProps().estimatedRowHeight;
       const insertionOffset = threadDropInsertionOffset(rows, destination, sourceOffset);
       const previous = layout.get();
       if (
@@ -258,7 +266,7 @@ export function useThreadListDrag(props: {
           offsets,
         });
       }
-      const item = latest.current.items.find((item) => item.key === current.itemKey);
+      const item = latestProps().items.find((item) => item.key === current.itemKey);
       const title =
         item && isThreadListV2ListItem(item) && item.type === "v2-thread"
           ? item.item.thread.title
@@ -276,7 +284,7 @@ export function useThreadListDrag(props: {
       let last = performance.now();
       const tick = () => {
         const current = drag.current;
-        const list = latest.current.listRef.current;
+        const list = latestProps().listRef.current;
         if (current === null || list === null) return;
         const now = performance.now();
         const elapsed = Math.min(now - last, 32);
@@ -319,8 +327,8 @@ export function useThreadListDrag(props: {
           return;
         }
         setHeldKey(itemKey);
-        latest.current.listRef.current
-          ?.getNativeScrollRef()
+        latestProps()
+          .listRef.current?.getNativeScrollRef()
           ?.measureInWindow((_x: number, y: number, _width: number, height: number) => {
             viewport.current = { top: y, height };
           });
@@ -331,13 +339,13 @@ export function useThreadListDrag(props: {
         setHeldKey(null);
       },
       start: (itemKey, thread, grabY, absoluteY) => {
-        const list = latest.current.listRef.current;
+        const list = latestProps().listRef.current;
         if (owner.get() !== itemKey || list === null || drag.current !== null) return;
         const state = list.getState();
         const source = snapshotRows(
           state,
-          latest.current.items,
-          latest.current.estimatedRowHeight,
+          latestProps().items,
+          latestProps().estimatedRowHeight,
         ).rows.find((row) => row.key === itemKey);
         if (source?.section !== "pinned" && source?.section !== "active") return;
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -349,9 +357,9 @@ export function useThreadListDrag(props: {
           anchor: source.offset + grabY - absoluteY - state.scroll,
           minimumScroll: Math.min(
             state.scroll,
-            -(latest.current.edgeInsets?.scrollInsetTop ?? insets().top),
+            -(latestProps().edgeInsets?.scrollInsetTop ?? insets().top),
           ),
-          canDrop: createDropPolicy(thread, source.section, latest.current.workingShelfEnabled),
+          canDrop: createDropPolicy(thread, source.section, latestProps().workingShelfEnabled),
           absoluteY,
           destination: undefined,
         };
@@ -383,13 +391,15 @@ export function useThreadListDrag(props: {
         if (current === null) return;
         if (cancelled || !current.destination) return cancel();
         // Keep the gap until the saved order arrives, avoiding a flash back.
-        void latest.current.onMoveThread(current.thread, current.destination).finally(() => {
-          if (drag.current === current) cancel();
-        });
+        void latestProps()
+          .onMoveThread(current.thread, current.destination)
+          .finally(() => {
+            if (drag.current === current) cancel();
+          });
       },
     };
     return { controller, cancel };
-  }, [layout, owner, previewTop]);
+  });
 
   // A rebuilt list invalidates the drag, including a remote pin or settle
   // that keeps the order but changes what the drop would do.
@@ -444,8 +454,8 @@ export function useThreadListDrag(props: {
 }
 
 /**
- * Press-and-drag for one row. Attach `ref`, `gesture`, and `style` to the
- * row's outer view and call `onMenuOpen` when its long-press menu appears.
+ * Press-and-drag for one row. Render the row inside `ThreadListDragRow` and
+ * call `onMenuOpen` when its long-press menu appears.
  */
 export function useThreadListDragTarget(input: {
   readonly target: ThreadListDragTarget | undefined;
@@ -455,47 +465,41 @@ export function useThreadListDragTarget(input: {
 }) {
   const fallbackLayout = useSharedValue<DragLayout | null>(null);
   const layout = input.target?.layout ?? fallbackLayout;
-  const controller = input.target?.controller ?? null;
   const fallbackOwner = useSharedValue<string | null>(null);
   const owner = input.target?.owner ?? fallbackOwner;
   const enabled = input.enabled && input.target?.draggableKeys.has(input.itemKey) === true;
-  const row = useRef<ViewInstance>(null);
-  const latest = useRef(input);
-  latest.current = input;
-  const press = useRef({ itemKey: "", thread: input.thread, startY: 0, rowTop: 0, active: false });
-  const touch = useSharedValue({ startedAt: 0, x: 0, y: 0, active: false });
+  const touch = useSharedValue({ startedAt: 0, x: 0, y: 0, grabY: 0, active: false });
   const menuOpen = useSharedValue(false);
   const itemKey = input.itemKey;
 
+  // Gesture callbacks outlive renders, so they read the latest input on demand.
+  const latestInput = useEffectEvent(() => input);
+  const [{ prepare, start, move, finish }] = useState(() => {
+    const controllerFor = () => latestInput().target?.controller ?? null;
+    let press = { itemKey: "", thread: input.thread, active: false };
+    return {
+      prepare: (key: string) => {
+        if (latestInput().itemKey !== key) return controllerFor()?.disarm(key);
+        press = { itemKey: key, thread: latestInput().thread, active: false };
+        controllerFor()?.arm(key);
+      },
+      start: (key: string, grabY: number, startY: number, absoluteY: number) => {
+        if (press.itemKey !== key || latestInput().itemKey !== key) return;
+        press.active = true;
+        controllerFor()?.start(key, press.thread, grabY, startY);
+        controllerFor()?.move(key, absoluteY);
+      },
+      move: (key: string, absoluteY: number) => controllerFor()?.move(key, absoluteY),
+      finish: (key: string, success: boolean) => {
+        if (press.itemKey !== key) return;
+        if (press.active) controllerFor()?.end(key, !success);
+        press.active = false;
+        controllerFor()?.disarm(key);
+      },
+    };
+  });
+
   const { gesture, release } = useMemo(() => {
-    const prepare = (key: string, startY: number) => {
-      if (latest.current.itemKey !== key) return controller?.disarm(key);
-      Object.assign(press.current, {
-        itemKey: key,
-        thread: latest.current.thread,
-        startY,
-        active: false,
-      });
-      // Measure at touch-down, before the UI-thread hold can activate.
-      row.current?.measureInWindow((_x, y) => {
-        press.current.rowTop = y;
-      });
-      controller?.arm(key);
-    };
-    const start = (key: string, absoluteY: number) => {
-      const state = press.current;
-      if (state.itemKey !== key || latest.current.itemKey !== key) return;
-      state.active = true;
-      controller?.start(key, state.thread, state.startY - state.rowTop, state.startY);
-      controller?.move(key, absoluteY);
-    };
-    const move = (key: string, absoluteY: number) => controller?.move(key, absoluteY);
-    const finish = (key: string, success: boolean) => {
-      if (press.current.itemKey !== key) return;
-      if (press.current.active) controller?.end(key, !success);
-      press.current.active = false;
-      controller?.disarm(key);
-    };
     const release = () => finish(itemKey, false);
     const gesture = Gesture.Pan()
       .enabled(enabled)
@@ -508,15 +512,17 @@ export function useThreadListDragTarget(input: {
         const point = event.allTouches[0];
         if (event.numberOfTouches !== 1 || point === undefined || owner.value !== null)
           return manager.fail();
-        owner.value = itemKey;
-        menuOpen.value = false;
-        touch.value = {
+        owner.set(itemKey);
+        menuOpen.set(false);
+        touch.set({
           startedAt: Date.now(),
           x: point.absoluteX,
           y: point.absoluteY,
+          // Row-relative, so the lifted card keeps the finger's grab point.
+          grabY: point.y,
           active: false,
-        };
-        runOnJS(prepare)(itemKey, point.absoluteY);
+        });
+        runOnJS(prepare)(itemKey);
       })
       .onTouchesMove((event, manager) => {
         const point = event.allTouches[0];
@@ -542,13 +548,14 @@ export function useThreadListDragTarget(input: {
       })
       .onTouchesCancelled((_event, manager) => manager.fail())
       .onStart((event) => {
-        touch.value = { ...touch.value, active: true };
-        runOnJS(start)(itemKey, event.absoluteY);
+        const state = touch.get();
+        touch.set({ ...state, active: true });
+        runOnJS(start)(itemKey, state.grabY, state.y, event.absoluteY);
       })
       .onUpdate((event) => runOnJS(move)(itemKey, event.absoluteY))
       .onFinalize((_event, success) => runOnJS(finish)(itemKey, success));
     return { gesture, release };
-  }, [controller, enabled, itemKey, latest, menuOpen, owner, press, row, touch]);
+  }, [enabled, finish, itemKey, menuOpen, move, owner, prepare, start, touch]);
 
   // A recycled or unmounted row must release its own press only.
   useEffect(() => release, [release]);
@@ -579,7 +586,7 @@ export function useThreadListDragTarget(input: {
     },
     [menuOpen, release],
   );
-  return { ref: row, gesture, style, onMenuOpen };
+  return { gesture, style, onMenuOpen };
 }
 
 /** The row's outer view, carrying its drag gesture and gap offset. */
@@ -589,7 +596,7 @@ export function ThreadListDragRow(props: {
 }) {
   return (
     <GestureDetector gesture={props.drag.gesture}>
-      <Reanimated.View ref={props.drag.ref} collapsable={false} style={props.drag.style}>
+      <Reanimated.View collapsable={false} style={props.drag.style}>
         {props.children}
       </Reanimated.View>
     </GestureDetector>
