@@ -4814,8 +4814,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       // Stop leaves the run reading as running until its provider stops. A plain
-      // send in that window waits in the held queue instead of steering text the
-      // agent never receives; an explicit steer or restart still fails below.
+      // send in that window queues behind the stopped queue instead of steering
+      // text the agent never receives, and like any user send it releases the
+      // hold; an explicit steer or restart still fails below.
       if (
         command.deliveryIntent === "auto" &&
         (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") &&

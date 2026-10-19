@@ -875,7 +875,7 @@ it.effect("keeps a queued message queued when promoted into a run that Stop reac
   ),
 );
 
-it.effect("queues a plain send behind the held queue when Stop reached the run", () =>
+it.effect("queues a plain send behind the stopped queue and releases its hold", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { started, steered, layer, startFirstTurn } =
@@ -923,7 +923,8 @@ it.effect("queues a plain send behind the held queue when Stop reached the run",
           ),
           ["queued", "sent"],
         );
-        assert.isTrue(queued.every((run) => run.queueHeld === true));
+        // The user sent it, so the queue they stopped runs again once the provider stops.
+        assert.isFalse(queued.some((run) => run.queueHeld === true));
       }).pipe(Effect.provide(layer));
     }),
   ),
