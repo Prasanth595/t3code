@@ -195,7 +195,6 @@ describe("composer timeline scroll input", () => {
       if (input === "middle click") {
         pointerDown(content, 1);
         pointerUp(1);
-        vi.advanceTimersByTime(1000);
       }
 
       scrollTo(590);
@@ -203,6 +202,7 @@ describe("composer timeline scroll input", () => {
       expect(collapsed).toBe(false);
       scrollTo(576);
       expect(collapsed).toBe(true);
+      if (input === "middle click") vi.advanceTimersByTime(1000);
 
       // The last message can be visible before the footer's physical bottom.
       atLogicalEnd = true;
@@ -291,8 +291,8 @@ describe("composer timeline scroll input", () => {
     (stop) => {
       pointerDown(content, 1);
       pointerUp(1);
-      vi.advanceTimersByTime(1000);
       scrollTo(450);
+      vi.advanceTimersByTime(1000);
       expect(collapsed).toBe(true);
       atLogicalEnd = true;
       scrollTo(700);
@@ -325,13 +325,17 @@ describe("composer timeline scroll input", () => {
     expect(collapsed).toBe(false);
   });
 
-  it("ends a stationary middle-click toggle on its second release", () => {
-    pointerDown(content, 1);
-    pointerUp(1);
-    pointerUp(1);
-    scrollTo(450);
-    expect(collapsed).toBe(false);
-  });
+  it.each(["second release", "no autoscroll"])(
+    "does not track programmatic scrolling after a stationary middle click with %s",
+    (end) => {
+      pointerDown(content, 1);
+      pointerUp(1);
+      if (end === "second release") pointerUp(1);
+      else vi.advanceTimersByTime(RESET_MS + 1);
+      scrollTo(450);
+      expect(collapsed).toBe(false);
+    },
+  );
 
   it("keeps tracking when native touch panning cancels the pointer stream", () => {
     content.dispatchEvent(new Event("touchmove", { bubbles: true }));

@@ -162,13 +162,13 @@ export function listenForComposerScrollGestures({
 
   let activeInput: "scrollbar" | "touch" | "middle-click" | null = null;
   let hasScrolled = false;
-  let middleButtonReleased = false;
+  let middleButtonReleasedAt: number | null = null;
   let touchScrollUntil = 0;
   let lastScrollTop = getTimelineScrollableNode()?.scrollTop ?? null;
   const beginPointerScroll = (input: NonNullable<typeof activeInput>, scrollNode: HTMLElement) => {
     activeInput = input;
     hasScrolled = false;
-    middleButtonReleased = false;
+    middleButtonReleasedAt = null;
     touchScrollUntil = 0;
     lastScrollTop = scrollNode.scrollTop;
   };
@@ -176,7 +176,7 @@ export function listenForComposerScrollGestures({
     activeInput = null;
     touchScrollUntil = 0;
     hasScrolled = false;
-    middleButtonReleased = false;
+    middleButtonReleasedAt = null;
   };
   const releasePointerScroll = (event: Event) => {
     // Native touch panning takes over the pointer stream, but keeps touch events.
@@ -190,11 +190,11 @@ export function listenForComposerScrollGestures({
       if (
         event.type === "pointerup" &&
         event instanceof MouseEvent &&
-        (hasScrolled || middleButtonReleased || event.button !== 1)
+        (hasScrolled || middleButtonReleasedAt !== null || event.button !== 1)
       ) {
         cancelPointerScroll();
       } else if (event.type === "pointerup") {
-        middleButtonReleased = true;
+        middleButtonReleasedAt = window.performance.now();
       }
       return;
     }
@@ -241,6 +241,16 @@ export function listenForComposerScrollGestures({
     const deltaY = lastScrollTop === null ? 0 : scrollTop - lastScrollTop;
     lastScrollTop = scrollTop;
     const now = window.performance.now();
+    // A browser without autoscroll must not leave a stationary middle click armed.
+    if (
+      activeInput === "middle-click" &&
+      !hasScrolled &&
+      middleButtonReleasedAt !== null &&
+      now - middleButtonReleasedAt > COMPOSER_SCROLL_GESTURE_RESET_MS
+    ) {
+      cancelPointerScroll();
+      return;
+    }
     if (deltaY === 0 || (activeInput === null && now >= touchScrollUntil)) return;
     hasScrolled = true;
 
