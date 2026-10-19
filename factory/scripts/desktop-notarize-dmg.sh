@@ -27,6 +27,10 @@ security create-keychain -p "$keychain_password" "$keychain"
 security set-keychain-settings -lut 21600 "$keychain"
 security unlock-keychain -p "$keychain_password" "$keychain"
 security import "$work/cert.p12" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/bin/codesign >/dev/null
+# set-key-partition-list and codesign only find the key through the user search
+# list. delete-keychain in cleanup takes it out again.
+# shellcheck disable=SC2046
+security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
 security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
 identity=$(security find-identity -v -p codesigning "$keychain" |
   awk -v team="($APPLE_TEAM_ID)" '/Developer ID Application: / && index($0, team) { print $2; exit }')
