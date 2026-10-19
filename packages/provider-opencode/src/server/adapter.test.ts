@@ -989,10 +989,6 @@ describe("OpenCodeAdapterV2", () => {
         });
       }
       const turns = yield* Fiber.join(received);
-      yield* push({
-        type: "session.status",
-        properties: { sessionID: root, status: { type: "idle" } },
-      });
       assert.deepEqual(
         turns.map((turn) => turn.ordinal),
         [1, 2],

@@ -997,6 +997,34 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const subagentsByNativeItemId = new Map<string, OpenCodeSubagentContext>();
         const subagentsByChildSessionId = new Map<string, OpenCodeSubagentContext>();
         const relatedSessionOwners = new Map<string, OpenCodeThreadState>();
+        const registerThread = (
+          nativeSession: OpenCodeSession,
+          providerThread: OrchestrationV2ProviderThread,
+          appThread: OrchestrationV2AppThread | null,
+        ): OpenCodeThreadState => {
+          const existing = threads.get(nativeSession.id);
+          if (existing !== undefined) {
+            existing.providerThread = providerThread;
+            if (appThread !== null) existing.appThread = appThread;
+            return existing;
+          }
+          const state: OpenCodeThreadState = {
+            nativeSessionId: nativeSession.id,
+            providerThread,
+            appThread,
+            activeTurn: null,
+            providerTurns: new Map(),
+            runtimeRequests: new Map(),
+            messageRoles: new Map(),
+            userMessageIds: [],
+            parentSubagent: subagentsByChildSessionId.get(nativeSession.id) ?? null,
+            nextChildTurnOrdinal: 1,
+            nextAdmissionGeneration: 1,
+          };
+          threads.set(nativeSession.id, state);
+          return state;
+        };
+
         // Sessions of this runtime that OpenCode reports busy. A background
         // task child keeps running after its parent turn settles, so idle
         // release must not close the server under it.
@@ -1405,26 +1433,8 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                   permission: childPermission,
                 }),
             );
-            const existingChildState = threads.get(childSessionId);
-            if (existingChildState !== undefined) {
-              existingChildState.providerThread = childProviderThread;
-              existingChildState.appThread = childThread;
-              existingChildState.parentSubagent = context;
-            } else {
-              threads.set(childSessionId, {
-                nativeSessionId: childSessionId,
-                providerThread: childProviderThread,
-                appThread: childThread,
-                activeTurn: null,
-                providerTurns: new Map(),
-                runtimeRequests: new Map(),
-                messageRoles: new Map(),
-                userMessageIds: [],
-                parentSubagent: context,
-                nextChildTurnOrdinal: 1,
-                nextAdmissionGeneration: 1,
-              });
-            }
+            registerThread(nativeChildSession, childProviderThread, childThread).parentSubagent =
+              context;
             yield* emitProviderEvent({
               type: "app_thread.created",
               driver: OPENCODE_PROVIDER,
@@ -2789,34 +2799,6 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             closing = true;
           }),
         );
-
-        const registerThread = (
-          nativeSession: OpenCodeSession,
-          providerThread: OrchestrationV2ProviderThread,
-          appThread: OrchestrationV2AppThread | null,
-        ): OpenCodeThreadState => {
-          const existing = threads.get(nativeSession.id);
-          if (existing !== undefined) {
-            existing.providerThread = providerThread;
-            if (appThread !== null) existing.appThread = appThread;
-            return existing;
-          }
-          const state: OpenCodeThreadState = {
-            nativeSessionId: nativeSession.id,
-            providerThread,
-            appThread,
-            activeTurn: null,
-            providerTurns: new Map(),
-            runtimeRequests: new Map(),
-            messageRoles: new Map(),
-            userMessageIds: [],
-            parentSubagent: subagentsByChildSessionId.get(nativeSession.id) ?? null,
-            nextChildTurnOrdinal: 1,
-            nextAdmissionGeneration: 1,
-          };
-          threads.set(nativeSession.id, state);
-          return state;
-        };
 
         const resolvePromptParts = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) => {
           const text = providerMessageTextWithAttachmentPaths({
