@@ -14,7 +14,7 @@ import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopBridge } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
 
@@ -108,26 +108,30 @@ describe.each([
     });
   });
 
-  it("blocks the connection on authentication instead of retrying", async () => {
-    const { readDesktopPrimaryBearerToken } = await import("../environments/primary/desktopAuth");
-    // The web connection platform's PrimaryEnvironmentAuth.bearerToken, in full:
-    // readDesktopPrimaryBearerToken mapped through Option.fromNullishOr.
-    const primaryBearer = Option.fromNullishOr(await readDesktopPrimaryBearerToken());
-    expect(Option.isSome(primaryBearer)).toBe(true);
+  it.effect("blocks the connection on authentication instead of retrying", () =>
+    Effect.gen(function* () {
+      const { readDesktopPrimaryBearerToken } = yield* Effect.promise(
+        () => import("../environments/primary/desktopAuth"),
+      );
+      // The web connection platform's PrimaryEnvironmentAuth.bearerToken, in full:
+      // readDesktopPrimaryBearerToken mapped through Option.fromNullishOr.
+      const primaryBearer = Option.fromNullishOr(
+        yield* Effect.promise(() => readDesktopPrimaryBearerToken()),
+      );
+      expect(Option.isSome(primaryBearer)).toBe(true);
 
-    // authorizeBearer's ticket request and error mapping. A ConnectionBlockedError parks the
-    // supervisor in phase "blocked" with retryAt null (supervisor.ts); only a
-    // ConnectionTransientError schedules a retry.
-    const error = await Effect.runPromise(
-      requestConnectionUrl(Option.getOrThrow(primaryBearer)).pipe(
+      // authorizeBearer's ticket request and error mapping. A ConnectionBlockedError parks the
+      // supervisor in phase "blocked" with retryAt null (supervisor.ts); only a
+      // ConnectionTransientError schedules a retry.
+      const error = yield* requestConnectionUrl(Option.getOrThrow(primaryBearer)).pipe(
         Effect.mapError((cause) => mapRemoteEnvironmentError(cause)),
         Effect.flip,
-      ),
-    );
+      );
 
-    expect(error).toBeInstanceOf(ConnectionBlockedError);
-    expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "authentication" });
-  });
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "authentication" });
+    }),
+  );
 });
 
 describe("a paired desktop", () => {
@@ -140,9 +144,11 @@ describe("a paired desktop", () => {
     vi.unstubAllGlobals();
   });
 
-  it("gets a websocket ticket, so the blocked cases above come from the bearer alone", async () => {
-    const url = await Effect.runPromise(requestConnectionUrl(PAIRED_BEARER));
+  it.effect("gets a websocket ticket, so the blocked cases above come from the bearer alone", () =>
+    Effect.gen(function* () {
+      const url = yield* requestConnectionUrl(PAIRED_BEARER);
 
-    expect(url).toContain("wsTicket=ticket-1");
-  });
+      expect(url).toContain("wsTicket=ticket-1");
+    }),
+  );
 });
