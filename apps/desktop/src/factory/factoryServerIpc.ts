@@ -12,7 +12,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import { PAIR_FACTORY_SERVER_CHANNEL } from "./factoryServerChannel.ts";
-import { usesFactoryServer } from "./factoryServer.ts";
+import { factoryServerIsLocalEnvironment, usesFactoryServer } from "./factoryServer.ts";
 import { readFactoryServerBearer, writeFactoryServerBearer } from "./factoryServerCredential.ts";
 
 export class FactoryServerPairingError extends Schema.TaggedError<FactoryServerPairingError>()(
@@ -33,12 +33,12 @@ const credentialFromInput = (input: string): string | null => {
 };
 
 /**
- * The stored bearer, `""` before pairing, and `null` when this build does not use the factory
- * server, so upstream's local-backend token applies.
+ * The stored bearer, `""` before pairing, and `null` when the factory server is not the local
+ * environment (not a packaged build, or "local environment" is off), so upstream's
+ * local-backend token applies.
  */
 export const factoryServerBearerToken = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  if (!usesFactoryServer(environment)) return null;
+  if (!(yield* factoryServerIsLocalEnvironment)) return null;
   return Option.getOrElse(yield* readFactoryServerBearer, () => "");
 });
 
