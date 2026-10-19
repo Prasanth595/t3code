@@ -134,8 +134,22 @@ jobs:
             ls -la release
             exit 1
           fi
-          echo "dmg=${dmgs[0]}" >> "$GITHUB_OUTPUT"
-          echo "zip=${zips[0]}" >> "$GITHUB_OUTPUT"
+          # Upstream's build script names assets T3-Code-<version>-<arch>. Renaming
+          # keeps the bytes, so only the manifest's urls change.
+          rename() {
+            local from=$1 to
+            to="release/T3-Code-Factory-${from#release/T3-Code-}"
+            mv "$from" "$to"
+            if [[ -f "$from.blockmap" ]]; then mv "$from.blockmap" "$to.blockmap"; fi
+            sed -i '' "s|^\( *- url: \)${from#release/}\$|\1${to#release/}|" release/nightly-mac.yml
+            grep -q "url: ${to#release/}\$" release/nightly-mac.yml ||
+              { echo "::error::nightly-mac.yml has no url for ${from#release/}." >&2; exit 1; }
+            echo "$to"
+          }
+          dmg=$(rename "${dmgs[0]}")
+          zip=$(rename "${zips[0]}")
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
 
       - name: Notarize and staple the dmg
         env:
