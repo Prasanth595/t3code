@@ -18,13 +18,13 @@ The fork's one check: the factory gate and the `Check` job of `factory-ci`.
 
 Fails when a committed file differs from the upstream commit in `factory/UPSTREAM` and is neither factory-owned nor listed in `factory/SEAMS`.
 
-|               |                                                                                                                                                                                 |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Usage         | `factory/scripts/check-seams.sh`                                                                                                                                                |
-| Factory-owned | `apps/server/src/factory/`, `apps/web/src/factory/`, `factory/`, `.dw/`, `apps/web/src/routes/factory*`, `apps/web/src/routes/settings.factory*`, `.github/workflows/factory-*` |
-| Prints        | `check-seams: not a listed seam: <path>` per offender                                                                                                                           |
-| 0             | No offender.                                                                                                                                                                    |
-| 1             | At least one offender.                                                                                                                                                          |
+|               |                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Usage         | `factory/scripts/check-seams.sh`                                                                                                                                                                             |
+| Factory-owned | `apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `factory/`, `.dw/`, `apps/web/src/routes/factory*`, `apps/web/src/routes/settings.factory*`, `.github/workflows/factory-*` |
+| Prints        | `check-seams: not a listed seam: <path>` per offender                                                                                                                                                        |
+| 0             | No offender.                                                                                                                                                                                                 |
+| 1             | At least one offender.                                                                                                                                                                                       |
 
 ## deploy.sh
 
