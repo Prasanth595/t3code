@@ -75,9 +75,7 @@ const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilities
 function isClaudeNativeCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
-    normalized.endsWith("/.local/bin/claude") ||
-    normalized.endsWith("/.local/bin/claude.exe") ||
-    normalized.includes("/.local/share/claude/")
+    normalized.endsWith("/.local/bin/claude.exe") || normalized.includes("/.local/share/claude/")
   );
 }
 
@@ -87,6 +85,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   nativeUpdate: {
     args: ["update"],
     isCommandPath: isClaudeNativeCommandPath,
+    fallback: "manual",
   },
 });
 
