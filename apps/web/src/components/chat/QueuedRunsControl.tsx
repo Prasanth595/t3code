@@ -223,15 +223,13 @@ export function QueuedRunsControl({
       return;
     resumeInFlightRef.current = true;
     setResuming(true);
-    try {
-      await resumeQueue({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId },
-      });
-    } finally {
+    await resumeQueue({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    }).finally(() => {
       resumeInFlightRef.current = false;
       setResuming(false);
-    }
+    });
   };
 
   const heldRow = isHeld ? (

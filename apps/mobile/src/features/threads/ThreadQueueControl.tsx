@@ -219,12 +219,10 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                 return;
               busyRef.current = true;
               setResuming(true);
-              try {
-                await resume({ ...target, input: { threadId: target.threadId } });
-              } finally {
+              await resume({ ...target, input: { threadId: target.threadId } }).finally(() => {
                 busyRef.current = false;
                 setResuming(false);
-              }
+              });
             }}
           />
         </View>
