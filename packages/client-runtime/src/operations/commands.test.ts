@@ -633,6 +633,82 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("stops completed run background work when a newer queued run is held", () =>
+    Effect.gen(function* () {
+      const completedRun = {
+        id: RunId.make("run-completed"),
+        threadId: v2ThreadId,
+        ordinal: 1,
+        providerInstanceId: v2Projection.thread.providerInstanceId,
+        modelSelection: v2Projection.thread.modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message-completed"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "completed" as const,
+        requestedAt: v2Now,
+        startedAt: v2Now,
+        completedAt: v2Now,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const projection: OrchestrationV2ThreadProjection = {
+        ...v2Projection,
+        runs: [
+          completedRun,
+          {
+            ...completedRun,
+            id: RunId.make("run-held"),
+            ordinal: 2,
+            userMessageId: MessageId.make("message-held"),
+            status: "queued",
+            queuePosition: 1,
+            queueHeld: true,
+            startedAt: null,
+            completedAt: null,
+          },
+        ],
+        turnItems: [
+          {
+            id: TurnItemId.make("background-command"),
+            threadId: v2ThreadId,
+            runId: completedRun.id,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "running",
+            title: null,
+            startedAt: v2Now,
+            completedAt: null,
+            updatedAt: v2Now,
+            type: "command_execution",
+            input: "vp run dev",
+          },
+        ],
+      };
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [], projection });
+
+      const result = yield* interruptThreadTurn({ threadId: v2ThreadId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      );
+
+      expect(commands).toEqual([
+        {
+          type: "run.interrupt",
+          commandId: expect.any(String),
+          threadId: v2ThreadId,
+          runId: completedRun.id,
+          holdQueue: true,
+        },
+      ]);
+      expect(result).toEqual({ sequence: 1 });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect(
     "dispatches V2-native relationship and queue commands without compatibility shaping",
     () =>
