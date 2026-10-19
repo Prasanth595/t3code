@@ -78,7 +78,6 @@ export type RightPanelSurface =
       repository: string;
       number: number;
       url?: string;
-      /** The detail tab last shown, so coming back to the thread lands where the reader left. */
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" };
@@ -687,10 +686,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ...next,
                   surfaces: next.surfaces.map((entry) =>
                     entry.id === surface.id && entry.kind === "pull-request"
-                      ? {
-                          ...surface,
-                          ...(entry.detailTab ? { detailTab: entry.detailTab } : {}),
-                        }
+                      ? { ...entry, ...surface }
                       : entry,
                   ),
                 }
