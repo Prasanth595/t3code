@@ -1666,10 +1666,6 @@ export function makeClaudeUserMessage(input: {
   readonly skillNames?: ReadonlySet<string>;
   readonly uuid?: SDKUserMessage["uuid"];
 }): SDKUserMessage {
-  // Claude Code expands a skill only from the LAST text block, and only when
-  // `/name` is its first character. Preserve an existing leading command; otherwise
-  // send [whole request, "/name trailing text"] for native skill dispatch.
-
   const dispatch =
     input.skillNames === undefined
       ? undefined
