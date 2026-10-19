@@ -1,17 +1,6 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 
-/**
- * List continuation and indentation for the composer.
- *
- * Implemented once at the ChatComposer level (store replacement), so both
- * composer modes behave identically and serialize identically:
- * Shift+Enter on a list item continues it, Enter on an empty item leaves one
- * level of nesting (or the list), and Tab nests the item under the one above.
- * Plain Markdown markers only — no real list nodes anywhere.
- */
-
 export interface ComposerListEdit {
-  /** Expanded (plain string) offsets into the prompt. */
   start: number;
   end: number;
   replacement: string;
@@ -57,11 +46,6 @@ function parseListMarker(line: string): { marker: ListMarker; markerEnd: number 
   return null;
 }
 
-/**
- * The ordered marker that follows `3.` or `09)`: one higher, same delimiter,
- * zero padding kept, and a number too large to count left as typed. Shared
- * with the rich editor's native split so both modes count the same way.
- */
 export function nextOrderedMarkerText(marker: string): string {
   const numberText = marker.slice(0, -1);
   const delimiter = marker.slice(-1);
@@ -89,7 +73,6 @@ function segmentSource(
   return segment.source;
 }
 
-/** True when splitting at the caret would cut an inline chip in two. */
 function isInsideInlineToken(value: string, cursor: number): boolean {
   let offset = 0;
   for (const segment of splitPromptIntoComposerSegments(value)) {
