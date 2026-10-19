@@ -14,7 +14,7 @@ import {
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
@@ -32,6 +32,8 @@ type DialogRequest =
   | { readonly kind: "alert"; readonly request: AlertRequest }
   | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }
   | { readonly kind: "text-input"; readonly request: TextInputDialogRequest };
+
+type Presentation = DialogRequest & { readonly id: number };
 
 let presentRequest: ((request: DialogRequest) => void) | null = null;
 
@@ -56,38 +58,43 @@ export function prompt(request: TextInputDialogRequest): void {
 
 /** Android presenter for Dialog.alert, Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
-  const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
-    null,
-  );
-  const [inputValue, setInputValue] = useState("");
+  const [presented, setPresented] = useState<Presentation | null>(null);
+  const queue = useRef<Presentation[]>([]);
   const nextPresentationId = useRef(0);
   useEffect(() => {
     presentRequest = (request) => {
-      setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
-      setPresented({ ...request, id: ++nextPresentationId.current });
+      const presentation = { ...request, id: ++nextPresentationId.current };
+      queue.current.push(presentation);
+      if (queue.current.length === 1) setPresented(presentation);
     };
     return () => {
       presentRequest = null;
+      queue.current = [];
     };
   }, []);
 
-  const handleCancel = useCallback(() => {
-    setPresented(null);
+  const consume = () => {
+    // Native handlers may arrive after their presentation and several successors have closed.
+    if (!presented || queue.current[0] !== presented) return false;
+    queue.current.shift();
+    setPresented(queue.current[0] ?? null);
+    return true;
+  };
+
+  const handleCancel = () => {
+    if (!consume()) return;
     if (presented?.kind === "alert") presented.request.options?.onDismiss?.();
     else presented?.request.onCancel?.();
-  }, [presented]);
+  };
 
-  const handleConfirm = useCallback(
-    (nativeInputValue?: string) => {
-      setPresented(null);
-      if (presented?.kind === "confirm") {
-        presented.request.onConfirm();
-      } else if (presented?.kind === "text-input") {
-        presented.request.onConfirm(nativeInputValue ?? inputValue);
-      }
-    },
-    [inputValue, presented],
-  );
+  const handleConfirm = (readInputValue: () => string | undefined) => {
+    if (!consume()) return;
+    if (presented?.kind === "confirm") {
+      presented.request.onConfirm();
+    } else if (presented?.kind === "text-input") {
+      presented.request.onConfirm(readInputValue() ?? presented.request.initialValue);
+    }
+  };
 
   if (presented?.kind === "alert") {
     return (
@@ -101,8 +108,7 @@ export function Host() {
         alertActions={presented.request.buttons ?? [{ text: "OK" }]}
         dismissable={presented.request.options?.cancelable ?? false}
         onAlertAction={(action) => {
-          setPresented(null);
-          action.onPress?.();
+          if (consume()) action.onPress?.();
         }}
         onCancel={handleCancel}
         onConfirm={handleConfirm}
@@ -118,7 +124,6 @@ export function Host() {
         presented.kind === "text-input" ? presented.request.initialValue : undefined
       }
       inputPlaceholder={presented.kind === "text-input" ? presented.request.placeholder : undefined}
-      onInputChange={setInputValue}
       onCancel={handleCancel}
       onConfirm={handleConfirm}
     />
@@ -133,8 +138,7 @@ function DialogPresentation(props: DialogPresentationProps) {
   const inputState = useNativeState(props.inputInitialValue ?? "");
   const inputSelection = useNativeState({ start: 0, end: props.inputInitialValue?.length ?? 0 });
   const confirm = () => {
-    const value = props.inputInitialValue === undefined ? undefined : inputState.get();
-    props.onConfirm(value);
+    props.onConfirm(() => (props.inputInitialValue === undefined ? undefined : inputState.get()));
   };
   const actions = props.alertActions ?? [
     { text: props.request.cancelText ?? "Cancel", onPress: props.onCancel },
@@ -210,7 +214,6 @@ function DialogPresentation(props: DialogPresentationProps) {
                 singleLine
                 value={inputState}
                 selection={inputSelection}
-                onValueChange={props.onInputChange}
                 textStyle={inputTypography}
                 keyboardOptions={{ imeAction: "done" }}
                 keyboardActions={{
@@ -265,7 +268,6 @@ interface DialogPresentationProps {
   >;
   readonly inputInitialValue?: string;
   readonly inputPlaceholder?: string;
-  readonly onInputChange?: (value: string) => void;
   readonly onCancel: () => void;
-  readonly onConfirm: (inputValue?: string) => void;
+  readonly onConfirm: (readInputValue: () => string | undefined) => void;
 }
