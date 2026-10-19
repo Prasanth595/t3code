@@ -831,13 +831,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return state.active === undefined ? undefined : { state, turn: state.active };
     };
 
-    const owesWork = (state: ThreadState) =>
+    const owesBackground = (state: ThreadState) =>
       state.wakes.length > 0 ||
       state.reports.size > 0 ||
-      state.shells.size > 0 ||
-      state.queuedShells.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
       [...state.calls.values()].some((call) => call.background);
+
+    const ownsShells = (state: ThreadState) => state.shells.size > 0 || state.queuedShells.size > 0;
+
+    const owesWork = (state: ThreadState) => owesBackground(state) || ownsShells(state);
 
     const hasBackground = (thread: ThreadState) => sessionsOf(thread).some(owesWork);
 
@@ -2519,12 +2521,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         .filter(([, state]) => state.active !== undefined)
         .toSorted(([left], [right]) => callsAbove(right).length - callsAbove(left).length);
       const background = [...threads.values()].filter(
-        (state) => state.subagent === undefined && hasBackground(state),
+        (state) => state.subagent === undefined && sessionsOf(state).some(owesBackground),
       );
       const marked = [...threads.values()].some((state) => state.unsettled);
       if (
         running.length === 0 &&
         background.length === 0 &&
+        ![...threads.values()].some(ownsShells) &&
         busy.size === 0 &&
         !marked &&
         strays.size === 0
@@ -2601,7 +2604,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             continue;
           }
           const shellId = stringField(item.payload.metadata, "shellID");
-          if (shellId !== undefined) state.shells.delete(shellId);
+          if (shellId !== undefined && !state.shells.delete(shellId))
+            state.endedShells.add(shellId);
           state.queuedShells.add(item.id);
         }
       }
