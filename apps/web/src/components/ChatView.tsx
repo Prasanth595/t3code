@@ -8445,6 +8445,7 @@ export default function ChatView(props: ChatViewProps) {
               availableEditors={availableEditors}
               showOpenInPicker={showOpenInPicker}
               gitCwd={gitCwd}
+              workspaceMutationId={workspaceMutationId}
               isGitRepo={isGitRepo}
               envLocked={envLocked}
               availableEnvironments={logicalProjectEnvironments}

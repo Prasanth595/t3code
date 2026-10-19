@@ -135,6 +135,7 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
+  workspaceMutationId?: string | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -962,9 +963,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 function ThreadChangesControl({
   gitCwd,
   activeThreadRef,
+  workspaceMutationId,
   gitStatus,
   onOpenChanges,
-}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef"> & {
+}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef" | "workspaceMutationId"> & {
   gitStatus: VcsStatusResult | null;
   onOpenChanges: GitActionsControlProps["onOpenChanges"];
 }) {
@@ -998,6 +1000,7 @@ function ThreadChangesControl({
   const lastRefreshRef = useRef<{
     atom: typeof previewAtom;
     statusKey: typeof statusKey;
+    workspaceMutationId: typeof workspaceMutationId;
   } | null>(null);
   const { refresh, isPending } = changesDiffPreview;
   useEffect(() => {
@@ -1007,13 +1010,15 @@ function ThreadChangesControl({
     }
     const previous = lastRefreshRef.current;
     if (previous?.atom === previewAtom) {
-      if (previous.statusKey === statusKey) return;
+      // Equal status totals can hide content changes against a custom base.
+      if (previous.statusKey === statusKey && previous.workspaceMutationId === workspaceMutationId)
+        return;
       // A change during the fetch still needs a refresh after it settles.
       if (isPending) return;
     }
-    lastRefreshRef.current = { atom: previewAtom, statusKey };
+    lastRefreshRef.current = { atom: previewAtom, statusKey, workspaceMutationId };
     if (!isPending) refresh();
-  }, [previewAtom, statusKey, isPending, refresh]);
+  }, [previewAtom, statusKey, workspaceMutationId, isPending, refresh]);
   const changesTotals = resolveChangesTotals({
     gitStatus,
     useDiffPreview,
@@ -1051,6 +1056,7 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
+  workspaceMutationId = null,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -1923,6 +1929,7 @@ export default function GitActionsControl({
         <ThreadChangesControl
           gitCwd={gitCwd}
           activeThreadRef={activeThreadRef}
+          workspaceMutationId={workspaceMutationId}
           gitStatus={gitStatusForActions}
           onOpenChanges={onOpenChanges}
         />
