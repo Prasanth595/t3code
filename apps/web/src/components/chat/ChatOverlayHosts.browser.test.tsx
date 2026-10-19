@@ -31,7 +31,7 @@ describe("RevertConfirmHost", () => {
     const onConfirm = vi.fn();
     const host = (threadKey: string) => (
       <AppAtomRegistryProvider>
-        <RevertConfirmHost threadKey={threadKey} checkpoints={[]} onConfirm={onConfirm} />
+        <RevertConfirmHost threadKey={threadKey} checkpoints={[]} runs={[]} onConfirm={onConfirm} />
       </AppAtomRegistryProvider>
     );
     await act(() => root.render(host("env:a")));
@@ -53,7 +53,7 @@ describe("RevertConfirmHost", () => {
     await vi.waitFor(() => expect(dialog()).toBeNull());
   });
 
-  it("counts a checkpoint captured while the dialog is open", async () => {
+  it("counts a checkpoint captured while the dialog is open, and hedges after a failed run", async () => {
     const checkpoint = (turnCount: number, paths: string[]): ThreadCheckpointSummary => ({
       runId: RunId.make(`run-${turnCount}`),
       checkpointTurnCount: turnCount,
@@ -63,9 +63,17 @@ describe("RevertConfirmHost", () => {
       assistantMessageId: null,
       completedAt: "2026-06-20T00:00:00.000Z",
     });
-    const host = (checkpoints: ReadonlyArray<ThreadCheckpointSummary>) => (
+    const host = (
+      checkpoints: ReadonlyArray<ThreadCheckpointSummary>,
+      runs: ReadonlyArray<{ ordinal: number; status: "completed" | "failed" }> = [],
+    ) => (
       <AppAtomRegistryProvider>
-        <RevertConfirmHost threadKey="env:a" checkpoints={checkpoints} onConfirm={vi.fn()} />
+        <RevertConfirmHost
+          threadKey="env:a"
+          checkpoints={checkpoints}
+          runs={runs}
+          onConfirm={vi.fn()}
+        />
       </AppAtomRegistryProvider>
     );
     const first = [checkpoint(1, ["a.ts"]), checkpoint(2, ["b.ts"])];
@@ -75,5 +83,13 @@ describe("RevertConfirmHost", () => {
 
     await act(() => root.render(host([...first, checkpoint(3, ["c.ts", "d.ts"])])));
     expect(dialog()?.textContent).toContain("The agent changed 3 files since then.");
+
+    // A failed run is never captured, so the count becomes a lower bound.
+    await act(() =>
+      root.render(
+        host([...first, checkpoint(3, ["c.ts", "d.ts"])], [{ ordinal: 4, status: "failed" }]),
+      ),
+    );
+    expect(dialog()?.textContent).toContain("The agent changed at least 3 files since then.");
   });
 });

@@ -1059,6 +1059,28 @@ export function countFilesChangedAfterTurnCount(
   return paths.size;
 }
 
+/**
+ * Whether the agent may have changed files after `turnCount` that no checkpoint recorded,
+ * so `countFilesChangedAfterTurnCount` is a lower bound. Failed runs are never captured,
+ * and missing or errored captures carry no file list.
+ */
+export function hasUnrecordedChangesAfterTurnCount(input: {
+  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly runs: ReadonlyArray<
+    Pick<OrchestrationV2ThreadProjection["runs"][number], "ordinal" | "status">
+  >;
+  readonly turnCount: number;
+}): boolean {
+  return (
+    input.runs.some((run) => run.ordinal > input.turnCount && run.status === "failed") ||
+    input.checkpoints.some(
+      (checkpoint) =>
+        checkpoint.checkpointTurnCount > input.turnCount &&
+        (checkpoint.status === "missing" || checkpoint.status === "error"),
+    )
+  );
+}
+
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (

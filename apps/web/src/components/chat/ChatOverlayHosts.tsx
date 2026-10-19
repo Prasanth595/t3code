@@ -2,6 +2,7 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   MessageId,
+  OrchestrationV2Run,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -13,7 +14,10 @@ import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thre
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { countFilesChangedAfterTurnCount } from "~/session-logic";
+import {
+  countFilesChangedAfterTurnCount,
+  hasUnrecordedChangesAfterTurnCount,
+} from "~/session-logic";
 import { DeviceSetup } from "../device/DeviceSetup";
 import { PullRequestThreadDialog } from "../PullRequestThreadDialog";
 import {
@@ -183,6 +187,17 @@ export function BranchRestoreConfirmHost(props: {
   );
 }
 
+/** A failed or uncaptured run makes the checkpoint count a lower bound. */
+function describeChangedFiles(count: number, hasUnrecordedChanges: boolean): string | null {
+  if (count === 0) {
+    return hasUnrecordedChanges ? "The agent may have changed files since then." : null;
+  }
+  const files = `${count} ${count === 1 ? "file" : "files"}`;
+  return hasUnrecordedChanges
+    ? `The agent changed at least ${files} since then.`
+    : `The agent changed ${files} since then.`;
+}
+
 interface PendingRevert {
   readonly turnCount: number;
   readonly messageId: MessageId;
@@ -198,11 +213,21 @@ export function RevertConfirmHost(props: {
   readonly threadKey: string;
   /** Read while open, so a checkpoint captured after opening still counts. */
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "ordinal" | "status">>;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
-  const changedFileCount =
-    pending === null ? 0 : countFilesChangedAfterTurnCount(props.checkpoints, pending.turnCount);
+  const changedFilesNote =
+    pending === null
+      ? null
+      : describeChangedFiles(
+          countFilesChangedAfterTurnCount(props.checkpoints, pending.turnCount),
+          hasUnrecordedChangesAfterTurnCount({
+            checkpoints: props.checkpoints,
+            runs: props.runs,
+            turnCount: pending.turnCount,
+          }),
+        );
   const confirm = (restoreFiles: boolean) => {
     if (pending === null) return;
     closeThreadOverlay(revertConfirmAtom);
@@ -220,9 +245,7 @@ export function RevertConfirmHost(props: {
           <AlertDialogTitle>Edit from here?</AlertDialogTitle>
           <AlertDialogDescription>
             Rewind chat to before this message. Your prompt and attachments return to the composer.
-            {changedFileCount > 0
-              ? ` The agent changed ${changedFileCount} ${changedFileCount === 1 ? "file" : "files"} since then.`
-              : null}
+            {changedFilesNote === null ? null : ` ${changedFilesNote}`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

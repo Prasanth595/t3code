@@ -28,6 +28,7 @@ import {
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   countFilesChangedAfterTurnCount,
+  hasUnrecordedChangesAfterTurnCount,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
   findLatestProposedPlan,
@@ -363,6 +364,56 @@ describe("V2 session presentation", () => {
     expect(countFilesChangedAfterTurnCount(checkpoints, 1)).toBe(3);
     expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(4);
     expect(countFilesChangedAfterTurnCount(checkpoints, 3)).toBe(0);
+  });
+
+  it("flags changes no checkpoint recorded after the rewind point", () => {
+    const checkpoint = (turnCount: number, status: "ready" | "missing" | "error" | "stale") => ({
+      runId: RunId.make(`run-${turnCount}`),
+      checkpointTurnCount: turnCount,
+      checkpointRef: `checkpoint-${turnCount}` as never,
+      status,
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:00.000Z",
+    });
+    const ready = [checkpoint(1, "ready"), checkpoint(2, "ready")];
+
+    expect(hasUnrecordedChangesAfterTurnCount({ checkpoints: ready, runs: [], turnCount: 0 })).toBe(
+      false,
+    );
+    // Failed runs are never captured.
+    expect(
+      hasUnrecordedChangesAfterTurnCount({
+        checkpoints: ready,
+        runs: [{ ordinal: 3, status: "failed" }],
+        turnCount: 1,
+      }),
+    ).toBe(true);
+    // A failed run before the rewind point, or one an earlier rewind discarded, does not count.
+    expect(
+      hasUnrecordedChangesAfterTurnCount({
+        checkpoints: ready,
+        runs: [
+          { ordinal: 1, status: "failed" },
+          { ordinal: 3, status: "rolled_back" },
+        ],
+        turnCount: 1,
+      }),
+    ).toBe(false);
+    expect(
+      hasUnrecordedChangesAfterTurnCount({
+        checkpoints: [...ready, checkpoint(3, "error")],
+        runs: [],
+        turnCount: 2,
+      }),
+    ).toBe(true);
+    expect(
+      hasUnrecordedChangesAfterTurnCount({
+        checkpoints: [...ready, checkpoint(3, "stale")],
+        runs: [],
+        turnCount: 2,
+      }),
+    ).toBe(false);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
