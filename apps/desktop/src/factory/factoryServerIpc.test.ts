@@ -6,11 +6,11 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { factoryServerBearerToken, pairFactoryServer } from "./factoryServerIpc.ts";
-import { layerDesktopEnvironment, layerSafeStorage } from "./testing.ts";
+import { layerDesktopEnvironment, layerSafeStorageWith } from "./testing.ts";
 
 const accessTokenBody = (token: string) => ({
   access_token: token,
@@ -20,20 +20,28 @@ const accessTokenBody = (token: string) => ({
   scope: "environment:connect",
 });
 
+/** A response, or the transport error of a server that could not be reached. */
+type Respond = (
+  request: HttpClientRequest.HttpClientRequest,
+) => Response | HttpClientError.HttpClientError;
+
 const layerHttp = (
   requests: Array<{ readonly url: string; readonly body: string }>,
-  respond: (request: HttpClientRequest.HttpClientRequest) => Response,
+  respond: Respond,
 ) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const body = request.body;
         requests.push({
           url: request.url,
           body: body._tag === "Uint8Array" ? new TextDecoder().decode(body.body) : "",
         });
-        return HttpClientResponse.fromWeb(request, respond(request));
+        const result = respond(request);
+        return result instanceof Response
+          ? Effect.succeed(HttpClientResponse.fromWeb(request, result))
+          : Effect.fail(result);
       }),
     ),
   );
@@ -50,11 +58,15 @@ const rejected = () =>
     headers: { "content-type": "application/json" },
   });
 
+const unreachable = (request: HttpClientRequest.HttpClientRequest) =>
+  new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request }) });
+
 const withLayers = <A, E, R>(
   options: {
     readonly isPackaged?: boolean;
+    readonly encryptionAvailable?: boolean;
     readonly requests?: Array<{ readonly url: string; readonly body: string }>;
-    readonly respond?: (request: HttpClientRequest.HttpClientRequest) => Response;
+    readonly respond?: Respond;
   },
   effect: Effect.Effect<A, E, R>,
 ) =>
@@ -67,7 +79,7 @@ const withLayers = <A, E, R>(
       Effect.provide(
         Layer.mergeAll(
           layerDesktopEnvironment(baseDir, options.isPackaged ?? true),
-          layerSafeStorage,
+          layerSafeStorageWith({ encryptionAvailable: options.encryptionAvailable ?? true }),
           layerHttp(options.requests ?? [], options.respond ?? accepted("bearer-1")),
         ),
       ),
@@ -135,6 +147,41 @@ describe("pairing the factory server", () => {
           pairFactoryServer.handler("http://127.0.0.1:3876/pair#token=stale"),
         );
         assert.equal(failureMessage(exit), "The factory server rejected this pairing link.");
+        assert.equal(yield* factoryServerBearerToken, "");
+      }),
+    ),
+  );
+
+  it.effect("says the server is unreachable when the request cannot be sent", () =>
+    withLayers(
+      { respond: unreachable },
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          pairFactoryServer.handler("http://127.0.0.1:3876/pair#token=abc"),
+        );
+        assert.equal(
+          failureMessage(exit),
+          "Could not reach the factory server at http://127.0.0.1:3876. Is it running?",
+        );
+        assert.equal(yield* factoryServerBearerToken, "");
+      }),
+    ),
+  );
+
+  it.effect("stores nothing when secure storage is unavailable", () =>
+    withLayers(
+      { encryptionAvailable: false },
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
+        assert.equal(failureMessage(exit), "Could not store the factory server credential.");
+
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        assert.isFalse(
+          yield* fileSystem.exists(
+            environment.path.join(environment.stateDir, "factory-server-credential.json"),
+          ),
+        );
         assert.equal(yield* factoryServerBearerToken, "");
       }),
     ),

@@ -32,21 +32,24 @@ export const layerDesktopEnvironment = (baseDir: string, isPackaged: boolean) =>
   );
 
 /** Stores `encrypted:<value>` so a test can tell the file apart from the plaintext. */
-export const layerSafeStorage = Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
-  isEncryptionAvailable: Effect.succeed(true),
-  encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
-  decryptString: (value) => {
-    const decoded = textDecoder.decode(value);
-    return decoded.startsWith("encrypted:")
-      ? Effect.succeed(decoded.slice("encrypted:".length))
-      : Effect.fail(
-          new ElectronSafeStorage.ElectronSafeStorageDecryptError({
-            cause: new Error("not encrypted"),
-          }),
-        );
-  },
-  selectedStorageBackend: Effect.succeedNone,
-} satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
+export const layerSafeStorageWith = (options: { readonly encryptionAvailable: boolean }) =>
+  Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
+    isEncryptionAvailable: Effect.succeed(options.encryptionAvailable),
+    encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
+    decryptString: (value) => {
+      const decoded = textDecoder.decode(value);
+      return decoded.startsWith("encrypted:")
+        ? Effect.succeed(decoded.slice("encrypted:".length))
+        : Effect.fail(
+            new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+              cause: new Error("not encrypted"),
+            }),
+          );
+    },
+    selectedStorageBackend: Effect.succeedNone,
+  } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
+
+export const layerSafeStorage = layerSafeStorageWith({ encryptionAvailable: true });
 
 /** An HTTP client that answers every request with a successful pairing exchange. */
 export const layerHttpPairing = (accessToken: string) =>
