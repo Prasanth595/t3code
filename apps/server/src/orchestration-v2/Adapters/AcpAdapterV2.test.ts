@@ -2705,8 +2705,6 @@ describe("AcpAdapterV2", () => {
     const openModelSwitchSession = Effect.fnUntraced(function* (input: {
       readonly name: string;
       readonly environment: Readonly<Record<string, string>>;
-      readonly initialNativeThreadId?: string;
-      readonly sessionLoadReplayIdleGap?: AcpSessionRuntime.AcpSessionRuntimeOptions["sessionLoadReplayIdleGap"];
     }) {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -2725,9 +2723,7 @@ describe("AcpAdapterV2", () => {
             childProcessSpawner,
             mockAgentPath,
             environment: input.environment,
-            ...(input.sessionLoadReplayIdleGap === undefined
-              ? {}
-              : { sessionLoadReplayIdleGap: input.sessionLoadReplayIdleGap }),
+            sessionLoadReplayIdleGap: "50 millis",
             wrapRuntime: (runtime) => {
               agentRuntime = runtime;
               return runtime;
@@ -2736,18 +2732,40 @@ describe("AcpAdapterV2", () => {
         },
         selfInvocation,
       });
+      const threadId = ThreadId.make(`thread-acp-${input.name}`);
+      const modelSelection = { instanceId, model: "composer-2" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
       const runtime = yield* adapter.openSession({
-        threadId: ThreadId.make(`thread-acp-${input.name}`),
+        threadId,
         providerSessionId: ProviderSessionId.make(`provider-session-acp-${input.name}`),
-        modelSelection: { instanceId, model: "default" },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        }),
-        ...(input.initialNativeThreadId === undefined
-          ? {}
-          : { initialNativeThreadId: input.initialNativeThreadId }),
+        modelSelection,
+        runtimePolicy,
+        initialNativeThreadId: "mock-session-1",
+      });
+      const runTurn = Effect.gen(function* () {
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            modelSelection,
+            now: yield* DateTime.now,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
       });
       const nextSessionUpdate = runtime.events.pipe(
         Stream.filter((event) => event.type === "provider_session.updated"),
@@ -2755,42 +2773,20 @@ describe("AcpAdapterV2", () => {
         Effect.map(Option.getOrThrow),
         Effect.timeout("5 seconds"),
       );
-      return { runtime, nextSessionUpdate, agentRuntime: () => agentRuntime };
+      return { runtime, nextSessionUpdate, runTurn, agentRuntime: () => agentRuntime };
     });
 
-    it.live("recomputes model switch support when config options change after setup", () =>
+    it.live("model switch support follows late and later config options", () =>
       Effect.gen(function* () {
-        const { runtime, nextSessionUpdate, agentRuntime } = yield* openModelSwitchSession({
-          name: "model-switch-config-update",
-          environment: { T3_ACP_OMIT_MODEL_CONFIG_OPTION: "1" },
-        });
-        assert.isFalse(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
-
-        yield* agentRuntime()!.request("_test/model-config-update", { omit: false });
-        const added = yield* nextSessionUpdate;
-        assert.isTrue(
-          added.type === "provider_session.updated" &&
-            added.providerSession.capabilities.sessions.supportsModelSwitchInSession,
-        );
-        assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
-
-        yield* agentRuntime()!.request("_test/model-config-update", { omit: true });
-        yield* nextSessionUpdate;
-        assert.isFalse(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
-    );
-
-    it.live("enables model switch when the late session/load response adds a model option", () =>
-      Effect.gen(function* () {
-        const { runtime, nextSessionUpdate } = yield* openModelSwitchSession({
-          name: "model-switch-late-load",
-          environment: {
-            T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
-            T3_ACP_LOAD_SESSION_DELAY_MS: "600",
+        const { runtime, nextSessionUpdate, runTurn, agentRuntime } = yield* openModelSwitchSession(
+          {
+            name: "model-switch-late-load",
+            environment: {
+              T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+              T3_ACP_LOAD_SESSION_DELAY_MS: "600",
+            },
           },
-          initialNativeThreadId: "mock-session-1",
-          sessionLoadReplayIdleGap: "50 millis",
-        });
+        );
         assert.isFalse(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
 
         const updated = yield* nextSessionUpdate;
@@ -2799,6 +2795,17 @@ describe("AcpAdapterV2", () => {
             updated.providerSession.capabilities.sessions.supportsModelSwitchInSession,
         );
         assert.isTrue(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
+
+        // The open-time selection was applied before the model option existed.
+        yield* runTurn;
+        const model = (yield* agentRuntime()!.getConfigOptions).find(
+          (option) => option.category === "model",
+        );
+        assert.equal(model?.currentValue, "composer-2");
+
+        yield* agentRuntime()!.request("_test/model-config-update", { omit: true });
+        yield* nextSessionUpdate;
+        assert.isFalse(runtime.providerSession.capabilities.sessions.supportsModelSwitchInSession);
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });

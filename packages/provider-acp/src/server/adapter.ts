@@ -5951,6 +5951,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             updatedAt: yield* DateTime.now,
           };
           yield* Ref.set(providerSessionRef, next);
+          if (supportsModelSwitchInSession) {
+            // The session was configured while it could not switch models, so
+            // the next turn has to configure it again against the live options.
+            yield* Ref.set(activeSelection, null);
+            yield* Ref.set(activeInteractionMode, null);
+          }
           yield* Queue.offer(events, {
             type: "provider_session.updated",
             driver,

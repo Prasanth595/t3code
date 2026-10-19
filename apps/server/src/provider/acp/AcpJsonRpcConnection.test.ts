@@ -1136,10 +1136,12 @@ describe("AcpSessionRuntime", () => {
   );
 
   describe("late session/load response after replay idle", () => {
-    const lateLoadRuntimeOptions = (extra?: {
-      readonly resumeSessionId?: string;
+    const lateLoadRuntimeOptions = ({
+      lifecycle,
+      ...overrides
+    }: {
       readonly lifecycle?: boolean;
-    }) =>
+    } & Partial<AcpSessionRuntime.AcpSessionRuntimeOptions> = {}) =>
       AcpSessionRuntime.layer({
         authMethodId: "test",
         spawn: {
@@ -1148,14 +1150,14 @@ describe("AcpSessionRuntime", () => {
           env: {
             T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
             T3_ACP_LOAD_SESSION_DELAY_MS: "600",
-            ...(extra?.lifecycle ? { T3_ACP_SESSION_LIFECYCLE: "1" } : {}),
+            ...(lifecycle ? { T3_ACP_SESSION_LIFECYCLE: "1" } : {}),
           },
         },
         cwd: process.cwd(),
-        ...(extra?.resumeSessionId ? { resumeSessionId: extra.resumeSessionId } : {}),
         sessionLoadReplayIdleGap: "50 millis",
         sessionLoadTimeout: "5 seconds",
         clientInfo: { name: "t3-test", version: "0.0.0" },
+        ...overrides,
       });
     const nextConfigUpdate = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) =>
       runtime.getEvents().pipe(
@@ -1228,6 +1230,75 @@ describe("AcpSessionRuntime", () => {
 
         expect(Option.isNone(lateUpdate)).toBe(true);
         expect((yield* runtime.start()).sessionId).toBe("mock-session-3");
+      }).pipe(
+        Effect.provide(lateLoadRuntimeOptions({ lifecycle: true })),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        TestClock.withLive,
+      ),
+    );
+
+    it.effect("applies the late response once the loaded session is adopted", () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
+        yield* runtime.loadSession("mock-session-2");
+
+        const update = yield* nextConfigUpdate(runtime).pipe(Effect.timeout("3 seconds"));
+
+        expect(modelOption(update.configOptions)).toBeDefined();
+      }).pipe(
+        Effect.provide(
+          lateLoadRuntimeOptions({
+            lifecycle: true,
+            // Holds adoption back so the late response lands before it.
+            requestLogger: (event) =>
+              event.method === "session/load" && event.status === "succeeded"
+                ? Effect.sleep("900 millis")
+                : Effect.void,
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        TestClock.withLive,
+      ),
+    );
+
+    it.effect("drops a late response that arrives after the session load timeout", () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
+
+        const late = yield* nextConfigUpdate(runtime).pipe(Effect.timeoutOption("1500 millis"));
+
+        expect(Option.isNone(late)).toBe(true);
+      }).pipe(
+        Effect.provide(
+          lateLoadRuntimeOptions({
+            resumeSessionId: "mock-session-1",
+            sessionLoadTimeout: "300 millis",
+          }),
+        ),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        TestClock.withLive,
+      ),
+    );
+
+    it.effect("lets a newer load supersede the previous late response", () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
+        yield* runtime.loadSession("mock-session-2");
+        yield* Effect.sleep("300 millis");
+        yield* runtime.loadSession("mock-session-2");
+
+        // The first load answers at ~600ms, inside this window, but is stale.
+        const stale = yield* nextConfigUpdate(runtime).pipe(Effect.timeoutOption("300 millis"));
+        expect(Option.isNone(stale)).toBe(true);
+
+        const latest = yield* nextConfigUpdate(runtime).pipe(Effect.timeout("2 seconds"));
+        expect(modelOption(latest.configOptions)).toBeDefined();
       }).pipe(
         Effect.provide(lateLoadRuntimeOptions({ lifecycle: true })),
         Effect.scoped,
