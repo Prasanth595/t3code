@@ -26,8 +26,8 @@ export function parseFetchRemotes(
  * remote `gh repo set-default` marked, else the first of upstream, github, origin (in any case), else
  * the only remote.
  *
- * Null whenever gh might weigh the remotes differently: a remote on another host or under an SSH alias,
- * more than one mark, or several remotes with none of those names.
+ * Null whenever gh might weigh the remotes differently: a remote on another API host or under a
+ * dotless SSH alias, more than one mark, or several remotes with none of those names.
  */
 export function selectGitHubBaseRepository(input: {
   readonly remotes: string;
@@ -38,7 +38,8 @@ export function selectGitHubBaseRepository(input: {
   const repositories = new Map<string, { readonly owner: string; readonly name: string }>();
   for (const remote of parseFetchRemotes(input.remotes)) {
     const [remoteHost, owner, name, ...rest] = normalizeGitRemoteUrl(remote.url).split("/");
-    if (remoteHost !== host || !owner || !name || rest.length > 0) return null;
+    if (!remoteHost || gitHubApiHostOf(remoteHost) !== host || !owner || !name || rest.length > 0)
+      return null;
     repositories.set(remote.name, { owner, name });
   }
   const marks = input.resolved

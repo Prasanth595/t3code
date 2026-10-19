@@ -293,6 +293,34 @@ describe("GitHubSourceControlProvider repository resolution", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("prefers a marked GitHub subdomain origin over upstream", () => {
+    const targets: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(
+        ["origin", "git@work.github.com:me/web.git"],
+        ["upstream", "git@github.com:acme/web.git"],
+      ),
+      resolved: "remote.origin.gh-resolved base",
+      api: {
+        rest: (input) =>
+          Effect.sync(() => {
+            targets.push(`${input.host} ${input.path}`);
+            return restResponse({
+              full_name: "me/web",
+              html_url: "https://github.com/me/web",
+              ssh_url: "git@github.com:me/web.git",
+              default_branch: "main",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      assert.strictEqual(yield* provider.getDefaultBranch({ cwd: "/repo" }), "main");
+      assert.deepStrictEqual(targets, ["github.com repos/me/web"]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  });
+
   it.effect("reads an SSH alias remote through github.com", () => {
     const hosts: string[] = [];
     const { layer } = harness({
