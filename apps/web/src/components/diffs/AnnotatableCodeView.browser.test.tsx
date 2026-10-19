@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { CodeViewDiffItem, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { act, StrictMode, type ComponentProps } from "react";

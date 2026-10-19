@@ -513,9 +513,7 @@ export default function DiffPanel({
         collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
     }));
   const codeViewFileKeys = codeViewFiles.map((file) => file.fileKey);
-  const pendingFiles = renderableFileEntries
-    .filter(({ fileDiff }) => fileDiff.cacheKey?.endsWith(":pending"))
-    .map(({ fileDiff }) => fileDiff);
+  const pendingFiles = renderableFiles.filter((file) => file.cacheKey?.endsWith(":pending"));
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
   const fileTreeEntries = diffFileTreeEntries(renderableFiles);

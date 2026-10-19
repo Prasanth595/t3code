@@ -80,7 +80,6 @@ interface AnnotatableCodeViewProps {
     fileVersion: number;
     collapsed: boolean;
   }>;
-  /** Files with unavailable patches; placeholder change types are provisional. */
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
   sectionId: string;
   sectionTitle: string;
@@ -142,6 +141,7 @@ export function AnnotatableCodeView({
   if (
     draft !== null &&
     !filesByKey.has(draft.fileKey) &&
+    // Lazy placeholders have provisional change types, so match both paths instead.
     !pendingFiles.some(
       (file) =>
         resolveFileDiffPath(file) === draft.filePath &&
@@ -254,7 +254,6 @@ export function AnnotatableCodeView({
     });
   };
 
-  const hasOpenComment = draft !== null;
   return (
     <StyledDiffCodeView<DiffCommentAnnotationGroup>
       key={codeViewKey}
@@ -274,8 +273,8 @@ export function AnnotatableCodeView({
       onRevealSearchMatch={(item) => onRevealSearchMatch(item.id)}
       options={{
         ...options,
-        enableGutterUtility: !hasOpenComment,
-        enableLineSelection: !hasOpenComment,
+        enableGutterUtility: draft === null,
+        enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
       }}
       renderHeaderFilenameSuffix={(item) =>
