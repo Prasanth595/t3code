@@ -60,18 +60,9 @@ export function ProviderWizardAuthenticationStep({
               description={
                 isDiscovering
                   ? "Discovering sign-in methods…"
-                  : // A provider that authenticates with its own CLI has no auth
-                    // controller, so the state query fails with "does not support
-                    // sign-in in T3 Code". That is not user-actionable: it is the
-                    // normal state of an installed CLI. Prefer the provider's own
-                    // sign-in instruction, which names the command to run.
-                    provider?.setup?.canAuthenticate === false
-                    ? (auth?.message ??
-                      provider?.message ??
-                      "Sign in with the provider's own CLI, then refresh provider status.")
-                    : (query.error ??
-                      auth?.message ??
-                      "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
+                  : (query.error ??
+                    auth?.message ??
+                    "No in-app sign-in advertised. Follow the provider's docs to finish setup.")
               }
               control={
                 isDiscovering ? (

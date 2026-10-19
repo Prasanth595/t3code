@@ -54,18 +54,6 @@ const GROK_PRESENTATION = {
   showInteractionModeToggle: false,
   supportedRuntimeModes: GROK_SUPPORTED_RUNTIME_MODES,
 } as const;
-
-/**
- * Grok Build authenticates with the installed CLI (`grok login`). T3 Code installs
- * neither and signs into neither, so it advertises neither. Clients read an absent
- * `setup` as "unknown" and offer a sign-in that can only fail, so every Grok
- * snapshot declares this.
- */
-const GROK_SETUP = { canAuthenticate: false, canInstall: false } as const;
-
-const buildGrokProvider = (
-  input: Omit<Parameters<typeof buildServerProvider>[0], "setup">,
-): ServerProviderDraft => buildServerProvider({ ...input, setup: GROK_SETUP });
 const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
 });
@@ -91,7 +79,7 @@ export function buildInitialGrokProviderSnapshot(
     const models = grokModelsFromSettings(grokSettings.customModels);
 
     if (!grokSettings.enabled) {
-      return buildGrokProvider({
+      return buildServerProvider({
         presentation: GROK_PRESENTATION,
         enabled: false,
         checkedAt,
@@ -106,7 +94,7 @@ export function buildInitialGrokProviderSnapshot(
       });
     }
 
-    return buildGrokProvider({
+    return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -386,7 +374,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   const fallbackModels = grokModelsFromSettings(grokSettings.customModels);
 
   if (!grokSettings.enabled) {
-    return buildGrokProvider({
+    return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -414,7 +402,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     yield* Effect.logWarning("Grok CLI health check failed.", {
       errorTag: error._tag,
     });
-    return buildGrokProvider({
+    return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -432,7 +420,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
   }
 
   if (Option.isNone(versionResult.success)) {
-    return buildGrokProvider({
+    return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -455,7 +443,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       stdoutLength: versionOutput.stdout.length,
       stderrLength: versionOutput.stderr.length,
     });
-    return buildGrokProvider({
+    return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -530,7 +518,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
       : fallbackModels;
 
   if (auth.status === "unauthenticated") {
-    return buildGrokProvider({
+    return buildServerProvider({
       presentation: GROK_PRESENTATION,
       enabled: grokSettings.enabled,
       checkedAt,
@@ -546,7 +534,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
-  return buildGrokProvider({
+  return buildServerProvider({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
     checkedAt,

@@ -134,19 +134,16 @@ and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
 computer.
 
-Every provider except Antigravity authenticates through its own CLI. Sign in once with the CLI on
-the environment's machine and T3 Code uses that login; there is nothing to register in the app.
-
-| Provider    | Install and authenticate                                                                                                                                                                                                                                                                        |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Codex       | Use your [existing Codex CLI login](./providers-codex.md#use-an-existing-codex-login), or [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt) to let T3 Code manage the token. Install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login` for the former. |
-| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                                                                                                                                                                    |
-| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                                                                                                                                                           |
-| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                                                                                                                                                              |
-| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                                                                                                                                                        |
-| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                                                                                                                                                               |
-| Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                                                                                                                                                              |
-| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                                                                                                                                                                |
+| Provider    | Install and authenticate                                                                                                                                  |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex       | [Connect with ChatGPT](./providers-codex.md#connect-with-chatgpt), or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`. |
+| Claude      | Install [Claude Code](https://claude.com/product/claude-code), then run `claude auth login`.                                                              |
+| Cursor      | Install [Cursor CLI](https://cursor.com/cli), then run `agent login`.                                                                                     |
+| Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                                                                                        |
+| OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                                                                                  |
+| Antigravity | Install and sign in with Google from T3 Code's provider settings.                                                                                         |
+| Pi          | Install [Pi](./providers-pi.md#set-up-pi) with Node.js 22.19 or newer, then run `pi` and `/login`.                                                        |
+| Muse Code   | Install [Muse Code](https://dev.meta.ai/docs/muse-code) on the server, run `muse login`, then enable it in Settings → Providers.                          |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.

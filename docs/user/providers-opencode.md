@@ -5,12 +5,6 @@ enable it in **Settings > Providers**. See [provider setup](./install.md#provide
 T3 Code requires OpenCode 1.14.19 or newer, including when you connect an existing
 OpenCode server.
 
-T3 Code never signs you in to OpenCode. It uses the login your `opencode` CLI already
-has, so there is nothing to register in T3 Code and no account to connect. Run
-`opencode auth login` on the environment's machine if the CLI is not signed in yet,
-then refresh provider status. Provider settings show the account OpenCode reports,
-not one T3 Code manages.
-
 ## OpenCode 2
 
 T3 Code supports OpenCode 2.0.18 and newer. It detects the version on its own, so

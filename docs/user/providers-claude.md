@@ -4,12 +4,6 @@ T3 Code uses Claude Code's login and configuration. Start with the default provi
 for one account; [provider setup](./install.md#providers) covers installation and
 shared provider settings.
 
-There is nothing to sign in to inside T3 Code. It uses the login your `claude` CLI
-already has, and never stores or asks for Anthropic credentials. Run
-`claude auth login` on the environment's machine if the CLI is not signed in yet,
-then refresh provider status. Provider settings report the account and plan Claude
-Code reports, read-only.
-
 ## Separate accounts or configurations
 
 Use a separate Claude config directory for each account. This also works for named

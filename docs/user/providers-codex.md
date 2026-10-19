@@ -21,24 +21,14 @@ localhost page into the sign-in panel, even if that page could not load.
 
 ## Use an existing Codex login
 
-This is the default. T3 Code uses your installed Codex and its existing login, so
-there is nothing to register in T3 Code. Run `codex login` on the environment's
-machine to sign in, then refresh provider status. Provider settings report the
-account Codex reports, read-only.
-
-[Provider setup](./install.md#providers) covers installation and custom configuration.
-
-**Connect with ChatGPT** is the alternative. It connects a ChatGPT account that T3
-Code stores and refreshes itself, which is what you want when the ChatGPT plan
-should be shared or credited to T3 Code rather than read from the CLI. Switching to
-it changes how this instance authenticates and leaves your `codex` CLI login
-untouched. Because T3 Code holds that token, it can also sign the instance out; it
-cannot sign out a CLI login, which you manage with `codex logout`.
+T3 Code can use your installed Codex and its existing login. Run `codex login`
+on the environment's machine to sign in. [Provider setup](./install.md#providers)
+covers installation and custom configuration.
 
 ## Use multiple accounts
 
-Add another account in **Settings → Providers**, then select it from the thread's
-model picker. Compatible accounts can continue the same thread.
+Add another ChatGPT account in **Settings → Providers**, then select the account
+from the thread's model picker. Compatible accounts can continue the same thread.
 Connecting accounts through T3 Code leaves your CLI login unchanged.
 
 ### Multiple CLI logins

@@ -49,23 +49,6 @@ client connections and provider-instance rebuilds. Releases are immutable, with 
 selecting the version for new processes. Running processes hold leases on their version. Updates
 and removal must respect those leases instead of replacing executables under a running agent.
 
-## Credential ownership is declared, not inferred
-
-Claude, OpenCode, and default Codex authenticate with the login their installed CLI already holds.
-T3 Code installs none of them and signs into none of them, so each snapshot publishes
-`setup: { canAuthenticate: false, canInstall: false }`. Managed Codex is the exception: it owns a
-ChatGPT token, declares `canAuthenticate: true`, and sets `auth.canLogout`.
-
-The field is load-bearing. Clients test `canAuthenticate === true` rather than `!== false`, so a
-snapshot that omits `setup` is treated as "sign-in unknown" and the settings surfaces offer a
-control that can only fail — with `This provider does not support sign-in in T3 Code.` The account
-still works, so the failure reads as a broken provider rather than a missing declaration. See
-[`adding-a-provider.md`](./adding-a-provider.md).
-
-Multiple CLI logins are per instance, never per account switch: Claude through `CLAUDE_CONFIG_DIR`
-and Codex through `CODEX_HOME`, each instance pointing at its own directory. Sign out is reserved
-for providers that hold the credential themselves.
-
 ## Setup must not happen as a health-check side effect
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.

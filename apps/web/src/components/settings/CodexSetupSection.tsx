@@ -131,27 +131,24 @@ export function CodexSetupSection(props: CodexSetupSectionProps) {
           ) : null
         }
       />
-    ) : props.mode === "existing" || props.provider?.setup?.canAuthenticate === false ? (
-      // The CLI owns this instance's login, so there is no in-app ChatGPT sign-in
-      // to start. Say where the account actually comes from instead of rendering a
-      // sign-in control that cannot work.
-      props.provider?.auth.status === "authenticated" ? (
-        <SettingsRow
-          title="Account"
-          description={
-            props.provider.auth.email?.trim()
-              ? `Signed in with your Codex CLI as ${props.provider.auth.email.trim()}.`
-              : "Signed in with your Codex CLI."
+    ) : props.mode === "existing" ? null : props.provider?.setup === undefined ? (
+      props.presentation === "onboarding" ? (
+        <CodexWelcomeCard
+          title={props.displayName || props.provider?.displayName || "Codex"}
+          description={<CodexSignInDescription />}
+          control={
+            <Button size="sm" variant="outline" className="min-w-44" disabled>
+              Open sign-in page
+            </Button>
+          }
+          secondaryControl={
+            <Button size="sm" variant="ghost-muted" disabled>
+              Cancel
+            </Button>
           }
         />
       ) : (
-        <SettingsRow
-          title="Account"
-          description={
-            props.provider?.message ??
-            "Run `codex login` on this environment's machine, then refresh provider status."
-          }
-        />
+        <SettingsRow title="ChatGPT account" description="Preparing sign-in." />
       )
     ) : (
       <ManagedCodexSetup

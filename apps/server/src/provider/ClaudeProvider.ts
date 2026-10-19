@@ -62,17 +62,6 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
   reportsContextWindow: true,
 } as const;
-
-/**
- * Claude authenticates with the installed `claude` CLI: T3 Code neither installs it
- * nor signs in, so it advertises neither. Clients read an absent `setup` as "unknown"
- * and offer a sign-in that can only fail, so every Claude snapshot declares this.
- */
-const CLAUDE_SETUP = { canAuthenticate: false, canInstall: false } as const;
-
-const buildClaudeProvider = (
-  input: Omit<Parameters<typeof buildServerProvider>[0], "setup">,
-): ServerProviderDraft => buildServerProvider({ ...input, setup: CLAUDE_SETUP });
 function toTitleCaseWords(value: string): string {
   const parts: Array<string> = [];
   for (const part of value.split(/[\s_-]+/g)) {
@@ -505,7 +494,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   );
 
   if (!claudeSettings.enabled) {
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -532,7 +521,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     yield* Effect.logWarning("Claude Agent CLI health check failed.", {
       errorTag: error._tag,
     });
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
@@ -550,7 +539,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   if (Option.isNone(versionProbe.success)) {
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
@@ -574,7 +563,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       stdoutLength: version.stdout.length,
       stderrLength: version.stderr.length,
     });
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
@@ -609,7 +598,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
@@ -632,7 +621,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   if (claudeAuthStatus(capabilities) === "unauthenticated") {
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
       checkedAt,
@@ -669,7 +658,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     parsedVersion
       ? yield* resolveResetCredits(parsedVersion)
       : undefined;
-  return buildClaudeProvider({
+  return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,
     enabled: claudeSettings.enabled,
     checkedAt,
@@ -708,7 +697,7 @@ export const makePendingClaudeProvider = (
     );
 
     if (!claudeSettings.enabled) {
-      return buildClaudeProvider({
+      return buildServerProvider({
         presentation: CLAUDE_PRESENTATION,
         enabled: false,
         checkedAt,
@@ -723,7 +712,7 @@ export const makePendingClaudeProvider = (
       });
     }
 
-    return buildClaudeProvider({
+    return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: true,
       checkedAt,

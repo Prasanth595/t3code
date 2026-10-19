@@ -41,15 +41,6 @@ capabilities, never the driver kind.
 - **Instances.** Session state, catalogs, and credentials belong to a provider instance, not the
   driver. Remove ambient credentials the instance did not configure, so two instances cannot
   silently share an account or billing.
-- **Declare `setup`.** A provider that signs in with its own installed CLI has no in-app sign-in
-  and no auth controller, so it must publish `setup: { canAuthenticate: false, canInstall: false }`
-  from every snapshot — `buildServerProvider` in
-  [`snapshotProbe.ts`](../../packages/provider-core/src/server/snapshotProbe.ts) takes it for this.
-  Clients test `canAuthenticate === true`, never `!== false`, because an absent `setup` reads as
-  "unknown" and otherwise renders a Sign in button whose only outcome is the raw error
-  `This provider does not support sign-in in T3 Code.` It fails quietly: the provider looks broken
-  while it is working. A provider that _does_ sign in declares `true`, and a provider that owns
-  the login sets `auth.canLogout`, which is what enables the Sign out control.
 - **Status checks.** Background status and model refreshes must not open a session that can start
   MCP servers, run hooks, or launch a login. Keep heavier probes behind an explicit refresh.
 - **T3 MCP tools.** Inject the thread's MCP server so agents can use T3's tools, and make a turn
