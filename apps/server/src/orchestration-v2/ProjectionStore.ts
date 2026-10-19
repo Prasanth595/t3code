@@ -3694,7 +3694,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     JOIN orchestration_v2_projection_subagents AS task
                       ON task.subagent_id = json_extract(requested.payload_json, '$.delegatedTaskId')
                     WHERE requested.thread_id = child.thread_id
-                      AND requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                      AND (requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                        OR (requested.status = 'queued'
+                          AND task.status != CASE
+                            WHEN json_extract(requested.payload_json, '$.queueHeld') IS 1
+                            THEN 'idle' ELSE 'pending' END))
                       AND task.child_thread_id = child.thread_id
                       AND json_extract(task.payload_json, '$.origin') = 'app_owned'
                       AND json_extract(task.payload_json, '$.result') IS NULL
