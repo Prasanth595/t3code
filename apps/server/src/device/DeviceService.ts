@@ -690,7 +690,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
           hostId: host.id,
           platform: "android",
           reason:
-            "Android emulator video needs working ffmpeg with the libx264 encoder. Install it on the device host's PATH or set SERVE_EMU_FFMPEG there, then retry opening the emulator.",
+            "Android emulator video needs working ffmpeg with the libx264 encoder. Install it on the device host's PATH or set SERVE_EMU_FFMPEG there, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, restart SSH device support or the local environment server.",
         });
       }
       if (!/\blibx264\b/.test(`${encoders.stdout}\n${encoders.stderr}`)) {
@@ -698,7 +698,7 @@ process.exitCode = result.error ? 1 : (result.status ?? 1);`,
           hostId: host.id,
           platform: "android",
           reason:
-            "Android emulator video needs the libx264 encoder. Install an ffmpeg build that includes libx264 on the device host, then retry opening the emulator.",
+            "Android emulator video needs the libx264 encoder. Install an ffmpeg build that includes libx264 on the device host, then retry opening the emulator. After changing PATH or SERVE_EMU_FFMPEG, restart SSH device support or the local environment server.",
         });
       }
     }

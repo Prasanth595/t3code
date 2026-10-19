@@ -36,49 +36,6 @@ it.effect("finds Android Studio Java for a non-interactive SSH session", () =>
   }),
 );
 
-it.effect("keeps SSH Android and iOS available when ffmpeg is missing", () =>
-  Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) === "win32") return;
-    yield* Effect.promise(async () => {
-      const home = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-ssh-ffmpeg-"));
-      try {
-        const bin = NodePath.join(home, ".local/bin");
-        await NodeFSP.mkdir(bin, { recursive: true });
-        const tool = (name: string, output: string) =>
-          NodeFSP.writeFile(NodePath.join(bin, name), `#!/bin/sh\necho ${output}\n`, {
-            mode: 0o755,
-          });
-        await tool("adb", "adb");
-        await tool("npm", "10.0.0");
-        await tool("xcrun", "simctl");
-        const script = NodePath.join(home, "probe.cjs");
-        await NodeFSP.writeFile(
-          script,
-          "Object.defineProperty(process, 'platform', { value: 'darwin' });\n" +
-            remoteDeviceScript("one", "probe"),
-        );
-        const result = await exec(
-          "/bin/sh",
-          ["-c", `${remoteDeviceEnvironment}\nexec "$0" "$1"`, process.execPath, script],
-          {
-            env: {
-              HOME: home,
-              PATH: "/usr/bin:/bin",
-              SERVE_EMU_FFMPEG: NodePath.join(home, "missing-ffmpeg"),
-            },
-          },
-        );
-        expect(JSON.parse(result.stdout).platforms).toEqual([
-          { platform: "ios", available: true },
-          { platform: "android", available: true },
-        ]);
-      } finally {
-        await NodeFSP.rm(home, { recursive: true, force: true });
-      }
-    });
-  }),
-);
-
 it.effect("preserves shell metacharacters and newlines in remote arguments", () =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "win32") return;

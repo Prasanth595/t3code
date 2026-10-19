@@ -36,7 +36,10 @@ After installing SDK tools, restart the environment server and refresh devices.
 Android emulator video also needs `ffmpeg` with the libx264 encoder on the device
 host's PATH, or an executable selected by `SERVE_EMU_FFMPEG` on that host. If
 opening an emulator reports an ffmpeg problem, install or fix the executable
-and retry opening it. Physical Android devices and iOS do not need ffmpeg.
+and retry opening it. After changing PATH or `SERVE_EMU_FFMPEG`, restart the
+environment server for local devices, or turn device support off and on for SSH
+devices, so the running tools inherit the new environment. Physical Android
+devices and iOS do not need ffmpeg.
 
 The screen is interactive: click and drag to touch, type while the screen is
 focused, and use the toolbar for Home, Back, and Recents on Android, rotate on
