@@ -533,6 +533,8 @@ const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Accepted responses may heal old markers, but cannot undo a newer refusal.
+  let revocationRevision = 0;
 
   const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
   const withRuntimeFiles = <A, E>(
@@ -640,23 +642,36 @@ const make = Effect.gen(function* () {
     Effect.catchTags({ PlatformError: internalError("generate-link-proof") }),
   );
 
+  const isCurrentManagedTunnel = Effect.fnUntraced(function* (input: {
+    readonly configJson: string;
+    readonly credential: string;
+    readonly revocationRevision: number;
+  }) {
+    const [currentConfig, currentCredential] = yield* Effect.all([
+      secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
+      secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET),
+    ]);
+    return (
+      revocationRevision === input.revocationRevision &&
+      Option.isSome(currentConfig) &&
+      bytesToString(currentConfig.value) === input.configJson &&
+      Option.isSome(currentCredential) &&
+      bytesToString(currentCredential.value) === input.credential
+    );
+  });
+
   const activateManagedTunnel = Effect.fn("environment.cloud.activateManagedTunnel")(
     function* (input: {
       readonly config: RelayManagedEndpointRuntimeConfig;
       readonly configJson: string;
       readonly origin: RelayManagedEndpointOrigin;
+      readonly credential: string;
+      readonly revocationRevision: number;
     }) {
       return yield* endpointRuntime.withLinkStateLock(
         Effect.gen(function* () {
-          const [currentConfig, revoked] = yield* Effect.all([
-            secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
-            secrets.get(CLOUD_LINK_REVOKED),
-          ]);
-          if (
-            Option.isSome(revoked) ||
-            Option.isNone(currentConfig) ||
-            bytesToString(currentConfig.value) !== input.configJson
-          ) {
+          const revoked = yield* secrets.get(CLOUD_LINK_REVOKED);
+          if (Option.isSome(revoked) || !(yield* isCurrentManagedTunnel(input))) {
             return null;
           }
           const status = yield* endpointRuntime.applyConfig(input.config);
@@ -682,6 +697,8 @@ const make = Effect.gen(function* () {
       readonly config: RelayManagedEndpointRuntimeConfig;
       readonly configJson: string;
       readonly origin: RelayManagedEndpointOrigin;
+      readonly credential: string;
+      readonly revocationRevision: number;
     },
     retryRuntimeFailures: boolean,
   ) => {
@@ -984,6 +1001,7 @@ const make = Effect.gen(function* () {
         if (Option.isNone(current) || bytesToString(current.value) !== credential) {
           return false;
         }
+        revocationRevision++;
         yield* Effect.logWarning(
           "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
           { cause },
@@ -1002,6 +1020,7 @@ const make = Effect.gen(function* () {
   const registerManagedTunnelRecovery = Effect.fn(
     "environment.cloud.registerManagedCloudTunnelRecovery",
   )(function* (localOrigin: string, options?: { readonly retryRuntimeFailures?: boolean }) {
+    const requestRevocationRevision = revocationRevision;
     const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
       secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       secrets.get(RELAY_URL_SECRET),
@@ -1065,16 +1084,26 @@ const make = Effect.gen(function* () {
     if (registered === "revoked" || registered === "superseded") {
       return { status: registered };
     }
-    yield* secrets.remove(CLOUD_LINK_REVOKED);
+    const activation = {
+      config,
+      configJson: bytesToString(runtimeConfig.value),
+      origin,
+      credential,
+      revocationRevision: requestRevocationRevision,
+    };
+    const accepted = yield* endpointRuntime.withLinkStateLock(
+      Effect.gen(function* () {
+        if (!(yield* isCurrentManagedTunnel(activation))) return false;
+        yield* secrets.remove(CLOUD_LINK_REVOKED);
+        return true;
+      }),
+    );
+    if (!accepted) return { status: "superseded" as const };
     if (registered.status === "recovery_required") {
       return { status: registered.status, config };
     }
     const endpointRuntimeStatus = yield* activateManagedTunnelWithRetry(
-      {
-        config,
-        configJson: bytesToString(runtimeConfig.value),
-        origin,
-      },
+      activation,
       options?.retryRuntimeFailures === true,
     );
     return endpointRuntimeStatus === null
@@ -1087,6 +1116,7 @@ const make = Effect.gen(function* () {
     expectedConfig?: RelayManagedEndpointRuntimeConfig,
     options?: { readonly retryRuntimeFailures?: boolean },
   ) {
+    const requestRevocationRevision = revocationRevision;
     const [runtimeConfig, relayUrl, cloudUserId, environmentCredential] = yield* Effect.all([
       secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
       secrets.get(RELAY_URL_SECRET),
@@ -1157,10 +1187,12 @@ const make = Effect.gen(function* () {
     );
     const stored = yield* endpointRuntime.withLinkStateLock(
       Effect.gen(function* () {
-        const currentConfig = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
         if (
-          Option.isNone(currentConfig) ||
-          bytesToString(currentConfig.value) !== bytesToString(runtimeConfig.value)
+          !(yield* isCurrentManagedTunnel({
+            configJson: bytesToString(runtimeConfig.value),
+            credential,
+            revocationRevision: requestRevocationRevision,
+          }))
         ) {
           return false;
         }
@@ -1176,6 +1208,8 @@ const make = Effect.gen(function* () {
         config: recovered.endpointRuntime,
         configJson: encoded,
         origin,
+        credential,
+        revocationRevision: requestRevocationRevision,
       },
       options?.retryRuntimeFailures === true,
     );
