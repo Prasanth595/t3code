@@ -388,11 +388,11 @@ function titleCaseCommandSegment(segment: string): string {
 }
 
 function recordedLayoutShortcutKey(
-  event: Pick<KeyboardEvent, "key" | "code" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "altKey">,
 ): string {
   const physicalKey = shortcutKeyFromEvent(event);
   const layoutKey = event.key.toLowerCase();
-  if (layoutKey.length !== 1) return physicalKey;
+  if (event.altKey || layoutKey.length !== 1) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
   // produce the same glyph without Shift or at a different position.
   const unshiftedKey = event.shiftKey ? US_SHIFTED_TO_UNSHIFTED_KEYS.get(layoutKey) : undefined;

@@ -211,17 +211,31 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe(expected);
   });
 
-  it("records German punctuation that triggers the saved binding while default recording stays physical", () => {
-    for (const { key, shiftKey, expected, defaultInput } of [
-      { key: "#", shiftKey: false, expected: "#", defaultInput: "\\" },
-      { key: "'", shiftKey: true, expected: "shift+'", defaultInput: "shift+\\" },
+  it("records layout punctuation while preserving physical Alt shortcuts; saved bindings still trigger", () => {
+    for (const { key, code, altKey = false, shiftKey, expected, defaultInput } of [
+      { key: "#", code: "Backslash", shiftKey: false, expected: "#", defaultInput: "\\" },
+      {
+        key: "'",
+        code: "Backslash",
+        shiftKey: true,
+        expected: "shift+'",
+        defaultInput: "shift+\\",
+      },
+      {
+        key: "¡",
+        code: "Digit1",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+1",
+        defaultInput: "alt+1",
+      },
     ]) {
       const pressed = {
         key,
-        code: "Backslash",
+        code,
         metaKey: false,
         ctrlKey: false,
-        altKey: false,
+        altKey,
         shiftKey,
       };
       expect(keybindingFromKeyboardEvent(pressed, "MacIntel")).toBe(defaultInput);
