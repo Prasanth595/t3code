@@ -659,19 +659,22 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
-  // Read when a scroll starts; the listener keeps it current if the user
-  // changes Reduce Motion while the thread is open.
+  // Avoid animating until the system preference is known.
   const reduceMotionRef = useRef(true);
   useEffect(() => {
     // A change event or cleanup makes a still-pending initial query stale.
     let superseded = false;
-    void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (!superseded) reduceMotionRef.current = enabled;
-    });
     const subscription = AccessibilityInfo.addEventListener("reduceMotionChanged", (enabled) => {
       superseded = true;
       reduceMotionRef.current = enabled;
     });
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (!superseded) reduceMotionRef.current = enabled;
+      })
+      .catch(() => {
+        // Keep the current preference if the native query fails.
+      });
     return () => {
       superseded = true;
       subscription.remove();
