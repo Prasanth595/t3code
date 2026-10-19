@@ -56,7 +56,7 @@ export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceEr
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code background service set up for ${this.baseDir} runs an older release or has not restarted into its update, so it cannot share that home safely. On the machine that hosts it, update it with \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed), or remove it with \`t3 service uninstall\`. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3\` if \`t3\` is not installed. Then retry. No server was stopped.`;
+    return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, update it with \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed), or remove it with \`t3 service uninstall\`. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3\` if \`t3\` is not installed. Then retry. No server was stopped.`;
   }
 }
 
@@ -111,13 +111,8 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
 
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-/**
- * Background services from before this lock never take it, and once another
- * server replaces their runtime record nothing names them. Returns the T3 home
- * of the boot service installed for this user when it serves this state
- * directory, runs now or at next login, and runs a release without the lock.
- * Best effort: anything that cannot be read or probed allows startup.
- */
+// Pre-lock services become invisible when another server replaces their runtime
+// record. Probe their installed runtime; unreadable or unavailable probes allow startup.
 const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
   function* (stateDir: string) {
     if ((yield* HostProcess.Environment)[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined) {
@@ -125,49 +120,16 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
     }
     const platform = yield* HostProcess.Platform;
     const uid = yield* HostProcess.UserId;
+    if (platform !== "linux" && (platform !== "darwin" || uid === undefined)) return undefined;
+
     const homeDir = yield* HostProcess.HomeDirectory;
     const fs = yield* FileSystem.FileSystem;
     const runner = yield* ProcessRunner.ProcessRunner;
-    const run = (command: string, args: ReadonlyArray<string>) =>
-      runner.run({ command, args, timeout: Duration.seconds(5) });
-    const manager =
-      platform === "darwin" && uid !== undefined
-        ? {
-            unitPath: NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE),
-            loaded: run("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`]).pipe(
-              Effect.map((result) => result.code === 0),
-            ),
-            // macOS 12 and earlier print `true` for a disabled label instead of `disabled`.
-            scheduled: run("launchctl", ["print-disabled", `gui/${uid}`]).pipe(
-              Effect.map(
-                (result) =>
-                  result.code === 0 &&
-                  !result.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) &&
-                  !result.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`),
-              ),
-            ),
-          }
-        : platform === "linux"
-          ? {
-              unitPath: NodePath.join(
-                homeDir,
-                ".config",
-                "systemd",
-                "user",
-                BOOT_SERVICE_UNIT_FILE,
-              ),
-              // A unit waiting out its `Restart=` delay is `activating`, with exit code 3.
-              loaded: run("systemctl", ["--user", "is-active", BOOT_SERVICE_UNIT_FILE]).pipe(
-                Effect.map((result) => result.code === 0 || result.stdout.trim() === "activating"),
-              ),
-              scheduled: run("systemctl", ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE]).pipe(
-                Effect.map((result) => result.stdout.trim() === "enabled"),
-              ),
-            }
-          : undefined;
-    if (manager === undefined) return undefined;
-
-    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(manager.unitPath));
+    const unitPath =
+      platform === "darwin"
+        ? NodePath.join(homeDir, "Library", "LaunchAgents", BOOT_SERVICE_PLIST_FILE)
+        : NodePath.join(homeDir, ".config", "systemd", "user", BOOT_SERVICE_UNIT_FILE);
+    const baseDir = bootServiceBaseDirOf(yield* fs.readFileString(unitPath));
     if (
       baseDir === undefined ||
       (yield* fs.realPath(NodePath.join(baseDir, "userdata"))) !== (yield* fs.realPath(stateDir))
@@ -179,13 +141,34 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
       yield* fs.readFileString(NodePath.join(runtimeDir, SERVICE_STATE_FILE)),
     );
     if (version === undefined) return undefined;
-    if (yield* manager.loaded) {
-      // `t3 update` with the restart declined names the new release in
-      // service-state.json while the loaded service keeps running the old
-      // one, so probing that release would prove nothing.
-      if (yield* fs.exists(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE))) return baseDir;
-    } else if (!(yield* manager.scheduled)) {
-      return undefined;
+    const run = (command: string, args: ReadonlyArray<string>) =>
+      runner.run({ command, args, timeout: Duration.seconds(5), maxOutputBytes: 65_536 });
+    let loaded: boolean;
+    if (platform === "darwin") {
+      loaded =
+        (yield* run("launchctl", ["print", `gui/${uid}/${BOOT_SERVICE_LAUNCHD_LABEL}`])).code === 0;
+      if (!loaded) {
+        const disabled = yield* run("launchctl", ["print-disabled", `gui/${uid}`]);
+        // Older macOS versions print `true` instead of `disabled`.
+        if (
+          disabled.code !== 0 ||
+          disabled.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => disabled`) ||
+          disabled.stdout.includes(`"${BOOT_SERVICE_LAUNCHD_LABEL}" => true`)
+        )
+          return undefined;
+      }
+    } else {
+      const active = yield* run("systemctl", ["--user", "is-active", BOOT_SERVICE_UNIT_FILE]);
+      // A unit waiting out its Restart= delay is activating, with exit code 3.
+      loaded = active.code === 0 || (active.code === 3 && active.stdout.trim() === "activating");
+      if (!loaded) {
+        const enabled = yield* run("systemctl", ["--user", "is-enabled", BOOT_SERVICE_UNIT_FILE]);
+        if (enabled.code !== 0 || enabled.stdout.trim() !== "enabled") return undefined;
+      }
+    }
+    // A deferred update names the staged runtime, not the loaded service's runtime.
+    if (loaded && (yield* fs.exists(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)))) {
+      return baseDir;
     }
     const preflight = yield* runner.run({
       command: NodePath.join(runtimeDir, "versions", version, "t3"),
@@ -197,6 +180,7 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
         String(SERVICE_LAUNCHER_PROTOCOL),
       ],
       timeout: Duration.seconds(15),
+      maxOutputBytes: 65_536,
     });
     if (preflight.code !== 0) return undefined;
     const answer = decodeServicePreflightResult(yield* decodeJson(preflight.stdout));
