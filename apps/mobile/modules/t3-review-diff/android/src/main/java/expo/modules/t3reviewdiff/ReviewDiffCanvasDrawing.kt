@@ -212,26 +212,31 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     return codeLayouts.layout(rows, tokens, textPaint, style, theme, availableWidth.toInt())
   }
 
-  /** Unwrapped scroll width: change bar, gutter, padding and the widest code or hunk text. */
-  fun contentWidth(rows: List<DiffRow>, style: DiffStyle): Int {
+  fun contentWidth(
+    rows: List<DiffRow>,
+    tokens: Map<String, List<DiffToken>>,
+    style: DiffStyle
+  ): Int {
     if (style.wordWrap) return 0
-    configureCodePaint(theme.text, 0, style)
-    val characterWidth = textPaint.measureText("M")
     var widest = 0f
     for (row in rows) {
-      if (row.kind != "line") continue
-      // ASCII is fixed-pitch; tabs and other glyphs need real measurement.
-      val width = if (row.content.all { it in ' '..'~' }) {
-        row.content.length * characterWidth
-      } else {
-        textPaint.measureText(row.content)
+      when (row.kind) {
+        "line" -> {
+          val rowTokens = tokens[row.id]
+          val runs = if (rowTokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else rowTokens
+          var width = 0f
+          // Match drawCode's run boundaries and fonts, including fallback glyphs and tabs.
+          for (run in runs) {
+            configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
+            width += textPaint.measureText(run.content)
+          }
+          widest = max(widest, width)
+        }
+        "hunk" -> {
+          configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
+          widest = max(widest, textPaint.measureText(row.text.ifEmpty { row.content }))
+        }
       }
-      widest = max(widest, width)
-    }
-    configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
-    for (row in rows) {
-      if (row.kind != "hunk") continue
-      widest = max(widest, textPaint.measureText(row.text.ifEmpty { row.content }))
     }
     return ceil(
       style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f + widest,
