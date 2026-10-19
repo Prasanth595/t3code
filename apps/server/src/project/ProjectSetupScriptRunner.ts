@@ -171,15 +171,20 @@ function wrapCommandForCompletion(
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "posix": {
       const normalized = command.replace(/\r\n/g, "\n");
-      const encode = (text: string) =>
-        text.replace(
-          // eslint-disable-next-line no-control-regex -- encode terminal control characters before submission.
-          /[\\'\x00-\x1f\x7f]/g,
-          (character) =>
-            character === "'"
-              ? "'\\''"
-              : `\\0${character.charCodeAt(0).toString(8).padStart(3, "0")}`,
-        );
+      const encode = (text: string) => {
+        let encoded = "";
+        for (const character of text) {
+          const code = character.charCodeAt(0);
+          if (character === "'") {
+            encoded += "'\\''";
+          } else if (character === "\\" || code <= 0x1f || code === 0x7f) {
+            encoded += `\\0${code.toString(8).padStart(3, "0")}`;
+          } else {
+            encoded += character;
+          }
+        }
+        return encoded;
+      };
       // The suffix preserves trailing newlines; the subshell contains exits and syntax errors.
       const evaluate = (payload: string) =>
         `( __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
