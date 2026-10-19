@@ -10,6 +10,7 @@ import {
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
 import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -419,13 +420,19 @@ function resolveRuntimeState(input: {
 const tailscaleIpv4AddressKey = (
   networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces,
 ): string =>
-  Object.values(networkInterfaces)
-    .flatMap((addresses) => addresses ?? [])
-    .filter(
-      (address) =>
-        !address.internal && address.family === "IPv4" && isTailscaleIpv4Address(address.address),
-    )
-    .map((address) => address.address)
+  [
+    ...new Set(
+      Object.values(networkInterfaces)
+        .flatMap((addresses) => addresses ?? [])
+        .filter(
+          (address) =>
+            !address.internal &&
+            address.family === "IPv4" &&
+            isTailscaleIpv4Address(address.address),
+        )
+        .map((address) => address.address),
+    ),
+  ]
     .toSorted()
     .join(",");
 
@@ -447,21 +454,17 @@ export const make = Effect.gen(function* () {
   // with values it read before that change persisted.
   const changePermit = yield* Semaphore.make(1);
 
-  // Cache the `tailscale status` spawn for the TTL. On macOS, the Mac App
-  // Store Tailscale CLI lives inside Tailscale's sandbox container, so each
-  // spawn re-triggers the "Other apps" TCC prompt.
-  const [cachedReadTailscaleStatus, invalidateTailscaleStatus] =
-    yield* Effect.cachedInvalidateWithTTL(
+  // Key status by interface addresses so network changes bypass stale DNS and
+  // identity. Cache unchanged addresses to avoid repeated macOS TCC prompts.
+  const tailscaleStatusCache = yield* Cache.make({
+    capacity: 1,
+    timeToLive: TAILSCALE_STATUS_CACHE_TTL,
+    lookup: (_addresses: string) =>
       readTailscaleStatus.pipe(
         Effect.orElseSucceed(() => null),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       ),
-      TAILSCALE_STATUS_CACHE_TTL,
-    );
-
-  // Tailscale connecting or disconnecting changes its interface addresses, which
-  // makes a status read cached before the change stale.
-  const lastTailscaleAddressesRef = yield* Ref.make<string | null>(null);
+  });
 
   const readNetworkInterfaces = networkInterfaces.read;
 
@@ -577,21 +580,15 @@ export const make = Effect.gen(function* () {
       return coreEndpoints;
     }
 
-    const tailscaleAddresses = tailscaleIpv4AddressKey(currentNetworkInterfaces);
-    const previousTailscaleAddresses = yield* Ref.getAndSet(
-      lastTailscaleAddressesRef,
-      tailscaleAddresses,
-    );
-    if (previousTailscaleAddresses !== tailscaleAddresses) {
-      yield* invalidateTailscaleStatus;
-    }
-
     const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
       port: state.port,
       serveEnabled: state.tailscaleServeEnabled,
       servePort: state.tailscaleServePort,
       networkInterfaces: currentNetworkInterfaces,
-      readStatus: cachedReadTailscaleStatus,
+      readStatus: Cache.get(
+        tailscaleStatusCache,
+        tailscaleIpv4AddressKey(currentNetworkInterfaces),
+      ),
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
       Effect.provideService(HttpClient.HttpClient, httpClient),
