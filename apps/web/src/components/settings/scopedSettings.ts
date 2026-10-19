@@ -384,9 +384,18 @@ type ScopedSettingsServerResult =
   | { readonly _tag: "Success"; readonly value: ServerSettings }
   | { readonly _tag: "Failure"; readonly cause: Cause.Cause<unknown> };
 
-/** Queue planning and persistence together, since project entries replace whole overrides. */
+type ScopedSettingsPersistServer = (input: {
+  environmentId: EnvironmentId;
+  input: { patch: ServerSettingsPatch };
+}) => Promise<{
+  readonly _tag: "Success" | "Failure";
+  readonly cause?: Cause.Cause<unknown>;
+  readonly value?: ServerSettings;
+}>;
+
+/** Project entries replace whole overrides, so queue their planning with their writes. */
 export function createScopedSettingsWriter() {
-  const queues = new Map<EnvironmentId, { tail: Promise<void> }>();
+  const queues = new Map<EnvironmentId, Promise<void>>();
   return (
     environments: readonly ScopedSettingsEnvironment[],
     plan: (
@@ -399,16 +408,14 @@ export function createScopedSettingsWriter() {
     }) => Promise<ScopedSettingsServerResult>,
     persistClient: (patch: ClientSettingsPatch) => void,
   ) =>
-    persistScopedSettingsPatch(
+    persistScopedSettingsPlan(
       plan(environments),
-      ({ environmentId }) => {
-        const queue = queues.get(environmentId) ?? { tail: Promise.resolve() };
-        queues.set(environmentId, queue);
-        const save = queue.tail.then(async () => {
-          // Config pushes can lag or be batched. Read the server after the preceding save
-          // rather than guessing whether a client snapshot includes it.
+      (initialWrite) => {
+        const { environmentId } = initialWrite;
+        const save = (queues.get(environmentId) ?? Promise.resolve()).then(async () => {
+          // Config pushes can lag, and another client may have changed the overrides.
           const current = await readServer(environmentId);
-          if (current._tag === "Failure") return current;
+          if (current._tag === "Failure") return { write: initialWrite, result: current };
           const rebased = environments.map((environment) =>
             environment.environmentId === environmentId && environment.serverConfig
               ? {
@@ -420,15 +427,16 @@ export function createScopedSettingsWriter() {
           const write = plan(rebased).serverWrites.find(
             (write) => write.environmentId === environmentId,
           )!;
-          return persistServer({ environmentId, input: { patch: write.patch } });
+          const result = await persistServer({ environmentId, input: { patch: write.patch } });
+          return { write, result };
         });
         const settled = save.then(
           () => {},
           () => {},
         );
-        queue.tail = settled;
+        queues.set(environmentId, settled);
         void settled.then(() => {
-          if (queue.tail === settled) queues.delete(environmentId);
+          if (queues.get(environmentId) === settled) queues.delete(environmentId);
         });
         return save;
       },
@@ -471,37 +479,47 @@ function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | un
 
 export async function persistScopedSettingsPatch(
   plan: ReturnType<typeof planScopedSettingsPatch>,
-  persistServer: (input: {
-    environmentId: EnvironmentId;
-    input: { patch: ServerSettingsPatch };
-  }) => Promise<{
-    readonly _tag: "Success" | "Failure";
-    readonly cause?: Cause.Cause<unknown>;
-    readonly value?: ServerSettings;
+  persistServer: ScopedSettingsPersistServer,
+  persistClient: (patch: ClientSettingsPatch) => void,
+) {
+  return persistScopedSettingsPlan(
+    plan,
+    async (write) => ({
+      write,
+      result: await persistServer({
+        environmentId: write.environmentId,
+        input: { patch: write.patch },
+      }),
+    }),
+    persistClient,
+  );
+}
+
+async function persistScopedSettingsPlan(
+  plan: ReturnType<typeof planScopedSettingsPatch>,
+  persistWrite: (write: ScopedServerWrite) => Promise<{
+    readonly write: ScopedServerWrite;
+    readonly result: Awaited<ReturnType<ScopedSettingsPersistServer>>;
   }>,
   persistClient: (patch: ClientSettingsPatch) => void,
 ) {
   if (plan.hasClientWrite) persistClient(plan.clientPatch);
-  const results = await Promise.allSettled(
-    plan.serverWrites.map(({ environmentId, patch }) =>
-      persistServer({ environmentId, input: { patch } }),
-    ),
-  );
+  const results = await Promise.allSettled(plan.serverWrites.map(persistWrite));
   const saved = (index: number) => {
     const result = results[index];
     return (
       result?.status === "fulfilled" &&
-      result.value._tag === "Success" &&
-      droppedSettingKeys(plan.serverWrites[index]!, result.value.value).length === 0
+      result.value.result._tag === "Success" &&
+      droppedSettingKeys(result.value.write, result.value.result.value).length === 0
     );
   };
   const failedEnvironments = plan.serverWrites.flatMap((environment, index) => {
     if (saved(index)) return [];
     const result = results[index];
-    if (result?.status === "fulfilled" && result.value._tag === "Success") {
+    if (result?.status === "fulfilled" && result.value.result._tag === "Success") {
       return [
         {
-          ...environment,
+          ...result.value.write,
           message: "This environment does not support this setting. Update T3 Code on it.",
         },
       ];
@@ -509,8 +527,8 @@ export async function persistScopedSettingsPatch(
     const error: unknown =
       result?.status === "rejected"
         ? result.reason
-        : result?.status === "fulfilled" && result.value.cause
-          ? Cause.squash(result.value.cause)
+        : result?.status === "fulfilled" && result.value.result.cause
+          ? Cause.squash(result.value.result.cause)
           : undefined;
     return [
       {
@@ -522,7 +540,9 @@ export async function persistScopedSettingsPatch(
       },
     ];
   });
-  const savedEnvironments = plan.serverWrites.filter((_, index) => saved(index));
+  const savedEnvironments = results.flatMap((result, index) =>
+    result.status === "fulfilled" && saved(index) ? [result.value.write] : [],
+  );
   return {
     failedEnvironments,
     savedEnvironments,
