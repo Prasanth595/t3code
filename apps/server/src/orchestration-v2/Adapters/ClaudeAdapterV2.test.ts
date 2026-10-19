@@ -1600,6 +1600,36 @@ describe("ClaudeAdapterV2 resume compaction", () => {
   );
 });
 
+describe("ClaudeAdapterV2 user message skill dispatch", () => {
+  const skillNames = new Set(["review", "implement"]);
+
+  it("preserves a leading /goal in one text block with known skills rewritten inline", () => {
+    const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "/goal ship the fix with $review and $implement then $unknown",
+      skillNames,
+    });
+    assert.deepEqual(message.message.content, [
+      { type: "text", text: "/goal ship the fix with /review and /implement then $unknown" },
+    ]);
+  });
+
+  it("keeps the full path-leading request before the native skill command", () => {
+    const message = ClaudeAdapterV2.makeClaudeUserMessage({
+      text: "/tmp/build.log has errors, $review it",
+      skillNames,
+    });
+    assert.deepEqual(message.message.content, [
+      { type: "text", text: "/tmp/build.log has errors, /review it" },
+      { type: "text", text: "/review it" },
+    ]);
+  });
+
+  it("leaves a command with only unknown mentions unchanged", () => {
+    const text = "/goal check $HOME with $unknown";
+    assert.equal(ClaudeAdapterV2.makeClaudeUserMessage({ text, skillNames }).message.content, text);
+  });
+});
+
 describe("ClaudeAdapterV2 attachments", () => {
   it.effect.each([
     {
