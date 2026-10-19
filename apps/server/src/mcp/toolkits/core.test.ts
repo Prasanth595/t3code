@@ -553,7 +553,14 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
     });
   }).pipe(
     Effect.provide(
-      layerThreadToolkit.pipe(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(
+          Layer.mock(ThreadLaunch.ThreadLaunchService)({
+            fork: ({ targetThreadId }) => Effect.succeed({ sequence: 1, targetThreadId }),
+          }),
+        ),
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
