@@ -11499,27 +11499,62 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // below. Replaying the full event table on every server start delays live
   // queue promotion in proportion to the lifetime size of the database.
   const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
+  // See PROVIDER_EXIT_SUBAGENT_CASCADE_COMMAND_PREFIX: those subagent rows settle
+  // without a run update, so the child's delegated task is reconsidered here.
+  const settleDelegatedTaskAfterProviderExit = (stored: OrchestrationV2StoredEvent) =>
+    Effect.gen(function* () {
+      const threadId = stored.event.threadId;
+      const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+      if (parentThreadId === undefined) return;
+      yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to settle a delegated task after its provider exited", {
+          threadId: stored.event.threadId,
+          cause,
+        }),
+      ),
+    );
+
   // Queue promotion can wait on a provider or a thread lock. Subscribe to run
   // updates before buffering so that wait never retains unrelated tool bodies.
-  yield* eventSink
-    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
-    .pipe(
-      Stream.filter(
-        (stored) =>
-          stored.event.type === "run.updated" &&
-          !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
-          ((stored.event.payload.delegatedTaskId !== undefined &&
-            (stored.event.payload.status === "queued" ||
-              stored.event.payload.status === "starting")) ||
-            stored.event.payload.status === "completed" ||
-            stored.event.payload.status === "interrupted" ||
-            stored.event.payload.status === "failed" ||
-            stored.event.payload.status === "cancelled" ||
-            stored.event.payload.status === "rolled_back"),
+  // One consumer serializes both reactions.
+  yield* Stream.merge(
+    eventSink
+      .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
+      .pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" &&
+            !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
+            ((stored.event.payload.delegatedTaskId !== undefined &&
+              (stored.event.payload.status === "queued" ||
+                stored.event.payload.status === "starting")) ||
+              stored.event.payload.status === "completed" ||
+              stored.event.payload.status === "interrupted" ||
+              stored.event.payload.status === "failed" ||
+              stored.event.payload.status === "cancelled" ||
+              stored.event.payload.status === "rolled_back"),
+        ),
       ),
-      Stream.runForEach(handleRunUpdate),
-      Effect.forkDetach,
-    );
+    eventSink
+      .stream({ afterSequence: terminalEventsAfterSequence, eventType: "subagent.updated" })
+      .pipe(
+        Stream.filter((stored) =>
+          String(stored.commandId).startsWith(
+            RunExecutionService.PROVIDER_EXIT_SUBAGENT_CASCADE_COMMAND_PREFIX,
+          ),
+        ),
+        Stream.changesWith((left, right) => left.commandId === right.commandId),
+      ),
+  ).pipe(
+    Stream.runForEach((stored) =>
+      stored.event.type === "run.updated"
+        ? handleRunUpdate(stored)
+        : settleDelegatedTaskAfterProviderExit(stored),
+    ),
+    Effect.forkDetach,
+  );
 
   const recoverDelegatedTasks = Effect.gen(function* () {
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(

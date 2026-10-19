@@ -4373,6 +4373,8 @@ function runBackgroundItemScenario(
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
     readonly keepEventStreamOpen?: boolean;
+    readonly failEventStream?: ProviderAdapter.ProviderAdapterEventStreamError;
+    readonly onWrite?: (events: ReadonlyArray<OrchestrationV2DomainEvent>) => Effect.Effect<void>;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
     >;
@@ -4397,6 +4399,7 @@ function runBackgroundItemScenario(
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
+                yield* options?.onWrite?.(input.events) ?? Effect.void;
                 if (
                   input.events.some(
                     (event) => event.type === "run.updated" && event.runId === ids.runId,
@@ -4447,9 +4450,11 @@ function runBackgroundItemScenario(
             const events = Stream.fromIterable(makeEvents(ids));
             return {
               events:
-                options?.keepEventStreamOpen === true
-                  ? events.pipe(Stream.concat(Stream.never))
-                  : events,
+                options?.failEventStream !== undefined
+                  ? events.pipe(Stream.concat(Stream.fail(options.failEventStream)))
+                  : options?.keepEventStreamOpen === true
+                    ? events.pipe(Stream.concat(Stream.never))
+                    : events,
               close: Deferred.succeed(ingestionDone, undefined),
             };
           }),
@@ -4552,6 +4557,46 @@ it.effect("keeps a failed root's still-running native children live while the ru
     assert.isFalse(
       written.some((event) => event.type === "subagent.updated"),
       "a child that outlives the failed root must not be settled with it",
+    );
+  }),
+);
+
+it.effect("fails a completed root's native subagents when the provider stream dies", () =>
+  Effect.gen(function* () {
+    const written = yield* Ref.make<ReadonlyArray<OrchestrationV2DomainEvent>>([]);
+    const observed = yield* runBackgroundItemScenario(
+      "completed-root-orphaned-child",
+      (ids) => [
+        childThreadCreatedEvent(ids),
+        subagentEvent(ids, "running"),
+        backgroundTurnItemEvent(ids, "subagent", "running", 1),
+        rootTerminalEvent(ids, "completed"),
+      ],
+      {
+        failEventStream: new ProviderAdapter.ProviderAdapterEventStreamError({
+          driver,
+          providerSessionId: ProviderSessionId.make("session:completed-root-orphaned-child"),
+          cause: "Codex App Server process exited with code 137",
+        }),
+        onWrite: (events) => Ref.update(written, (current) => [...current, ...events]),
+      },
+    );
+
+    assert.deepEqual(observed, ["subagent:running", "turn_item:running", "root-finalized"]);
+    const events = yield* Ref.get(written);
+    assert.deepEqual(
+      events.flatMap((event) => (event.type === "run.updated" ? [event.payload.status] : [])),
+      ["waiting"],
+      "the root turn already completed; its own result stands",
+    );
+    assert.deepEqual(
+      events.flatMap((event) =>
+        event.type === "subagent.updated" || event.type === "turn-item.updated"
+          ? [`${event.type}:${event.payload.status}`]
+          : [],
+      ),
+      ["subagent.updated:failed", "turn-item.updated:failed"],
+      "a subagent whose provider died must not stay running",
     );
   }),
 );

@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import {
@@ -352,6 +353,85 @@ describe("orchestrator replay recovery", () => {
           assertAssistantTextIncludes(projection, FIRST_FINAL);
           assertAssistantTextIncludes(projection, SECOND_FINAL);
           assert.lengthOf(projection.providerThreads, 1);
+        }).pipe(
+          provideDeterministicTestRuntime,
+          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+        ),
+      ),
+  );
+
+  it.effect(
+    "fails a Codex run when the app-server exits mid-turn, then serves the next turn on a new one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const workspace = yield* checkpointWorkspace("provider_thread_resume");
+          const recorded = yield* readCodexTranscript(workspace);
+          // Cut the first app-server off mid-turn: it has started the turn and
+          // its agent message, then exits without `turn/completed`. The second
+          // app-server in the recording answers the follow-up message.
+          const firstExit = recorded.entries.findIndex((entry) => entry.type === "runtime_exit");
+          const agentMessageStarted = recorded.entries.findIndex(
+            (entry, index) =>
+              index < firstExit &&
+              entry.type === "emit_inbound" &&
+              (entry.frame as { readonly method?: string }).method === "item/agentMessage/delta",
+          );
+          assert.isAbove(agentMessageStarted, 0);
+          const transcript = {
+            ...recorded,
+            entries: [
+              ...recorded.entries.slice(0, agentMessageStarted),
+              { type: "runtime_exit" as const, status: "success" as const },
+              ...recorded.entries.slice(firstExit + 1),
+            ],
+          };
+          const driver = yield* CodexReplay.makeReplayDriver(transcript);
+          const materialized = yield* materializeFixtureInput({
+            scenario: "provider_thread_resume",
+            fixtureInput: {
+              steps: [
+                { type: "message", text: PROVIDER_THREAD_RESUME_FIRST_PROMPT },
+                { type: "message", text: PROVIDER_THREAD_RESUME_SECOND_PROMPT },
+              ],
+            },
+            driver: ProviderDriverKind.make("codex"),
+            modelSelection: CODEX_MODEL_SELECTION,
+          });
+
+          const result = yield* runOrchestratorV2ProviderReplayScenario(
+            {
+              name: "provider_thread_resume/codex:app-server-exit",
+              transcript,
+              commands: materialized.steps.flatMap((step) =>
+                step.type === "dispatch" ? [step.command] : [],
+              ),
+              steps: materialized.steps,
+              projectionThreadIds: materialized.projectionThreadIds,
+              runtimePolicyOverride: { cwd: workspace },
+            },
+            {
+              ...CodexOrchestratorReplayHarness,
+              makeProviderAdapterRegistryLayer: () =>
+                CodexAdapterV2Testkit.layer({ transcript, driver }),
+            },
+          );
+
+          const projection = projectionFor(result, transcript.scenario);
+          assert.deepEqual(
+            projection.runs.map((run) => run.status),
+            ["failed", "completed"],
+          );
+          const failure = projection.turnItems.find((item) => item.type === "error");
+          assert.include(
+            failure?.type === "error" ? failure.failure.message : "",
+            "provider event stream closed unexpectedly",
+          );
+          assertAssistantTextIncludes(projection, SECOND_FINAL);
+          assert.deepEqual(yield* Ref.get(driver.state), {
+            cursor: transcript.entries.length,
+            failure: null,
+          });
         }).pipe(
           provideDeterministicTestRuntime,
           Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
