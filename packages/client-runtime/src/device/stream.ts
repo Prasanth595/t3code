@@ -100,6 +100,8 @@ const SEMU_MAGIC = 0x53454d55;
 const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
+// The scrcpy/hub inject-text limit is 300 UTF-8 bytes per packet.
+const ANDROID_MAX_TEXT_BYTES = 300;
 
 const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
@@ -115,6 +117,13 @@ const isWebCodecsSupported = (): boolean =>
   typeof globalThis !== "undefined" &&
   "VideoDecoder" in globalThis &&
   "EncodedVideoChunk" in globalThis;
+
+function utf8ByteLength(codePoint: number): number {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
 
 function taggedJson(tag: number, payload: unknown): Uint8Array<ArrayBuffer> {
   const json = encoder.encode(JSON.stringify(payload));
@@ -1057,7 +1066,20 @@ export function createDeviceStreamClient(
       }
     },
     sendText: (text) => {
-      if (platform === "android" && text.length > 0) send(JSON.stringify({ type: "text", text }));
+      if (platform !== "android") return;
+      let chunk = "";
+      let chunkBytes = 0;
+      for (const character of text) {
+        const characterBytes = utf8ByteLength(character.codePointAt(0)!);
+        if (chunkBytes + characterBytes > ANDROID_MAX_TEXT_BYTES) {
+          send(JSON.stringify({ type: "text", text: chunk }));
+          chunk = "";
+          chunkBytes = 0;
+        }
+        chunk += character;
+        chunkBytes += characterBytes;
+      }
+      if (chunk.length > 0) send(JSON.stringify({ type: "text", text: chunk }));
     },
     pressButton: (button) => {
       if (platform === "ios") {

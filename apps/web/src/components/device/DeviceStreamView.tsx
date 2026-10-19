@@ -388,12 +388,18 @@ export function DeviceStreamView(props: {
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
-          // Preventing this keydown suppresses the browser's paste event.
-          if (event.ctrlKey && (event.key === "v" || event.key === "V")) return;
+          // Let browser paste chords fire the paste event.
+          if (
+            (event.ctrlKey && (event.key === "v" || event.key === "V")) ||
+            (event.shiftKey && event.key === "Insert")
+          ) {
+            return;
+          }
           event.preventDefault();
           clientRef.current?.sendKey(event.nativeEvent, "down");
         }}
         onPaste={(event) => {
+          if (event.target !== event.currentTarget) return;
           event.preventDefault();
           clientRef.current?.sendText(event.clipboardData.getData("text/plain"));
         }}
