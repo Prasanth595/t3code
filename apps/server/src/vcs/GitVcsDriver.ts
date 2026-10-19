@@ -784,6 +784,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
   // later fetch and push. Checkpoint writes flush before they are published;
   // macOS defaults to writeout-only, which does not reach the disk either.
+  // VcsProcess retries with writeout-only where a full fsync is unsupported.
   const durableWrite = [
     "-c",
     "core.fsync=objects,reference",

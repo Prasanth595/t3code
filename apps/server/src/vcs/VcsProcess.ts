@@ -9,6 +9,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import {
   type VcsError,
+  type VcsProcessErrorContext,
   VcsProcessExitError,
   type VcsProcessExitFailureKind,
   VcsProcessMissingExitCodeError,
@@ -162,21 +163,21 @@ const isTransientGitExit = (stderr: string) =>
   /unable to create [^\n]*\.lock['"]?: file exists/i.test(stderr) ||
   /(?:unable to stat|lstat\(|error: open\()[^\n]+: no such file or directory/i.test(stderr);
 
+// macOS implements core.fsyncMethod=fsync as F_FULLFSYNC, which SMB, NFS and AFP
+// mounts reject with ENOTSUP; writeout-only is the strongest flush they offer.
+const FULL_FSYNC_ARG = "core.fsyncMethod=fsync";
+const WRITEOUT_ONLY_FSYNC_ARG = "core.fsyncMethod=writeout-only";
+const isUnsupportedFullFsync = (stderr: string) =>
+  /fsync error on [^\n]+: operation not supported/i.test(stderr);
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const hostPlatform = yield* HostProcess.Platform;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
-  const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
-    const baseError = {
-      operation: input.operation,
-      command: input.command,
-      cwd: input.cwd,
-      argumentCount: input.args.length,
-    };
-
-    const result = yield* processRunner
+  const spawn = (input: VcsProcessInput, baseError: VcsProcessErrorContext) =>
+    processRunner
       .run({
         command: input.command,
         args: input.args,
@@ -223,6 +224,32 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+
+  const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
+    const baseError = {
+      operation: input.operation,
+      command: input.command,
+      cwd: input.cwd,
+      argumentCount: input.args.length,
+    };
+
+    let result = yield* spawn(input, baseError);
+
+    if (
+      !input.allowNonZeroExit &&
+      result.code !== 0 &&
+      input.command === "git" &&
+      input.args.includes(FULL_FSYNC_ARG) &&
+      isUnsupportedFullFsync(result.stderr)
+    ) {
+      result = yield* spawn(
+        {
+          ...input,
+          args: input.args.map((arg) => (arg === FULL_FSYNC_ARG ? WRITEOUT_ONLY_FSYNC_ARG : arg)),
+        },
+        baseError,
+      );
+    }
 
     if (result.code === null) {
       return yield* new VcsProcessMissingExitCodeError(baseError);
