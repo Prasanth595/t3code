@@ -144,21 +144,14 @@ export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3
       const output = yield* Queue.bounded<
         {
           readonly items: Arr.NonEmptyReadonlyArray<A2 | A3>;
-          readonly acknowledged: Deferred.Deferred<void>;
+          readonly acknowledged?: Deferred.Deferred<void>;
         },
         E2 | E3 | Cause.Done
       >(0);
       yield* Effect.addFinalizer(() => Queue.shutdown(output));
       let remaining = 2;
-      const drain = (source: Stream.Stream<A2 | A3, E2 | E3, R2 | R3>) =>
-        source.pipe(
-          Stream.runForEachArray((items) =>
-            Effect.gen(function* () {
-              const acknowledged = yield* Deferred.make<void>();
-              yield* Queue.offer(output, { items, acknowledged });
-              yield* Deferred.await(acknowledged);
-            }),
-          ),
+      const drain = (effect: Effect.Effect<void, E2 | E3, R2 | R3>) =>
+        effect.pipe(
           Effect.exit,
           Effect.flatMap((exit) =>
             Exit.isFailure(exit)
@@ -169,8 +162,22 @@ export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3
           ),
           Effect.forkScoped,
         );
-      yield* drain(input.tail);
-      yield* drain(input.enrichment);
+      yield* drain(
+        input.tail.pipe(
+          Stream.runForEachArray((items) =>
+            Effect.gen(function* () {
+              const acknowledged = yield* Deferred.make<void>();
+              yield* Queue.offer(output, { items, acknowledged });
+              yield* Deferred.await(acknowledged);
+            }),
+          ),
+        ),
+      );
+      // Keep draining the sliding enrichment subscription after each handoff,
+      // as Stream.merge does, while only the budgeted tail waits for an ACK.
+      yield* drain(
+        input.enrichment.pipe(Stream.runForEachArray((items) => Queue.offer(output, { items }))),
+      );
       let previous: Deferred.Deferred<void> | undefined;
       // Stream.merge pulls ahead after handing off each batch. Wait for the next
       // downstream pull so shell delivery keeps that batch charged until its RPC ACK.
