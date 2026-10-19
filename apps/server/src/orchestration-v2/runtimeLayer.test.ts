@@ -6354,8 +6354,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             threadId,
           });
 
-        // A subagent that died at the same limit reports back while the thread waits.
-        yield* TestClock.adjust("10 seconds");
+        const waiting = (yield* orchestrator.getThreadProjection(threadId)).thread;
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make(`recovery:wake:held-wake:${scenario}`),
@@ -6373,9 +6372,13 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           creationSource: "provider",
         });
         const held = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(held.runs[1]?.status, "queued");
-        if (scenario === "settled") assert.equal(held.thread.settledOverride, "settled");
-        else assert.equal(DateTime.toEpochMillis(held.thread.snoozedUntil!), Date.parse(resetAt));
+        assert.deepEqual(
+          held.runs.map((run) => run.status),
+          ["failed", "queued"],
+        );
+        assert.deepEqual(held.thread.limitRecovery, waiting.limitRecovery);
+        assert.deepEqual(held.thread.snoozedUntil, waiting.snoozedUntil);
+        assert.equal(held.thread.settledOverride, waiting.settledOverride);
 
         yield* TestClock.adjust("1 minute");
         const resume = limitRecoveryCommand(
@@ -6386,13 +6389,29 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         // Settling the thread opted out of the resume; a held wake keeps it that way.
         if (scenario === "settled") {
           assert.isNull(resume);
-          return;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`recovery:manual:held-wake:${scenario}`),
+            threadId,
+            messageId: MessageId.make(`recovery:manual:held-wake:${scenario}`),
+            manualContinuationOfRunId: run.id,
+            text: "Continue where you left off.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        } else {
+          assert.equal(resume?.type, "message.dispatch");
+          yield* orchestrator.dispatch(resume!);
         }
-        assert.equal(resume?.type, "message.dispatch");
-        yield* orchestrator.dispatch(resume!);
         const resumed = yield* orchestrator.getThreadProjection(threadId);
-        assert.equal(resumed.runs[2]?.status, "starting");
-        assert.equal(resumed.runs[1]?.status, "queued");
+        assert.deepEqual(
+          resumed.runs.map((run) => run.status),
+          ["failed", "queued", "starting"],
+        );
+        assert.isNull(resumed.thread.snoozedUntil);
+        assert.isNull(resumed.thread.settledOverride);
       }),
   );
 });
