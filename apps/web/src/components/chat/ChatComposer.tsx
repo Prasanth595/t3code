@@ -2041,14 +2041,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : null;
   const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
   const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
-  // SnapShots follow the question under the attach button's gate, and only until its answer sends.
   const questionTakesSnapShots =
     supportsQuestionAttachments &&
     activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
     !activePendingIsResponding;
   const questionRequest = pendingUserInputs[0];
-  // A layout effect, so the registry changes in the same commit as the question's UI: a capture
-  // resolved between the paint and a passive effect would otherwise see the old question state.
+  // Publish eligibility before async captures can observe a question the UI has already closed.
   useLayoutEffect(() => {
     if (!questionAttachmentTarget || !questionRequest || !questionTakesSnapShots) return;
     return trackOpenQuestionAttachmentDraft(routeThreadRef, {

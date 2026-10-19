@@ -22,27 +22,24 @@ export function questionAttachmentDraftId(
   );
 }
 
-export type OpenQuestionAttachmentDraft = {
+type OpenQuestionAttachmentDraft = {
   readonly draftId: DraftId;
-  /** Every question draft of the request, since they share one attachment limit. */
   readonly requestKeys: ReadonlyArray<DraftId>;
 };
 
 const openQuestionDrafts = new Map<string, OpenQuestionAttachmentDraft>();
 
-/** The question draft taking attachments on a thread, so SnapShots land where dropped files do. */
 export function openQuestionAttachmentDraft(
   threadRef: ScopedThreadRef,
 ): OpenQuestionAttachmentDraft | null {
   return openQuestionDrafts.get(scopedThreadKey(threadRef)) ?? null;
 }
 
-/** Attachments staged or preparing across the request a question draft answers; 0 for other drafts. */
-export function countQuestionRequestAttachments(draftId: DraftId): number {
+export function countQuestionRequestAttachments(draftId: DraftId): number | null {
   for (const draft of openQuestionDrafts.values()) {
     if (draft.draftId === draftId) return countQuestionAttachments(draft.requestKeys);
   }
-  return 0;
+  return null;
 }
 
 export function trackOpenQuestionAttachmentDraft(

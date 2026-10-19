@@ -36,7 +36,6 @@ import {
 } from "../../lib/desktopSnapShot";
 import {
   countQuestionRequestAttachments,
-  type OpenQuestionAttachmentDraft,
   openQuestionAttachmentDraft,
 } from "../../questionAttachments";
 import { readFileAsDataUrl } from "../ChatView.logic";
@@ -70,21 +69,16 @@ export function resolveExistingSnapShotTarget(
     : null;
 }
 
-// The question open when a capture is first seen owns it, so the animation and the delivery agree.
-// Once that question closes, the capture goes to the thread draft, never to a newer question.
+// Pin absence too: a later question must never claim an earlier capture.
 export function resolveSnapShotAttachmentTarget(
-  pins: Map<string, OpenQuestionAttachmentDraft | null>,
+  pins: Map<string, DraftId | null>,
   id: string,
   target: CaptureTarget,
 ): CaptureTarget {
-  if (typeof target === "string") return target;
-  const open = openQuestionAttachmentDraft(target);
-  let pinned = pins.get(id);
-  if (pinned === undefined) {
-    pinned = open;
-    pins.set(id, open);
-  }
-  return pinned && pinned.draftId === open?.draftId ? pinned.draftId : target;
+  const open = typeof target === "string" ? null : openQuestionAttachmentDraft(target);
+  if (!pins.has(id)) pins.set(id, open?.draftId ?? null);
+  const pinned = pins.get(id);
+  return pinned && pinned === open?.draftId ? pinned : target;
 }
 
 const NEXT_PAINT_FALLBACK_MS = 100;
@@ -160,8 +154,6 @@ async function afterNextPaint(): Promise<void> {
   });
 }
 
-// `resolveTarget` runs after the capture is read and compressed, so a question that closed in the
-// meantime does not get its draft recreated with an image its answer can no longer carry.
 export async function deliverSnapShot(
   bridge: DesktopSnapShotBridge,
   item: DesktopPendingSnapShot,
@@ -182,28 +174,26 @@ export async function deliverSnapShot(
   const target = resolveTarget();
   const alreadyAttached =
     store.getComposerDraft(target)?.images.some(({ id }) => id === capture.id) ?? false;
-  // The questions of one request share a limit that `addImages` only checks per draft, and
-  // `addImage` refuses drafts without a thread session, which a question draft never has.
-  if (
-    !alreadyAttached &&
-    ((typeof target === "string" &&
-      countQuestionRequestAttachments(target) >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) ||
-      !store
-        .addImages(target, [
-          {
-            type: "image",
-            id: capture.id,
-            name: file.name,
-            mimeType: file.type,
-            sizeBytes: file.size,
-            previewUrl: dataUrl,
-            file,
-            source,
-          },
-        ])
-        .includes(capture.id))
-  ) {
-    throw new Error("Remove an attachment, then try this capture again.");
+  if (!alreadyAttached) {
+    const questionAttachmentCount =
+      typeof target === "string" ? countQuestionRequestAttachments(target) : null;
+    const image = {
+      type: "image" as const,
+      id: capture.id,
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      previewUrl: dataUrl,
+      file,
+      source,
+    };
+    // Only question drafts may bypass addImage's thread-session gate.
+    const added =
+      questionAttachmentCount === null
+        ? store.addImage(target, image)
+        : questionAttachmentCount < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+          store.addImages(target, [image]).includes(capture.id);
+    if (!added) throw new Error("Remove an attachment, then try this capture again.");
   }
   const persisted: PersistedComposerImageAttachment = {
     id: capture.id,
@@ -248,7 +238,7 @@ export function SnapShotCoordinator() {
   );
   const animateCaptures = useClientSettings((settings) => settings.snapShotAnimations);
   const captureTargetsRef = useRef(new Map<string, Promise<CaptureTarget | null>>());
-  const questionPinsRef = useRef(new Map<string, OpenQuestionAttachmentDraft | null>());
+  const questionPinsRef = useRef(new Map<string, DraftId | null>());
   const targetResolutionRef = useRef<Promise<CaptureTarget | null> | null>(null);
   const drainingRef = useRef<Promise<void> | null>(null);
   const rerunRequestedRef = useRef(false);
@@ -351,8 +341,7 @@ export function SnapShotCoordinator() {
           }
 
           try {
-            // A capture this coordinator never saw requested (a reload, a blurred window) is
-            // pinned here, before the read, so a question that opens meanwhile cannot claim it.
+            // Pending captures may have arrived without a requested event; pin before reading.
             resolveSnapShotAttachmentTarget(questionPinsRef.current, item.id, target);
             await deliverSnapShot(bridge, item, () =>
               resolveSnapShotAttachmentTarget(questionPinsRef.current, item.id, target),
@@ -408,23 +397,25 @@ export function SnapShotCoordinator() {
             void resolveSnapShotDeliveryTarget(captureTargetsRef.current, event.id, () =>
               Promise.resolve(target),
             );
+          } else if (!questionPinsRef.current.has(event.id)) {
+            questionPinsRef.current.set(event.id, null);
           }
           return;
         }
         case "started": {
           playCaptureSound(event.id);
+          const target = resolveSnapShotDeliveryTarget(
+            captureTargetsRef.current,
+            event.id,
+            resolveCaptureTarget,
+          ).then(
+            (target) =>
+              target && resolveSnapShotAttachmentTarget(questionPinsRef.current, event.id, target),
+          );
           if (animateCaptures && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
             void beginSnapShotAnimationWhenReady(
               event.id,
-              resolveSnapShotDeliveryTarget(
-                captureTargetsRef.current,
-                event.id,
-                resolveCaptureTarget,
-              ).then(
-                (target) =>
-                  target &&
-                  resolveSnapShotAttachmentTarget(questionPinsRef.current, event.id, target),
-              ),
+              target,
               pendingAnimationStartsRef.current,
             );
           }
