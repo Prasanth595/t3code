@@ -471,19 +471,17 @@ const GIT_FAILURE_REASON_PATTERNS: ReadonlyArray<readonly [RegExp, GitCommandFai
   // Quoted-path forms only: an unquoted `fatal: <thing> already exists` also
   // covers tag and ref collisions, which are not path collisions.
   [/fatal: '[^']+' already exists|destination path .+ already exists/i, "path_already_exists"],
-  // Wordings git uses for a ref or revision that does not resolve. `unknown
-  // revision or path not in the working tree` and `pathspec ... did not match`
-  // are left out: they also cover a missing file. Anchored because a quoted
-  // path in another diagnostic can contain these words.
+  // Ambiguous revision/path and pathspec failures can name files, so omit them.
+  // Anchor to a diagnostic line to avoid matching quoted paths in other errors.
   [
     /^fatal: (?:invalid reference: |not a valid object name|needed a single revision|bad revision |'.+' is not a commit and a branch '.+' cannot be created from it)/im,
     "ref_not_found",
   ],
 ];
 
-// Git words a ref that exists but is not a commit the same way as a missing
-// one, and only an `error:` line before it tells them apart.
-const GIT_NOT_A_COMMIT_PATTERN = /error: .+(?:, not a commit|expected commit type)/i;
+// Existing non-commit objects share the missing-ref fatal diagnostic; Git
+// distinguishes them with a separate error line.
+const GIT_NOT_A_COMMIT_PATTERN = /^error: .+(?:, not a commit|expected commit type)/im;
 
 // Hooks write to the same stream git does, and nothing distinguishes their text
 // from git's: a pre-push hook echoing "authentication failed" would otherwise

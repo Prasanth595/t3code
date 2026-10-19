@@ -345,10 +345,9 @@ export const VcsPullResult = Schema.Struct({
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
 
-// Git's stderr itself stays off the error: it echoes argv and remote URLs,
-// which can hold credentials. The tag names the cause for logs and callers; it
-// does not select a message. The set grows, so GitCommandError decodes a tag
-// this build does not know as absent.
+// Git stderr can echo credentials from argv and remote URLs. Only a fixed
+// reason reaches the error and its diagnostic suffix; newer, unknown reasons
+// decode as absent through GitCommandError.
 export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
