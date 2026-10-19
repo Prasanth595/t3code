@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The process fixture runs real shell commands with isolated config files.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -9,7 +10,10 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { vi } from "vite-plus/test";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -122,6 +126,58 @@ function runShellEnvironment(input: {
 }
 
 describe("DesktopShellEnvironment", () => {
+  // Explicit opt-in keeps real shell coverage independent of globally installed tools.
+  it.effect.runIf(process.env.T3_TEST_NU_PATH !== undefined)(
+    "hydrates the desktop from Nushell despite missing variables and startup output",
+    () =>
+      Effect.gen(function* () {
+        const shell = process.env.T3_TEST_NU_PATH!;
+        const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-nu-"));
+        try {
+          const config = NodePath.join(home, "config.nu");
+          const envConfig = NodePath.join(home, "env.nu");
+          NodeFS.writeFileSync(envConfig, "");
+          NodeFS.writeFileSync(
+            config,
+            [
+              '$env.PATH = ["/nu tools/bin", "/usr/bin", "/bin"]',
+              '$env.SSH_AUTH_SOCK = "/tmp/nu-agent.sock"',
+              '$env.__MISE_DIFF = "  first\\nsecond  "',
+              '$env.HOMEBREW_PREFIX = ""',
+              'print "startup noise"',
+            ].join("\n"),
+          );
+          const env: NodeJS.ProcessEnv = { SHELL: shell, PATH: "/inherited/bin:/usr/bin" };
+          yield* runShellEnvironment({
+            env,
+            platform: "linux",
+            handler: (command) => {
+              if (command._tag !== "StandardCommand" || command.command !== shell) return "";
+              const result = NodeChildProcess.spawnSync(
+                command.command,
+                ["--no-history", "--config", config, "--env-config", envConfig, ...command.args],
+                {
+                  encoding: "utf8",
+                  timeout: 5000,
+                  env: { HOME: home, XDG_CONFIG_HOME: home, PATH: "/usr/bin:/bin" },
+                },
+              );
+              if (result.error) throw result.error;
+              return { output: result.stdout, exitCode: result.status ?? 1 };
+            },
+          });
+
+          assert.equal(env.PATH, "/nu tools/bin:/usr/bin:/bin:/inherited/bin");
+          assert.equal(env.SSH_AUTH_SOCK, "/tmp/nu-agent.sock");
+          assert.equal(env.__MISE_DIFF, "  first\nsecond  ");
+          assert.isUndefined(env.DISPLAY);
+          assert.isUndefined(env.HOMEBREW_PREFIX);
+        } finally {
+          NodeFS.rmSync(home, { recursive: true, force: true });
+        }
+      }),
+  );
+
   it.effect("rejects PATH output from a failed shell and tries the next candidate", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
