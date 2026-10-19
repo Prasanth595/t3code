@@ -69,37 +69,39 @@ const FAKE_PID = 999_999_999;
 
 const at = (seconds: number) => DateTime.makeUnsafe(seconds * 1000);
 
-function sessionMessageEntry(
+const sessionMessage = (
   id: string,
   parentId: string | null,
   role: "user" | "assistant",
   seconds: number,
-) {
-  return {
-    type: "message",
-    id,
-    parentId,
-    timestamp: DateTime.formatIso(at(seconds)),
-    message: { role, content: [] },
-  };
-}
+) => ({
+  type: "message",
+  id,
+  parentId,
+  timestamp: DateTime.formatIso(at(seconds)),
+  message: { role, content: [] },
+});
 
-/** Turn 1 (u1, with a steer) completed at 50s; turn 2's prompt u2 landed at 110s. */
+const TURN_ONE_ENTRIES = [
+  sessionMessage("u1", null, "user", 10),
+  sessionMessage("a1", "u1", "assistant", 20),
+  sessionMessage("steer1", "a1", "user", 30),
+  sessionMessage("a1b", "steer1", "assistant", 40),
+];
 const UNCAPTURED_TURN_TREE = {
   entries: [
-    sessionMessageEntry("u1", null, "user", 10),
-    sessionMessageEntry("a1", "u1", "assistant", 20),
-    sessionMessageEntry("steer1", "a1", "user", 30),
-    sessionMessageEntry("a1b", "steer1", "assistant", 40),
-    sessionMessageEntry("u2", "a1b", "user", 110),
-    sessionMessageEntry("a2", "u2", "assistant", 150),
+    ...TURN_ONE_ENTRIES,
+    sessionMessage("u2", "a1b", "user", 110),
+    sessionMessage("a2", "u2", "assistant", 120),
+    sessionMessage("steer2", "a2", "user", 130),
+    sessionMessage("a2b", "steer2", "assistant", 140),
   ],
-  leafId: "a2",
+  leafId: "a2b",
 };
 
 function uncapturedTurns(
   providerThreadId: ProviderThreadId,
-  window: { startedAt: number; completedAt: number },
+  window = { startedAt: 150, completedAt: 200 },
 ): ReadonlyArray<OrchestrationV2ProviderTurn> {
   const turn = (
     ordinal: number,
@@ -122,7 +124,7 @@ function uncapturedTurns(
     turn(1, { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" }, "completed", 0, 50),
     turn(
       2,
-      { driver: PI_PROVIDER, nativeId: "synthetic-turn-2", strength: "weak" },
+      { driver: PI_PROVIDER, nativeId: "synthetic-2", strength: "weak" },
       "cancelled",
       window.startedAt,
       window.completedAt,
@@ -1932,24 +1934,36 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
-      const turns = uncapturedTurns(source.id, { startedAt: 100, completedAt: 200 });
-      forkFake.queueEntries(UNCAPTURED_TURN_TREE);
-      forkFake.queueState({ sessionFile: forkFile });
-      fake.queueState({ sessionFile: forkFile });
-      const forked = yield* runtime.forkThread({
-        sourceProviderThread: source,
-        sourceProviderTurns: turns,
-        providerTurnId: turns[0]!.id,
-        targetThreadId: ThreadId.make("fork-target"),
-      });
-      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
-      assert.deepEqual(
+      const forkAtFirst = (turns: ReadonlyArray<OrchestrationV2ProviderTurn>) =>
+        runtime.forkThread({
+          sourceProviderThread: source,
+          sourceProviderTurns: turns,
+          providerTurnId: turns[0]!.id,
+          targetThreadId: ThreadId.make("fork-target"),
+        });
+      const forkedEntries = () =>
         forkFake
           .allRequests()
           .filter((request) => request.type === "fork")
-          .map((request) => request.entryId),
-        ["u2"],
+          .map((request) => request.entryId);
+
+      // A later prompt cannot stand in for a cancelled turn that ended before it landed.
+      forkFake.queueEntries(UNCAPTURED_TURN_TREE);
+      const unresolved = yield* forkAtFirst(
+        uncapturedTurns(source.id, { startedAt: 60, completedAt: 100 }),
+      ).pipe(Effect.result);
+      assert.deepEqual(forkedEntries(), []);
+      assert.equal(unresolved._tag, "Failure");
+
+      forkFake.queueEntries(UNCAPTURED_TURN_TREE);
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const forked = yield* forkAtFirst(
+        uncapturedTurns(source.id, { startedAt: 100, completedAt: 200 }),
       );
+      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+      assert.deepEqual(forkedEntries(), ["u2"]);
+      assert.isFalse(fake.allRequests().some((request) => request.type === "fork"));
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -2774,29 +2788,67 @@ describe("PiAdapterV2", () => {
           .filter((request) => request.type === "fork")
           .map((request) => request.entryId);
 
-      // The cancelled turn's prompt is the earliest user entry stamped while it ran, not turn
-      // 1's steer.
-      fake.queueEntries(UNCAPTURED_TURN_TREE);
-      yield* rollBackToFirst(
-        uncapturedTurns(providerThread.id, { startedAt: 100, completedAt: 200 }),
-      );
-      assert.deepEqual(forkedEntries(), ["u2"]);
-
-      // An adopted native wake's prompt predates the turn T3 opened for it; it still follows
-      // turn 1's end, so it is the boundary.
-      fake.queueEntries(UNCAPTURED_TURN_TREE);
-      yield* rollBackToFirst(
-        uncapturedTurns(providerThread.id, { startedAt: 120, completedAt: 200 }),
-      );
-      assert.deepEqual(forkedEntries(), ["u2", "u2"]);
-
-      // The turn ended before any user entry landed, so rollback still refuses to guess.
       fake.queueEntries(UNCAPTURED_TURN_TREE);
       const unresolved = yield* rollBackToFirst(
         uncapturedTurns(providerThread.id, { startedAt: 60, completedAt: 100 }),
       ).pipe(Effect.result);
+      assert.deepEqual(forkedEntries(), []);
       assert.equal(unresolved._tag, "Failure");
-      assert.deepEqual(forkedEntries(), ["u2", "u2"]);
+
+      fake.queueEntries({ entries: TURN_ONE_ENTRIES, leafId: "a1b" });
+      const missing = yield* rollBackToFirst(uncapturedTurns(providerThread.id)).pipe(
+        Effect.result,
+      );
+      assert.deepEqual(forkedEntries(), []);
+      assert.equal(missing._tag, "Failure");
+
+      // An adopted wake precedes its T3 turn, but follows turn 1 and its steer.
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
+      yield* rollBackToFirst(uncapturedTurns(providerThread.id));
+      assert.deepEqual(forkedEntries(), ["u2"]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves inherited history when rolling back an uncaptured first turn", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const rollBackToStart = (startedAt: number) =>
+        runtime.rollbackThread({
+          providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-start"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [
+            {
+              ...uncapturedTurns(providerThread.id)[1]!,
+              ordinal: 1,
+              startedAt: at(startedAt),
+            },
+          ],
+        });
+      const forkedEntries = () =>
+        fake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId);
+
+      // The parent history and adopted wake both predate T3's first turn: refuse to guess.
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
+      const unresolved = yield* rollBackToStart(150).pipe(Effect.result);
+      assert.deepEqual(forkedEntries(), []);
+      assert.equal(unresolved._tag, "Failure");
+
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
+      yield* rollBackToStart(100);
+      assert.deepEqual(forkedEntries(), ["u2"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

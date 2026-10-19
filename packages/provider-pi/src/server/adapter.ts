@@ -3190,9 +3190,9 @@ function piForkEntry<E>(
 }
 
 /**
- * An uncaptured turn's prompt is the earliest user entry on the active branch stamped after the
- * target turn ended (after this turn started, when the target has no end) and before this turn
- * ended, above the target's own entry. Pi and the server share a clock.
+ * Pi shares the server clock. An adopted wake can precede its T3 turn, so search from the target
+ * turn's end through the boundary turn's end. At thread start, bound the search by startedAt to
+ * preserve inherited session history; a wake predating it cannot be recovered safely.
  */
 function piUncapturedForkEntry(
   listing: PiSessionListing,
@@ -3203,25 +3203,17 @@ function piUncapturedForkEntry(
   const from = DateTime.toEpochMillis(boundary.target?.completedAt ?? startedAt);
   const to = DateTime.toEpochMillis(completedAt);
   const targetRef = boundary.target?.nativeTurnRef;
-  const afterEntryId = targetRef?.strength === "strong" ? targetRef.nativeId : null;
-  const visited = new Set<string>();
+  const stopAt = targetRef?.strength === "strong" ? targetRef.nativeId : null;
+  if (stopAt !== null && !listing.entries.has(stopAt)) return undefined;
+  const walk = walkPiBranch(listing.entries, listing.leafId, stopAt);
+  if (walk === null || !walk.reachedStop) return undefined;
   let earliest: string | undefined;
-  let current = listing.leafId;
-  while (current !== null && current !== afterEntryId) {
-    const entry = listing.entries.get(current);
-    if (entry === undefined || visited.has(current)) return undefined;
-    visited.add(current);
-    if (
-      entry.isUserMessage &&
-      entry.timestamp !== null &&
-      entry.timestamp >= from &&
-      entry.timestamp <= to
-    ) {
-      earliest = current;
-    }
-    current = entry.parentId;
+  for (const id of walk.userEntryIds) {
+    const timestamp = listing.entries.get(id)?.timestamp;
+    if (timestamp == null) return undefined;
+    if (timestamp >= from && timestamp <= to) earliest = id;
   }
-  return current === afterEntryId ? earliest : undefined;
+  return earliest;
 }
 
 function piSubagentOutput(result: unknown): string {
