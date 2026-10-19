@@ -2625,6 +2625,100 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a resumed native child and its descendant routing after parent unload", () =>
+    Effect.gen(function* () {
+      const descendant = "ses_f0e5aa64cffelFnoQRL0DAA9BH";
+      const { runtime, thread } = yield* resumed([
+        ...subagentAsks(CHILD).slice(0, -1),
+        event("session.created", { ...childCreated(descendant), parentID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        event("session.tool.success", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id: "call-subagent",
+          content: [{ type: "text", text: "done" }],
+          metadata: { sessionID: CHILD, status: "completed" },
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("session.get", { sessionID: CHILD }),
+        replyData("session.get", sessionInfo({ id: CHILD, agent: "build" })),
+        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+        reply("session.update", null),
+        out("session.instructions.entry.put", {
+          sessionID: CHILD,
+          key: "t3-code",
+          value: "<any>",
+        }),
+        reply("session.instructions.entry.put", null),
+        out("session.prompt", { sessionID: CHILD, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: CHILD }),
+        event("permission.asked", { ...shellAsk.data, sessionID: descendant }),
+        out("permission.reply", {
+          sessionID: descendant,
+          requestID: shellAsk.data.id,
+          decision: "once",
+        }),
+        reply("permission.reply", null),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+      ]);
+      let child: OrchestrationV2ProviderThread | undefined;
+      const parentEnded = yield* Deferred.make<void>();
+      const requested =
+        yield* Deferred.make<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
+        >();
+      const terminals = yield* runtime.events.pipe(
+        Stream.tap((event) => {
+          if (
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeThreadRef?.nativeId === CHILD
+          ) {
+            child = event.providerThread;
+          }
+          if (event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending")
+            return Deferred.succeed(requested, event);
+          if (event.type === "turn.terminal" && event.providerThreadId === thread.id)
+            return Deferred.succeed(parentEnded, undefined);
+          return Effect.void;
+        }),
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      yield* Deferred.await(parentEnded);
+      assert.isDefined(child);
+      const loaded = yield* runtime.resumeThread({
+        providerThread: child!,
+        threadId: child!.appThreadId!,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+      yield* runtime.unloadThread!({ providerThread: thread });
+      yield* runtime.startTurn({ ...turnInput(loaded), threadId: loaded.appThreadId! });
+      const request = yield* Deferred.await(requested);
+      assert.equal(request.threadId, loaded.appThreadId);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "accept",
+      });
+      assert.deepEqual(
+        (yield* Fiber.join(terminals)).map((event) => [event.providerThreadId, event.status]),
+        [
+          [thread.id, "completed"],
+          [loaded.id, "completed"],
+        ],
+      );
+      yield* runtime.unloadThread!({ providerThread: loaded });
+      const error = yield* runtime.startTurn(turnInput(loaded)).pipe(Effect.flip);
+      assert.equal(error._tag, "ProviderAdapterProtocolError");
+      assert.include(error.message, `OpenCode session ${CHILD} is not registered`);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("gives a resumed subagent the rules of the thread's current mode", () =>
     Effect.gen(function* () {
       const call = "call-resume";
