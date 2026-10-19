@@ -16,7 +16,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { remoteHttpClientLayer } from "../rpc/http.ts";
+import * as RpcHttp from "../rpc/http.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "./service.ts";
 import * as TokenStore from "./tokenStore.ts";
@@ -51,7 +51,10 @@ const isDescriptorUrl = (url: RequestInfo | URL) =>
 
 // Descriptor requests can run next to other requests, so they are answered by
 // URL from `descriptors` (default: DESCRIPTOR) and the rest in call order.
-type FetchResponse = Response | Promise<Response> | (() => Promise<Response>);
+type FetchResponse =
+  | Response
+  | Promise<Response>
+  | ((init: RequestInit) => Response | Promise<Response>);
 
 function recordedFetch(
   responses: ReadonlyArray<FetchResponse>,
@@ -64,13 +67,13 @@ function recordedFetch(
     calls.push([input, init ?? {}]);
     if (isDescriptorUrl(input)) {
       const response = descriptors[descriptorIndex++] ?? Response.json(DESCRIPTOR);
-      return typeof response === "function" ? response() : Promise.resolve(response);
+      return typeof response === "function" ? response(init ?? {}) : Promise.resolve(response);
     }
     const response = responses[responseIndex++];
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
       : typeof response === "function"
-        ? response()
+        ? response(init ?? {})
         : Promise.resolve(response);
   }) satisfies typeof fetch;
   return { calls, fetchFn };
@@ -85,13 +88,13 @@ const websocketTicket = (ticket: string) =>
     expiresAt: "2026-06-06T01:00:00.000Z",
   });
 
-const accessToken = (token: string) =>
+const accessToken = (token: string, scope = AuthStandardClientScopes.join(" ")) =>
   Response.json({
     access_token: token,
     issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
     token_type: "DPoP",
     expires_in: 3_600,
-    scope: AuthStandardClientScopes.join(" "),
+    scope,
   });
 
 const authInvalid = () =>
@@ -212,7 +215,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
   const layer = RemoteEnvironmentAuthorization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
-        remoteHttpClientLayer(fetch.fetchFn),
+        RpcHttp.layerRemoteHttpClient(fetch.fetchFn),
         Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, signer),
         Layer.succeed(ManagedRelay.ManagedRelayClient, relay),
         Layer.succeed(ClientCapabilities.CloudSession, {
@@ -231,7 +234,6 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
               deviceType: "mobile",
               os: "test",
             },
-            scopes: AuthStandardClientScopes,
           }),
         ),
       ),
@@ -393,6 +395,115 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("uses the T3 Connect token on a learned direct address without the relay", () =>
+    Effect.gen(function* () {
+      const cached = new TokenStore.RemoteDpopAccessToken({
+        environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
+        label: DESCRIPTOR.label,
+        endpoint: ENDPOINT,
+        accessToken: "cached-access-token",
+        expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        dpopThumbprint: "thumbprint-1",
+      });
+      const harness = yield* makeHarness({
+        initialToken: cached,
+        responses: [websocketTicket("lan-ticket")],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          directEndpoint: {
+            httpBaseUrl: "http://192.168.1.10:3773/",
+            wsBaseUrl: "ws://192.168.1.10:3773/",
+          },
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.httpBaseUrl).toBe("http://192.168.1.10:3773/");
+      expect(authorized.socketUrl).toMatch(/^ws:\/\/192\.168\.1\.10:3773\/ws\?/);
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
+        "http://192.168.1.10:3773/.well-known/t3/environment",
+        "http://192.168.1.10:3773/api/auth/websocket-ticket",
+      ]);
+    }),
+  );
+
+  it.effect("sends no token to a direct address that answers as another machine", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        initialToken: persistedToken({ accessToken: "cached-access-token" }),
+        responses: [],
+        descriptors: [
+          Response.json({ ...DESCRIPTOR, environmentId: EnvironmentId.make("someone-else") }),
+        ],
+      });
+
+      const error = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote
+          .authorizeDpop({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            directEndpoint: {
+              httpBaseUrl: "http://192.168.1.10:3773/",
+              wsBaseUrl: "ws://192.168.1.10:3773/",
+            },
+          })
+          .pipe(Effect.flip);
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "configuration" });
+      expect(harness.fetch.calls.map(([url]) => String(url))).toEqual([
+        "http://192.168.1.10:3773/.well-known/t3/environment",
+      ]);
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
+        "cached-access-token",
+      );
+    }),
+  );
+
+  it.effect("replaces a token a learned direct address rejects", () =>
+    Effect.gen(function* () {
+      const cached = new TokenStore.RemoteDpopAccessToken({
+        environmentId: ENVIRONMENT_ID,
+        accountId: "account-1",
+        label: DESCRIPTOR.label,
+        endpoint: ENDPOINT,
+        accessToken: "revoked-access-token",
+        expiresAtEpochMs: Number.MAX_SAFE_INTEGER,
+        dpopThumbprint: "thumbprint-1",
+      });
+      const harness = yield* makeHarness({
+        initialToken: cached,
+        responses: [
+          authInvalid(),
+          accessToken("replacement-access-token"),
+          websocketTicket("lan-ticket"),
+        ],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          directEndpoint: {
+            httpBaseUrl: "http://192.168.1.10:3773/",
+            wsBaseUrl: "ws://192.168.1.10:3773/",
+          },
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(authorized.socketUrl).toContain("wsTicket=lan-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
+        "replacement-access-token",
+      );
+    }),
+  );
+
   it.effect("refreshes and persists an expired environment token", () =>
     Effect.gen(function* () {
       const expired = new TokenStore.RemoteDpopAccessToken({
@@ -426,6 +537,76 @@ describe("RemoteEnvironmentAuthorization", () => {
       );
       expect(nonDescriptorCalls(harness.fetch.calls)).toHaveLength(2);
     }),
+  );
+
+  it.effect.each([
+    { name: "read-only", grantScopes: ["orchestration:read"] },
+    { name: "default", grantScopes: AuthStandardClientScopes },
+  ] as const)(
+    "inherits $name pairing grant scopes for websocket authorization and HTTP renewal",
+    ({ grantScopes }) =>
+      Effect.gen(function* () {
+        const grantedScope = grantScopes.join(" ");
+        let exchangeCount = 0;
+        const tokenFields = (init: RequestInit) =>
+          new URLSearchParams(
+            init.body instanceof Uint8Array
+              ? new TextDecoder().decode(init.body)
+              : String(init.body),
+          );
+        const exchangeGrant = (init: RequestInit) => {
+          const fields = tokenFields(init);
+          expect(fields.get("scope")).toBeNull();
+          const scope = fields.get("scope") ?? grantedScope;
+          const scopes = scope.split(" ");
+          if (scopes.some((requested) => !grantScopes.some((grant) => grant === requested))) {
+            return authInvalid();
+          }
+          return accessToken(`access-token:${++exchangeCount}:${scopes.join(",")}`, scope);
+        };
+        const harness = yield* makeHarness({
+          responses: [exchangeGrant, websocketTicket("granted-ticket"), exchangeGrant],
+        });
+
+        const [authorized, refreshed] = yield* Effect.gen(function* () {
+          const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+          const first = yield* remote.authorizeDpop({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+          });
+          yield* TestClock.adjust("1 hour");
+          const refreshed = yield* remote.authorizeDpopHttp({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+          });
+          return [first, refreshed] as const;
+        }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+        expect(authorized.socketUrl).toContain("wsTicket=granted-ticket");
+        expect(authorized.httpAuthorization).toMatchObject({
+          _tag: "Dpop",
+          accessToken: `access-token:1:${grantScopes.join(",")}`,
+        });
+        expect(refreshed.httpAuthorization).toMatchObject({
+          _tag: "Dpop",
+          accessToken: `access-token:2:${grantScopes.join(",")}`,
+        });
+        expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)).toMatchObject({
+          accessToken: `access-token:2:${grantScopes.join(",")}`,
+          dpopThumbprint: "thumbprint-1",
+        });
+        expect(yield* Ref.get(harness.bootstrapCalls)).toBe(2);
+        const exchanges = harness.fetch.calls.filter(([url]) =>
+          String(url).endsWith("/oauth/token"),
+        );
+        expect(exchanges).toHaveLength(2);
+        for (const [, init] of exchanges) {
+          expect(Object.fromEntries(tokenFields(init))).toMatchObject({
+            subject_token: BOOTSTRAP.credential,
+            client_label: "T3 Code Test",
+            client_device_type: "mobile",
+            client_os: "test",
+          });
+        }
+      }),
   );
 
   it.effect("evicts an auth-invalid cached token and obtains a fresh bootstrap", () =>
@@ -747,6 +928,29 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("retries instead of blocking while the cloud session has not loaded", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [accessToken("loaded-token")],
+      });
+      yield* Ref.set(harness.session, Option.none());
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const pending = yield* remote
+          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.flip);
+        expect(pending).toMatchObject({
+          _tag: "ConnectionTransientError",
+          reason: "session-pending",
+        });
+        yield* Ref.set(harness.session, Option.some({ accountId: "account-1" }));
+        const loaded = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
+        expect(loaded.httpAuthorization.accessToken).toBe("loaded-token");
+      }).pipe(Effect.provide(harness.layer));
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+    }),
+  );
+
   it.effect("does not return or persist credentials after logout during renewal", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -864,13 +1068,6 @@ describe("RemoteEnvironmentAuthorization", () => {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
         yield* Ref.set(harness.session, Option.none());
-        const signedOut = yield* remote
-          .authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID })
-          .pipe(Effect.flip);
-        expect(signedOut).toMatchObject({
-          _tag: "ConnectionBlockedError",
-          reason: "authentication",
-        });
         yield* Ref.set(harness.session, Option.some({ accountId: "account-1" }));
         const signedIn = yield* remote.authorizeDpopHttp({ expectedEnvironmentId: ENVIRONMENT_ID });
         expect(signedIn.httpAuthorization.accessToken).toBe("new-session-token");
