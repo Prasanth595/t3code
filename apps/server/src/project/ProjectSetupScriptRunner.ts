@@ -158,12 +158,6 @@ function resolveCompletionShell(
   return "posix";
 }
 
-/**
- * The command runs inside a block and the block closes on its own line, so a trailing `# comment`
- * or a heredoc terminator in the command cannot swallow the sentinel. The shell reads the whole
- * block before running any of it, so a script that reads stdin cannot consume the sentinel line
- * either.
- */
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -175,8 +169,20 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
-    case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+    case "posix": {
+      // Line editors must receive one input line, including for heredocs and comments.
+      const encoded = command.replace(/\r\n/g, "\n").replace(
+        // eslint-disable-next-line no-control-regex -- encode terminal control characters before submission.
+        /[\\'\x00-\x1f\x7f]/g,
+        (character) =>
+          character === "'"
+            ? "'\\''"
+            : `\\0${character.charCodeAt(0).toString(8).padStart(3, "0")}`,
+      );
+      // The suffix prevents command substitution from stripping trailing newlines.
+      // Eval runs in a subshell so exits and syntax errors still reach the sentinel.
+      return `( __t3_command=$(printf '%b_' '${encoded}'); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
+    }
   }
 }
 
