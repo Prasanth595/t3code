@@ -37,9 +37,12 @@ describe("web runtime relay telemetry policy", () => {
   it.each([
     { surface: "desktop opt-out", desktopEnabled: false, exports: false },
     { surface: "desktop enabled", desktopEnabled: true, exports: true },
-    { surface: "hosted web default", desktopEnabled: undefined, exports: true },
+    { surface: "ordinary browser ignores host opt-out", desktopEnabled: undefined, exports: true },
   ])("applies $surface before the first relay span", async ({ desktopEnabled, exports }) => {
     vi.resetModules();
+    vi.stubEnv("T3CODE_TELEMETRY_ENABLED", "false");
+    vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", "true");
+    vi.stubEnv("OTEL_SDK_DISABLED", "true");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_URL", "https://telemetry.example.test/v1/traces");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_DATASET", "relay-test");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_TOKEN", "test-token");
@@ -53,6 +56,8 @@ describe("web runtime relay telemetry policy", () => {
     vi.stubGlobal("fetch", fetchFn);
     // Re-import after setting runtime policy: static initialization creates the exporter layer.
     const { runtime: freshRuntime } = await import("./runtime");
+    const { setDelegate } = await import("../observability/clientTracer");
+    const userSpans: Array<string> = [];
 
     try {
       expect(
@@ -63,7 +68,19 @@ describe("web runtime relay telemetry policy", () => {
           ),
         ),
       ).toBe("relay operation completed");
+
+      setDelegate(
+        Tracer.make({
+          span(options) {
+            userSpans.push(options.name);
+            return new Tracer.NativeSpan(options);
+          },
+        }),
+      );
+      await freshRuntime.runPromise(Effect.void.pipe(Effect.withSpan("user.work")));
+      expect(userSpans).toEqual(["user.work"]);
     } finally {
+      setDelegate(null);
       // Closing the runtime flushes the exporter without waiting for its batch timer.
       await freshRuntime.dispose();
     }

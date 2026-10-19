@@ -181,16 +181,17 @@ it("resolves relay client tracing from runtime config with build-time fallback",
   );
 });
 
-it.each([
-  { T3CODE_TELEMETRY_ENABLED: "false" },
-  { T3CODE_OTEL_SDK_DISABLED: "true" },
-  { OTEL_SDK_DISABLED: "true" },
-])("disables built-in and runtime relay tracing for %o", (env) => {
+it("product opt-out disables relay tracing with either built-in or runtime credentials", () => {
   const fallback = {
     tracesUrl: "https://embedded.example.test/v1/traces",
     tracesDataset: "embedded-dataset",
     tracesToken: "embedded-token",
   };
+  const env = {
+    T3CODE_TELEMETRY_ENABLED: "false",
+    T3CODE_OTEL_SDK_DISABLED: "false",
+  };
+
   assert.equal(resolveRelayClientTracingConfig(env, fallback), null);
   assert.equal(
     resolveRelayClientTracingConfig(
@@ -202,20 +203,6 @@ it.each([
       },
       fallback,
     ),
-    null,
-  );
-});
-
-it("allows an explicit T3CODE SDK enable to override OTEL without overriding telemetry opt-out", () => {
-  const fallback = {
-    tracesUrl: "https://embedded.example.test/v1/traces",
-    tracesDataset: "embedded-dataset",
-    tracesToken: "embedded-token",
-  };
-  const env = { T3CODE_OTEL_SDK_DISABLED: "false", OTEL_SDK_DISABLED: "true" };
-  assert.deepEqual(resolveRelayClientTracingConfig(env, fallback), fallback);
-  assert.equal(
-    resolveRelayClientTracingConfig({ ...env, T3CODE_TELEMETRY_ENABLED: "false" }, fallback),
     null,
   );
 });
