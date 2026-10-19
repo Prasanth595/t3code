@@ -26,6 +26,18 @@ export interface SidebarProjectSnapshot extends Project {
   remoteEnvironmentLabels: readonly string[];
 }
 
+export function countSidebarProjectChoices(groups: ReadonlyArray<SidebarProjectSnapshot>): number {
+  let checkoutCount = 0;
+  let hasScratch = false;
+  for (const group of groups) {
+    for (const project of group.memberProjects) {
+      if (project.isScratch) hasScratch = true;
+      else checkoutCount += 1;
+    }
+  }
+  return checkoutCount + Number(hasScratch);
+}
+
 export function projectGroupsSpanEnvironments(
   groups: ReadonlyArray<Pick<SidebarProjectSnapshot, "memberProjects">>,
 ): boolean {

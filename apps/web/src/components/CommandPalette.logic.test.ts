@@ -345,10 +345,10 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 }
 
 describe("buildProjectActionItems", () => {
-  it("keeps offline checkouts visible while skipping them during keyboard navigation", () => {
+  it("shows offline checkout rows but excludes them from keyboard selection", () => {
     const local = makeProject();
     const remote = makeProject({
-      id: ProjectId.make("remote-copy"),
+      id: local.id,
       environmentId: EnvironmentId.make("offline"),
     });
     const items = buildProjectActionItems({
@@ -361,7 +361,10 @@ describe("buildProjectActionItems", () => {
     const groups = [{ value: "projects", label: "Projects", items }];
     const { rows, itemValues } = buildCommandPaletteRows(groups);
 
-    expect(rows.filter((row) => row.kind === "item")).toHaveLength(2);
+    expect(rows.filter((row) => row.kind === "item").map((row) => row.item.value)).toEqual([
+      `new-thread-in:${remote.environmentId}:${remote.id}`,
+      `new-thread-in:${local.environmentId}:${local.id}`,
+    ]);
     expect(itemValues).toEqual([`new-thread-in:${local.environmentId}:${local.id}`]);
     expect(findHighlightedCommandPaletteItem(groups, items[0]!.value)).toBeNull();
     expect(findHighlightedCommandPaletteItem(groups, items[1]!.value)).toBe(items[1]);

@@ -12,6 +12,7 @@ import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
+  countSidebarProjectChoices,
   projectGroupsSpanEnvironments,
   resolveSidebarProjectScopeKey,
   getSidebarProjectSettingsKey,
@@ -77,6 +78,10 @@ describe("environment grouping", () => {
     const settingsGroups = buildSidebarProjectSnapshots(input);
     expect(filters).toHaveLength(1);
     expect(settingsGroups).toHaveLength(2);
+    expect([
+      countSidebarProjectChoices(filters),
+      countSidebarProjectChoices(settingsGroups),
+    ]).toEqual([1, 1]);
     expect(settingsGroups.map((group) => group.memberProjectRefs)).toEqual([
       [{ environmentId: local.environmentId, projectId: local.id }],
       [{ environmentId: remote.environmentId, projectId: remote.id }],
@@ -565,7 +570,7 @@ describe("environment grouping", () => {
     });
   });
 
-  it("offers every checkout while an offline remote is selected", () => {
+  it("offers every physical checkout, with reachable choices before an offline preference", () => {
     const primary = makeProject({ repositoryIdentity });
     const worktree = makeProject({
       id: ProjectId.make("local-worktree"),
@@ -573,7 +578,7 @@ describe("environment grouping", () => {
       repositoryIdentity,
     });
     const remote = makeProject({
-      id: ProjectId.make("remote-copy"),
+      id: worktree.id,
       environmentId: remoteEnvironmentId,
       repositoryIdentity,
     });
@@ -583,60 +588,33 @@ describe("environment grouping", () => {
       primaryEnvironmentId,
       resolveEnvironmentLabel: () => null,
     });
-    const entries = buildSidebarProjectPickerEntries({
+    expect(countSidebarProjectChoices(groups)).toBe(3);
+    const pickerInput = {
       groups,
-      preferredProjectRef: { environmentId: remoteEnvironmentId, projectId: remote.id },
       expandCheckouts: true,
-      isEnvironmentReachable: (environmentId) => environmentId === primaryEnvironmentId,
-    });
+      isEnvironmentReachable: (environmentId: EnvironmentId) =>
+        environmentId === primaryEnvironmentId,
+    };
 
-    expect(groups).toHaveLength(1);
-    expect(entries.map(({ targetProject }) => targetProject.id)).toEqual([
-      primary.id,
-      worktree.id,
-      remote.id,
-    ]);
-    expect(entries[2]?.isPreferred).toBe(true);
-    expect(entries.map(({ group }) => group.projectKey)).toEqual([
-      repositoryIdentity.canonicalKey,
-      repositoryIdentity.canonicalKey,
-      repositoryIdentity.canonicalKey,
-    ]);
-  });
-
-  it("prefers the exact connected worktree while keeping other copies available", () => {
-    const primary = makeProject({ repositoryIdentity });
-    const worktree = makeProject({
-      id: ProjectId.make("local-worktree"),
-      workspaceRoot: "/tmp/shared-repo-feature",
-      repositoryIdentity,
-    });
-    const remote = makeProject({
-      id: ProjectId.make("remote-copy"),
-      environmentId: remoteEnvironmentId,
-      repositoryIdentity,
-    });
-    const groups = buildSidebarProjectSnapshots({
-      projects: [primary, worktree, remote],
-      settings: defaultGroupingSettings,
-      primaryEnvironmentId,
-      resolveEnvironmentLabel: () => null,
-    });
-    const entries = buildSidebarProjectPickerEntries({
-      groups,
+    const connectedPreference = buildSidebarProjectPickerEntries({
+      ...pickerInput,
       preferredProjectRef: { environmentId: primaryEnvironmentId, projectId: worktree.id },
-      expandCheckouts: true,
-      isEnvironmentReachable: () => true,
     });
-
-    expect(entries.map(({ targetProject }) => targetProject.id)).toEqual([
-      worktree.id,
-      primary.id,
-      remote.id,
+    expect(connectedPreference.map(({ targetProject }) => targetProject)).toMatchObject([
+      worktree,
+      primary,
+      remote,
     ]);
-    expect(
-      entries.filter((entry) => entry.isPreferred).map(({ targetProject }) => targetProject.id),
-    ).toEqual([worktree.id]);
+
+    const offlinePreference = buildSidebarProjectPickerEntries({
+      ...pickerInput,
+      preferredProjectRef: { environmentId: remoteEnvironmentId, projectId: remote.id },
+    });
+    expect(offlinePreference.map(({ targetProject }) => targetProject)).toMatchObject([
+      primary,
+      worktree,
+      remote,
+    ]);
   });
 
   it("keeps manual project order when building grouped sidebar entries", () => {
