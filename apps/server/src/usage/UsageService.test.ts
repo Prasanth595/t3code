@@ -1618,7 +1618,7 @@ describe("UsageService", () => {
         await NodeFSP.writeFile(newerOnly, rollout("newer-only", 40));
         await NodeFSP.writeFile(
           transcript,
-          claudeLine(1, 100) + claudeLine(1, 160, "claude-fable-5", 40),
+          claudeLine(1, 100) + claudeLine(1, 160, "claude-fable-5", 40).trimEnd(),
         );
       });
 
@@ -1636,15 +1636,23 @@ describe("UsageService", () => {
           const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
             files: Record<
               string,
-              { m: number; p: string; r: unknown[][]; cs: { speed?: unknown } | null }
+              {
+                m: number;
+                p: string;
+                r: unknown[][];
+                t: unknown[][];
+                cs: { speed?: unknown } | null;
+              }
             >;
           };
           for (const file of Object.values(document.files)) {
             file.r = file.r.map((row) => [...row.slice(0, 10), 0]);
+            file.t = file.t.map((row) => [...row.slice(0, 10), 0]);
             if (file.cs !== null) delete file.cs.speed;
             if (file.p === "claude") {
               file.r[0]![6] = 100;
               file.r[0]![7] = 0;
+              file.t[0]![7] = 0;
             }
           }
           const newerEntry = document.files[newerOnly]!;
@@ -1696,7 +1704,7 @@ describe("UsageService", () => {
         yield* Effect.gen(function* () {
           check(yield* (yield* UsageService.make).readSummary(WINDOW));
         }).pipe(Effect.scoped);
-        // Newer legacy metadata must not erase a fuller snapshot already saved in v6.
+        // A downgrade's newer tail must retain thinking saved only in the v6 tail.
         yield* Effect.promise(async () => {
           const current = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
             files: Record<string, { m: number }>;
