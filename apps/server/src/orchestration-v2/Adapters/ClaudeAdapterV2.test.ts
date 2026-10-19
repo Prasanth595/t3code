@@ -4604,28 +4604,71 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.notEqual(nextRunning.id, boundaryOnly.id);
       assert.isAbove(nextRunning.ordinal, boundaryOnly.ordinal);
 
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: null,
+          permissionMode: "default",
+          uuid: "00000000-0000-4000-8000-000000000233",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      assert.deepEqual(
+        yield* observeCompactions("00000000-0000-4000-8000-000000000234"),
+        nextCompactions,
+      );
+
+      let retryRunning = nextRunning;
       for (const [index, outcome] of [
-        { status: null, compact_result: "failed", compact_error: "Temporary compaction failure." },
-        { status: "compacting" },
+        { compact_result: "failed", compact_error: "Temporary compaction failure." },
+        {},
       ].entries()) {
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
             subtype: "status",
+            status: null,
             ...outcome,
-            uuid: `00000000-0000-4000-8000-00000000023${index}`,
+            uuid: `00000000-0000-4000-8000-00000000024${index}`,
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
+        const stopped = yield* observeCompactions(`00000000-0000-4000-8000-00000000025${index}`);
+        assert.lengthOf(stopped, 6 + index * 2);
+        const settled = stopped.at(-1)!;
+        assert.equal(settled.id, retryRunning.id);
+        assert.equal(settled.ordinal, retryRunning.ordinal);
+        assert.deepEqual(settled.startedAt, retryRunning.startedAt);
+        assert.equal(
+          settled.status,
+          outcome.compact_result === "failed" ? "failed" : "interrupted",
+        );
+        assert.equal(
+          settled.title,
+          outcome.compact_result === "failed"
+            ? "Context compaction failed"
+            : "Context compaction stopped",
+        );
+        assert.isNotNull(settled.completedAt);
+        assert.isEmpty(harness.terminalEvents());
+
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: `00000000-0000-4000-8000-00000000026${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const retried = yield* observeCompactions(`00000000-0000-4000-8000-00000000027${index}`);
+        assert.lengthOf(retried, stopped.length + 1);
+        retryRunning = retried.at(-1)!;
+        assert.equal(retryRunning.status, "running");
+        assert.notEqual(retryRunning.id, settled.id);
+        assert.isAbove(retryRunning.ordinal, settled.ordinal);
       }
-      const retried = yield* observeCompactions("00000000-0000-4000-8000-000000000232");
-      assert.lengthOf(retried, 7);
-      assert.equal(retried[5]?.id, nextRunning.id);
-      assert.equal(retried[5]?.status, "failed");
-      const retryRunning = retried[6]!;
-      assert.equal(retryRunning.status, "running");
-      assert.notEqual(retryRunning.id, nextRunning.id);
-      assert.isAbove(retryRunning.ordinal, nextRunning.ordinal);
 
       yield* harness.offerAndWait(
         claudeSdkFrame({
@@ -4637,12 +4680,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       const allCompactions = yield* observeCompactions("00000000-0000-4000-8000-000000000221");
-      assert.lengthOf(allCompactions, 8);
-      assert.equal(allCompactions[7]?.id, retryRunning.id);
-      assert.equal(allCompactions[7]?.ordinal, retryRunning.ordinal);
-      assert.equal(allCompactions[7]?.status, "completed");
-      assert.equal(allCompactions[7]?.beforeTokenCount, 3000);
-      assert.equal(allCompactions[7]?.afterTokenCount, 600);
+      assert.lengthOf(allCompactions, 10);
+      assert.equal(allCompactions[9]?.id, retryRunning.id);
+      assert.equal(allCompactions[9]?.ordinal, retryRunning.ordinal);
+      assert.equal(allCompactions[9]?.status, "completed");
+      assert.equal(allCompactions[9]?.beforeTokenCount, 3000);
+      assert.equal(allCompactions[9]?.afterTokenCount, 600);
 
       yield* Queue.offer(
         harness.sdkMessages,

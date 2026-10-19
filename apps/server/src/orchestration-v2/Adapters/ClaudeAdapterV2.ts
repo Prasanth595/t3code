@@ -7136,19 +7136,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             message.type === "system" &&
             message.subtype === "status" &&
-            message.compact_result !== undefined
+            (message.compact_result !== undefined ||
+              (message.status === null && message.permissionMode === undefined))
           ) {
-            context.compactionFailure =
-              message.compact_result === "failed" ? { message: message.compact_error } : null;
+            if (message.compact_result !== undefined) {
+              context.compactionFailure =
+                message.compact_result === "failed" ? { message: message.compact_error } : null;
+            }
             if (context.compaction?.status === "running") {
               const now = yield* DateTime.now;
               context.compaction = {
                 ...context.compaction,
-                status: message.compact_result === "success" ? "completed" : "failed",
+                status:
+                  message.compact_result === "success"
+                    ? "completed"
+                    : message.compact_result === "failed"
+                      ? "failed"
+                      : "interrupted",
                 title:
                   message.compact_result === "success"
                     ? "Context compacted"
-                    : "Context compaction failed",
+                    : message.compact_result === "failed"
+                      ? "Context compaction failed"
+                      : "Context compaction stopped",
                 completedAt: now,
                 updatedAt: now,
               };
@@ -7157,7 +7167,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 driver: CLAUDE_PROVIDER,
                 turnItem: context.compaction,
               });
-              if (message.compact_result === "failed") context.compaction = null;
+              if (message.compact_result !== "success") context.compaction = null;
             }
           }
 
