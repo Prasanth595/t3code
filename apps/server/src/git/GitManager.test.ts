@@ -47,6 +47,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
 import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as AzureDevOpsSourceControlProvider from "@t3tools/source-control-azure-devops/server/AzureDevOpsSourceControlProvider";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -714,6 +716,7 @@ function preparePullRequestThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  sourceControlProviderKind?: SourceControlProviderKind;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -799,14 +802,28 @@ function makeManager(input?: {
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     Effect.gen(function* () {
+      if (input?.sourceControlProvider) return input.sourceControlProvider;
       const git = yield* GitVcsDriver.GitVcsDriver;
-      return (
-        input?.sourceControlProvider ?? {
-          ...fakeGitHubProvider,
-          readChangeRequestTemplate: ({ cwd, treeish }: { cwd: string; treeish: string }) =>
-            GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute),
-        }
-      );
+      const kind = input?.sourceControlProviderKind ?? fakeGitHubProvider.kind;
+      let readChangeRequestTemplate: SourceControlProvider["Service"]["readChangeRequestTemplate"] =
+        ({ cwd, treeish }) => GitHubChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      if (kind === "gitlab" || kind === "azure-devops") {
+        const provider = yield* (
+          kind === "gitlab"
+            ? GitLabSourceControlProvider.make.pipe(
+                Effect.provide(Layer.mock(GitLabCli.GitLabCli)({})),
+              )
+            : AzureDevOpsSourceControlProvider.make.pipe(
+                Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({})),
+              )
+        ).pipe(Effect.provide(TestSourceControlHost.layer({ git: { execute: git.execute } })));
+        readChangeRequestTemplate = provider.readChangeRequestTemplate;
+      }
+      return {
+        ...fakeGitHubProvider,
+        kind,
+        ...(readChangeRequestTemplate ? { readChangeRequestTemplate } : {}),
+      };
     }).pipe(
       Effect.map((provider) =>
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
@@ -2584,7 +2601,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           GitLabCli.layer.pipe(
-            Layer.provide(
+            Layer.provideMerge(
               TestSourceControlHost.layer({
                 process: {
                   run: (input) =>
@@ -5215,78 +5232,91 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("creates PR when one does not already exist", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      NodeFS.mkdirSync(NodePath.join(repoDir, ".github"));
-      NodeFS.writeFileSync(
-        NodePath.join(repoDir, ".github", "pull_request_template.md"),
-        "## What changed?\n\n## Verification",
-      );
-      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
-      yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
-      yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
-      yield* runGit(repoDir, ["add", "changes.txt"]);
-      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature-create-pr"]);
-      yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
-      let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
-      let generatedChangeRequestTemplate: string | undefined;
+  it.effect.each(["github", "gitlab", "azure-devops"] as const)(
+    "passes the committed base %s template to generation from a subdirectory",
+    (kind) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const templatePaths = {
+          github: ".github/pull_request_template.md",
+          gitlab: ".gitlab/merge_request_templates/Default.md",
+          "azure-devops": ".azuredevops/pull_request_template.md",
+        };
+        const templateContent = (provider: string) => `## ${provider} context\n\n## Verification`;
+        for (const [provider, relativePath] of Object.entries(templatePaths)) {
+          const templatePath = NodePath.join(repoDir, relativePath);
+          NodeFS.mkdirSync(NodePath.dirname(templatePath), { recursive: true });
+          NodeFS.writeFileSync(templatePath, templateContent(provider));
+        }
+        yield* runGit(repoDir, ["add", ...Object.values(templatePaths)]);
+        yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        const projectDir = NodePath.join(repoDir, "subdir");
+        NodeFS.mkdirSync(projectDir);
+        NodeFS.writeFileSync(NodePath.join(projectDir, "changes.txt"), "change\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, templatePaths[kind]), "feature template");
+        yield* runGit(repoDir, ["add", "subdir", templatePaths[kind]]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature-create-pr"]);
+        yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, templatePaths[kind]), "uncommitted template");
+        let generatedPolicy: TextGeneration.PrContentGenerationInput["policy"] = undefined;
+        let generatedChangeRequestTemplate: string | undefined;
 
-      const { manager, ghCalls } = yield* makeManager({
-        serverSettings: {
-          sourceControlWritingStyle: {
-            mode: "custom" as const,
-            customInstructions: "Lead with user impact.",
+        const { manager, ghCalls } = yield* makeManager({
+          sourceControlProviderKind: SourceControlProviderKind.make(kind),
+          serverSettings: {
+            sourceControlWritingStyle: {
+              mode: "custom" as const,
+              customInstructions: "Lead with user impact.",
+            },
           },
-        },
-        textGeneration: {
-          generatePrContent: (input) => {
-            generatedPolicy = input.policy;
-            generatedChangeRequestTemplate = input.changeRequestTemplate;
-            return Effect.succeed({
-              title: "Add stacked git actions",
-              body: "## What changed?\nAdded stacked git actions.",
-            });
-          },
-        },
-        ghScenario: {
-          prListSequence: [
-            "[]",
-            JSON.stringify([
-              {
-                number: 88,
+          textGeneration: {
+            generatePrContent: (input) => {
+              generatedPolicy = input.policy;
+              generatedChangeRequestTemplate = input.changeRequestTemplate;
+              return Effect.succeed({
                 title: "Add stacked git actions",
-                url: "https://github.com/pingdotgg/codething-mvp/pull/88",
-                baseRefName: "main",
-                headRefName: "feature-create-pr",
-              },
-            ]),
-          ],
-        },
-      });
-      const result = yield* runStackedAction(manager, {
-        cwd: repoDir,
-        action: "commit_push_pr",
-      });
+                body: "## What changed?\nAdded stacked git actions.",
+              });
+            },
+          },
+          ghScenario: {
+            prListSequence: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 88,
+                  title: "Add stacked git actions",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+                  baseRefName: "main",
+                  headRefName: "feature-create-pr",
+                },
+              ]),
+            ],
+          },
+        });
+        const result = yield* runStackedAction(manager, {
+          cwd: projectDir,
+          action: "commit_push_pr",
+        });
 
-      expect(result.branch.status).toBe("skipped_not_requested");
-      expect(result.pr.status).toBe("created");
-      expect(result.pr.number).toBe(88);
-      expect(generatedPolicy).toMatchObject({
-        changeRequestInstructions: "Lead with user impact.",
-      });
-      expect(generatedChangeRequestTemplate).toBe("## What changed?\n\n## Verification");
-      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
-      expect(
-        ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
-      ).toBe(true);
-      expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
-    }),
+        expect(result.branch.status).toBe("skipped_not_requested");
+        expect(result.pr.status).toBe("created");
+        expect(result.pr.number).toBe(88);
+        expect(generatedPolicy).toMatchObject({
+          changeRequestInstructions: "Lead with user impact.",
+        });
+        expect(generatedChangeRequestTemplate).toBe(templateContent(kind));
+        expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+        expect(
+          ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
+        ).toBe(true);
+        expect(ghCalls.some((call) => call.startsWith("pr view "))).toBe(false);
+      }),
   );
 
   it.effect.each(["commit", "short-commit", "tag", "revision"] as const)(
