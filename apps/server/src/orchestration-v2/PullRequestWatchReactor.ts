@@ -355,6 +355,15 @@ export const make = Effect.gen(function* () {
         Effect.as(null),
       ),
     ),
+    (effect, key) =>
+      effect.pipe(
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            // A retry must refresh every tail before advancing the shared remark watermark.
+            if (Exit.isFailure(exit) || exit.value === null) threadTails.delete(key);
+          }),
+        ),
+      ),
   );
 
   const closed = (target: WatchTarget) =>
