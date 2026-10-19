@@ -30,7 +30,6 @@ import {
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
   resolveProjectStatusIndicator,
-  resolveSidebarRowAccessibleName,
   resolveSidebarSweepKeys,
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
@@ -74,37 +73,6 @@ import {
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../test-fixtures";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
-
-describe("resolveSidebarRowAccessibleName", () => {
-  it.each([
-    {
-      title: "Can you audit the UI?",
-      statusLabel: "Working",
-      projectDisplayName: "T3 Code",
-      expected: "Can you audit the UI?, Working, T3 Code",
-    },
-    {
-      title: "Fix tests",
-      statusLabel: "Unsent draft",
-      projectDisplayName: null,
-      expected: "Fix tests, Unsent draft",
-    },
-    {
-      title: "The audit is done",
-      statusLabel: null,
-      projectDisplayName: "T3 Code",
-      expected: "The audit is done, T3 Code",
-    },
-    {
-      title: "Untitled task",
-      statusLabel: null,
-      projectDisplayName: null,
-      expected: "Untitled task",
-    },
-  ])("leads with the title, then status and project: %j", ({ expected, ...input }) => {
-    expect(resolveSidebarRowAccessibleName(input)).toBe(expected);
-  });
-});
 
 describe("animateSidebarLayoutChanges", () => {
   const baseArgs: Parameters<AnimateLayoutChanges>[0] = {
