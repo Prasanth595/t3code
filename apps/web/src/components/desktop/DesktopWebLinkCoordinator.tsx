@@ -47,7 +47,7 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
-  const { scratchEnvironmentId, openScratchProject } = useScratchProject();
+  const { scratchEnvironmentId, scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
   const openThread = useNewThreadHandler();
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -67,8 +67,16 @@ export function DesktopWebLinkCoordinator() {
       stackedThreadToast({ type: "error", title: "Could not open the link", description }),
     );
 
-  const startThread = async (url: string): Promise<ScopedThreadRef | null> => {
-    const environmentId = scratchEnvironmentId(primaryEnvironment?.environmentId ?? null);
+  const startThread = async (url: string, isFile: boolean): Promise<ScopedThreadRef | null> => {
+    const primaryId = primaryEnvironment?.environmentId ?? null;
+    // A native file lives on the primary, so its thread must too: another
+    // machine's scratch thread would request the asset from a server that
+    // cannot serve it.
+    const environmentId = isFile
+      ? scratchWorkspaceRootFor(primaryId) === null
+        ? null
+        : primaryId
+      : scratchEnvironmentId(primaryId);
     if (environmentId === null) {
       reportFailure(url);
       return null;
@@ -97,7 +105,7 @@ export function DesktopWebLinkCoordinator() {
       threadShowingBrowser(
         routeParams,
         isFile ? (primaryEnvironment?.environmentId ?? null) : null,
-      ) ?? (await startThread(url));
+      ) ?? (await startThread(url, isFile));
     if (threadRef === null) return;
     const result = isFile
       ? httpBaseUrl === null

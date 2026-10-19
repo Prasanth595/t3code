@@ -34,7 +34,7 @@ export function useScratchProject() {
   };
 
   const scratchEnvironmentId = (current: EnvironmentId | null): EnvironmentId | null => {
-    if (current !== null) return scratchWorkspaceRootFor(current) !== null ? current : null;
+    if (current !== null && scratchWorkspaceRootFor(current) !== null) return current;
     const offering = environments.filter(
       (entry) => scratchWorkspaceRootFor(entry.environmentId) !== null,
     );
