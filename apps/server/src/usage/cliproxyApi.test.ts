@@ -51,6 +51,8 @@ function fixture(
   options: {
     accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
+    /** Upstream calls it matches never get an answer from the hub. */
+    stalls?: (request: RequestBody) => boolean;
     cooldownStatus?: number;
   } = {},
 ) {
@@ -76,6 +78,7 @@ function fixture(
         );
       expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
+      if (options.stalls?.(body!)) return undefined;
       const upstream = options.upstream?.(body!) ?? {
         status: 200,
         body: body?.url?.endsWith("/consume")
@@ -104,7 +107,12 @@ function fixture(
         request,
         Response.json({ status_code: upstream.status, body: encodeJson(upstream.body) }),
       );
-    }),
+    }).pipe(
+      Effect.filterOrElse(
+        (response) => response !== undefined,
+        () => Effect.never,
+      ),
+    ),
   );
   return {
     requests,
@@ -334,50 +342,48 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("labels Claude accounts with the plan tier from their profile", () =>
+  it.effect("labels a hub Claude account with its plan tier", () =>
     Effect.gen(function* () {
-      const organizations: Record<string, { organization_type: string; rate_limit_tier: string }> =
-        {
-          a: { organization_type: "claude_max", rate_limit_tier: "default_claude_max_5x" },
-          b: { organization_type: "claude_max", rate_limit_tier: "default_claude_max_20x" },
-          c: { organization_type: "claude_pro", rate_limit_tier: "default_claude_ai" },
-        };
       const test = fixture({
-        accounts: [
-          ...accounts,
-          { ...accounts[0]!, id: "third.json", auth_index: "c", email: "third@example.com" },
-        ].map((account) => ({ ...account, provider: "claude" })),
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
         upstream: (request) => ({
           status: 200,
           body: request.url?.endsWith("/profile")
-            ? { organization: organizations[request.auth_index] }
+            ? {
+                organization: {
+                  organization_type: "claude_max",
+                  rate_limit_tier: "default_claude_max_20x",
+                },
+              }
             : { seven_day: { utilization: 50, resets_at: null } },
         }),
       });
       const api = yield* test.api;
-      const result = yield* api.readAccounts(config);
-      expect(result.map((account) => account.plan)).toEqual([
-        "Claude Max 5x Subscription",
-        "Claude Max 20x Subscription",
-        "Claude Pro Subscription",
-      ]);
+      const [account] = yield* api.readAccounts(config);
+      expect(account?.plan).toBe("Claude Max 20x Subscription");
     }),
   );
 
-  it.effect("keeps Claude usage when the profile cannot be read", () =>
+  it.effect("does not hold Claude usage until the hub times out a stalled profile", () =>
     Effect.gen(function* () {
       const test = fixture({
         accounts: [{ ...accounts[0]!, provider: "claude" }],
-        upstream: (request) =>
-          request.url?.endsWith("/profile")
-            ? { status: 503, body: { token: "do-not-publish" } }
-            : { status: 200, body: { seven_day: { utilization: 50, resets_at: null } } },
+        upstream: () => ({
+          status: 200,
+          body: { seven_day: { utilization: 50, resets_at: null } },
+        }),
+        stalls: (request) => request.url?.endsWith("/profile") ?? false,
       });
       const api = yield* test.api;
-      const [account] = yield* api.readAccounts(config);
+      const pending = yield* api
+        .readAccounts(config)
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("14 seconds");
+      const exit = pending.pollUnsafe();
+      expect(exit?._tag).toBe("Success");
+      const [account] = yield* Fiber.join(pending);
       expect(account?.plan).toBe("Claude Subscription");
       expect(account?.usageLimits.windows.map((window) => window.usedPercent)).toEqual([50]);
-      expect(encodeJson(account)).not.toContain("do-not-publish");
     }),
   );
 

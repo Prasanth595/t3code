@@ -150,6 +150,7 @@ const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
 const CLAUDE_OAUTH_BASE = "https://api.anthropic.com/api/oauth";
 const CLAUDE_HUB_PLAN = "Claude Subscription";
+const CLAUDE_PROFILE_TIMEOUT = "5 seconds";
 
 /**
  * Names a hub Claude account's plan the way a native sign-in does. Max plans
@@ -291,10 +292,13 @@ export const makeCliproxyApi = Effect.gen(function* () {
         const [body, plan] = yield* Effect.all(
           [
             apiCall(config, account, `${CLAUDE_OAUTH_BASE}/usage`),
-            // A profile outage must not hide successfully fetched quota windows.
+            // The profile only names the plan. A stalled or failed profile must not hold the
+            // quota windows for the hub's 15-second management timeout, and readAccounts runs
+            // four accounts at a time, so later batches would wait too.
             apiCall(config, account, `${CLAUDE_OAUTH_BASE}/profile`).pipe(
               Effect.flatMap(decodeClaudeProfile),
               Effect.map(claudeProfilePlanLabel),
+              Effect.timeout(CLAUDE_PROFILE_TIMEOUT),
               Effect.orElseSucceed(() => CLAUDE_HUB_PLAN),
             ),
           ],
