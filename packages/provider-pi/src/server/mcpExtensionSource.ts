@@ -448,14 +448,12 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
     }
   });
 
-  // Deliver orchestration guidance through pi's real system-prompt channel.
-  // Wrapping the first user message instead would stop it from starting
-  // with "/" and silently break slash-command expansion.
-  // Structured sections let later extensions edit the final prompt options.
+  // Keep guidance in the system prompt so leading slash commands still expand.
   pi.on("before_agent_start", (event, ctx) => {
     reconcileDiscovery(ctx);
     const sections = event.systemPromptOptions?.sections;
     if (sections && typeof sections === "object") {
+      // A full prompt override bypasses Pi's later section rendering.
       sections.t3_code_orchestration = ORCHESTRATION_INSTRUCTIONS;
       return undefined;
     }

@@ -25,12 +25,8 @@ type InputHook = (
   ctx: { ui: { notify: (message: string, level: string) => void } },
 ) => Promise<{ action: string; text: string; images?: ReadonlyArray<unknown> } | undefined>;
 
-async function loadHooks(
-  commands: ReadonlyArray<SkillCommand> = [],
-  env: Record<string, string> = {},
-) {
+async function loadHooks(commands: ReadonlyArray<SkillCommand> = []) {
   const handlers = new Map<string, unknown>();
-
   const source = NodeModule.stripTypeScriptTypes(
     PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
       "export default async function",
@@ -38,11 +34,7 @@ async function loadHooks(
     ),
   );
   await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
-    process: { env },
-    AbortSignal,
-    fetch: async () => {
-      throw new Error("MCP unavailable in this test");
-    },
+    process: { env: {} },
     NodeFSP,
     NodePath,
     stripFrontmatter: (content: string) => content,
@@ -54,55 +46,36 @@ async function loadHooks(
   return handlers;
 }
 
-type PromptEvent = {
-  systemPrompt: string;
-  systemPromptOptions?: { sections?: Record<string, string> | null };
-  messageType?: "user" | "custom";
-};
-
-type PromptHook = (event: PromptEvent) => { systemPrompt: string } | undefined;
-
-async function loadPromptHook(): Promise<PromptHook> {
-  const handlers = await loadHooks([], {
-    T3_MCP_URL: "http://fixture.invalid/mcp",
-    T3_MCP_BEARER_TOKEN: "fixture-token",
-  });
-  const hook = handlers.get("before_agent_start");
-  assert.isDefined(hook);
-  return hook as PromptHook;
-}
-
 describe("Pi orchestration prompt section", () => {
-  it.each(["user", "custom"] as const)(
-    "adds guidance without forcing the prompt for %s turns",
-    async (messageType) => {
-      const hook = await loadPromptHook();
-      const sections: Record<string, string> = { existing: "keep me" };
-      const options = { sections };
-      const event = { systemPrompt: "base", systemPromptOptions: options, messageType };
+  it("adds a stable section without overriding the prompt or skipping discovery", async () => {
+    const bridge = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+    const hook = bridge.handlers.get("before_agent_start")!;
+    const sections: Record<string, string> = { existing: "keep me" };
+    const event = { systemPrompt: "base", systemPromptOptions: { sections } };
+    const ctx = { model: { api: "openai-completions" }, ui: { notify: assert.fail } };
 
-      assert.isUndefined(hook(event));
-      assert.strictEqual(options.sections, sections);
-      assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
-      assert.equal(sections.existing, "keep me");
-      assert.equal(event.systemPrompt, "base");
+    assert.isUndefined(await hook(event, ctx));
+    assert.include(sections.t3_code_orchestration, "orchestrator_capabilities");
+    assert.equal(event.systemPrompt, "base");
+    assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
 
-      // Repeated turns replace this section rather than accumulating instructions.
-      const guidance = sections.t3_code_orchestration;
-      assert.isUndefined(hook(event));
-      assert.equal(sections.t3_code_orchestration, guidance);
-      assert.equal(Object.keys(sections).length, 2);
-    },
-  );
+    const guidance = sections.t3_code_orchestration!;
+    assert.isUndefined(await hook(event, ctx));
+    assert.deepEqual(event.systemPromptOptions.sections, {
+      existing: "keep me",
+      t3_code_orchestration: guidance,
+    });
+  });
 
-  it("keeps the appended-prompt fallback on Pi builds without sections", async () => {
-    const hook = await loadPromptHook();
+  it("appends guidance on Pi builds without prompt sections", async () => {
+    const bridge = await loadMcpBridge();
+    const hook = bridge.handlers.get("before_agent_start")!;
     for (const event of [
       { systemPrompt: "base" },
       { systemPrompt: "base", systemPromptOptions: {} },
       { systemPrompt: "base", systemPromptOptions: { sections: null } },
     ]) {
-      const result = hook(event);
+      const result = await hook(event, { ui: { notify: assert.fail } });
       assert.isDefined(result);
       assert.isTrue(result!.systemPrompt.startsWith("base\n\n"));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
@@ -207,7 +180,7 @@ describe("Pi MCP tool exposure", () => {
     const start = bridge.handlers.get("before_agent_start");
     assert.isDefined(start);
     const prompt = await start!({ systemPrompt: "Pi system prompt" }, discoveryContext);
-    assert.include(prompt.systemPrompt, "orchestrator_capabilities");
+    assert.include(prompt?.systemPrompt ?? "", "orchestrator_capabilities");
     assert.equal(bridge.servers.length, 0);
     assert.equal(bridge.tools.length, 8);
     assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);
