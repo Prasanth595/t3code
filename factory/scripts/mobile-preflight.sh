@@ -49,7 +49,8 @@ fail() {
 cert_path="$work/preflight.p12"
 keychain_password="$(openssl rand -hex 16)"
 echo "::add-mask::$keychain_password"
-printf '%s' "$IOS_DIST_CERT_P12" | base64 --decode > "$cert_path"
+printf '%s' "$IOS_DIST_CERT_P12" | base64 --decode > "$cert_path" 2>/dev/null ||
+  fail "IOS_DIST_CERT_P12 is not base64."
 security create-keychain -p "$keychain_password" "$keychain"
 if ! security import "$cert_path" -k "$keychain" -P "$IOS_DIST_CERT_PASSWORD" -T /usr/bin/codesign >/dev/null; then
   fail "IOS_DIST_CERT_P12 is not a .p12 that IOS_DIST_CERT_PASSWORD opens."
@@ -73,7 +74,8 @@ check_profile() {
   local name=$1 bundle_id=$2 profile_path plist value expires
   profile_path="$work/$name.mobileprovision"
   plist="$work/$name.plist"
-  printf '%s' "${!name}" | base64 --decode > "$profile_path"
+  printf '%s' "${!name}" | base64 --decode > "$profile_path" 2>/dev/null ||
+    fail "$name is not base64."
   if ! security cms -D -i "$profile_path" > "$plist" 2>/dev/null; then
     fail "$name is not a provisioning profile."
   fi
@@ -92,7 +94,8 @@ check_profile() {
     [[ "$(read_key "$plist" Entitlements:get-task-allow || true)" == "true" ]]; then
     fail "$name is not an App Store profile; make an App Store distribution profile for $bundle_id."
   fi
-  expires="$(plutil -extract ExpirationDate raw -o - "$plist")"
+  expires="$(plutil -extract ExpirationDate raw -o - "$plist" 2>/dev/null)" ||
+    fail "$name has no expiration date."
   if [[ "$expires" < "$(date -u +%Y-%m-%dT%H:%M:%SZ)" ]]; then
     fail "$name expired on $expires."
   fi

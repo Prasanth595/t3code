@@ -93,7 +93,7 @@ else
   echo "Print: Entry, \\":$key\\", Does Not Exist" >&2
   exit 1
 fi`,
-  plutil: `grep "^$2=" "\${@: -1}" | cut -d= -f2-`,
+  plutil: `set -o pipefail; grep "^$2=" "\${@: -1}" | cut -d= -f2-`,
 };
 
 const ALL_SET = {
@@ -267,7 +267,7 @@ describe("mobile-preflight.sh", () => {
   });
 
   it.each(["IOS_DIST_CERT_P12", ...PROFILES])("names %s when it is not base64", (name) => {
-    expectFailure(stubbed({ [name]: "not base64 !!!" }), `${name} is not base64`);
+    expectFailure(stubbed({ [name]: "%%%%" }), `${name} is not base64`);
   });
 
   it("names a profile with no expiration date", () => {
