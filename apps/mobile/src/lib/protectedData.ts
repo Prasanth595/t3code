@@ -7,21 +7,12 @@ const NativeControls = requireOptionalNativeModule<{
 
 let protectedDataAvailable: Promise<void> | undefined;
 
-/**
- * Waits until the keychain and the app's database files can be read. iOS can
- * launch the app in the background while the device is locked, for example for
- * a Live Activity after a restart, and those reads fail until it is unlocked.
- * A launch like that waits until the app comes to the foreground.
- *
- * Only the launch is checked: once this resolves it stays resolved, even if the
- * device locks again, so it does not protect reads made later.
- */
+// A locked iOS background launch cannot read startup storage. Cache readiness
+// for this launch only; later device locks do not pause an initialized runtime.
 export function whenProtectedDataAvailable(): Promise<void> {
   protectedDataAvailable ??= new Promise((resolve) => {
     const isAvailable = NativeControls?.isProtectedDataAvailable;
-    // Only an unlocked device can bring the app to the foreground, so only a
-    // background launch needs to ask.
-    if (isAvailable === undefined || AppState.currentState !== "background") {
+    if (isAvailable === undefined || AppState.currentState === "active") {
       resolve();
       return;
     }
@@ -32,9 +23,14 @@ export function whenProtectedDataAvailable(): Promise<void> {
       subscription.remove();
       resolve();
     }
-    isAvailable().then((available) => {
-      if (available) done();
-    }, done);
+    isAvailable().then(
+      (available) => {
+        if (available) done();
+      },
+      () => {
+        // A failed check does not establish readiness; activation still can.
+      },
+    );
   });
   return protectedDataAvailable;
 }

@@ -17,12 +17,9 @@ shutdown, but a supervisor created after its cleanup runs would escape it. A clo
 parent scope also closes late arrivals, preventing interrupted startup or runtime
 replacement from leaving a WebSocket alive outside the new registry.
 
-iOS can launch the app in the background while the device is locked, for example for a
-Live Activity after a restart. The keychain and the app database cannot be read until the
-device is unlocked, and a failed layer build lasts for the life of the process. The
-[shared runtime](../../apps/mobile/src/lib/runtime.ts) therefore waits for
-[`whenProtectedDataAvailable`](../../apps/mobile/src/lib/protectedData.ts) before it builds.
-Startup reads that bypass it, such as Clerk's token cache, must wait the same way.
+The [shared runtime](../../apps/mobile/src/lib/runtime.ts) waits for protected data
+on locked iOS launches because a failed layer build is cached for the process.
+Startup storage reads outside the runtime must share that gate.
 
 Uniwind compiles CSS on Metro updates so newly used classes are discovered. It
 skips global style invalidation only when the generated stylesheet and theme list
