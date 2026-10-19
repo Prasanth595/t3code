@@ -95,13 +95,12 @@ export class BrowserRecordingOperationError extends Schema.TaggedError<BrowserRe
       return this.cause.message;
     }
     // Stream acquisition stores its primary failure on the aggregate when cleanup also fails.
-    const captureCause =
-      this.operation === "capture-media-stream"
-        ? this.cause instanceof AggregateError
-          ? this.cause.cause
-          : this.cause
-        : undefined;
-    if (captureCause instanceof DOMException && captureCause.name === "NotReadableError") {
+    const captureCause = this.cause instanceof AggregateError ? this.cause.cause : this.cause;
+    if (
+      this.operation === "capture-media-stream" &&
+      captureCause instanceof DOMException &&
+      captureCause.name === "NotReadableError"
+    ) {
       return (
         "Unable to start the preview video source. Make sure the capture host is unlocked " +
         "and its display is on, then retry. " +
