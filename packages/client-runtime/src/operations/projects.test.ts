@@ -331,7 +331,7 @@ describe("new project publish targets", () => {
       versionControlSystems: [],
       sourceControlProviders: [
         readyHost("github", "enterprise-user", "enterprise.example"),
-        readyHost("gitlab", "group", "gitlab.com"),
+        readyHost("gitlab", "group", "gitlab.example"),
       ],
     };
     expect(
@@ -344,6 +344,9 @@ describe("new project publish targets", () => {
         kind: target.definition.kind,
         owner: target.owner,
       })),
-    ).toEqual([{ kind: "gitlab", owner: "group" }]);
+    ).toEqual([
+      { kind: "github", owner: "enterprise-user" },
+      { kind: "gitlab", owner: "group" },
+    ]);
   });
 });
