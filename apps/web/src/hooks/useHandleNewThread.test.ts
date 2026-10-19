@@ -85,29 +85,40 @@ const testState = vi.hoisted(() => {
   };
 });
 
+const testServerConfigs = () =>
+  new Map([
+    [
+      "environment-primary",
+      {
+        settings: {
+          ...testState.targetSettings,
+          projectSettingsOverrides: testState.projectDefaultEnabled
+            ? { "project-primary": { defaultEnvironmentId: "environment-ssh" } }
+            : {},
+          defaultRuntimeMode: "approval-required",
+          newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
+        },
+      },
+    ],
+    [
+      "environment-ssh",
+      { settings: { ...testState.targetSettings, projectSettingsOverrides: {} } },
+    ],
+  ]);
+
+vi.mock("../rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => testServerConfigs() },
+}));
+
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
-    atom === "primary-settings"
-      ? { newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin }
-      : new Map([
-          [
-            "environment-primary",
-            {
-              settings: {
-                ...testState.targetSettings,
-                projectSettingsOverrides: testState.projectDefaultEnabled
-                  ? { "project-primary": { defaultEnvironmentId: "environment-ssh" } }
-                  : {},
-                defaultRuntimeMode: "approval-required",
-                newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin,
-              },
-            },
-          ],
-          [
-            "environment-ssh",
-            { settings: { ...testState.targetSettings, projectSettingsOverrides: {} } },
-          ],
-        ]),
+    typeof atom === "object" && atom !== null && "environmentSettingsIds" in atom
+      ? (atom as { environmentSettingsIds: string[] }).environmentSettingsIds.map(
+          (id) => testServerConfigs().get(id)?.settings ?? null,
+        )
+      : atom === "primary-settings"
+        ? { newWorktreesStartFromOrigin: !testState.targetSettings.newWorktreesStartFromOrigin }
+        : testServerConfigs(),
 }));
 vi.mock("@t3tools/shared/projectSettings", () => ({
   resolveProjectSettings: (
@@ -207,8 +218,13 @@ vi.mock("../state/environments", () => ({
   useConnectedEnvironmentIds: () => testState.connectedEnvironmentIds,
   usePrimaryEnvironmentId: () => "environment-primary",
 }));
+vi.mock("../state/environmentAtomList", () => ({
+  environmentIdsKey: (ids: string[]) => ids.join("\n"),
+  environmentAtomList: () => (key: string) => ({ environmentSettingsIds: key.split("\n") }),
+}));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
+  serverEnvironment: { settingsValueAtom: vi.fn() },
   primaryServerSettingsAtom: "primary-settings",
 }));
 vi.mock("../threadRoutes", () => ({
