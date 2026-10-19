@@ -16,15 +16,11 @@ export function projectPendingUserInputAnswer(
   });
 }
 
-/**
- * Thread records the answer text still references. Deleting a chip from an answer
- * leaves its record in the question draft, so moving the answer elsewhere must not
- * carry the records it no longer points at.
- */
+// Question drafts retain deleted chip records for undo; only transfer referenced records.
 export function threadContextsReferencedByAnswer(
   answer: string,
   threadContexts: ReadonlyArray<ThreadContextRecord>,
-): ThreadContextRecord[] {
+) {
   const referencedIds = new Set(collectInlineContextIds(answer));
   return threadContexts.filter((record) => referencedIds.has(record.contextId));
 }
