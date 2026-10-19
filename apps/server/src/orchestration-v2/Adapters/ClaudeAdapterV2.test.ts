@@ -2487,7 +2487,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
         ...(options?.usageLimitResetFallback
-          ? { usageLimitResetFallback: options.usageLimitResetFallback }
+          ? { usageLimitResetFallback: () => options.usageLimitResetFallback! }
           : {}),
         attachmentsDir,
         fileSystem,
@@ -4304,6 +4304,63 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         assert.equal(failure.resetAt, "2026-10-10T08:00:00.000Z");
       }),
+    );
+
+    it.effect("honors Stop received while the reset lookup is pending", () =>
+      Effect.gen(function* () {
+        const lookupStarted = yield* Deferred.make<void>();
+        const lookupResult = yield* Deferred.make<string | null>();
+        const interruptStarted = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          usageLimitResetFallback: Deferred.succeed(lookupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(lookupResult)),
+          ),
+          interrupt: Deferred.succeed(interruptStarted, undefined),
+          close: Queue.shutdown,
+        });
+        const attemptId = RunAttemptId.make("attempt-claude-stop-reset-lookup");
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000663",
+            result: "API Error",
+            terminalReason: "api_error",
+            isError: true,
+            apiErrorStatus: 429,
+          }),
+        );
+        yield* Deferred.await(lookupStarted);
+        const interrupt = yield* harness.runtime
+          .interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeTurnId: `turn:${attemptId}`,
+            }),
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(interruptStarted);
+        yield* Deferred.succeed(lookupResult, "2026-10-10T08:00:00.000Z");
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "interrupted");
+        assert.equal(terminal.failure, null);
+        yield* Fiber.join(interrupt);
+        assert.lengthOf(harness.terminalEvents(), 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     );
 
     it.effect("does not consult the fallback when the provider reported a reset time", () =>

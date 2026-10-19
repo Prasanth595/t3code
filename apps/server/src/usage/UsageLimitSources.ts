@@ -4,7 +4,6 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConsumeResetCreditInput,
   type ProviderConsumeResetCreditResult,
-  type ServerSettings,
   type UsageLimitSourceConfig,
   type UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
@@ -16,6 +15,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
@@ -31,14 +31,8 @@ export class UsageLimitSources extends Context.Service<
     readonly current: Effect.Effect<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly streamChanges: Stream.Stream<ReadonlyArray<UsageLimitSourceSnapshot>>;
     readonly refresh: Effect.Effect<void>;
-    /**
-     * When the Claude accounts the hub at `baseUrl` pools will serve again,
-     * for a turn that hit the hub's 429 without the provider naming a reset.
-     * Re-reads the hub once first, bounded so a slow hub cannot hold up the
-     * failing turn, and falls back to the last snapshot. Null when no enabled
-     * source matches or the pool is not known to be out.
-     */
-    readonly poolResetAt: (baseUrl: string) => Effect.Effect<string | null>;
+    /** Fresh recovery evidence for a Claude proxy failure with no native reset. */
+    readonly poolResetAt: (baseUrl: string, model?: string) => Effect.Effect<string | null>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
@@ -55,42 +49,57 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
-/** Hubs compare by protocol, host, and port; a path or trailing slash does not make a different hub. */
 function hubOrigin(url: string): string | null {
   try {
-    const { protocol, host } = new URL(url);
-    return `${protocol}//${host}`;
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : null;
   } catch {
     return null;
   }
 }
 
-/**
- * When a pooled hub serves Claude again: the pool recovers as soon as any one
- * account does, and an account recovers once every exhausted window has reset.
- * An account with headroom, or an exhausted window with no reset time, means
- * the pool is not known to be out, so nothing is guessed.
- */
-export function poolUsageLimitResetAt(
+function claudeModelIdentity(model: string) {
+  const key = model
+    .toLowerCase()
+    .replace(/^claude-/, "")
+    .replace(/[-. ]/g, "_")
+    .replace(/_\d{8}$/, "");
+  const match = /^(opus|sonnet|haiku)(?:_(\d+(?:_\d+)?))?$/.exec(key);
+  return match ? { family: match[1], version: match[2] ?? null } : null;
+}
+
+function poolUsageLimitResetAt(
   accounts: ReadonlyArray<UsageLimitSourceAccount>,
   nowMs: number,
+  model: string | undefined,
 ): string | null {
-  let earliest: { readonly ms: number; readonly iso: string } | null = null;
+  const requestedModel = model === undefined ? null : claudeModelIdentity(model);
+  let earliest = Infinity;
   for (const account of accounts) {
     if (account.driver !== "claudeAgent") continue;
-    const exhausted = account.usageLimits.windows.filter((window) => window.usedPercent >= 100);
-    if (exhausted.length === 0 || exhausted.some((window) => !window.resetsAt)) return null;
-    const recovery = exhausted.reduce<{ readonly ms: number; readonly iso: string }>(
-      (latest, window) => {
-        const ms = Date.parse(window.resetsAt!);
-        return ms > latest.ms ? { ms, iso: window.resetsAt! } : latest;
-      },
-      { ms: Number.NEGATIVE_INFINITY, iso: "" },
-    );
-    if (!Number.isFinite(recovery.ms)) return null;
-    if (earliest === null || recovery.ms < earliest.ms) earliest = recovery;
+    if (account.usageLimits.unavailable) return null;
+    let recovery = -Infinity;
+    for (const window of account.usageLimits.windows) {
+      if (window.usedPercent < 100) continue;
+      if (window.id.startsWith("seven_day_")) {
+        const scopedModel = claudeModelIdentity(window.id.slice("seven_day_".length));
+        // Bare aliases and custom names do not identify which version the hub routes.
+        if (!requestedModel?.version || scopedModel === null) return null;
+        if (
+          scopedModel.family !== requestedModel.family ||
+          (scopedModel.version !== null && scopedModel.version !== requestedModel.version)
+        )
+          continue;
+      }
+      const reset = DateTime.make(window.resetsAt ?? "");
+      if (Option.isNone(reset)) return null;
+      recovery = Math.max(recovery, DateTime.toEpochMillis(reset.value));
+    }
+    // One account with headroom makes the pool's outage unexplained.
+    if (!Number.isFinite(recovery) || recovery <= nowMs) return null;
+    earliest = Math.min(earliest, recovery);
   }
-  return earliest !== null && earliest.ms > nowMs ? earliest.iso : null;
+  return Number.isFinite(earliest) ? DateTime.formatIso(DateTime.makeUnsafe(earliest)) : null;
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -133,42 +142,56 @@ export const make = Effect.gen(function* () {
   // must not publish after the change's own refresh and resurrect a removed
   // source. Callers queue behind the in-flight run and see current settings.
   const refreshLock = yield* Semaphore.make(1);
-  const refresh = Effect.gen(function* () {
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.orElseSucceed((): ServerSettings | null => null),
-    );
-    const entries = Object.entries(settings?.usageLimitSources ?? {}).filter(
-      ([, config]) => config.enabled,
-    );
-    const snapshots = yield* Effect.forEach(
-      entries,
-      ([id, config]) => readSource(id as UsageLimitSourceId, config),
-      { concurrency: 4 },
-    );
-    yield* publish(snapshots);
-  }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
+  const refreshSources = Effect.fn("UsageLimitSources.refreshSources")(
+    function* (origin: string | undefined) {
+      const settings = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+      const enabled = Object.entries(settings?.usageLimitSources ?? {}).filter(
+        ([, config]) => config.enabled,
+      );
+      const entries = enabled.filter(
+        ([, config]) => origin === undefined || hubOrigin(config.url) === origin,
+      );
+      if (origin !== undefined && entries.length === 0) return [];
+      const snapshots = yield* Effect.forEach(
+        entries,
+        ([id, config]) => readSource(id as UsageLimitSourceId, config),
+        { concurrency: 4 },
+      );
+      const byId = new Map(
+        [...(yield* Ref.get(stateRef)), ...snapshots].map((source) => [source.id, source]),
+      );
+      yield* publish(
+        enabled.flatMap(([id]) => {
+          const snapshot = byId.get(id as UsageLimitSourceId);
+          return snapshot ? [snapshot] : [];
+        }),
+      );
+      return snapshots;
+    },
+    (effect) => effect.pipe(refreshLock.withPermits(1)),
+  );
 
-  const poolResetAt = Effect.fn("UsageLimitSources.poolResetAt")(function* (baseUrl: string) {
+  const refresh = refreshSources(undefined).pipe(Effect.asVoid, Effect.ignoreCause({ log: true }));
+
+  const poolResetAt = Effect.fn("UsageLimitSources.poolResetAt")(function* (
+    baseUrl: string,
+    model?: string,
+  ) {
     const origin = hubOrigin(baseUrl);
     if (origin === null) return null;
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.orElseSucceed((): ServerSettings | null => null),
+    // Never use cached windows after a failed or timed-out refresh: routing
+    // and account availability may have changed since that snapshot.
+    const snapshots = yield* refreshSources(origin).pipe(
+      Effect.timeout("5 seconds"),
+      Effect.orElseSucceed(() => null),
     );
-    const matching = new Set(
-      Object.entries(settings?.usageLimitSources ?? {}).flatMap(([id, config]) =>
-        config.enabled && hubOrigin(config.url) === origin ? [id] : [],
-      ),
-    );
-    if (matching.size === 0) return null;
-    yield* refresh.pipe(Effect.timeout("5 seconds"), Effect.ignore);
+    if (snapshots === null || snapshots.some((source) => "error" in source)) return null;
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    return (yield* Ref.get(stateRef)).reduce<string | null>((earliest, source) => {
-      if (!matching.has(source.id) || source.error) return earliest;
-      const resetAt = poolUsageLimitResetAt(source.accounts, nowMs);
-      return resetAt !== null && (earliest === null || Date.parse(resetAt) < Date.parse(earliest))
-        ? resetAt
-        : earliest;
-    }, null);
+    return poolUsageLimitResetAt(
+      snapshots.flatMap((source) => source.accounts),
+      nowMs,
+      model,
+    );
   });
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
