@@ -109,6 +109,9 @@ describe("resolveT3McpToolPresentation", () => {
       displayName: "Render an HTML page",
       logo: "t3-code",
     });
+    expect(resolveT3McpToolPresentation("t3-code.html_render-v2")).toBeNull();
+    expect(resolveT3McpToolPresentation("t3-code__html_render-v2")).toBeNull();
+    expect(resolveT3McpToolPresentation("mcp__t3-code__html_render-v2")).toBeNull();
   });
 
   it("keeps unknown MCP tools on the generic renderer path", () => {
