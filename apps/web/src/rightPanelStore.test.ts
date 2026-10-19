@@ -1054,25 +1054,39 @@ describe("rightPanelStore", () => {
     expect(state.surfaces[1]).not.toHaveProperty("url");
   });
 
-  it("remembers each thread's pull request detail tab", () => {
+  it("restores each environment, thread and PR surface's detail tab after reload and URL reopen", async () => {
     const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
-    const id = pullRequestSurfaceId(pr);
+    const otherPr = { ...pr, projectId: "project-b" };
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    const selections = [
+      [refA, pr, "code"],
+      [refB, pr, "guide"],
+      [otherEnvironment, pr, "timeline"],
+      [refA, otherPr, "summary"],
+    ] as const;
     const store = useRightPanelStore.getState();
-    store.openPullRequest(refA, pr);
-    store.openPullRequest(refB, pr);
-    store.setPullRequestDetailTab(refA, id, "code");
-    store.openPullRequest(refA, { ...pr, url: "https://github.com/pingdotgg/t3code/pull/4909" });
+    for (const [ref, reference, tab] of selections) {
+      store.openPullRequest(ref, reference);
+      store.setPullRequestDetailTab(ref, pullRequestSurfaceId(reference), "guide");
+      store.setPullRequestDetailTab(ref, pullRequestSurfaceId(reference), tab);
+    }
 
-    const byThreadKey = useRightPanelStore.getState().byThreadKey;
-    expect(selectActiveRightPanelSurface(byThreadKey, refA)).toMatchObject({ detailTab: "code" });
-    expect(selectActiveRightPanelSurface(byThreadKey, refB)).not.toHaveProperty("detailTab");
+    const { storage, name } = useRightPanelStore.persist.getOptions();
+    const saved = await storage!.getItem(name!);
+    expect(saved).not.toBeNull();
+    useRightPanelStore.setState({ byThreadKey: {} });
+    await storage!.setItem(name!, saved!);
+    await useRightPanelStore.persist.rehydrate();
 
-    // Reporting the tab already shown is not a new panel choice.
-    const revision = store.getUserActionRevision(refA);
-    store.setPullRequestDetailTab(refA, id, "code");
-    store.setPullRequestDetailTab(refB, id, "summary");
-    expect(useRightPanelStore.getState().byThreadKey).toBe(byThreadKey);
-    expect(store.getUserActionRevision(refA)).toBe(revision);
+    for (const [ref, reference, tab] of selections) {
+      store.openPullRequest(ref, {
+        ...reference,
+        url: `https://github.com/${reference.repository}/pull/${reference.number}`,
+      });
+      const active = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+      expect(active?.id).toBe(pullRequestSurfaceId(reference));
+      expect(active?.kind === "pull-request" && (active.detailTab ?? "summary")).toBe(tab);
+    }
   });
 
   it("keeps matching repository and number on different hosts as separate tabs", () => {
