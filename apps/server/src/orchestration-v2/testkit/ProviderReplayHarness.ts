@@ -379,6 +379,7 @@ export function layerWithRegistry<Error>(
   const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ThreadCommandExecutor.layer,
         McpAppModelContext.layerEmpty,
         layerCheckpointServiceProvided,
         layerEventSinkProvided,

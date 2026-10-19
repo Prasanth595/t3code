@@ -150,6 +150,7 @@ const layerProviderAuthServiceProvided = ProviderAuthService.layer.pipe(
 const layerRunExecutionServiceProvided = RunExecutionService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      ThreadCommandExecutor.layer,
       McpAppModelContext.layer,
       layerCheckpointServiceProvided,
       layerEventSinkProvided,
