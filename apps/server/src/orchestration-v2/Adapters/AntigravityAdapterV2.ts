@@ -168,6 +168,7 @@ export function makeAntigravityAcpAdapterFlavor(
     // without the replay and is what the official client does.
     preferResumeSession: true,
     subagentsIdleOnTurnCompletion: true,
+    restartRuntimeOnEveryInterrupt: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
     // Commands can outlive end_turn; retain Stop until their terminal updates arrive.
     deferFinalizeForBackgroundWork: true,
