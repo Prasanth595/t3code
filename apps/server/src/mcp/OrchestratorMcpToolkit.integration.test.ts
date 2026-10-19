@@ -4181,12 +4181,12 @@ describe("orchestrator MCP toolkit", () => {
             }
             expect((yield* readApprovalStatus()).pendingApproval).toBeNull();
 
-            // A different task can own another run in the same backing thread.
+            // An unrelated untagged turn must not inherit the task's approval ownership.
+            const { delegatedTaskId: _, ...legacyRun } = approvalRun;
             const foreignRun = {
-              ...approvalRun,
+              ...legacyRun,
               id: RunId.make("run:foreign-approval"),
               ordinal: 2,
-              delegatedTaskId: NodeId.make("task:foreign-approval"),
             };
             const foreignNode = {
               ...approvalNode,
@@ -4253,7 +4253,6 @@ describe("orchestrator MCP toolkit", () => {
             });
 
             // Legacy ownership falls back to the original run, never the other run.
-            const { delegatedTaskId: _, ...legacyRun } = approvalRun;
             yield* persistApprovalEvent({
               id: EventId.make("event:approval-legacy"),
               type: "run.updated",
