@@ -274,6 +274,11 @@ export interface PullRequestProviderApi {
    * organization from the checkout, so only a checkout whose key matches the reference serves it.
    */
   readonly repositoryKey?: (input: { readonly canonicalKey: string }) => string;
+  /**
+   * Absent means every host detected as this kind is read. A host it refuses is listed as one that
+   * cannot be browsed here, and nothing is sent for it.
+   */
+  readonly servesHost?: (host: string) => boolean;
 
   readonly getViewer: (input: {
     readonly cwd: string;
