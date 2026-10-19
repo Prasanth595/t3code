@@ -200,10 +200,15 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
     await expect.element(trigger).not.toBeInTheDocument();
     await render({ run: "run-b" });
     await expect.element(trigger).toBeVisible();
-    // Another tab can receive a new ready while this owner still retains the old run.
+    // Another tab has dismissed the next run while this owner still retains run-b.
+    const otherRunDismissals = [
+      ...dismissals[0].temporary,
+      ...dismissals[0].temporary.map((id) => id.replace("\u0000run-a\u0000", "\u0000run-c\u0000")),
+    ];
     const storageKey = "t3code:chat-warning-dismissals:v3";
     const newValue = JSON.stringify({
       ...dismissals[0],
+      temporary: otherRunDismissals,
       lastKnownRunByEnvironment: { [environmentId]: "run-c" },
     });
     await act(() => {
@@ -212,17 +217,25 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
     });
     expect(dismissals[0].lastKnownRunByEnvironment?.[environmentId]).toBe("run-c");
     expect(window.localStorage.getItem(storageKey)).toBe(newValue);
+    await userEvent.click(trigger);
+    await userEvent.click(page.getByRole("button", { name: "Dismiss for now", exact: true }));
+    await expect.element(trigger).not.toBeInTheDocument();
+    expect.soft(dismissals[0].temporary).toEqual(expect.arrayContaining(otherRunDismissals));
     await act(async () => root.render(null));
     await render({ run: null });
+    await expect.element(trigger).not.toBeInTheDocument();
+    await render({ run: "run-c" });
+    await expect.element(trigger).not.toBeInTheDocument();
+    await render({ run: "run-d" });
     await expect.element(trigger).toBeVisible();
     await userEvent.click(trigger);
     await userEvent.click(page.getByRole("button", { name: "Don't show again", exact: true }));
     await expect.element(trigger).not.toBeInTheDocument();
     await act(async () => root.render(null));
-    await render({ run: "run-c" });
+    await render({ run: "run-e" });
     await expect.element(trigger).not.toBeInTheDocument();
 
-    // A dismissal on a different environment must not prune this run's temporary IDs.
+    // Dismissing another warning preserves the other environment and run identities.
     await render({ environment: otherEnvironmentId });
     await userEvent.click(trigger);
     await userEvent.click(page.getByRole("button", { name: "Dismiss for now", exact: true }));
@@ -233,7 +246,7 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
       true,
     );
     expect(dismissals[0].temporary.some((id) => id.startsWith("remote\u0000run-a\u0000"))).toBe(
-      false,
+      true,
     );
   } finally {
     await act(() => dismissals[1]({ temporary: [], permanent: [] }));

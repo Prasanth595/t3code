@@ -78,17 +78,9 @@ export function useChatWarnings({
     ),
     dismissForNow: (ids: ReadonlyArray<string>) => {
       if (serverRunId === null || runPrefix === null) return;
-      const environmentPrefix = `${environmentId}\u0000`;
       setDismissals((current) => ({
         ...current,
-        temporary: [
-          ...new Set([
-            ...current.temporary.filter(
-              (id) => !id.startsWith(environmentPrefix) || id.startsWith(runPrefix),
-            ),
-            ...ids.map((id) => `${runPrefix}${id}`),
-          ]),
-        ],
+        temporary: [...new Set([...current.temporary, ...ids.map((id) => `${runPrefix}${id}`)])],
       }));
     },
     dismissForever: (ids: ReadonlyArray<string>) =>
