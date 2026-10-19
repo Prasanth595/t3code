@@ -280,15 +280,23 @@ describe("pruneScanCache", () => {
 });
 
 describe("dedupeWithinFile", () => {
-  it("keeps the first record per dedupe key", () => {
-    const kept = dedupeWithinFile([
-      record({ totals: { ...record().totals, outputTokens: 1 } }),
-      record({ totals: { ...record().totals, outputTokens: 999 } }),
-      record({ dedupeKey: "msg_2:" }),
-    ]);
+  it("keeps the first Claude record's attribution with its fullest usage snapshot", () => {
+    const first = record({ totals: { ...record().totals, outputTokens: 1 } });
+    const output = record({
+      timestampMs: first.timestampMs + 500,
+      totals: { ...first.totals, outputTokens: 100 },
+      reportedCostUsd: 0.25,
+    });
+    const thinking = record({
+      ...output,
+      totals: { ...output.totals, reasoningTokens: 40 },
+    });
+    const other = record({ dedupeKey: "msg_2:" });
+    const kept = dedupeWithinFile([first, output, thinking, first, thinking, other]);
 
-    expect(kept).toHaveLength(2);
-    expect(kept[0]?.totals.outputTokens).toBe(1);
+    expect(kept).toEqual([{ ...first, totals: thinking.totals, reportedCostUsd: 0.25 }, other]);
+    expect(first.totals.outputTokens).toBe(1);
+    expect(output.totals.reasoningTokens).toBe(0);
   });
 
   it("keeps every record that has no dedupe key", () => {

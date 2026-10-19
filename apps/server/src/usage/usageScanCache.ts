@@ -9,16 +9,21 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6 reparses Claude history to recover fuller output snapshots and recorded thinking.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
- * An older server sharing that directory cannot read a newer cache and would
- * replace it, dropping saved usage for deleted transcripts. Separate files keep
- * both.
+ * Each cache version writes its own file in the state directory. An older
+ * server sharing that directory cannot read a newer cache and would replace
+ * it, dropping saved usage for deleted transcripts. Separate files keep both.
+ * Import older files too: a downgraded server may have retained additional history.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
-export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const LEGACY_SCAN_CACHE_FILE_NAMES = [
+  "usage-scan-cache-v5.json",
+  "usage-scan-cache.json",
+] as const;
 
 const SPEEDS: readonly UsageSpeed[] = ["standard", "fast", "ultrafast"];
 
@@ -289,11 +294,12 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v4 records of stateful formats (Codex) predate service tiers, so they
-    // all priced as standard. Keep them, because the rollout may be gone, but
-    // make a live rollout re-parse whole: no file has size -1, and a zero
-    // position cannot resume.
-    const legacy = format.state !== undefined && version < USAGE_SCAN_CACHE_VERSION;
+    // v4 records of stateful formats (Codex) predate service tiers, and
+    // pre-v6 Claude records miss later usage snapshots. Keep them, because the
+    // transcript may be gone, but make a live one re-parse whole: no file has
+    // size -1, and a zero position cannot resume.
+    const legacy =
+      (format.state !== undefined && version < 5) || (entry.p === "claude" && version < 6);
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;
@@ -348,21 +354,54 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/**
- * Callers stitching an incremental parse together pass one `seen` set across the line and tail
- * record batches so the whole file stays deduplicated as a unit; the set is mutated in place.
- */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
+  const indexes = new Map<string, number>();
   for (const record of records) {
     if (record.dedupeKey !== null) {
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
+      const index = indexes.get(record.dedupeKey);
+      if (index !== undefined) {
+        kept[index] = fullerClaudeSnapshot(kept[index]!, record);
+        continue;
+      }
+      indexes.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
   }
   return kept;
+}
+
+/**
+ * Claude Code repeats a message's usage on every content block, and later
+ * blocks can carry fuller output and thinking counts. Keep the first block's
+ * attribution with the fullest snapshot; never sum the repeats.
+ */
+function fullerClaudeSnapshot(kept: UsageRecord, next: UsageRecord): UsageRecord {
+  if (kept.provider !== "claude" || next.provider !== "claude") return kept;
+  const snapshot =
+    next.totals.outputTokens > kept.totals.outputTokens ||
+    (next.totals.outputTokens === kept.totals.outputTokens &&
+      next.totals.reasoningTokens > kept.totals.reasoningTokens)
+      ? next
+      : kept;
+  const reasoningTokens = Math.min(
+    snapshot.totals.outputTokens,
+    Math.max(kept.totals.reasoningTokens, next.totals.reasoningTokens),
+  );
+  if (snapshot === kept && reasoningTokens === kept.totals.reasoningTokens) return kept;
+  return {
+    ...kept,
+    totals: { ...snapshot.totals, reasoningTokens },
+    reportedCostUsd:
+      snapshot.totals.outputTokens > kept.totals.outputTokens
+        ? snapshot.reportedCostUsd
+        : (snapshot.reportedCostUsd ?? kept.reportedCostUsd),
+  };
+}
+
+/** Reconcile the displayed usage without promoting a replaceable tail into committed records. */
+export function cachedFileRecords(entry: CachedFile): readonly UsageRecord[] {
+  return entry.tailRecords.length === 0
+    ? entry.records
+    : dedupeWithinFile([...entry.records, ...entry.tailRecords]);
 }

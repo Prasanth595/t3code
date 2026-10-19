@@ -6,6 +6,7 @@ import {
   costPerMillionTokens,
   modelShare,
   sortModelsByTokens,
+  tokenTypeSegments,
 } from "./usageBreakdown";
 
 const model = (
@@ -47,6 +48,22 @@ describe("sortModelsByTokens", () => {
       "lower-cost",
     ]);
     expect(models.map((item) => item.model)).toEqual(["lower-cost", "more-tokens", "higher-cost"]);
+  });
+});
+
+describe("token types", () => {
+  it("separates recorded thinking from output without counting it twice", () => {
+    const segments = tokenTypeSegments({
+      uncachedInputTokens: 200,
+      cachedInputTokens: 300,
+      cacheCreationTokens: 50,
+      outputTokens: 100,
+      reasoningTokens: 40,
+    });
+
+    expect(segments.find((segment) => segment.label === "Output")?.value).toBe(60);
+    expect(segments.find((segment) => segment.label === "Thinking")?.value).toBe(40);
+    expect(segments.reduce((sum, segment) => sum + segment.value, 0)).toBe(650);
   });
 });
 

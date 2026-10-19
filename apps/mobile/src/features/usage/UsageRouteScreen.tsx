@@ -573,6 +573,11 @@ function ChartCard(props: {
           ))}
         </View>
       </View>
+      {metric === "tokens" ? (
+        <Text className="text-xs text-foreground-muted">
+          Lighter segments show recorded thinking tokens. Unreported thinking stays in output.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -657,6 +662,9 @@ function ProviderSection(props: {
               {metric === "cost"
                 ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
                 : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+              {metric === "tokens" && (provider.reasoningTokens ?? 0) > 0
+                ? ` · ${formatTokens(provider.reasoningTokens ?? 0)} thinking`
+                : null}
             </Text>
           </View>
         );
@@ -703,8 +711,13 @@ function TotalsSection(props: { readonly merged: MergedUsage; readonly isPast24H
         />
         <MetricCell
           label="Output"
-          value={formatTokens(merged.outputTokens)}
-          detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
+          value={formatTokens(merged.outputTokens - merged.reasoningTokens)}
+          detail="Excludes recorded thinking"
+        />
+        <MetricCell
+          label="Thinking"
+          value={formatTokens(merged.reasoningTokens)}
+          detail="Only separately recorded tokens"
         />
         <MetricCell
           label="Unpriced"
@@ -847,6 +860,12 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
                   ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
                   : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
             </Text>
+            {metric === "tokens" && model.tokens.reasoningTokens > 0 ? (
+              <Text className="text-xs text-foreground-muted">
+                {formatTokens(model.tokens.outputTokens - model.tokens.reasoningTokens)} output ·{" "}
+                {formatTokens(model.tokens.reasoningTokens)} thinking
+              </Text>
+            ) : null}
           </View>
           <Text className="text-base tabular-nums text-foreground">
             {metric === "tokens"

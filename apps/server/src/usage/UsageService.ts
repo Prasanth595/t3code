@@ -48,9 +48,10 @@ import {
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
+  cachedFileRecords,
   decodeScanCache,
   dedupeWithinFile,
-  LEGACY_SCAN_CACHE_FILE_NAME,
+  LEGACY_SCAN_CACHE_FILE_NAMES,
   makeScanCacheWriter,
   pruneScanCache,
   SCAN_CACHE_FILE_NAME,
@@ -204,7 +205,9 @@ export const make = Effect.gen(function* () {
 
   const ratesCachePath = path.join(config.stateDir, "usage-model-rates.json");
   const scanCachePath = path.join(config.stateDir, SCAN_CACHE_FILE_NAME);
-  const legacyScanCachePath = path.join(config.stateDir, LEGACY_SCAN_CACHE_FILE_NAME);
+  const legacyScanCachePaths = LEGACY_SCAN_CACHE_FILE_NAMES.map((fileName) =>
+    path.join(config.stateDir, fileName),
+  );
   const writeCacheFile = (filePath: string, contents: string) =>
     writeFileStringAtomically({ filePath, contents }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -391,19 +394,55 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((raw) => decodeScanCacheFile(raw)),
           Effect.catchCause(() => Effect.succeed(null)),
         );
-      let document = yield* readDocument(scanCachePath);
-      if (document === null) {
-        document = yield* readDocument(legacyScanCachePath);
-        cacheDirty = document !== null;
-      }
-      if (document === null) return;
-      for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
-        fileCache.set(path, entry);
-      }
-      const sources = decodeCachedSources(document);
-      if (Option.isSome(sources)) {
-        for (const [key, source] of Object.entries(sources.value.sources))
-          sourceCache.set(key, source);
+      // Current format wins ties, but every supported cache can hold deleted history.
+      for (const filePath of [scanCachePath, ...legacyScanCachePaths]) {
+        const document = yield* readDocument(filePath);
+        if (document === null) continue;
+        for (const [path, entry] of decodeScanCache(document, transcriptFormats)) {
+          const previous = fileCache.get(path);
+          let selected =
+            previous === undefined || entry.mtimeMs > previous.mtimeMs ? entry : previous;
+          if (previous?.provider === "claude" && entry.provider === "claude") {
+            const older = selected === entry ? previous : entry;
+            const reconcile = (
+              records: readonly UsageRecord[],
+              candidates: readonly UsageRecord[],
+            ) => {
+              const snapshots = new Map(
+                dedupeWithinFile([...records, ...candidates])
+                  .filter((record) => record.dedupeKey !== null)
+                  .map((record) => [record.dedupeKey, record]),
+              );
+              return records.map((record) =>
+                record.dedupeKey === null ? record : (snapshots.get(record.dedupeKey) ?? record),
+              );
+            };
+            const records = reconcile(selected.records, older.records);
+            const tailRecords = reconcile(selected.tailRecords, [
+              ...older.records,
+              ...older.tailRecords,
+            ]);
+            if (
+              records.some((record, index) => record !== selected.records[index]) ||
+              tailRecords.some((record, index) => record !== selected.tailRecords[index])
+            ) {
+              selected = { ...selected, records, tailRecords };
+            }
+          }
+          if (selected !== previous) {
+            fileCache.set(path, selected);
+            if (filePath !== scanCachePath) cacheDirty = true;
+          }
+        }
+        const sources = decodeCachedSources(document);
+        if (Option.isSome(sources)) {
+          for (const [key, source] of Object.entries(sources.value.sources)) {
+            if (!sourceCache.has(key)) {
+              sourceCache.set(key, source);
+              if (filePath !== scanCachePath) cacheDirty = true;
+            }
+          }
+        }
       }
     }),
   );
@@ -473,10 +512,7 @@ export const make = Effect.gen(function* () {
         cached.provider === provider
       ) {
         return {
-          records:
-            cached.tailRecords.length === 0
-              ? cached.records
-              : [...cached.records, ...cached.tailRecords],
+          records: cachedFileRecords(cached),
         };
       }
 
@@ -494,21 +530,22 @@ export const make = Effect.gen(function* () {
       // (size, mtime) would silently drop the file's usage until it changes.
       if (parsed === null)
         return {
-          records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+          records: cached?.provider === provider ? cachedFileRecords(cached) : [],
           failed: true,
         };
 
       const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
-
+      const entry = {
+        size,
+        mtimeMs,
+        provider,
+        records: dedupeWithinFile([...base, ...parsed.records]),
+        tailRecords: dedupeWithinFile(parsed.tailRecords),
+        position: parsed.position,
+      };
       return {
-        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
-        update: {
-          entry: { size, mtimeMs, provider, records, tailRecords, position: parsed.position },
-          replaces: cached,
-        },
+        records: cachedFileRecords(entry),
+        update: { entry, replaces: cached },
       };
     });
 
@@ -713,7 +750,7 @@ export const make = Effect.gen(function* () {
           !isWithinDirectory(filePath, dir)
         )
           continue;
-        retainedFiles.push({ path: filePath, records: [...entry.records, ...entry.tailRecords] });
+        retainedFiles.push({ path: filePath, records: cachedFileRecords(entry) });
       }
       return retainedFiles;
     });
