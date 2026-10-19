@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { EnvironmentId, ThreadId, WS_METHODS } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type TerminalAttachInput,
+  type TerminalAttachStreamEvent,
+  ThreadId,
+  WS_METHODS,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -28,6 +34,7 @@ import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type * as RpcSession from "../rpc/session.ts";
 import { createAssetEnvironmentAtoms } from "./assets.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
+import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   environmentRpcKey,
   createAtomCommandScheduler,
@@ -101,6 +108,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
 ) {
   const supervisorState = yield* SubscriptionRef.make(initialState ?? queryConnectionState());
   const supervisorSession = yield* SubscriptionRef.make(Option.some(QUERY_RPC_SESSION));
+  const streamGeneration = yield* SubscriptionRef.make(0);
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
     target: QUERY_ENVIRONMENT,
     state: supervisorState,
@@ -115,7 +123,12 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
   const followStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["followStream"] = (
     _environmentId,
     stream,
-  ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+  ) =>
+    SubscriptionRef.changes(streamGeneration).pipe(
+      Stream.switchMap(() =>
+        Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      ),
+    );
   const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
     run,
     followStream,
@@ -139,6 +152,7 @@ const makeEnvironmentQueryHarness = Effect.fn("TestEnvironmentQuery.makeHarness"
     atom: family({ environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined }),
     supervisorSession,
     supervisorState,
+    streamGeneration,
   };
 });
 
@@ -415,6 +429,76 @@ describe("environment query lifecycle", () => {
       expect(yield* url("message-1")).toBe("/api/assets/first/image.png");
       expect(sign.mock.calls).toEqual([[{ resource }], [{ resource }]]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect("terminal attach resubscribes with resume only after the stream replied", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void);
+      const inputs = yield* Queue.unbounded<TerminalAttachInput>();
+      const events = yield* Queue.unbounded<TerminalAttachStreamEvent>();
+      const received = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.terminalAttach]: (input: TerminalAttachInput) =>
+          Stream.fromEffect(Queue.offer(inputs, input)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.fromQueue(events)),
+          ),
+      } as unknown as RpcSession.RpcSession["client"];
+      const firstSession = { ...QUERY_RPC_SESSION, client };
+      yield* SubscriptionRef.set(harness.supervisorSession, Option.some(firstSession));
+      const input = {
+        threadId: "thread-1",
+        terminalId: "terminal-1",
+        cwd: "/tmp/project",
+        restartIfNotRunning: true,
+      };
+      const atoms = createTerminalEnvironmentAtoms(harness.runtime);
+      const registry = AtomRegistry.make();
+      const atom = atoms.attach({ environmentId: QUERY_ENVIRONMENT.environmentId, input });
+      const unmount = registry.subscribe(
+        atom,
+        (result) => {
+          if (AsyncResult.isSuccess(result) && result.value.version > 0) {
+            Deferred.doneUnsafe(received, Exit.void);
+          }
+        },
+        { immediate: true },
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          unmount();
+          registry.dispose();
+        }),
+      );
+
+      expect(yield* Queue.take(inputs)).toEqual(input);
+      yield* SubscriptionRef.set(harness.supervisorSession, Option.some({ ...firstSession }));
+      expect(yield* Queue.take(inputs)).toEqual(input);
+      yield* Queue.offer(events, {
+        type: "closed",
+        threadId: input.threadId,
+        terminalId: input.terminalId,
+      });
+      yield* Deferred.await(received);
+
+      yield* SubscriptionRef.set(harness.supervisorSession, Option.some({ ...firstSession }));
+      expect(yield* Queue.take(inputs)).toEqual({ ...input, resume: true });
+      // Catalog replacements rerun the same stream through followStream's switchMap.
+      yield* SubscriptionRef.update(harness.streamGeneration, (generation) => generation + 1);
+      expect(yield* Queue.take(inputs)).toEqual({ ...input, resume: true });
+
+      unmount();
+      registry.dispose();
+      const remountedRegistry = AtomRegistry.make();
+      const remount = remountedRegistry.subscribe(atom, () => {}, { immediate: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          remount();
+          remountedRegistry.dispose();
+        }),
+      );
+      expect(yield* Queue.take(inputs)).toEqual(input);
+    }),
   );
 
   it.effect("keeps the previous value when a refetch returns equal content", () =>
