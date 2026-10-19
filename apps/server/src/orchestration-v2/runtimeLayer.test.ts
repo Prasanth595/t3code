@@ -4802,11 +4802,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const send = (index: number, text: string, provider = false) =>
+      const send = (index: number, text: string, source: "web" | "provider" | "server" = "web") =>
         orchestrator.dispatch({
           type: "message.dispatch",
-          createdBy: provider ? "agent" : "user",
-          creationSource: provider ? "provider" : "web",
+          createdBy: source === "web" ? "user" : "agent",
+          creationSource: source,
           commandId: CommandId.make(`${threadId}:message:${index}`),
           threadId,
           messageId: MessageId.make(`${threadId}:message:${index}`),
@@ -4818,12 +4818,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* send(0, "Active");
       yield* send(1, "Queued before the restart");
       yield* recovery.reconcile("startup");
-      yield* send(2, "After the restart");
-      yield* send(3, "Background task completed.", true);
+      yield* send(2, "First background task completed.", "provider");
+      yield* send(3, "Background task completed.", "provider");
+      yield* send(4, "Continue after the command completed.", "server");
       const queued = yield* orchestrator.getThreadProjection(threadId);
       const [held, active, wake] = [queued.runs[1]!, queued.runs[2]!, queued.runs[3]!];
+      assert.equal(active.status, "starting");
       assert.isTrue(held.queueHeld);
+      assert.equal(wake.status, "queued");
       assert.notEqual(wake.queueHeld, true);
+      const textContinuation = queued.runs[4]!;
+      assert.isTrue(textContinuation.queueHeld);
       const now = yield* DateTime.now;
       yield* events.write({
         events: [
@@ -4840,7 +4845,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* orchestrator.resumeQueuedRuns;
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(after.runs.find((run) => run.id === wake.id)?.status, "starting");
-      assert.equal(after.runs.find((run) => run.id === held.id)?.status, "queued");
+      assert.deepEqual(
+        after.runs.find((run) => run.id === held.id),
+        held,
+      );
+      assert.deepEqual(
+        after.runs.find((run) => run.id === textContinuation.id),
+        textContinuation,
+      );
     }),
   );
 

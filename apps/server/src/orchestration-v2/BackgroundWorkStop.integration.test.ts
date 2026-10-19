@@ -35,12 +35,14 @@ const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
 const stopEarlierBackgroundWork = ({
+  wakeAfterStop = false,
   failedStart = false,
   stopWithQueue,
   olderStart = false,
   stalledRun,
   workflowMember = false,
 }: {
+  readonly wakeAfterStop?: boolean;
   readonly failedStart?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
@@ -179,6 +181,46 @@ const stopEarlierBackgroundWork = ({
         });
         yield* worker.drain();
         yield* Fiber.join(running);
+        if (wakeAfterStop) {
+          const send = (id: string, provider = false) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(`message:${id}`),
+              text: id,
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: provider ? "agent" : "user",
+              creationSource: provider ? "provider" : "web",
+            });
+          yield* send("follow-up");
+          yield* orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("stop"),
+            threadId,
+          });
+          // Stop is committed, but its provider interrupt has not run yet.
+          yield* send("Background task completed.", true);
+          const [stopped, followUp, wake] = (yield* orchestrator.getThreadProjection(threadId))
+            .runs;
+          assert.equal(stopped?.status, "running");
+          assert.isTrue(followUp?.queueHeld);
+          assert.isTrue(wake?.queueHeld);
+
+          yield* worker.drain();
+          yield* orchestrator.resumeQueuedRuns;
+          yield* worker.drain();
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            after.runs.map((run) => run.status),
+            ["interrupted", "queued", "queued"],
+          );
+          assert.isTrue(after.runs.find((run) => run.id === followUp?.id)?.queueHeld);
+          assert.isTrue(after.runs.find((run) => run.id === wake?.id)?.queueHeld);
+          assert.lengthOf(started, 1);
+          return;
+        }
         const first = started[0]!;
         const codexTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
         const devServerId = TurnItemId.make("turn-item:dev-server");
@@ -951,163 +993,6 @@ it.effect.each([
   stopEarlierBackgroundWork({ stalledRun }),
 );
 
-// A provider wake that queues after Stop, while the stopped turn is still ending, waits with
-// the queue Stop held instead of starting when that turn ends.
 it.effect("Stop holds a provider wake that queues before the stopped turn ends", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("stop-holds-provider-wake");
-      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      const started: ProviderAdapter.ProviderAdapterV2TurnInput[] = [];
-      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-        instanceId,
-        driver,
-        getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-        openSession: (input) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            return {
-              instanceId,
-              driver,
-              providerSessionId: input.providerSessionId,
-              providerSession: {
-                id: input.providerSessionId,
-                driver,
-                providerInstanceId: instanceId,
-                status: "ready",
-                cwd,
-                model: modelSelection.model,
-                capabilities: CodexProviderCapabilitiesV2,
-                createdAt: now,
-                updatedAt: now,
-                lastError: null,
-              },
-              events: Stream.fromQueue(events),
-              ensureThread: ({ threadId }) =>
-                Effect.succeed({
-                  id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
-                  driver,
-                  providerInstanceId: instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId: threadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: { driver, nativeId: "native-thread", strength: "strong" },
-                  nativeConversationHeadRef: null,
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  createdAt: now,
-                  updatedAt: now,
-                }),
-              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-              startTurn: (turn) =>
-                Effect.gen(function* () {
-                  started.push(turn);
-                  yield* Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: {
-                        driver,
-                        nativeId: `native:${turn.attemptId}`,
-                        strength: "strong",
-                      },
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
-                    },
-                  });
-                }),
-              steerTurn: () => Effect.die("unused"),
-              // The interrupt lands later, so the stopped run stays active meanwhile.
-              interruptTurn: () => Effect.void,
-              respondToRuntimeRequest: () => Effect.die("unused"),
-              readThreadSnapshot: () => Effect.die("unused"),
-              rollbackThread: () => Effect.die("unused"),
-              forkThread: () => Effect.die("unused"),
-            };
-          }),
-      };
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = ThreadId.make("thread:stop-holds-provider-wake");
-        const send = (id: string, provider = false) =>
-          orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(id),
-            threadId,
-            messageId: MessageId.make(`message:${id}`),
-            text: id,
-            attachments: [],
-            dispatchMode: { type: id === "work" ? "start_immediately" : "queue_after_active" },
-            createdBy: provider ? "agent" : "user",
-            creationSource: provider ? "provider" : "web",
-          });
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("create"),
-          threadId,
-          projectId: ProjectId.make("project:stop-holds-provider-wake"),
-          title: "Stop holds a provider wake",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const running = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        yield* send("work");
-        yield* worker.drain();
-        yield* Fiber.join(running);
-        yield* send("follow-up");
-        yield* orchestrator.dispatch({
-          type: "thread.stop",
-          commandId: CommandId.make("stop"),
-          threadId,
-        });
-        yield* send("Background task completed.", true);
-        const [stopped, followUp, wake] = (yield* orchestrator.getThreadProjection(threadId)).runs;
-        assert.equal(stopped?.status, "running");
-        assert.isTrue(followUp?.queueHeld);
-        assert.isTrue(wake?.queueHeld);
-
-        // The interrupt ends the stopped run, and nothing starts after it.
-        yield* worker.drain();
-        yield* orchestrator.resumeQueuedRuns;
-        yield* worker.drain();
-        const after = yield* orchestrator.getThreadProjection(threadId);
-        assert.deepEqual(
-          after.runs.map((run) => run.status),
-          ["interrupted", "queued", "queued"],
-        );
-        assert.lengthOf(started, 1);
-      }).pipe(
-        Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            { name: "stop-holds-provider-wake" },
-            ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false },
-          ),
-        ),
-      );
-    }),
-  ),
+  stopEarlierBackgroundWork({ wakeAfterStop: true }),
 );
