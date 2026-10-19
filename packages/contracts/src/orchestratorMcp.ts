@@ -365,7 +365,7 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   maxCharsPerItem: Schema.optional(
     NonNegativeInt.check(Schema.isLessThanOrEqualTo(50_000)).annotate({
       description:
-        "Maximum UTF-16 code units per item. Zero returns metadata for every visible timeline item in either view, without text or delegated-result acknowledgment; page from position 0 using afterPosition until hasMore is false.",
+        "Maximum UTF-16 code units per item. Zero returns metadata for every visible timeline item in either view, without text or delegated-result acknowledgment; omit afterPosition on the first call, then pass afterPosition=nextPosition until hasMore is false.",
     }),
   ),
 });
