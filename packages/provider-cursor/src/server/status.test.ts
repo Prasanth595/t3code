@@ -232,35 +232,47 @@ describe("checkCursorProviderStatus", () => {
     }),
   );
 
-  it.effect("says when Cursor rejects the account's plan", () =>
-    Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(
-        baseCursorSettings,
-        { CURSOR_API_KEY: "free-plan-key" },
-        "browser",
-      ).pipe(
-        Effect.provide(
-          CursorSdkCatalog.layerTest(() =>
-            Effect.fail(
-              new CursorSdkCatalog.CursorSdkCatalogError({
-                authenticationFailure: false,
-                cause: new CursorSdkError(
-                  "[plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.",
-                  { code: "plan_required", status: 403 },
-                ),
-              }),
+  it.effect.each([
+    {
+      authenticationType: "browser" as const,
+      message:
+        "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one.",
+    },
+    {
+      authenticationType: "api-key" as const,
+      message:
+        "Cursor needs a paid plan to run in T3 Code. Upgrade the account that owns CURSOR_API_KEY or use a key from a paid account.",
+    },
+  ])(
+    "explains a rejected plan for $authenticationType authentication",
+    ({ authenticationType, message }) =>
+      Effect.gen(function* () {
+        const provider = yield* checkCursorProviderStatus(
+          baseCursorSettings,
+          { CURSOR_API_KEY: "free-plan-key" },
+          authenticationType,
+        ).pipe(
+          Effect.provide(
+            CursorSdkCatalog.layerTest(() =>
+              Effect.fail(
+                new CursorSdkCatalog.CursorSdkCatalogError({
+                  authenticationFailure: false,
+                  cause: new CursorSdkError(
+                    "[plan_required] Cloud Agent is not available for free users. Please upgrade to Pro.",
+                    { code: "plan_required", status: 403 },
+                  ),
+                }),
+              ),
             ),
           ),
-        ),
-      );
+        );
 
-      expect(provider).toMatchObject({
-        status: "error",
-        auth: { status: "unknown" },
-        message:
-          "Cursor needs a paid plan to run in T3 Code. Upgrade this account or sign in with a different one.",
-      });
-    }),
+        expect(provider).toMatchObject({
+          status: "error",
+          auth: { status: "unknown" },
+          message,
+        });
+      }),
   );
 
   it.effect("requires a Cursor API key without probing any external Cursor binary", () =>
