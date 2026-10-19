@@ -221,6 +221,9 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "",
       options: {
         title: "Settings",
+        // Android draws its own app bar here. Hidden only from inside the screen, the native one
+        // showed for the first frame of the Settings tab and pushed the page down.
+        headerShown: Platform.OS !== "android",
       },
     }),
     SettingsEnvironments: createNativeStackScreen({

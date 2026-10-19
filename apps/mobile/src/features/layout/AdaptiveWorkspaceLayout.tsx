@@ -712,7 +712,13 @@ function AdaptiveWorkspaceLayoutContent(
                   panes.primarySidebarVisible ? "auto" : "no-hide-descendants"
                 }
                 pointerEvents={panes.primarySidebarVisible ? "auto" : "none"}
-                style={[workspacePage ? { display: "none" } : null, sidebarAnimatedStyle]}
+                // Under a workspace page the sidebar leaves the row but keeps its size, so its
+                // lists never lay out at zero size and are ready, unchanged, on the way back. The
+                // content pane, laid out after it, covers it, in the same mount as the page.
+                style={[
+                  workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
+                  sidebarAnimatedStyle,
+                ]}
               >
                 <Animated.View className="flex-1" style={listPaneAnimatedStyle}>
                   <RenderErrorBoundary
