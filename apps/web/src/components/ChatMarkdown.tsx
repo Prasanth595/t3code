@@ -589,10 +589,6 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     return observeResize(table, measureClippedCells);
   }, [measureClippedCells]);
 
-  function toggleExpanded() {
-    setExpanded((value) => !value);
-  }
-
   const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
     if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -650,7 +646,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
                   variant={expanded ? "secondary" : "ghost-muted"}
                   size="icon-xs"
                   aria-pressed={expanded}
-                  onClick={toggleExpanded}
+                  onClick={() => setExpanded((value) => !value)}
                   aria-label={expandLabel}
                 />
               }
