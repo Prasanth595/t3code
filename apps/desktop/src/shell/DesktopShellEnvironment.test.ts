@@ -156,7 +156,7 @@ describe("DesktopShellEnvironment", () => {
               "    from_string: {|value| $value | split row (char esep) },",
               '    to_string: {|value| $value | str join (char esep) | str replace "nu tools" "converted-tools" }',
               "  },",
-              "  __MISE_DIFF: { from_string: {|value| $value }, to_string: {|value| $value | str upcase } }",
+              "  __MISE_DIFF: { from_string: {|value| $value }, to_string: { str upcase } }",
               "}",
               'print "startup noise"',
             ].join("\n"),
