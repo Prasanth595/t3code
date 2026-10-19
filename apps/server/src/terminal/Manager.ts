@@ -2764,7 +2764,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       };
     });
 
-  // Subscribe after taking the lock so lock contention cannot accumulate an unbounded replay.
+  // Subscribe after taking the lock so contention cannot accumulate an unbounded replay.
+  // Snapshot listeners run under that lock and must not block.
   const streamSession = (
     input: TerminalObserveInput,
     initial: Effect.Effect<TerminalSessionSnapshot | null, TerminalError>,
@@ -2835,14 +2836,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       };
     }).pipe(
       (effect) => withThreadLock(input.threadId, effect),
-      Effect.catchCause((cause) =>
-        Effect.flatMap(
-          Effect.sync(() => {
-            unsubscribe?.();
-            unsubscribe = null;
-          }),
-          () => Effect.failCause(cause),
-        ),
+      Effect.onError(() =>
+        Effect.sync(() => {
+          unsubscribe?.();
+          unsubscribe = null;
+        }),
       ),
     );
   };
