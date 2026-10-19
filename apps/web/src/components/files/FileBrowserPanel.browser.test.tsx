@@ -320,6 +320,9 @@ describe("Files panel", () => {
     const retainedSelection = { selectedPath: "src/app.ts", selectedPathRevealId: 1 };
     await render(retainedSelection);
     expect(visiblePaths()).toContain("src/app.ts");
+    await remount(retainedSelection);
+    expect(visiblePaths()).toContain("src/app.ts");
+    expect.soft(treeRow("src/app.ts")?.getAttribute("aria-selected")).toBe("true");
     await toggleFolder("src");
     expect(visiblePaths()).not.toContain("src/app.ts");
     await remount(retainedSelection);
@@ -433,76 +436,88 @@ describe("Files panel", () => {
     ).toBe("file:src/other.ts");
   });
 
-  it("keeps a selected deep search result revealed after its directory listings finish and search closes", async () => {
-    const path = "src/one/two/three/four/five/target.ts";
-    const segments = path.split("/");
-    const directories = segments
-      .slice(0, -1)
-      .map((_, index) => segments.slice(0, index + 1).join("/"));
-    const entries: ProjectEntry[] = [
-      ...directories.map((path) => ({ path, kind: "directory" as const })),
-      ...directories.map((path) => ({ path: `${path}/sibling.txt`, kind: "file" as const })),
-      { path, kind: "file" },
-    ];
-    files.directoryEntries = [{ path: "src", kind: "directory" }];
-    files.loadedDirectories = new Set([""]);
-    const pending = new Map<string, { promise: Promise<void>; finish: () => void }>();
-    files.load.mockImplementation((directory) => {
-      if (files.loadedDirectories.has(directory)) return Promise.resolve();
-      const existing = pending.get(directory);
-      if (existing) return existing.promise;
-      let resolveListing!: () => void;
-      const promise = new Promise<void>((resolve) => {
-        resolveListing = resolve;
+  it.each(["mounted", "remounted"])(
+    "keeps a selected deep search result revealed when %s while its directory listings finish",
+    async (lifecycle) => {
+      const path = "src/one/two/three/four/five/target.ts";
+      const segments = path.split("/");
+      const directories = segments
+        .slice(0, -1)
+        .map((_, index) => segments.slice(0, index + 1).join("/"));
+      const entries: ProjectEntry[] = [
+        ...directories.map((path) => ({ path, kind: "directory" as const })),
+        ...directories.map((path) => ({ path: `${path}/sibling.txt`, kind: "file" as const })),
+        { path, kind: "file" },
+      ];
+      files.directoryEntries = [{ path: "src", kind: "directory" }];
+      files.loadedDirectories = new Set([""]);
+      const pending = new Map<string, { promise: Promise<void>; finish: () => void }>();
+      files.load.mockImplementation((directory) => {
+        if (files.loadedDirectories.has(directory)) return Promise.resolve();
+        const existing = pending.get(directory);
+        if (existing) return existing.promise;
+        let resolveListing!: () => void;
+        const promise = new Promise<void>((resolve) => {
+          resolveListing = resolve;
+        });
+        pending.set(directory, {
+          promise,
+          finish: () => {
+            files.directoryEntries = [
+              ...files.directoryEntries,
+              ...entries.filter(
+                (entry) => entry.path.slice(0, entry.path.lastIndexOf("/")) === directory,
+              ),
+            ];
+            files.loadedDirectories = new Set([...files.loadedDirectories, directory]);
+            pending.delete(directory);
+            resolveListing();
+          },
+        });
+        return promise;
       });
-      pending.set(directory, {
-        promise,
-        finish: () => {
-          files.directoryEntries = [
-            ...files.directoryEntries,
-            ...entries.filter(
-              (entry) => entry.path.slice(0, entry.path.lastIndexOf("/")) === directory,
-            ),
-          ];
-          files.loadedDirectories = new Set([...files.loadedDirectories, directory]);
-          pending.delete(directory);
-          resolveListing();
-        },
-      });
-      return promise;
-    });
-    const panelProps = {
-      followActiveSurface: true,
-      onOpenFile: vi.fn((path: string) => useRightPanelStore.getState().openFile(threadRef, path)),
-    };
-    await render(panelProps);
-    files.searchEntries = [{ path, kind: "file" }];
-    await search("target.ts");
-    expect(visiblePaths()).toContain(path);
-    await act(async () => treeRow(path)!.click());
-    expect(panelProps.onOpenFile).toHaveBeenCalledExactlyOnceWith(path);
-    // Pierre closes search on a row click. Searching again before listings finish
-    // exposes the selected file from search data before its ancestors have loaded.
-    await search("target.ts");
-    expect(
-      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef),
-    ).toMatchObject({ relativePath: path });
-    await search("target.ts");
-    expect(searchInput().value).toBe("target.ts");
-
-    // Only requested listings can contribute entries; a search hit is not a loaded directory.
-    for (let batch = 0; pending.size > 0 && batch < directories.length; batch++) {
-      await act(async () => {
-        for (const request of pending.values()) request.finish();
-      });
+      const panelProps = {
+        followActiveSurface: true,
+        onOpenFile: vi.fn((path: string) =>
+          useRightPanelStore.getState().openFile(threadRef, path),
+        ),
+      };
       await render(panelProps);
-    }
-    expect(pending.size).toBe(0);
-    await act(async () =>
-      searchInput().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
-    );
-    expect(searchInput().value).toBe("");
-    expect(visiblePaths()).toContain(path);
-    expect(treeRow(path)?.getAttribute("aria-selected")).toBe("true");
-  });
+      files.searchEntries = [{ path, kind: "file" }];
+      await search("target.ts");
+      expect(visiblePaths()).toContain(path);
+      await act(async () => treeRow(path)!.click());
+      expect(panelProps.onOpenFile).toHaveBeenCalledExactlyOnceWith(path);
+      // Pierre closes search on a row click. Searching again before listings finish
+      // exposes the selected file from search data before its ancestors have loaded.
+      await search("target.ts");
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, threadRef),
+      ).toMatchObject({ relativePath: path });
+      await search("target.ts");
+      expect(searchInput().value).toBe("target.ts");
+
+      if (lifecycle === "remounted") {
+        // Search-only ancestors disappear on remount before the real listings arrive.
+        files.searchEntries = [];
+        await remount(panelProps);
+        expect(visiblePaths()).not.toContain(path);
+      }
+
+      // Only requested listings can contribute entries; a search hit is not a loaded directory.
+      for (let batch = 0; pending.size > 0 && batch < directories.length; batch++) {
+        await act(async () => {
+          for (const request of pending.values()) request.finish();
+        });
+        await render(panelProps);
+      }
+      expect(pending.size).toBe(0);
+      await act(async () =>
+        searchInput().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+      );
+      expect(searchInput().value).toBe("");
+      expect(visiblePaths()).toContain(path);
+      expect(treeRow(path)?.getAttribute("aria-selected")).toBe("true");
+    },
+  );
 });
