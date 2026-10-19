@@ -969,7 +969,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const legacyImportCovered = Effect.fnUntraced(function* (
     threadId: ThreadId,
     providerThread: OrchestrationV2ProviderThread | undefined,
-    runs: ReadonlyArray<OrchestrationV2Run>,
   ) {
     if (providerThread === undefined) return false;
     const { contextHandoffs } = yield* projectionStore.getThreadRecords(threadId, [
@@ -985,18 +984,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return false;
       }
-      if (handoff.delivery !== undefined) {
-        return (
-          nativeId !== undefined &&
-          handoff.delivery.nativeThreadId === nativeId &&
-          handoff.delivery.status !== "pending"
-        );
-      }
-      // Turn start retries undelivered handoffs from failed or interrupted runs.
-      return runs.some(
-        (run) =>
-          run.id === handoff.targetRunId &&
-          (run.status === "failed" || run.status === "interrupted"),
+      return (
+        nativeId !== undefined &&
+        handoff.delivery !== undefined &&
+        handoff.delivery.nativeThreadId === nativeId &&
+        handoff.delivery.status !== "pending"
       );
     });
   });
@@ -5422,11 +5414,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             hasCompletedRun: latestCompletedRun !== undefined,
             legacyImportItemCount: legacyImportItems.length,
           }) &&
-          !(yield* legacyImportCovered(
-            command.threadId,
-            activeProviderThread,
-            projection.runs,
-          ).pipe(mapDispatchError(command)))
+          !(yield* legacyImportCovered(command.threadId, activeProviderThread).pipe(
+            mapDispatchError(command),
+          ))
             ? yield* contextHandoffService
                 .prepareLegacyImport({
                   threadId: command.threadId,
@@ -6038,7 +6028,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !canResumeAcrossInstances &&
         latestCompletedRun === undefined &&
         legacyImportItems.length > 0 &&
-        !(yield* legacyImportCovered(command.threadId, ensuredProviderThread, projection.runs).pipe(
+        !(yield* legacyImportCovered(command.threadId, ensuredProviderThread).pipe(
           mapDispatchError(command),
         ))
           ? yield* contextHandoffService
