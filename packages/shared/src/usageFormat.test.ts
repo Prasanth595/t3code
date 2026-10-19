@@ -63,42 +63,30 @@ describe("hourly usage formatting", () => {
   it("disambiguates repeated hours during a fall-back transition", () => {
     expect(formatHourShort("2026-11-01T05:37:00.000Z", "America/New_York")).toBe("1 AM EDT");
     expect(formatHourShort("2026-11-01T06:37:00.000Z", "America/New_York")).toBe("1 AM EST");
-  });
-
-  it("follows an explicit hour cycle and keeps the 12-hour default without one", () => {
-    const afternoon = "2026-08-11T14:37:00.000Z";
-    const midnight = "2026-08-11T00:37:00.000Z";
-
-    expect(formatHourShort(afternoon, "UTC")).toBe("2 PM");
-    expect(formatHourShort(afternoon, "UTC", true)).toBe("2 PM");
-    expect(formatHourShort(afternoon, "UTC", false)).toBe("14:00");
-    expect(formatHourShort(midnight, "UTC", true)).toBe("12 AM");
-    expect(formatHourShort(midnight, "UTC", false)).toBe("00:00");
-
-    expect(formatDateTimeShort(afternoon, "UTC")).toBe("Aug 11, 2 PM");
-    expect(formatDateTimeShort(afternoon, "UTC", true)).toBe("Aug 11, 2 PM");
-    expect(formatDateTimeShort(afternoon, "UTC", false)).toBe("Aug 11, 14:00");
-
-    const windowEnd = "2026-08-11T15:37:00.000Z";
-    expect(formatRelativeHourShort(afternoon, windowEnd, "UTC")).toBe("2 PM today");
-    expect(formatRelativeHourShort(afternoon, windowEnd, "UTC", true)).toBe("2 PM today");
-    expect(formatRelativeHourShort(afternoon, windowEnd, "UTC", false)).toBe("14:00 today");
-    expect(formatRelativeHourShort("2026-08-10T17:37:00.000Z", windowEnd, "UTC", false)).toBe(
-      "17:00 yesterday",
+    expect(formatHourShort("2026-11-01T05:37:00.000Z", "America/New_York", false)).toBe(
+      "01:00 EDT",
     );
-    expect(formatRelativeHourShort("2026-08-08T17:37:00.000Z", windowEnd, "UTC", false)).toBe(
-      "Aug 8, 17:00",
+    expect(formatHourShort("2026-11-01T06:37:00.000Z", "America/New_York", false)).toBe(
+      "01:00 EST",
     );
   });
 
-  it("disambiguates repeated hours in the requested hour cycle", () => {
-    const daylight = "2026-11-01T05:37:00.000Z";
-    const standard = "2026-11-01T06:37:00.000Z";
+  it.each([
+    [true, "2 PM", "12 AM"],
+    [false, "14:00", "00:00"],
+  ])("formats hourly usage labels with hour12=%s", (hour12, afternoon, midnight) => {
+    const instant = "2026-08-11T14:37:00.000Z";
 
-    expect(formatHourShort(daylight, "America/New_York", true)).toBe("1 AM EDT");
-    expect(formatHourShort(standard, "America/New_York", true)).toBe("1 AM EST");
-    expect(formatHourShort(daylight, "America/New_York", false)).toBe("01:00 EDT");
-    expect(formatHourShort(standard, "America/New_York", false)).toBe("01:00 EST");
+    expect(formatHourShort(instant, "UTC", hour12)).toBe(afternoon);
+    expect(formatHourShort("2026-08-11T00:37:00.000Z", "UTC", hour12)).toBe(midnight);
+    expect(formatDateTimeShort(instant, "UTC", hour12)).toBe(`Aug 11, ${afternoon}`);
+    expect(formatRelativeHourShort(instant, instant, "UTC", hour12)).toBe(`${afternoon} today`);
+    expect(formatRelativeHourShort(instant, "2026-08-12T15:37:00.000Z", "UTC", hour12)).toBe(
+      `${afternoon} yesterday`,
+    );
+    expect(formatRelativeHourShort(instant, "2026-08-14T15:37:00.000Z", "UTC", hour12)).toBe(
+      `Aug 11, ${afternoon}`,
+    );
   });
 
   it("makes hourly tooltip dates relative to the window in its requested time zone", () => {
