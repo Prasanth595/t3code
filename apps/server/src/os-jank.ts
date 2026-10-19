@@ -1,10 +1,11 @@
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   listLoginShellCandidates,
   mergePathEntries,
   readEnvironmentFromLoginShell,
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
+  setWindowsPath,
   type ShellEnvironmentReader,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
@@ -23,25 +24,31 @@ export function hydratePosixEnvironment(
   platform: NodeJS.Platform,
   readShellEnvironment: ShellEnvironmentReader = readEnvironmentFromLoginShell,
 ): void {
-  let shellPath: string | undefined;
+  let shellEnvironment: Partial<Record<string, string>> = {};
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     try {
-      const shellEnvironment = readShellEnvironment(shell, ["PATH", "SSH_AUTH_SOCK"]);
-      shellPath = shellEnvironment.PATH;
-      if (shellPath && !env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
-        env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
-      }
+      // mise's record of the PATH entries it added. It must travel with the
+      // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
+      // (`exec mise x claude -- claude`) that then re-runs itself forever.
+      shellEnvironment = readShellEnvironment(shell, ["PATH", "__MISE_DIFF", "SSH_AUTH_SOCK"]);
     } catch (error) {
-      logPathHydrationWarning(`Failed to read environment from login shell ${shell}.`, error);
+      logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
     }
 
-    if (shellPath) break;
+    if (shellEnvironment.PATH) break;
   }
 
+  const shellPath = shellEnvironment.PATH;
   const launchctlPath = platform === "darwin" && !shellPath ? readPathFromLaunchctl() : undefined;
   const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
   if (mergedPath) {
     env.PATH = mergedPath;
+  }
+  if (shellPath && !env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
+    env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
+  }
+  if (shellPath && shellEnvironment.__MISE_DIFF) {
+    env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
   }
 }
 
@@ -57,15 +64,16 @@ export function hydratePosixHome(
   }
 }
 
-export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
-  void,
-  never,
-  FileSystem.FileSystem | Path.Path
-> {
-  const platform = yield* HostProcessPlatform;
-  const env = yield* HostProcessEnvironment;
+export const fixPath = Effect.fn("fixPath")(function* (options?: {
+  readonly shellEnvironmentPrepared?: boolean | undefined;
+}): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+  const platform = yield* HostProcess.Platform;
+  const env = yield* HostProcess.Environment;
 
   if (platform === "win32") {
+    // The desktop already ran both PowerShell probes into the env this child
+    // extends. Repeating them here costs seconds of startup on Windows.
+    if (options?.shellEnvironmentPrepared === true) return;
     const repairedEnvironment = yield* resolveWindowsEnvironment(env).pipe(
       Effect.catchDefect((defect) =>
         Effect.sync(() => {
@@ -75,7 +83,10 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
       ),
     );
     for (const [key, value] of Object.entries(repairedEnvironment)) {
-      if (value !== undefined) {
+      if (value === undefined) continue;
+      if (key === "PATH") {
+        setWindowsPath(env, value);
+      } else {
         env[key] = value;
       }
     }
@@ -91,10 +102,11 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
       }),
     ),
   );
+  if (options?.shellEnvironmentPrepared === true) return;
   yield* Effect.sync(() => hydratePosixEnvironment(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {
-        logPathHydrationWarning("Failed to hydrate the login-shell environment.", defect);
+        logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
       }),
     ),
   );
@@ -102,11 +114,12 @@ export const fixPath = Effect.fn("fixPath")(function* (): Effect.fn.Return<
 
 export const expandHomePath = Effect.fn(function* (input: string) {
   const { join } = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
   if (input === "~") {
-    return NodeOS.homedir();
+    return home;
   }
   if (input.startsWith("~/") || input.startsWith("~\\")) {
-    return join(NodeOS.homedir(), input.slice(2));
+    return join(home, input.slice(2));
   }
   return input;
 });
@@ -114,7 +127,7 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(NodeOS.homedir(), ".t3");
+    return join(yield* HostProcess.HomeDirectory, ".t3");
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });
