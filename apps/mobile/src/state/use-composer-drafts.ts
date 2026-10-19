@@ -1582,7 +1582,9 @@ export function mergeComposerDraftContentState(
   return {
     ...current,
     // The composer shows non-image files only as inline chips, so a shared file
-    // merged without one would be attached but invisible until sent.
+    // merged without one would be attached but invisible until sent. Other
+    // merges carry their own text, and appending chips to it would defeat
+    // mergeComposerDraftText's duplicate check on a retried merge.
     [draftKey]: restoreMissingComposerFileReferences(
       {
         ...existing,
@@ -1591,7 +1593,7 @@ export function mergeComposerDraftContentState(
         context,
         ...(importedShareIds ? { importedShareIds } : {}),
       },
-      attachments.slice(existing.attachments.length),
+      content.sourceShareId ? attachments.slice(existing.attachments.length) : [],
     ),
   };
 }

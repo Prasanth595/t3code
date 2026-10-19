@@ -2318,13 +2318,15 @@ describe("mobile composer drafts", () => {
       fileUri: "file:///documents/backup.json",
     };
 
-    const merged = mergeComposerDraftContentState({}, draftKey, {
-      text: "",
-      attachments: [sharedFile],
-      sourceShareId: "share-1",
-    })[draftKey]!;
+    const existingFile = { ...sharedFile, id: "existing-file", name: "notes.txt" };
 
-    expect(merged.attachments).toEqual([sharedFile]);
+    const merged = mergeComposerDraftContentState(
+      { [draftKey]: { text: "", attachments: [existingFile] } },
+      draftKey,
+      { text: "", attachments: [sharedFile], sourceShareId: "share-1" },
+    )[draftKey]!;
+
+    expect(merged.attachments).toEqual([existingFile, sharedFile]);
     const references = collectComposerContextReferences(merged.text);
     expect(references).toHaveLength(1);
     expect(merged.context?.records).toEqual([
@@ -2334,6 +2336,13 @@ describe("mobile composer drafts", () => {
         attachmentId: sharedFile.id,
       }),
     ]);
+
+    // A recovery merge carries its own text; a chip appended to it would
+    // break the duplicate-text check when the merge is retried.
+    const recovered = { text: "Retry this", attachments: [sharedFile] };
+    const once = mergeComposerDraftContentState({}, draftKey, recovered);
+    expect(once[draftKey]?.text).toBe("Retry this");
+    expect(mergeComposerDraftContentState(once, draftKey, recovered)).toBe(once);
   });
 
   it("preserves existing images when shared content exceeds the draft attachment limit", () => {
