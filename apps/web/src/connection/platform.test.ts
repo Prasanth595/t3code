@@ -3,11 +3,14 @@ import {
   EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopBridge,
+  type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import { afterEach, vi } from "vite-plus/test";
+import { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -16,8 +19,7 @@ import {
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
-  ensureDesktopSshEnvironment,
-  forgetDesktopSshSetup,
+  layer,
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
   nextRejectedSecondaryBootstrap,
@@ -37,46 +39,51 @@ const TARGET: DesktopSshEnvironmentTarget = {
   port: 22,
 };
 
-function deferred() {
-  let resolve!: () => void;
+const SSH_BOOTSTRAP = {
+  target: TARGET,
+  httpBaseUrl: "http://127.0.0.1:3201/",
+  wsBaseUrl: "ws://127.0.0.1:3201/",
+  pairingToken: "abandoned-token",
+};
+
+function pendingSetup() {
+  let resolve!: (bootstrap: DesktopSshEnvironmentBootstrap) => void;
   let reject!: (cause: unknown) => void;
-  const promise = new Promise<void>((onResolve, onReject) => {
+  const promise = new Promise<DesktopSshEnvironmentBootstrap>((onResolve, onReject) => {
     resolve = onResolve;
     reject = onReject;
   });
   return { promise, resolve, reject };
 }
 
-// Runs the attempt up to its desktop setup call before the test continues.
-const FORK_NOW = { startImmediately: true } as const;
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 function makeBridge(
   calls: string[],
   options?: {
     readonly failDescriptor?: boolean;
-    /** Settles when the desktop finishes the given setup call (0-based). */
-    readonly setupDone?: (call: number) => Promise<void>;
-    /** Collects every setup promise the desktop returned. */
-    readonly setups?: Promise<unknown>[];
     readonly savedTokenRejected?: boolean;
     readonly savedTokenPermissions?: ReadonlyArray<string>;
   },
 ): DesktopBridge {
-  let setupCalls = 0;
   return {
-    ensureSshEnvironment: (
+    ensureSshEnvironment: async (
       target: DesktopSshEnvironmentTarget,
       ensureOptions?: { issuePairingToken?: boolean },
     ) => {
       calls.push("ensure");
-      const setup = (options?.setupDone?.(setupCalls++) ?? Promise.resolve()).then(() => ({
+      return {
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
         wsBaseUrl: "ws://127.0.0.1:3201/",
         pairingToken: ensureOptions?.issuePairingToken === true ? "pairing-token" : null,
-      }));
-      options?.setups?.push(setup);
-      return setup;
+      };
+    },
+    disconnectSshEnvironment: async () => {
+      calls.push("disconnect");
     },
     fetchSshSessionState: async () => {
       calls.push("session");
@@ -156,99 +163,108 @@ describe("desktop SSH pairing", () => {
     }),
   );
 
-  it.effect("hands a timed-out attempt's setup to the next attempt", () =>
+  it.effect("exchanges one setup credential after repeated interrupted provisions", () =>
     Effect.gen(function* () {
-      const calls: string[] = [];
-      const setupDone = deferred();
-      const bridge = makeBridge(calls, { setupDone: () => setupDone.promise });
+      const bridge = makeBridge([]);
+      const setup = pendingSetup();
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValue(setup.promise);
+      const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const timedOut = yield* Effect.forkChild(
-          ensureDesktopSshEnvironment(bridge, TARGET),
-          FORK_NOW,
+        const interrupted = yield* Effect.forkChild(
+          provisionDesktopSshEnvironment(bridge, TARGET),
+          { startImmediately: true },
         );
-        yield* Fiber.interrupt(timedOut);
+        yield* Fiber.interrupt(interrupted);
       }
 
-      const next = yield* Effect.forkChild(
-        provisionDesktopSshEnvironment(bridge, TARGET),
-        FORK_NOW,
-      );
-      setupDone.resolve();
-      yield* Fiber.join(next);
+      const retry = yield* Effect.forkChild(provisionDesktopSshEnvironment(bridge, TARGET), {
+        startImmediately: true,
+      });
+      setup.resolve(SSH_BOOTSTRAP);
+      const provisioned = yield* Fiber.join(retry);
 
-      expect(calls).toEqual(["ensure", "descriptor", "token"]);
+      expect(provisioned.bearerToken).toBe("bearer-token");
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: true });
+      expect(exchange).toHaveBeenCalledExactlyOnceWith(
+        SSH_BOOTSTRAP.httpBaseUrl,
+        "abandoned-token",
+      );
     }),
   );
 
-  it.effect("does not hand over a setup that a disconnect tears down", () =>
+  it.effect("starts fresh after an abandoned setup settles in success or failure", () =>
     Effect.gen(function* () {
-      const calls: string[] = [];
-      const setupDone = deferred();
-      const bridge = makeBridge(calls, { setupDone: () => setupDone.promise });
-      const timedOut = yield* Effect.forkChild(
-        ensureDesktopSshEnvironment(bridge, TARGET),
-        FORK_NOW,
-      );
-      // Disabling the environment disconnects before the attempt's interruption lands.
-      forgetDesktopSshSetup(TARGET);
-      yield* Fiber.interrupt(timedOut);
-
-      const next = yield* Effect.forkChild(
-        provisionDesktopSshEnvironment(bridge, TARGET),
-        FORK_NOW,
-      );
-      expect(calls).toEqual(["ensure", "ensure"]);
-      setupDone.resolve();
-      yield* Fiber.join(next);
-    }),
-  );
-
-  it.effect.each(["failed", "succeeded"] as const)(
-    "starts its own setup once the abandoned one %s",
-    (outcome) =>
-      Effect.gen(function* () {
-        const calls: string[] = [];
-        const setups: Promise<unknown>[] = [];
-        const setupDone = deferred();
-        const bridge = makeBridge(calls, {
-          setupDone: (call) => (call === 0 ? setupDone.promise : Promise.resolve()),
-          setups,
-        });
-        const timedOut = yield* Effect.forkChild(
-          ensureDesktopSshEnvironment(bridge, TARGET),
-          FORK_NOW,
+      for (const outcome of ["success", "failure"]) {
+        const bridge = makeBridge([]);
+        const setup = pendingSetup();
+        const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValueOnce(setup.promise);
+        const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
+        const interrupted = yield* Effect.forkChild(
+          provisionDesktopSshEnvironment(bridge, TARGET),
+          { startImmediately: true },
         );
-        yield* Fiber.interrupt(timedOut);
-        if (outcome === "failed") {
-          setupDone.reject(new Error("remote launch failed"));
-        } else {
-          setupDone.resolve();
-        }
-        // The abandoned setup was observed first, so it has already been let go.
+        yield* Fiber.interrupt(interrupted);
+        if (outcome === "success") setup.resolve(SSH_BOOTSTRAP);
+        else setup.reject(new Error("remote launch failed"));
         yield* Effect.promise(() =>
-          setups[0]!.then(
+          setup.promise.then(
             () => undefined,
             () => undefined,
           ),
         );
 
-        yield* provisionDesktopSshEnvironment(bridge, TARGET);
+        const provisioned = yield* provisionDesktopSshEnvironment(bridge, TARGET);
 
-        expect(calls).toEqual(["ensure", "ensure", "descriptor", "token"]);
-      }),
+        expect(provisioned.bearerToken).toBe("bearer-token");
+        expect(ensure).toHaveBeenCalledTimes(2);
+        expect(exchange).toHaveBeenCalledExactlyOnceWith(
+          SSH_BOOTSTRAP.httpBaseUrl,
+          "pairing-token",
+        );
+      }
+    }),
+  );
+
+  it.effect("disconnect invalidates unfinished setup even before provision is interrupted", () =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const bridge = makeBridge(calls);
+      const setup = pendingSetup();
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment").mockReturnValueOnce(setup.promise);
+      const exchange = vi.spyOn(bridge, "bootstrapSshBearerSession");
+      vi.stubGlobal("window", { desktopBridge: bridge });
+      const ssh = yield* ClientCapabilities.SshEnvironmentGateway.pipe(Effect.provide(layer));
+      const interrupted = yield* Effect.forkChild(ssh.provision(TARGET), {
+        startImmediately: true,
+      });
+      yield* ssh.disconnect(TARGET);
+      yield* Fiber.interrupt(interrupted);
+
+      const retry = yield* Effect.forkChild(ssh.provision(TARGET), { startImmediately: true });
+      setup.resolve(SSH_BOOTSTRAP);
+      const provisioned = yield* Fiber.join(retry);
+
+      expect(provisioned.bearerToken).toBe("bearer-token");
+      expect(ensure).toHaveBeenCalledTimes(2);
+      expect(calls).toEqual(["disconnect", "ensure", "descriptor", "token"]);
+      expect(exchange).toHaveBeenCalledExactlyOnceWith(SSH_BOOTSTRAP.httpBaseUrl, "pairing-token");
+    }),
   );
 
   it.effect("reconnects with the saved token while it holds every standard scope", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
 
-      const prepared = yield* prepareDesktopSshEnvironment(makeBridge(calls), {
+      const bridge = makeBridge(calls);
+      const ensure = vi.spyOn(bridge, "ensureSshEnvironment");
+      const prepared = yield* prepareDesktopSshEnvironment(bridge, {
         target: TARGET,
         expectedEnvironmentId: EnvironmentId.make("environment-ssh"),
         bearerToken: "saved-token",
       });
 
       expect(prepared.bearerToken).toBe("saved-token");
+      expect(ensure).toHaveBeenCalledExactlyOnceWith(TARGET, { issuePairingToken: false });
       expect(calls).toEqual(["ensure", "descriptor", "session"]);
     }),
   );
