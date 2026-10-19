@@ -1078,12 +1078,15 @@ it.layer(
     Effect.gen(function* () {
       let snapshots = 0;
       let processes: Array<{ pid: number; ppid: number; name: string }> = [];
+      let duringSnapshot: Effect.Effect<void> = Effect.void;
       const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
         processKillGraceMs: 0,
         subprocessPollIntervalMs: 1_000,
-        processTable: Effect.sync(() => {
+        processTable: Effect.gen(function* () {
           snapshots += 1;
-          return processes;
+          const snapshot = processes;
+          yield* duringSnapshot;
+          return snapshot;
         }),
       }).pipe(Effect.provide(layerWithHostPlatform("linux")));
       const activity = yield* Queue.unbounded<Extract<TerminalEvent, { type: "activity" }>>();
@@ -1141,6 +1144,23 @@ it.layer(
         label: "node",
       });
       assert.equal(snapshots, 8);
+
+      processes = shells;
+      duringSnapshot = Effect.gen(function* () {
+        duringSnapshot = Effect.void;
+        yield* manager.write({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+          data: "next command\r",
+        });
+      }).pipe(Effect.orDie);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Queue.take(activity)).toMatchObject({ hasRunningSubprocess: false });
+      // Input during inspection still needs two subsequent unchanged snapshots.
+      yield* TestClock.adjust("2 seconds");
+      assert.equal(snapshots, 11);
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(snapshots, 11);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
