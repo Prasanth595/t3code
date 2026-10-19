@@ -4200,9 +4200,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         "debug3: sign_and_send_pubkey: signing using ssh-ed25519 SHA256:test\n";
       const startFetch = Effect.fnUntraced(function* (
         stderr: Stream.Stream<string>,
-        options: { sshCommand?: string; envCommand?: string; platform?: NodeJS.Platform } = {},
+        options: {
+          sshCommand?: string;
+          envCommand?: string;
+          platform?: NodeJS.Platform;
+          hiddenConfig?: boolean;
+          submodules?: boolean;
+        } = {},
       ) {
-        const sshEnvKeys = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"] as const;
+        const sshEnvKeys = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT", "GIT_CONFIG"] as const;
         yield* Effect.acquireRelease(
           Effect.sync(() => {
             const previous = sshEnvKeys.map((key) => [key, process.env[key]] as const);
@@ -4222,6 +4228,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["init"]);
         if (options.sshCommand !== undefined) {
           yield* git(cwd, ["config", "core.sshCommand", options.sshCommand]);
+        }
+        if (options.hiddenConfig) {
+          yield* writeTextFile(cwd, "empty-config", "");
+          process.env.GIT_CONFIG = (yield* Path.Path).join(cwd, "empty-config");
+        }
+        let fetchCwd = cwd;
+        if (options.submodules) {
+          yield* git(cwd, ["config", "fetch.recurseSubmodules", "true"]);
+          yield* writeTextFile(
+            cwd,
+            ".gitmodules",
+            '[submodule "child"]\n\tpath = child\n\turl = git@example.com:child.git\n',
+          );
+          fetchCwd = (yield* Path.Path).join(cwd, "nested");
+          yield* (yield* FileSystem.FileSystem).makeDirectory(fetchCwd);
         }
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
         const started = yield* Deferred.make<void>();
@@ -4252,7 +4273,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           Effect.provide(layerServerConfig),
         );
         const fetching = yield* driver
-          .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+          .fetchRemote({ cwd: fetchCwd, remoteName: "origin", refName: "main" })
           .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(started);
         return { fetching, stderrRead, exit, released, fetches };
@@ -4312,6 +4333,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         { name: "configured SSH", sshCommand: "ssh -v" },
         { name: "an environment SSH override", envCommand: "ssh -v" },
         { name: "Windows", platform: "win32" },
+        {
+          name: "SSH configuration hidden by GIT_CONFIG",
+          sshCommand: "ssh -v",
+          hiddenConfig: true,
+        },
+        { name: "submodule SSH configuration from a nested directory", submodules: true },
       ] as const)("preserves $name without treating its output as pending approval", (options) =>
         Effect.gen(function* () {
           const fetch = yield* startFetch(Stream.make(signing), options);

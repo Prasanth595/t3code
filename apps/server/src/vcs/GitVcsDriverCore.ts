@@ -3739,25 +3739,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     function* (input) {
       // Only Git's default OpenSSH is watched: GIT_SSH_COMMAND would replace a
       // configured command, and Git for Windows may run another ssh.
-      const verboseSsh =
+      const watchSshApproval =
         hostPlatform !== "win32" &&
         ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"].every((key) => !(key in process.env)) &&
-        (yield* executeGit(
-          "GitVcsDriver.fetchRemote.sshConfig",
-          input.cwd,
-          ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"],
-          { allowNonZeroExit: true },
-        ).pipe(
-          Effect.map((result) => result.exitCode === 1),
-          Effect.orElseSucceed(() => false),
-        ));
-      // When ssh's pending sign request times out; never once ssh logs past it.
+        // GIT_CONFIG redirects `git config`, but fetch still reads repository config.
+        !("GIT_CONFIG" in process.env) &&
+        (yield* Effect.gen(function* () {
+          const config = yield* executeGit(
+            "GitVcsDriver.fetchRemote.sshConfig",
+            input.cwd,
+            ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant|submodule\\..*\\.url)$"],
+            { allowNonZeroExit: true },
+          );
+          if (config.exitCode !== 1) return false;
+          // Recursive fetch inherits GIT_SSH_COMMAND over submodules' own SSH commands.
+          const root = yield* runGitStdout("GitVcsDriver.fetchRemote.repositoryRoot", input.cwd, [
+            "rev-parse",
+            "--show-toplevel",
+          ]);
+          return (
+            root.trim().length > 0 &&
+            !(yield* fileSystem.exists(path.join(root.trim(), ".gitmodules")))
+          );
+        }).pipe(Effect.orElseSucceed(() => false)));
       const approvalDeadline = yield* Ref.make(Infinity);
       const args = ["fetch", "--quiet", "--", input.remoteName];
       const options = {
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
-        ...(verboseSsh && {
+        ...(watchSshApproval && {
           env: { ...STATUS_UPSTREAM_REFRESH_ENV, GIT_SSH_COMMAND: "ssh -o LogLevel=DEBUG3" },
           appendTruncationMarker: true,
           keepLineCallbacksAfterTruncation: true,
@@ -3804,7 +3814,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             allowNonZeroExit: true,
           },
         );
-        const run = verboseSsh ? Effect.raceFirst(fetched, approvalTimedOut(fetchArgs)) : fetched;
+        const run = watchSshApproval
+          ? Effect.raceFirst(fetched, approvalTimedOut(fetchArgs))
+          : fetched;
         return run.pipe(
           Effect.flatMap((result) =>
             result.exitCode !== 0 && isRefLockFailure(result.stderr) ? run : Effect.succeed(result),
