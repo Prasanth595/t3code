@@ -285,11 +285,9 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     });
     expect(named).toEqual(["Pinball Stats"]);
 
-    // A path still registers that folder, and never makes a named project.
     yield* handle({ title: "Existing", workspaceRoot: "/work/existing" });
     expect(registered).toEqual(["/work/existing"]);
 
-    // Fields this mode cannot apply are rejected, not dropped.
     for (const extra of [
       { scripts: [] },
       { defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" } },
@@ -308,9 +306,6 @@ const clientLaunchHarness = (input: {
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
-  // "claudeAgent" is the real default instance id for the Claude driver
-  // (see `defaultInstanceIdForDriver`), so it resolves as enabled by default
-  // under the project-scoped provider instance gate the launch path now runs.
   const modelSelection = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
     model: "claude-opus",
@@ -458,8 +453,6 @@ it.effect("a launch binds only an existing checkout that is one of the project's
       { type: "existing_worktree", worktreePath: repo },
     ]);
 
-    // A removed worktree stays listed as prunable until `git worktree prune`;
-    // whatever directory is later made at its path is not one of the project's.
     yield* fileSystem.remove(worktree, { recursive: true });
     yield* fileSystem.makeDirectory(worktree);
     expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({
@@ -475,24 +468,16 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
       runtimeModeCeiling: "auto",
       launched,
       checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "plain"
+        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
           ? Effect.fail(
-              new ThreadLaunch.ThreadLaunchNotRepositoryError({
+              new ThreadLaunch.ThreadLaunchBaseRefError({
                 projectId,
                 projectTitle: "Client target",
                 workspaceRoot: "/projects/client-target",
+                baseRef: workspaceStrategy.baseRef,
               }),
             )
-          : workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
-            ? Effect.fail(
-                new ThreadLaunch.ThreadLaunchBaseRefError({
-                  projectId,
-                  projectTitle: "Client target",
-                  workspaceRoot: "/projects/client-target",
-                  baseRef: workspaceStrategy.baseRef,
-                }),
-              )
-            : Effect.void,
+          : Effect.void,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
@@ -512,14 +497,6 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect((refused as { message: string }).message).toContain(
       'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
-    );
-    expect(launched).toHaveLength(0);
-
-    // A folder that is not a repository points the agent at the root instead.
-    const plain = (yield* launchFrom("plain")).at(-1)?.result;
-    expect(plain).toMatchObject({ code: "invalid_request" });
-    expect((plain as { message: string }).message).toContain(
-      'No thread was created. Use workspaceStrategy {type:"root"} instead.',
     );
     expect(launched).toHaveLength(0);
 

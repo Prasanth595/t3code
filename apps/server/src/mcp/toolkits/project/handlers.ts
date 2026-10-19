@@ -25,9 +25,7 @@ function projectFailure(error: Project.ProjectServiceError) {
 }
 
 /**
- * An existing checkout a launch may bind: one of the project's own git
- * worktrees. Without this check a launch could point an agent at any directory
- * on the machine.
+ * Without this check a launch could point an agent at any directory on the machine.
  */
 const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
   workspaceRoot: string,
@@ -116,14 +114,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               (error) =>
                 new OrchestratorMcpFailure({
                   code: "invalid_request",
-                  message:
-                    error._tag === "ThreadLaunchNotRepositoryError"
-                      ? `${error.message} No thread was created. Use workspaceStrategy {type:"root"} instead.`
-                      : `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
-                          strategy.startFromOrigin === true
-                            ? "; the project has no origin remote to fetch it from."
-                            : ", or set startFromOrigin:true if it exists only on origin."
-                        }`,
+                  message: `${error.message} No thread was created. Pass a branch, tag, or commit that exists there${
+                    strategy.startFromOrigin === true
+                      ? "; the project has no origin remote to fetch it from."
+                      : ", or set startFromOrigin:true if it exists only on origin."
+                  }`,
                 }),
             ),
           );
