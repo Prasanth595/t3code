@@ -6256,8 +6256,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     }),
   );
 
-  it.effect.each(["snoozed", "settled"] as const)(
-    "holds background wakes behind a usage limit on a %s thread",
+  it.effect.each(["snoozed", "settled", "settled after reset"] as const)(
+    "handles background wakes on a %s usage-limited thread",
     (scenario) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -6344,10 +6344,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const shellOf = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
           snapshot.threads.find((thread) => thread.id === threadId),
         );
-        yield* orchestrator.dispatch(
-          limitRecoveryCommand((yield* shellOf)!, true, DateTime.toEpochMillis(now), true)!,
-        );
-        if (scenario === "settled")
+        if (scenario !== "settled after reset")
+          yield* orchestrator.dispatch(
+            limitRecoveryCommand((yield* shellOf)!, true, DateTime.toEpochMillis(now), true)!,
+          );
+        if (scenario !== "snoozed")
           yield* orchestrator.dispatch({
             type: "thread.settle",
             commandId: CommandId.make(`recovery:settle:held-wake:${scenario}`),
@@ -6355,6 +6356,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           });
 
         const waiting = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        if (scenario === "settled after reset") {
+          assert.isNotTrue(waiting.limitRecovery?.autoResume);
+          assert.equal(waiting.settledOverride, "settled");
+          yield* TestClock.adjust("61 seconds");
+        }
         yield* orchestrator.dispatch({
           type: "message.dispatch",
           commandId: CommandId.make(`recovery:wake:held-wake:${scenario}`),
@@ -6372,6 +6378,15 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           creationSource: "provider",
         });
         const held = yield* orchestrator.getThreadProjection(threadId);
+        if (scenario === "settled after reset") {
+          assert.deepEqual(
+            held.runs.map((run) => run.status),
+            ["failed", "starting"],
+          );
+          assert.isNull(held.thread.snoozedUntil);
+          assert.isNull(held.thread.settledOverride);
+          return;
+        }
         assert.deepEqual(
           held.runs.map((run) => run.status),
           ["failed", "queued"],
