@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- net.Socket watches the inherited pipe without occupying a threadpool thread.
+// @effect-diagnostics nodeBuiltinImport:off -- net.Socket reads the inherited pipe asynchronously.
 import * as NodeNet from "node:net";
 
 import * as Effect from "effect/Effect";

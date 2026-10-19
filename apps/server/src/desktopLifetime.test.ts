@@ -107,7 +107,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("DesktopLifetim
         lifetimePipe.destroy();
         yield* takeLine(desktop.lines, "ready");
 
-        // Telemetry and browser IPC can close independently of desktop lifetime.
+        // Close unused pipe endpoints; FD 8 remains owned by the desktop fixture.
         for (const fd of [4, 5, 6, 7]) backend.child.stdio[fd]?.destroy();
         yield* takeLine(backend.lines, "ready");
         backend.child.stdin?.write("ping");
