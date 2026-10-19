@@ -616,28 +616,17 @@ describe("getComposerReasoningStep", () => {
       provider: ProviderDriverKind.make("cursor"),
       instanceId: ProviderInstanceId.make("cursor"),
       models: modelWith([
-        selectDescriptor("reasoning", LEVELS),
+        selectDescriptor("reasoning_effort", LEVELS),
         booleanDescriptor("fastMode", true),
       ]),
     };
 
     expect(step({ ...cursor, modelOptions: undefined })?.modelOptions).toStrictEqual(
-      selections(["reasoning", "high"], ["fastMode", false]),
+      selections(["reasoning_effort", "high"], ["fastMode", false]),
     );
     expect(
       step({ ...cursor, modelOptions: selections(["fastMode", true]) })?.modelOptions,
-    ).toStrictEqual(selections(["reasoning", "high"], ["fastMode", true]));
-  });
-
-  it("steps Cursor's reasoning_effort option", () => {
-    expect(
-      step({
-        provider: ProviderDriverKind.make("cursor"),
-        instanceId: ProviderInstanceId.make("cursor"),
-        models: modelWith([selectDescriptor("reasoning_effort", LEVELS)]),
-        modelOptions: selections(["reasoning_effort", "low"]),
-      })?.modelOptions,
-    ).toStrictEqual(selections(["reasoning_effort", "medium"]));
+    ).toStrictEqual(selections(["reasoning_effort", "high"], ["fastMode", true]));
   });
 
   it("steps from the provider-reported level for the same instance and model", () => {

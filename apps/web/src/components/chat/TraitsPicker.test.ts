@@ -81,7 +81,7 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
-  it.each(["reasoningEffort", "reasoning", "effort", "variant", "reasoning_effort", "thinking"])(
+  it.each(["reasoningEffort", "reasoning", "effort", "variant", "thinking"])(
     "pairs Fast with %s even when context is the primary select",
     (id) => {
       for (const speed of [fastModeDescriptor(true), serviceTierDescriptor("priority")]) {
@@ -115,14 +115,15 @@ describe("buildTraitsTriggerDisplay", () => {
       buildTraitsTriggerDisplay({
         provider: ProviderDriverKind.make("cursor"),
         descriptors: [
-          { ...EFFORT, id: "reasoning" },
+          CONTEXT_WINDOW,
+          { ...EFFORT, id: "reasoning_effort" },
           fastModeDescriptor(true),
           { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
         ],
-        primarySelectDescriptorId: "reasoning",
+        primarySelectDescriptorId: CONTEXT_WINDOW.id,
         ultrathinkPromptControlled: false,
       }),
-    ).toEqual({ label: "High Fast · Thinking On" });
+    ).toEqual({ label: "1M · High Fast · Thinking On" });
   });
 
   it.each([true, false])("keeps boolean thinking %s independent of Fast", (currentValue) => {

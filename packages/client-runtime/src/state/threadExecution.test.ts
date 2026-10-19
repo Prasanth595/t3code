@@ -468,19 +468,10 @@ describe("formatModelSelectionEffort", () => {
     expect(formatModelSelectionEffort(selection(), catalog({}))).toBe("High");
   });
 
-  it("names a stored effort the way the catalog does", () => {
-    expect(
-      formatModelSelectionEffort(selection([{ id: "effort", value: "xhigh" }]), catalog({})),
-    ).toBe("Extra High");
-  });
-
-  it("names the effort Cursor reports under its native reasoning_effort id", () => {
-    expect(
-      formatModelSelectionEffort(
-        selection([{ id: "reasoning_effort", value: "xhigh" }]),
-        catalog({ id: "reasoning_effort" }),
-      ),
-    ).toBe("Extra High");
+  it.each(["effort", "reasoning_effort"])("names a stored %s the way the catalog does", (id) => {
+    expect(formatModelSelectionEffort(selection([{ id, value: "xhigh" }]), catalog({ id }))).toBe(
+      "Extra High",
+    );
   });
 
   it("uses the descriptor's current value over the default", () => {
