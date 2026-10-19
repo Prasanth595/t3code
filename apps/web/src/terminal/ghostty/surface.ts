@@ -581,6 +581,9 @@ export class GhosttyTerminalSurface {
   // App capture can hide keydowns, so only encoded presses qualify for Kitty releases.
   private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
+  // Chromium can deliver native paste after the clipboard read resolves.
+  // Suppress its duplicate only for the current shortcut gesture.
+  private pasteShortcutGesture: { code: string; readText: string } | null = null;
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private primedCopySelection = "";
@@ -1128,19 +1131,20 @@ export class GhosttyTerminalSurface {
       return;
     }
     if (isTerminalPasteShortcut(event)) {
+      const gesture = { code: event.code, readText: "" };
+      this.pasteShortcutGesture = gesture;
       const clipboard = navigator.clipboard;
       if (typeof clipboard?.readText === "function") {
-        // Race the async clipboard read against the browser's own paste event:
-        // the native event (dispatched synchronously with the default action)
-        // always claims the token first when it fires, and the read covers
-        // browsers whose paste shortcut produces no paste event. Not preventing
-        // the default keeps the native path alive when the read is denied.
+        // Keep native paste available if the read is denied. The token drops
+        // a late read; the gesture drops a native duplicate when the read wins.
         const token = ++this.pasteShortcutToken;
         void clipboard.readText().then(
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
             this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length === 0) return;
+            if (this.pasteShortcutGesture === gesture) gesture.readText = text;
+            this.options.onData(this.core.encodePaste(text));
           },
           () => {},
         );
@@ -1157,6 +1161,15 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
+    // macOS can omit V keyup while Command is held.
+    if (
+      event.code === this.pasteShortcutGesture?.code ||
+      event.key === "Meta" ||
+      event.key === "Control" ||
+      event.key === "Shift"
+    ) {
+      this.pasteShortcutGesture = null;
+    }
     if (!this.encodedKeyCodes.delete(event.code)) return;
     if (isTerminalCompositionKey(event, this.composing)) {
       return;
@@ -1189,6 +1202,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onBlur = () => {
     this.focused = false;
+    this.pasteShortcutGesture = null;
     this.refreshHoveredLink();
     this.cursorOn = true;
     this.requestRender();
@@ -1243,6 +1257,11 @@ export class GhosttyTerminalSurface {
     event.preventDefault();
     const data = event.clipboardData?.getData("text/plain") ?? "";
     if (data.length === 0) return;
+    if (data === this.pasteShortcutGesture?.readText) {
+      // The shortcut's clipboard read already sent this paste.
+      this.pasteShortcutGesture = null;
+      return;
+    }
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
