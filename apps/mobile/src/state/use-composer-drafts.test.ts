@@ -1,3 +1,12 @@
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
+import { createEnvironmentThreadShellAtoms } from "../../../../packages/client-runtime/src/state/threadShell";
+import { applyShellStreamEvent } from "../../../../packages/client-runtime/src/state/shellReducer";
+import {
+  v2ShellSnapshot,
+  v2ThreadShell,
+} from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
+import * as Option from "effect/Option";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -7,6 +16,8 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type OrchestrationV2ThreadShell,
+  type ModelSelection,
 } from "@t3tools/contracts";
 import { onTestFinished, vi } from "vite-plus/test";
 
@@ -159,7 +170,7 @@ import {
   archiveCloudComposerDrafts,
   clearComposerDraftContent,
   clearComposerDraftContentState,
-  clearComposerDraftModelSelection,
+  subscribeComposerDraftModelReconciliation,
   clearComposerDraftsEnvironment,
   ComposerDraftPersistenceError,
   composerDraftsAtom,
@@ -238,6 +249,76 @@ function contextDraft(start: number, count: number): ComposerDraft {
     text: records.map((record) => `[Skill](t3-context://v1/skill/${record.contextId})`).join(" "),
     context: { version: 1, records },
     attachments: [],
+  };
+}
+
+function modelReconciliationHarness(environmentId: EnvironmentId, threadId: ThreadId) {
+  const tasks: Array<() => void> = [];
+  const registry = AtomRegistry.make({
+    scheduleTask: (task) => {
+      tasks.push(task);
+      return () => {};
+    },
+  });
+  onTestFinished(() => registry.dispose());
+  const flush = () => {
+    for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
+  };
+  const selectedThreadId = ThreadId.make("another-selected-thread");
+  const snapshotAtom = Atom.make({
+    ...v2ShellSnapshot,
+    threads: [
+      { ...v2ThreadShell, id: threadId },
+      { ...v2ThreadShell, id: selectedThreadId },
+    ],
+  });
+  const catalogValueAtom = Atom.make({
+    isReady: true,
+    entries: new Map([
+      [
+        environmentId,
+        {
+          target: new PrimaryConnectionTarget({
+            environmentId,
+            label: "Environment",
+            httpBaseUrl: "https://example.test",
+            wsBaseUrl: "wss://example.test",
+          }),
+          profile: Option.none(),
+          enabled: true,
+        },
+      ],
+    ]),
+  });
+  const shells = createEnvironmentThreadShellAtoms({
+    catalogValueAtom,
+    snapshotAtom: () => snapshotAtom,
+  });
+  const selectedShell = shells.threadShellAtom({ environmentId, threadId: selectedThreadId });
+  onTestFinished(registry.mount(selectedShell));
+  onTestFinished(
+    subscribeComposerDraftModelReconciliation({
+      registry,
+      threadShellsAtom: shells.threadShellsAtom,
+    }),
+  );
+  flush();
+  return {
+    update(changes: Partial<OrchestrationV2ThreadShell>) {
+      const snapshot = registry.get(snapshotAtom);
+      registry.set(
+        snapshotAtom,
+        applyShellStreamEvent(snapshot, {
+          kind: "thread.updated",
+          location: "active",
+          sequence: snapshot.snapshotSequence + 1,
+          thread: { ...snapshot.threads[0]!, ...changes },
+        }),
+      );
+      flush();
+      expect(registry.get(selectedShell)?.id).toBe(selectedThreadId);
+    },
+    model: () => registry.get(shells.threadShellAtom({ environmentId, threadId }))!.modelSelection,
   };
 }
 
@@ -427,19 +508,88 @@ describe("mobile composer drafts", () => {
     expect(draft.text).toContain(String(record?.contextId));
   });
 
-  it("drops the model pick without touching the draft text", () => {
-    const key = "environment-1:thread-1";
-    setComposerDraftText(key, "keep me");
+  it("releases an inactive thread pick only after its queued model becomes durable", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const key = `${environmentId}:${threadId}`;
+    const pick = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    setComposerDraftText(key, "keep this unsent follow-up");
+    appendComposerDraftAttachments(
+      key,
+      [
+        {
+          type: "file",
+          id: "file",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 4,
+          fileUri: "file:///notes.txt",
+        },
+      ],
+      { appendReference: true },
+    );
     updateComposerDraftSettings(key, {
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      modelSelection: pick,
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
     });
+    const before = getComposerDraftSnapshot(key);
+    const remoteKey = `environment-remote:${threadId}`;
+    updateComposerDraftSettings(remoteKey, { modelSelection: pick });
+    const remoteBefore = getComposerDraftSnapshot(remoteKey);
+    const h = modelReconciliationHarness(environmentId, threadId);
 
-    clearComposerDraftModelSelection(key);
+    h.update({ status: "queued" });
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    h.update({
+      status: "running",
+      modelSelection: { ...pick, options: [{ id: "fastMode", value: false }] },
+    });
+    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
+    expect(getComposerDraftSnapshot(remoteKey)).toEqual(remoteBefore);
 
-    expect(getComposerDraftSnapshot(key)).toMatchObject({ text: "keep me" });
-    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
+    h.update({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
+    });
+    expect(getComposerDraftSnapshot(key).modelSelection ?? h.model()).toEqual(h.model());
+    expect(getComposerDraftSnapshot(key)).toEqual({ ...before, modelSelection: undefined });
+  });
 
-    setComposerDraftText(key, "");
+  it("retains an unavailable provider pick through differing durable model updates", () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const threadId = ThreadId.make("thread-1");
+    const key = `${environmentId}:${threadId}`;
+    const pick: ModelSelection = {
+      instanceId: ProviderInstanceId.make("codex-secondary"),
+      model: "gpt-5.5",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    };
+    updateComposerDraftSettings(key, { modelSelection: pick });
+    const before = getComposerDraftSnapshot(key);
+    const h = modelReconciliationHarness(environmentId, threadId);
+    expect(getComposerDraftSnapshot(key)).toEqual(before);
+    for (const modelSelection of [
+      { ...pick, instanceId: ProviderInstanceId.make("codex") },
+      { ...pick, model: "gpt-5.4" },
+      { ...pick, options: [{ id: "reasoningEffort", value: "high" }] },
+      {
+        ...pick,
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      },
+    ]) {
+      h.update({ modelSelection });
+      expect(getComposerDraftSnapshot(key)).toEqual(before);
+    }
+    h.update({ modelSelection: { ...pick, options: pick.options!.toReversed() } });
     expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
   });
 

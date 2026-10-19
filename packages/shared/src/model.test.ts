@@ -20,7 +20,6 @@ import {
   normalizeCustomModelSlug,
   normalizeModelSlug,
   modelSelectionsEqual,
-  draftModelPickMatchesThread,
 } from "./model.ts";
 
 it("keeps the Codex catalog display formatting", () => {
@@ -220,21 +219,6 @@ describe("descriptor helpers", () => {
       }),
     ).toBe(false);
     expect(modelSelectionsEqual(left, { ...reordered, model: "gpt-5.5" })).toBe(false);
-  });
-
-  it("matches a draft pick to the thread when only one side spells out fast mode off", () => {
-    const opus = (options?: Parameters<typeof createModelSelection>[2]) =>
-      createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-opus-5-5", options);
-
-    expect(draftModelPickMatchesThread(opus([{ id: "fastMode", value: false }]), opus())).toBe(
-      true,
-    );
-    expect(draftModelPickMatchesThread(opus(), opus([{ id: "fastMode", value: false }]))).toBe(
-      true,
-    );
-    expect(draftModelPickMatchesThread(opus([{ id: "fastMode", value: true }]), opus())).toBe(
-      false,
-    );
   });
 });
 
