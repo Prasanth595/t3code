@@ -84,7 +84,7 @@ function inferHomeFromCwd(cwd: string): string | undefined {
     return `/home/${posixHome[1]}`;
   }
 
-  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/);
+  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/i);
   if (windowsUser?.[1]) {
     return windowsUser[1];
   }
@@ -97,7 +97,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/")) {
+  if (path.startsWith("~/") || (isWindowsPathStyle(cwd) && path.startsWith("~\\"))) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
       const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";
@@ -171,7 +171,6 @@ export function buildFileLinkParentSuffixByPath(
   return suffixByPath;
 }
 
-/** Visible text of a file chip, shared by Markdown rendering and thread search. */
 export function fileLinkLabel(
   file: FilePathPosition,
   parentSuffixByPath: ReadonlyMap<string, string>,
