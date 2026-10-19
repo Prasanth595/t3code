@@ -9,14 +9,7 @@ import * as Schema from "effect/Schema";
 import { CLAUDE_SYNTHETIC_MODEL } from "../provider/Drivers/claudeUsage.ts";
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
 
-// v2: Codex fork-copy suppression changed what a file parses to, so v1
-// entries would keep serving double-counted records forever.
-// v3: entries carry the parse position and reducer state so a grown file
-// re-parses only its appended bytes instead of starting over.
-// v4: records carry Claude fast mode, which v3 rows never captured.
-// v5: Codex records carry their service tier. v4 rows store speed the same
-// way, so v4 entries still load; see `decodeScanCache` for v4 stateful entries.
-// v6: Claude records keep their fullest usage snapshot and recorded thinking.
+// v6 reparses Claude history to recover fuller output snapshots and recorded thinking.
 const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
@@ -24,7 +17,7 @@ const SPEED_COMPATIBLE_SINCE_VERSION = 4;
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * When its own file is missing, a server reads the newest older file once.
+ * Import older files too: a downgraded server may have retained additional history.
  */
 export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
 export const LEGACY_SCAN_CACHE_FILE_NAMES = [
@@ -361,14 +354,7 @@ export function pruneScanCache(cache: ScanCache, retentionCutoffMs: number): num
   return removed;
 }
 
-/**
- * Callers stitching an incremental parse together pass one `seen` set across the line and tail
- * record batches so the whole file stays deduplicated as a unit; the set is mutated in place.
- */
-export function dedupeWithinFile(
-  records: readonly UsageRecord[],
-  seen: Set<string> = new Set(),
-): readonly UsageRecord[] {
+export function dedupeWithinFile(records: readonly UsageRecord[]): readonly UsageRecord[] {
   const kept: UsageRecord[] = [];
   const indexes = new Map<string, number>();
   for (const record of records) {
@@ -378,8 +364,6 @@ export function dedupeWithinFile(
         kept[index] = fullerClaudeSnapshot(kept[index]!, record);
         continue;
       }
-      if (seen.has(record.dedupeKey)) continue;
-      seen.add(record.dedupeKey);
       indexes.set(record.dedupeKey, kept.length);
     }
     kept.push(record);
@@ -393,7 +377,31 @@ export function dedupeWithinFile(
  * attribution with the fullest snapshot; never sum the repeats.
  */
 function fullerClaudeSnapshot(kept: UsageRecord, next: UsageRecord): UsageRecord {
-  return next.provider === "claude" && next.totals.outputTokens > kept.totals.outputTokens
-    ? { ...kept, totals: next.totals, reportedCostUsd: next.reportedCostUsd }
-    : kept;
+  if (kept.provider !== "claude" || next.provider !== "claude") return kept;
+  const snapshot =
+    next.totals.outputTokens > kept.totals.outputTokens ||
+    (next.totals.outputTokens === kept.totals.outputTokens &&
+      next.totals.reasoningTokens > kept.totals.reasoningTokens)
+      ? next
+      : kept;
+  const reasoningTokens = Math.min(
+    snapshot.totals.outputTokens,
+    Math.max(kept.totals.reasoningTokens, next.totals.reasoningTokens),
+  );
+  if (snapshot === kept && reasoningTokens === kept.totals.reasoningTokens) return kept;
+  return {
+    ...kept,
+    totals: { ...snapshot.totals, reasoningTokens },
+    reportedCostUsd:
+      snapshot.totals.outputTokens > kept.totals.outputTokens
+        ? snapshot.reportedCostUsd
+        : (snapshot.reportedCostUsd ?? kept.reportedCostUsd),
+  };
+}
+
+/** Reconcile the displayed usage without promoting a replaceable tail into committed records. */
+export function cachedFileRecords(entry: CachedFile): readonly UsageRecord[] {
+  return entry.tailRecords.length === 0
+    ? entry.records
+    : dedupeWithinFile([...entry.records, ...entry.tailRecords]);
 }

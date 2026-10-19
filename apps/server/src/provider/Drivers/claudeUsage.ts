@@ -15,14 +15,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 // Claude Code uses this model for local placeholders that never reached the API.
 export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 
-/**
- * Parses one line of a Claude Code transcript.
- *
- * T3 Code writes one record per assistant *content block*, and every one of
- * those records repeats the parent message's cumulative `usage`. Summing them
- * overcounts by roughly 2.4x on a real workload, so the caller reconciles
- * repeats by `dedupeKey`, keeping the fullest snapshot.
- */
+/** Claude content blocks repeat cumulative message usage; callers keep the fullest snapshot. */
 export function parseClaudeLine(line: string): UsageRecord | null {
   let parsed: unknown;
   try {

@@ -17,9 +17,9 @@ Select a model under **Breakdown** to see its trend, cache hit rate, and cost pe
 Thinking is part of output, so this does not change totals or cost. Thinking a provider does not
 report separately stays in **Output**.
 
-Totals depend on the history available on each server. Claude Code history is re-read once to pick
-up its thinking counts and output it previously missed, which can raise past totals and estimated
-costs. Grok turns without a saved completed-turn record are missing from the totals.
+Totals depend on the history available on each server. Recovering fuller Claude Code usage from
+saved history can raise past totals and estimated costs. Grok turns without a saved completed-turn
+record are missing from the totals.
 
 OpenCode reads its SQLite database and older JSON history. Antigravity reads local conversation
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the

@@ -860,6 +860,12 @@ function ModelsSection(props: { readonly merged: MergedUsage; readonly metric: U
                   ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
                   : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
             </Text>
+            {metric === "tokens" && model.tokens.reasoningTokens > 0 ? (
+              <Text className="text-xs text-foreground-muted">
+                {formatTokens(model.tokens.outputTokens - model.tokens.reasoningTokens)} output ·{" "}
+                {formatTokens(model.tokens.reasoningTokens)} thinking
+              </Text>
+            ) : null}
           </View>
           <Text className="text-base tabular-nums text-foreground">
             {metric === "tokens"
