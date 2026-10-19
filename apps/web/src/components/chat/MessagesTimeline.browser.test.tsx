@@ -1304,10 +1304,16 @@ describe("MessagesTimeline send anchor", () => {
 });
 
 describe("MessagesTimeline minimap", () => {
+  const turns = Array.from({ length: 100 }, (_, index) => [
+    message(`Prompt ${index}`, {}, `prompt-${index}`),
+    message(
+      `Reply ${index}. ${"Long reply text. ".repeat(40)}`,
+      { role: "assistant" },
+      `reply-${index}`,
+    ),
+  ]).flat();
+
   it("keeps the rail between the top of the timeline and the composer", async () => {
-    const turns = Array.from({ length: 100 }, (_, index) =>
-      message(`Prompt ${index}`, {}, `prompt-${index}`),
-    );
     await renderTimeline(turns, { contentInsetEndAdjustment: 120 });
     container.style.height = "300px";
 
@@ -1320,5 +1326,33 @@ describe("MessagesTimeline minimap", () => {
         expect(rect.bottom).toBeLessThanOrEqual(bounds.bottom - 120);
       }
     });
+  });
+
+  it("hides when the area above the composer is too short for the rail", async () => {
+    await renderTimeline(turns, { contentInsetEndAdjustment: 240 });
+    container.style.height = "300px";
+
+    await vi.waitFor(() =>
+      expect(container.querySelector("[data-testid=timeline-minimap]")).toBeNull(),
+    );
+  });
+
+  it("opens a preview near the bottom of the rail above the composer", async () => {
+    await renderTimeline(turns, { contentInsetEndAdjustment: 120 });
+    container.style.height = "600px";
+
+    const rail = await vi.waitFor(() => button(/^Jump to message/));
+    await act(async () => rail.focus());
+    await userEvent.keyboard("{End}{ArrowUp}");
+    const preview = await vi.waitFor(() => {
+      const element = container.querySelector<HTMLElement>("[data-minimap-preview]");
+      if (!element) throw new Error("Missing preview");
+      return element;
+    });
+
+    expect(preview.textContent).toContain("Prompt 98");
+    expect(preview.getBoundingClientRect().bottom).toBeLessThanOrEqual(
+      container.getBoundingClientRect().bottom - 120,
+    );
   });
 });

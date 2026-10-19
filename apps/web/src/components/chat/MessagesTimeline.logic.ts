@@ -278,7 +278,9 @@ export function workEntryIsVisibleInGroup(
 }
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
-const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100% - 4rem)";
+const TIMELINE_MINIMAP_BUTTON_CLEARANCE_PX = 64;
+const TIMELINE_MINIMAP_MIN_RAIL_HEIGHT_PX = 32;
+const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = `calc(100% - ${TIMELINE_MINIMAP_BUTTON_CLEARANCE_PX}px)`;
 const TIMELINE_MINIMAP_PERSISTENT_GUTTER = 48;
 
 export interface WorkGroupScrollAnchor {
@@ -343,6 +345,14 @@ export function resolveTimelineIsAtEnd(state: TimelineEndState | undefined): boo
 export function resolveTimelineMinimapHeightStyle(itemCount: number): string {
   const naturalHeight = Math.max(1, (itemCount - 1) * TIMELINE_MINIMAP_ITEM_SPACING);
   return `min(${naturalHeight}px, ${TIMELINE_MINIMAP_MAX_HEIGHT_CSS})`;
+}
+
+export function resolveTimelineMinimapHasRoom(areaHeight: number): boolean {
+  return areaHeight >= TIMELINE_MINIMAP_BUTTON_CLEARANCE_PX + TIMELINE_MINIMAP_MIN_RAIL_HEIGHT_PX;
+}
+
+export function resolveTimelineMinimapPreviewTranslate(index: number, itemCount: number): string {
+  return index * 2 > itemCount - 1 ? "-100%" : "0%";
 }
 
 export function resolveTimelineMinimapTopPercent(index: number, itemCount: number): number {

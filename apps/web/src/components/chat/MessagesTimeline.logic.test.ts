@@ -36,11 +36,13 @@ import {
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
+  resolveTimelineMinimapHasRoom,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
+  resolveTimelineMinimapPreviewTranslate,
   resolveTimelineMinimapTopPercent,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
@@ -5663,8 +5665,14 @@ describe("timeline end and minimap geometry", () => {
   });
 
   it("maps the minimap rail to rows and sizes its hit strip from the free gutter", () => {
-    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100% - 4rem))");
+    expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100% - 64px))");
     expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
+    expect(resolveTimelineMinimapHasRoom(95)).toBe(false);
+    expect(resolveTimelineMinimapHasRoom(96)).toBe(true);
+    expect(resolveTimelineMinimapPreviewTranslate(0, 5)).toBe("0%");
+    expect(resolveTimelineMinimapPreviewTranslate(2, 5)).toBe("0%");
+    expect(resolveTimelineMinimapPreviewTranslate(3, 5)).toBe("-100%");
+    expect(resolveTimelineMinimapPreviewTranslate(4, 5)).toBe("-100%");
     const rail = { itemCount: 101, railTop: 100, railHeight: 500 };
     expect(resolveTimelineMinimapIndexFromPointer({ ...rail, pointerY: 350 })).toBe(50);
     expect(resolveTimelineMinimapIndexFromPointer({ ...rail, pointerY: 999 })).toBe(100);

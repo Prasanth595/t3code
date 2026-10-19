@@ -210,12 +210,14 @@ import {
   resolveAssistantMessageCopyState,
   resolveTimelineIsAtEnd,
   resolveTimelineMinimapHasPersistentGutter,
+  resolveTimelineMinimapHasRoom,
   resolveTimelineMinimapCurrentIndex,
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapHitStripWidth,
   resolveTimelineMinimapIndexFromPointer,
   resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
+  resolveTimelineMinimapPreviewTranslate,
   resolveTimelineMinimapTopPercent,
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
@@ -1029,6 +1031,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           ...(alwaysRenderKeys.length === 0 ? {} : { keys: alwaysRenderKeys }),
         };
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
+  const [timelineViewportHeight, setTimelineViewportHeight] = useState<number | null>(null);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
@@ -1189,7 +1192,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     }
 
     const measure = () => {
-      const viewportWidth = timelineViewportElement.getBoundingClientRect().width;
+      const { width: viewportWidth, height: viewportHeight } =
+        timelineViewportElement.getBoundingClientRect();
       const contentWidth =
         timelineViewportElement
           .querySelector<HTMLElement>("[data-timeline-root]")
@@ -1202,6 +1206,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         current === nextHasPersistentGutter ? current : nextHasPersistentGutter,
       );
       setMinimapHitStripWidth(resolveTimelineMinimapHitStripWidth(viewportWidth, contentWidth));
+      setTimelineViewportHeight(viewportHeight);
       reportContentOverflow();
     };
 
@@ -1490,23 +1495,26 @@ const ConversationTimeline = memo(function ConversationTimeline({
             ListHeaderComponent={listHeader}
             ListFooterComponent={timelineListFooter}
           />
-          <TimelineMinimap
-            items={minimapItems}
-            hasPersistentGutter={minimapHasPersistentGutter}
-            hitStripWidth={minimapHitStripWidth}
-            currentIndex={minimapCurrentIndex}
-            stripMap={minimapStripMap}
-            composerInset={contentInsetEndAdjustment}
-            onWheel={forwardMinimapWheel}
-            onSelect={(item) => {
-              onManualNavigation();
-              void listRef.current?.scrollToIndex({
-                index: item.rowIndex,
-                animated: true,
-                viewOffset: 24,
-              });
-            }}
-          />
+          {timelineViewportHeight === null ||
+          resolveTimelineMinimapHasRoom(timelineViewportHeight - contentInsetEndAdjustment) ? (
+            <TimelineMinimap
+              items={minimapItems}
+              hasPersistentGutter={minimapHasPersistentGutter}
+              hitStripWidth={minimapHitStripWidth}
+              currentIndex={minimapCurrentIndex}
+              stripMap={minimapStripMap}
+              composerInset={contentInsetEndAdjustment}
+              onWheel={forwardMinimapWheel}
+              onSelect={(item) => {
+                onManualNavigation();
+                void listRef.current?.scrollToIndex({
+                  index: item.rowIndex,
+                  animated: true,
+                  viewOffset: 24,
+                });
+              }}
+            />
+          ) : null}
         </TooltipScrollDismissArea>
       </TimelineRowActivityCtx>
     </MarkdownFindContext>
@@ -1644,12 +1652,8 @@ function TimelineMinimap({
       : resolveTimelineMinimapTopPercent(resolvedActiveIndex, items.length);
   const activeTooltipTranslate =
     resolvedActiveIndex === null
-      ? "-50%"
-      : resolvedActiveIndex === 0
-        ? "0%"
-        : resolvedActiveIndex === items.length - 1
-          ? "-100%"
-          : "-50%";
+      ? "0%"
+      : resolveTimelineMinimapPreviewTranslate(resolvedActiveIndex, items.length);
   const resolvedCurrentIndex =
     currentIndex !== null && currentIndex >= 0 && currentIndex < items.length ? currentIndex : null;
   const previousItem =
