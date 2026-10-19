@@ -716,7 +716,7 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
-  it.effect.each(["Stop", "fallback restart"])(
+  it.effect.each(["Stop", "fallback restart", "agent crash"])(
     "lets %s end the running command and respawns the agent for the next turn",
     (action) =>
       Effect.gen(function* () {
@@ -733,13 +733,25 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
         const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
         if (providerTurnId == null) return yield* Effect.die("missing command item");
 
-        yield* mock.session.interruptTurn({
-          providerThread: mock.providerThread,
-          providerTurnId,
-          ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
-        });
-        assert.equal(yield* mock.waitForTerminal, "interrupted");
-        assert.equal(mock.commandItem("command-outliving-prompt")?.status, "interrupted");
+        if (action === "agent crash") {
+          process.kill(agentPid, "SIGKILL");
+        } else {
+          yield* mock.session.interruptTurn({
+            providerThread: mock.providerThread,
+            providerTurnId,
+            ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
+          });
+        }
+        assert.equal(
+          yield* mock.waitForTerminal,
+          action === "agent crash" ? "failed" : "interrupted",
+        );
+        const commandStatus = mock.commandItem("command-outliving-prompt")?.status;
+        if (action === "agent crash") {
+          assert.oneOf(commandStatus, ["failed", "interrupted"]);
+        } else {
+          assert.equal(commandStatus, "interrupted");
+        }
         assert.isFalse(pidIsRunning(commandPid), `${action} ends the command`);
         assert.isFalse(pidIsRunning(agentPid), `${action} ends the ACP agent`);
 
