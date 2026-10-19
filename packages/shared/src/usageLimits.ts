@@ -749,14 +749,31 @@ export function collectProviderUsageLimits(
         : provider.usageLimits,
     });
   }
-  // The same subscription can sit in hubs on several environments; the first one listed wins.
-  const hubAccounts = new Set<string>();
+  // The same subscription can sit in hubs on several environments. The first readable one
+  // listed wins; an unreadable one is shown only when no hub can read that account.
+  const hubPicks = new Map<
+    string,
+    { source: ComposerUsageLimitSource; account: UsageLimitSourceSnapshot["accounts"][number] }
+  >();
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      const key = resolveKey(account);
+      if (account.driver !== selected.driver || !key || nativeAccounts.has(key)) continue;
+      const picked = hubPicks.get(key);
+      if (
+        !picked ||
+        (limitsNotice(picked.account.usageLimits) && !limitsNotice(account.usageLimits))
+      ) {
+        hubPicks.set(key, { source, account });
+      }
+    }
+  }
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = resolveKey(account);
-      if (key && (nativeAccounts.has(key) || hubAccounts.has(key))) continue;
-      if (key) hubAccounts.add(key);
+      const picked = key ? hubPicks.get(key) : undefined;
+      if (key && (picked?.source !== source || picked.account !== account)) continue;
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,

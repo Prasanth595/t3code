@@ -1404,6 +1404,32 @@ describe("/usage-limits", () => {
     );
     expect(sharedHub?.accounts.map((account) => account.id)).toEqual(["codex", "hub:pooled"]);
     expect(sharedHub?.accounts[1]?.resetCreditEnvironmentId).toBeUndefined();
+
+    // A local hub that cannot read the account gives way to a remote hub that can.
+    const unreadableLocal = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(
+        threadEnvironment,
+        [
+          {
+            ...sources[0]!,
+            accounts: [
+              {
+                ...pooled,
+                usageLimits: { ...limits, windows: [], unavailable: { reason: "probeFailed" } },
+              },
+            ],
+          },
+        ],
+        byEnvironment,
+      ),
+      now,
+    );
+    expect(unreadableLocal?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "remote-hub:pooled",
+    ]);
   });
 
   it("advertises global and workspace commands only for providers present in Limits", () => {

@@ -156,7 +156,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
   // Hub snapshots per environment, so a composer can show hubs its own environment lacks.
   const usageLimitSourcesByEnvironmentAtom = Atom.make((get) => {
     const next = new Map<EnvironmentId, UsageLimitSourceSnapshots>();
-    for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const sources = get(input.serverConfigValueAtom(environmentId))?.usageLimitSources;
       if (sources !== undefined && sources.length > 0) {
         next.set(environmentId, sources);
