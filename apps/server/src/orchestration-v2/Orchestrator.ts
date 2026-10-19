@@ -67,6 +67,7 @@ import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -76,6 +77,7 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -1050,7 +1052,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ? undefined
       : projection.messages.find((candidate) => candidate.id === delivery.messageId);
 
-  const offerDelegatedCompletionDelivery = (threadId: ThreadId, parentRunId: RunId) =>
+  const offerDelegatedCompletionDelivery = (
+    threadId: ThreadId,
+    parentRunId: RunId,
+    pendingOffers?: Map<RunId, MessageId>,
+  ) =>
     Effect.gen(function* () {
       const projection = yield* projectionStore.getThreadRecords(
         threadId,
@@ -1066,6 +1072,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery === null ||
         delivery === undefined ||
         delivery.taskIds.length === 0 ||
+        (pendingOffers !== undefined && pendingOffers.get(parentRunId) !== delivery.messageId) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         (completionDeliveryMessage(projection, delivery) !== undefined &&
@@ -1094,6 +1101,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           messageId: delivery.messageId,
         },
       });
+      pendingOffers?.delete(parentRunId);
     });
 
   const offerDelegatedCompletionDeliveries = (threadId: ThreadId) =>
@@ -1996,14 +2004,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : "disposed";
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
-      // task_status and t3_thread_read use distinct command IDs, so two
-      // valid observations can race after their read preflight. Re-emit the
-      // existing task row so the second dispatch is a successful idempotent
-      // no-op rather than "already acknowledged/disposed" or empty-events.
+      // Distinct observation commands can race. Re-emit unchanged ownership
+      // for idempotent no-ops, including a child terminal before publication:
+      // acknowledging it early would suppress the result wake.
       if (
         task.completionDelivery?.state === state ||
         (command.type === "delegated_task.completion-delivery.acknowledge" &&
-          task.completionDelivery?.state === "disposed")
+          (task.result === null || task.completionDelivery?.state === "disposed"))
       ) {
         yield* emitEvent({
           type: "subagent.updated",
@@ -10198,6 +10205,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly settledContinuationOf?: RunId;
       readonly taskId: NodeId;
       readonly resultRun?: OrchestrationV2Run;
+      readonly pendingOffers?: Map<RunId, MessageId>;
     },
   ) =>
     Effect.gen(function* () {
@@ -10383,6 +10391,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         consumedAt: now,
       };
 
+      if (completionPlan.offer && completionPlan.parentRun?.delegatedCompletion?.delivery != null) {
+        options.pendingOffers?.set(
+          completionPlan.parentRun.id,
+          completionPlan.parentRun.delegatedCompletion.delivery.messageId,
+        );
+      }
       yield* writeSystemEvents([
         {
           type: "subagent.updated",
@@ -10487,13 +10501,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
 
       if (completionPlan.offer && completionPlan.parentRun !== undefined) {
-        yield* offerDelegatedCompletionDelivery(parentThreadId, completionPlan.parentRun.id);
+        yield* offerDelegatedCompletionDelivery(
+          parentThreadId,
+          completionPlan.parentRun.id,
+          options.pendingOffers,
+        );
       }
     });
 
   const finalizeAppOwnedSubagent = (
     childThreadId: ThreadId,
-    options?: { readonly settledContinuationOf?: RunId },
+    options?: {
+      readonly settledContinuationOf?: RunId;
+      readonly pendingOffers?: Map<RunId, MessageId>;
+    },
   ) =>
     Effect.gen(function* () {
       const childControls = yield* projectionStore.getThreadRecords(
@@ -10514,16 +10535,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         "contextTransfers",
       ]);
       for (const task of parent.subagents) {
+        if (task.origin !== "app_owned" || task.childThreadId !== childThreadId) continue;
         if (
-          task.origin !== "app_owned" ||
-          task.childThreadId !== childThreadId ||
-          (task.id === childControls.thread.forkedFrom.nodeId &&
-            progress.state !== "result_available") ||
-          (task.result !== null &&
-            parent.contextTransfers.some(
-              (transfer) =>
-                transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
-            ))
+          task.result !== null &&
+          parent.contextTransfers.some(
+            (transfer) =>
+              transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+          )
+        ) {
+          // Repair only this reaction's unfinished offer, even if a follow-up
+          // has started. Successful offers may still be waiting in the queue.
+          if (task.runId !== null && options?.pendingOffers?.has(task.runId)) {
+            yield* offerDelegatedCompletionDelivery(
+              parentThreadId,
+              task.runId,
+              options.pendingOffers,
+            );
+          }
+          continue;
+        }
+        if (
+          task.id === childControls.thread.forkedFrom.nodeId &&
+          progress.state !== "result_available"
         )
           continue;
         yield* finalizeAppOwnedSubagentTask(childControls, {
@@ -10591,7 +10624,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
-  const finalizeDelegatedCompletionDelivery = (threadId: ThreadId, runId: RunId) =>
+  const finalizeDelegatedCompletionDelivery = (
+    threadId: ThreadId,
+    runId: RunId,
+    pendingOffers?: Map<RunId, MessageId>,
+  ) =>
     Effect.gen(function* () {
       // Ordinary turns do not own a delegated delivery. Read just their input
       // before loading the cohort state needed to settle an actual delivery.
@@ -10624,6 +10661,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery.messageId !== deliveryRun.userMessageId ||
         delivery.generation !== messageOwnership.generation
       ) {
+        // A previous attempt may have reserved a successor before its offer
+        // failed. Repair that reservation without settling the successor.
+        if (parentRun !== undefined && pendingOffers?.has(parentRun.id)) {
+          yield* offerDelegatedCompletionDelivery(threadId, parentRun.id, pendingOffers);
+        }
         return;
       }
 
@@ -10714,6 +10756,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
         ];
       });
+      if (nextDelivery !== null) {
+        pendingOffers?.set(parentRun.id, nextDelivery.messageId);
+      }
       yield* writeSystemEvents([
         ...taskEvents,
         {
@@ -10727,7 +10772,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ]);
       if (nextDelivery !== null) {
-        yield* offerDelegatedCompletionDelivery(threadId, parentRun.id);
+        yield* offerDelegatedCompletionDelivery(threadId, parentRun.id, pendingOffers);
       }
     });
 
@@ -11356,54 +11401,79 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : threadDispatch.withLock(parentThreadId, dispatch);
     });
 
+  const terminalRetryRuns = new Map<RunId, Map<RunId, MessageId>>();
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
+      if (stored.event.type !== "run.updated") return;
       const threadId = stored.event.threadId;
-      // finalize writes the parent thread and startNextQueuedRun writes this
-      // thread, so each takes its own thread's lock, sequentially and never
-      // nested: dispatchDelegatedTaskRequest already writes child events
-      // while holding the parent lock, so nesting the parent lock inside the
-      // child lock here would invert that order, and the keyed executor's
-      // semaphores are neither reentrant nor deadlock-aware.
-      if (stored.event.type === "run.updated") {
-        yield* threadDispatch.withLock(
-          threadId,
-          finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
-        );
-      }
-      yield* threadDispatch
+      const runId = stored.event.payload.id;
+      // Repair only this reaction's unfinished offer reservations.
+      const pendingOffers = terminalRetryRuns.get(runId) ?? new Map<RunId, MessageId>();
+      // Intake takes parent then child. Release the child lock before taking
+      // the parent lock here, including on retries.
+      const settleDelivery = threadDispatch.withLock(
+        threadId,
+        finalizeDelegatedCompletionDelivery(threadId, runId, pendingOffers),
+      );
+      const publishResult = Effect.gen(function* () {
+        const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+        if (parentThreadId !== undefined) {
+          yield* threadDispatch.withLock(
+            parentThreadId,
+            finalizeAppOwnedSubagent(threadId, { pendingOffers }),
+          );
+        }
+      });
+      const finalize = settleDelivery.pipe(Effect.andThen(publishResult));
+      // Promote once after the first settlement attempt, even if it failed.
+      // Replaying this event's queue decision could bypass a newer failure.
+      const promoteQueue = threadDispatch
         .withLock(
           threadId,
-          startNextQueuedRun(
-            threadId,
-            stored.event.type === "run.updated"
-              ? {
-                  endedRunId: stored.event.payload.id,
-                  ...(stored.event.payload.status === "failed"
-                    ? { failedRunId: stored.event.payload.id }
-                    : {}),
-                }
-              : undefined,
-          ),
+          startNextQueuedRun(threadId, {
+            endedRunId: runId,
+            ...(stored.event.payload.status === "failed" ? { failedRunId: runId } : {}),
+          }),
         )
         .pipe(
           Effect.catchCause((cause) =>
             Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
           ),
         );
-      const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
-      if (parentThreadId !== undefined) {
-        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
-      }
-    }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to react to terminal V2 run", {
-          threadId: stored.event.threadId,
-          sequence: stored.sequence,
-          cause,
+      const initial = settleDelivery.pipe(
+        Effect.ensuring(promoteQueue),
+        Effect.andThen(publishResult),
+      );
+      const retryable = (error: Effect.Error<typeof finalize>) =>
+        error._tag !== "ProjectionStoreThreadNotFoundError";
+      const logFailure = (cause: Cause.Cause<Effect.Error<typeof finalize>>) =>
+        Effect.logWarning("Failed to react to terminal V2 run", { threadId, runId, cause });
+      yield* initial.pipe(
+        Effect.catch((error) => (retryable(error) ? finalize : Effect.fail(error))),
+        Effect.catch((error) => {
+          if (!retryable(error)) return logFailure(Cause.fail(error));
+          if (terminalRetryRuns.has(runId)) return Effect.void;
+          // Backoff must not stall unrelated terminal events. One bounded
+          // worker per run retries with the same parent/child lock ordering.
+          return Effect.uninterruptible(
+            Effect.gen(function* () {
+              terminalRetryRuns.set(runId, pendingOffers);
+              yield* finalize.pipe(
+                Effect.retry({
+                  schedule: Schedule.exponential("500 millis").pipe(Schedule.upTo({ times: 3 })),
+                  while: retryable,
+                }),
+                Effect.delay("250 millis"),
+                Effect.catchCause(logFailure),
+                Effect.ensuring(Effect.sync(() => terminalRetryRuns.delete(runId))),
+                Effect.forkChild({ uninterruptible: false }),
+              );
+            }),
+          );
         }),
-      ),
-    );
+        Effect.catchCause(logFailure),
+      );
+    });
 
   // Historical terminal events are already represented by the projections
   // below. Replaying the full event table on every server start delays live

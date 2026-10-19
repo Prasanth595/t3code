@@ -1,7 +1,7 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, it, vi } from "@effect/vitest";
 import {
   CommandId,
   EventId,
@@ -18,10 +18,15 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../config.ts";
@@ -38,6 +43,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ProviderTurnStartServiceTestkit from "./ProviderTurnStartService.testkit.ts";
@@ -104,7 +110,11 @@ const layerTestProviderInstanceRegistry = Layer.succeed(
   },
 );
 
-const layerTest = Layer.mergeAll(RuntimeLayer.layer, RuntimeLayer.layerEventSink).pipe(
+const layerTest = Layer.mergeAll(
+  RuntimeLayer.layer,
+  RuntimeLayer.layerEventSink,
+  ProjectionStore.layer,
+).pipe(
   Layer.provideMerge(RuntimeLayer.layerProjectService),
   Layer.provide(
     Layer.mock(WorkspacePaths.WorkspacePaths)({
@@ -921,9 +931,448 @@ const seedRestartCancelledChild = (input: {
     return { taskId, childThreadId, childRunId };
   });
 
+it.effect.each(["missing thread", "exhausted retries"] as const)(
+  "stops terminal repair after %s and logs its identity",
+  (failure) =>
+    Effect.gen(function* () {
+      const stopped = yield* Deferred.make<unknown>();
+      const logger = Logger.make(({ message }) => {
+        const parts = Array.isArray(message) ? message : [message];
+        if (parts[0] === "Failed to react to terminal V2 run") {
+          Deferred.doneUnsafe(stopped, Effect.succeed(parts[1]));
+        }
+      });
+      yield* Effect.gen(function* () {
+        const sink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`thread:terminal-repair-stop:${failure}`);
+        const runId = RunId.make(`run:terminal-repair-stop:${failure}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          runId,
+          projectId: ProjectId.make(`project:terminal-repair-stop:${failure}`),
+          rootNodeId: NodeId.make(`root:terminal-repair-stop:${failure}`),
+          taskId: NodeId.make(`task:terminal-repair-stop:${failure}`),
+          deliveryState: "delivered",
+          now,
+        });
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const queuedMessages = ["first", "second"].map((name) =>
+          MessageId.make(`message:terminal-repair-queue:${name}`),
+        );
+        if (failure === "exhausted retries") {
+          for (const messageId of queuedMessages) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:terminal-repair-queue:${messageId}`),
+              threadId,
+              messageId,
+              text: "Continue queued work.",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "queue_after_active" },
+            });
+          }
+        }
+        const attempts = yield* Queue.unbounded<number>();
+        let reads = 0;
+        const read = projections.getRunMessage;
+        const spy = vi.spyOn(projections, "getRunMessage").mockImplementation((...args) =>
+          args[0] === threadId
+            ? Effect.gen(function* () {
+                yield* Queue.offer(attempts, ++reads);
+                if (failure === "missing thread") {
+                  return yield* new ProjectionStore.ProjectionStoreThreadNotFoundError({
+                    threadId,
+                  });
+                }
+                if (reads === 1) {
+                  return yield* new ProjectionStore.ProjectionStoreReadError({ threadId });
+                }
+                return yield* read(...args);
+              })
+            : read(...args),
+        );
+        const getThread = projections.getThread;
+        const lineageSpy = vi
+          .spyOn(projections, "getThread")
+          .mockImplementation((id) =>
+            id === threadId && failure === "exhausted retries"
+              ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
+              : getThread(id),
+          );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            spy.mockRestore();
+            lineageSpy.mockRestore();
+          }),
+        );
+        const terminal = runEvent({ threadId, runId, ordinal: 1, status: "completed", now });
+        yield* sink.write({
+          commandId: CommandId.make(`command:terminal-repair-stop:${failure}`),
+          events: [terminal],
+        });
+        assert.equal(yield* Queue.take(attempts), 1);
+        if (failure === "exhausted retries") {
+          assert.equal(yield* Queue.take(attempts), 2);
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const promoted = projection.runs.find((run) => run.userMessageId === queuedMessages[0])!;
+          assert.notEqual(promoted.status, "queued");
+          // Model a newer failure committed before its live reaction runs.
+          // Reconciliation suppresses that reaction so the old retries run first.
+          yield* sink.write({
+            commandId: reconcileCommandId("terminal-repair-newer-failure"),
+            events: [
+              {
+                id: EventId.make("event:terminal-repair-newer-failure"),
+                type: "run.updated",
+                threadId,
+                runId: promoted.id,
+                occurredAt: now,
+                payload: {
+                  ...promoted,
+                  status: "failed",
+                  completedAt: now,
+                  workspacePreparation: {
+                    type: "worktree",
+                    baseRef: "HEAD",
+                    startFromOrigin: false,
+                  },
+                },
+              },
+            ],
+          });
+          for (const [index, delay] of [250, 500, 1000, 2000].entries()) {
+            yield* TestClock.adjust(delay);
+            assert.equal(yield* Queue.take(attempts), index + 3);
+          }
+        }
+        assert.deepInclude(yield* Deferred.await(stopped), { threadId, runId });
+        yield* TestClock.adjust("1 hour");
+        assert.equal(reads, failure === "missing thread" ? 1 : 6);
+        if (failure === "exhausted retries") {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const waiting = projection.runs.find((run) => run.userMessageId === queuedMessages[1]);
+          assert.equal(waiting?.status, "queued");
+          assert.isFalse(waiting?.queueHeld ?? false);
+        }
+
+        const resumed = yield* Deferred.make<void>();
+        lineageSpy.mockRestore();
+        spy.mockImplementation((...args) =>
+          read(...args).pipe(Effect.tap(() => Deferred.succeed(resumed, undefined))),
+        );
+        yield* sink.write({
+          commandId: CommandId.make(`command:terminal-repair-resume:${failure}`),
+          events: [{ ...terminal, id: EventId.make(`event:terminal-repair-resume:${failure}`) }],
+        });
+        yield* Deferred.await(resumed);
+      }).pipe(
+        Effect.provide(
+          layerTest.pipe(Layer.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+        ),
+      );
+    }),
+);
+
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   "subagent follow-ups",
   (it) => {
+    it.effect.each(["before publication", "after publication", "after offer"] as const)(
+      "publishes and offers a child result after repeated terminal failures %s",
+      (stage) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const projections = yield* ProjectionStore.ProjectionStoreV2;
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          const now = yield* DateTime.now;
+          const parentThreadId = ThreadId.make(`thread:transient-terminal:${stage}`);
+          const projectId = ProjectId.make(`project:transient-terminal:${stage}`);
+          const parentRunId = RunId.make(`run:transient-terminal:${stage}`);
+          const rootNodeId = NodeId.make(`node:transient-terminal:${stage}`);
+          yield* seedParentWithTerminalTask({
+            threadId: parentThreadId,
+            projectId,
+            runId: parentRunId,
+            rootNodeId,
+            taskId: NodeId.make(`node:transient-terminal-settled:${stage}`),
+            deliveryState: "delivered",
+            now,
+          });
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: `transient-terminal-child:${stage}`,
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: stage === "after offer" ? "cancelled" : "completed",
+            now,
+          });
+          const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.find(
+            (run) => run.id === parentRunId,
+          )!;
+          const readRecords = projections.getThreadRecords;
+          const readMessage = projections.getRunMessage;
+          const resultOffered = yield* Deferred.make<void>();
+          const offer = requests.offer;
+          const offers = vi
+            .spyOn(requests, "offer")
+            .mockImplementation((request) =>
+              offer(request).pipe(
+                Effect.andThen(
+                  request.threadId === parentThreadId
+                    ? Deferred.succeed(resultOffered, undefined)
+                    : Effect.void,
+                ),
+              ),
+            );
+          const immediateAttemptsFailed = yield* Deferred.make<void>();
+          const delayedAttemptFailed = yield* Deferred.make<void>();
+          const childReactionDone = yield* Deferred.make<void>();
+          let failures = 0;
+          const failRead = Effect.suspend(() => {
+            if (failures === 3) return Effect.void;
+            failures += 1;
+            return Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId: stage === "after publication" ? parentThreadId : child.childThreadId,
+              }),
+            ).pipe(
+              Effect.tapError(() =>
+                failures === 2
+                  ? Deferred.succeed(immediateAttemptsFailed, undefined)
+                  : failures === 3
+                    ? Deferred.succeed(delayedAttemptFailed, undefined)
+                    : Effect.void,
+              ),
+            );
+          });
+          const recordsSpy = vi
+            .spyOn(projections, "getThreadRecords")
+            .mockImplementation((...args) => {
+              const target =
+                stage === "before publication"
+                  ? args[0] === child.childThreadId &&
+                    args[1].length === 2 &&
+                    args[1].includes("turnItems")
+                  : stage === "after publication"
+                    ? args[0] === parentThreadId &&
+                      args[1].length === 4 &&
+                      args[1].includes("providerThreads") &&
+                      args[1].includes("providerTurns")
+                    : args[0] === child.childThreadId &&
+                      args[1].length === 1 &&
+                      args[1].includes("runtimeRequests");
+              return target
+                ? failRead.pipe(
+                    Effect.andThen(readRecords(...args)),
+                    Effect.tap(() => Deferred.succeed(childReactionDone, undefined)),
+                  )
+                : readRecords(...args);
+            });
+          // The parent event must progress while the child waits for backoff.
+          const parentReactionStarted = yield* Deferred.make<void>();
+          const messageSpy = vi
+            .spyOn(projections, "getRunMessage")
+            .mockImplementation((threadId, runId) =>
+              readMessage(threadId, runId).pipe(
+                Effect.tap(() =>
+                  threadId === parentThreadId && runId === parentRunId
+                    ? Deferred.succeed(parentReactionStarted, undefined)
+                    : Effect.void,
+                ),
+              ),
+            );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              recordsSpy.mockRestore();
+              messageSpy.mockRestore();
+              offers.mockRestore();
+            }),
+          );
+          yield* eventSink.write({
+            commandId: CommandId.make(`command:transient-terminal:${stage}`),
+            events: [
+              {
+                ...runEvent({
+                  threadId: child.childThreadId,
+                  runId: child.childRunId,
+                  ordinal: 1,
+                  status: stage === "after offer" ? "cancelled" : "completed",
+                  now,
+                }),
+                id: EventId.make(`event:transient-terminal:child:${stage}`),
+              },
+              {
+                id: EventId.make(`event:transient-terminal:parent:${stage}`),
+                type: "run.updated",
+                threadId: parentThreadId,
+                runId: parentRunId,
+                occurredAt: now,
+                payload: { ...parentRun, status: "completed", completedAt: now },
+              },
+            ],
+          });
+          yield* Deferred.await(immediateAttemptsFailed);
+          yield* Deferred.await(parentReactionStarted);
+          const interrupted = yield* orchestrator.getThreadProjection(parentThreadId);
+          const interruptedTransfers = interrupted.contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === child.childThreadId,
+          );
+          const reservedDelivery = interrupted.runs.find((run) => run.id === parentRunId)
+            ?.delegatedCompletion?.delivery;
+          assert.lengthOf(interruptedTransfers, stage === "before publication" ? 0 : 1);
+          if (stage === "after publication") {
+            assert.exists(reservedDelivery);
+            assert.equal(
+              interrupted.subagents.find((task) => task.id === child.taskId)?.completionDelivery
+                ?.state,
+              "claimed",
+            );
+          }
+          if (stage === "after publication") {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("command:terminal-retry-followup"),
+              threadId: child.childThreadId,
+              senderThreadId: parentThreadId,
+              messageId: MessageId.make("message:terminal-retry-followup"),
+              createdBy: "agent",
+              creationSource: "mcp",
+              text: "Continue with the next task.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+            });
+          }
+          assert.equal(failures, 2);
+          assert.lengthOf(offers.mock.calls, stage === "after offer" ? 1 : 0);
+          yield* TestClock.adjust("250 millis");
+          yield* Deferred.await(delayedAttemptFailed);
+          assert.lengthOf(offers.mock.calls, stage === "after offer" ? 1 : 0);
+          yield* TestClock.adjust("500 millis");
+          yield* Deferred.await(stage === "after offer" ? childReactionDone : resultOffered);
+
+          assert.equal(failures, 3);
+          const published = yield* orchestrator.getThreadProjection(parentThreadId);
+          assert.equal(
+            published.contextTransfers.filter(
+              (transfer) =>
+                transfer.type === "subagent_result" &&
+                transfer.sourceThreadId === child.childThreadId,
+            ).length,
+            1,
+          );
+          assert.equal(
+            offers.mock.calls.filter(([request]) => request.threadId === parentThreadId).length,
+            1,
+          );
+          const delivery = published.runs.find((run) => run.id === parentRunId)?.delegatedCompletion
+            ?.delivery;
+          if (stage === "after publication") {
+            assert.deepEqual(delivery, reservedDelivery);
+            assert.deepEqual(
+              published.contextTransfers.filter(
+                (transfer) =>
+                  transfer.type === "subagent_result" &&
+                  transfer.sourceThreadId === child.childThreadId,
+              ),
+              interruptedTransfers,
+            );
+          }
+          const wake = yield* requests.take;
+          assert.equal(wake.threadId, parentThreadId);
+          assert.deepEqual(wake.delegatedCompletion, {
+            parentRunId,
+            generation: delivery?.generation,
+            messageId: delivery?.messageId,
+          });
+        }),
+    );
+
+    it.effect("terminal acknowledgement cannot suppress an unpublished result wake", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:unpublished-observation");
+        const projectId = ProjectId.make("project:unpublished-observation");
+        const parentRunId = RunId.make("run:unpublished-observation");
+        const rootNodeId = NodeId.make("node:unpublished-observation");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:unpublished-observation-settled"),
+          deliveryState: "delivered",
+          now,
+        });
+        // Reconciliation events do not trigger the live terminal listener.
+        // Hold publication until the parent's terminal observation commits.
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "unpublished-child-observation",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        const publish = yield* Deferred.make<void>();
+        const publication = yield* Deferred.await(publish).pipe(
+          Effect.andThen(orchestrator.recoverDelegatedTask(child.childThreadId, child.childRunId)),
+          Effect.forkChild,
+        );
+        const observe = (suffix: string) =>
+          orchestrator.dispatch({
+            type: "delegated_task.completion-delivery.acknowledge",
+            commandId: CommandId.make(`command:unpublished-observation:${suffix}`),
+            parentThreadId,
+            taskId: child.taskId,
+            observedByRunId: parentRunId,
+          });
+        yield* observe("before-publication");
+        yield* Deferred.succeed(publish, undefined);
+        yield* Fiber.join(publication);
+
+        const published = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.equal(
+          published.contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === child.childThreadId,
+          ).length,
+          1,
+        );
+        assert.equal(
+          published.subagents.find((task) => task.id === child.taskId)?.completionDelivery?.state,
+          "claimed",
+        );
+        const wake = yield* requests.take;
+        assert.equal(wake.threadId, parentThreadId);
+        assert.equal(wake.delegatedCompletion?.parentRunId, parentRunId);
+
+        yield* observe("after-publication");
+        const observed = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.deepEqual(
+          observed.subagents.find((task) => task.id === child.taskId)?.completionDelivery,
+          { state: "acknowledged", observedByRunId: parentRunId },
+        );
+        assert.isNull(
+          observed.runs.find((run) => run.id === parentRunId)?.delegatedCompletion?.delivery,
+        );
+      }),
+    );
+
     const outcomes = [
       "completed",
       "failed",
