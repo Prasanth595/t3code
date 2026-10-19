@@ -31,7 +31,7 @@ interface RegisteredTool {
 type AgentStartHook = (
   event: {
     systemPrompt: string;
-    systemPromptOptions?: { sections?: Record<string, string> | null };
+    systemPromptOptions?: { sections?: Record<string, string> | null; forceSystemPrompt?: string };
   },
   ctx: {
     model?: { api: string };

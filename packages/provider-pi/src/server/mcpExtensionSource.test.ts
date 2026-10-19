@@ -67,17 +67,31 @@ describe("Pi orchestration prompt section", () => {
     });
   });
 
-  it("appends guidance on Pi builds without prompt sections", async () => {
+  it.each([
+    {
+      name: "on Pi builds without prompt sections",
+      events: [
+        { systemPrompt: "base" },
+        { systemPrompt: "base", systemPromptOptions: {} },
+        { systemPrompt: "base", systemPromptOptions: { sections: null } },
+      ],
+    },
+    {
+      name: "when an earlier extension forces the system prompt",
+      events: [
+        {
+          systemPrompt: "forced",
+          systemPromptOptions: { sections: {}, forceSystemPrompt: "forced" },
+        },
+      ],
+    },
+  ])("appends guidance $name", async ({ events }) => {
     const bridge = await loadMcpBridge();
     const hook = bridge.handlers.get("before_agent_start")!;
-    for (const event of [
-      { systemPrompt: "base" },
-      { systemPrompt: "base", systemPromptOptions: {} },
-      { systemPrompt: "base", systemPromptOptions: { sections: null } },
-    ]) {
+    for (const event of events) {
       const result = await hook(event, { ui: { notify: assert.fail } });
       assert.isDefined(result);
-      assert.isTrue(result!.systemPrompt.startsWith("base\n\n"));
+      assert.isTrue(result!.systemPrompt.startsWith(`${event.systemPrompt}\n\n`));
       assert.include(result!.systemPrompt, "orchestrator_capabilities");
     }
   });
