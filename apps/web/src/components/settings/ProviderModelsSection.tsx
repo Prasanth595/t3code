@@ -501,10 +501,6 @@ function ProviderModelRow({
         </TooltipPopup>
       </Tooltip>
       <span className="flex min-w-0 items-baseline gap-2">
-        {/*
-          The name never shrinks, so the slug truncates first. The wrapper is the
-          only part that shrinks, which keeps the "custom" label out of the next column.
-        */}
         <Tooltip>
           <TooltipTrigger
             render={
