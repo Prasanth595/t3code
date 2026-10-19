@@ -1144,6 +1144,7 @@ function ThreadSettingsModelsScreen() {
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const theme = useUniwindTheme();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = () => {
     if (!session.commitPendingModel()) return;
@@ -1292,14 +1293,16 @@ function ThreadSettingsModelsScreen() {
       <Toolbar placement="left">
         <Toolbar.Button
           accessibilityLabel="Cancel thread settings"
-          label="Cancel"
+          icon="xmark"
           onPress={presentation.onClose}
         />
       </Toolbar>
       <Toolbar placement="right">
         <Toolbar.Button
           accessibilityLabel={session.pendingModel ? "Save thread settings" : "Done"}
-          label={session.pendingModel ? "Save" : "Done"}
+          icon="checkmark"
+          variant="prominent"
+          tintColor={theme["--color-prominent-action"]}
           onPress={commitAndClose}
         />
       </Toolbar>
