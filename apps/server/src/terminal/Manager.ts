@@ -1471,7 +1471,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       const fallbackElapsedMs = Duration.toMillis(elapsed);
       return Result.isSuccess(result)
         ? Effect.succeed({ snapshot: result.success, fallbackElapsedMs })
-        : new TerminalSubprocessCheckError({ ...result.failure, fallbackElapsedMs });
+        : // `cause` is a non-enumerable own property on Schema.TaggedError
+          // instances, so the spread alone would drop it.
+          new TerminalSubprocessCheckError({
+            ...result.failure,
+            cause: result.failure.cause,
+            fallbackElapsedMs,
+          });
     }),
   );
   const fetchProcessTableSnapshot: Effect.Effect<
