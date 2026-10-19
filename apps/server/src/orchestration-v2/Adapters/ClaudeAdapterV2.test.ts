@@ -4443,9 +4443,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect("tracks automatic compaction before its boundary and deduplicates status updates", () =>
+  it.effect("shows automatic compaction before its boundary and completes the same item", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
+      const observeCompactions = Effect.fnUntraced(function* (uuid: string) {
+        // A later notice receipt confirms the event subscriber consumed preceding updates.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "informational",
+            content: "Context checkpoint",
+            level: "warning",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid,
+          }),
+        );
+        yield* Queue.take(harness.systemNoticeReceipts);
+        return harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+            ? [event.turnItem]
+            : [],
+        );
+      });
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -4467,8 +4487,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
       }
-      yield* Queue.offer(
-        harness.sdkMessages,
+      const beforeBoundary = yield* observeCompactions("00000000-0000-4000-8000-000000000215");
+      assert.lengthOf(beforeBoundary, 1);
+      const running = beforeBoundary[0]!;
+      assert.equal(running.status, "running");
+      assert.isNull(running.completedAt);
+      assert.isNotNull(running.startedAt);
+
+      yield* TestClock.adjust(1_000);
+      yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
           subtype: "compact_boundary",
@@ -4477,6 +4504,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           session_id: WAKE_NATIVE_SESSION,
         }),
       );
+      const afterBoundary = yield* observeCompactions("00000000-0000-4000-8000-000000000216");
+      assert.lengthOf(afterBoundary, 2);
+      const completed = afterBoundary[1]!;
+      assert.equal(completed.status, "completed");
+      assert.equal(completed.id, running.id);
+      assert.equal(completed.ordinal, running.ordinal);
+      assert.deepEqual(completed.startedAt, running.startedAt);
+      assert.equal(completed.beforeTokenCount, 1500);
+      assert.equal(completed.afterTokenCount, 400);
+      assert.deepEqual(completed.completedAt, yield* DateTime.now);
+
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
@@ -4485,22 +4523,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       yield* Queue.take(harness.terminalReceipts);
-      const updates = harness.events.flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.type === "compaction"
-          ? [event.turnItem]
-          : [],
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+            ? [event.turnItem]
+            : [],
+        ),
+        afterBoundary,
       );
-      assert.lengthOf(updates, 2);
-      const [running, completed] = updates;
-      assert.equal(running?.status, "running");
-      assert.isNull(running?.completedAt);
-      assert.equal(completed?.status, "completed");
-      assert.equal(completed?.id, running?.id);
-      assert.equal(completed?.ordinal, running?.ordinal);
-      assert.deepEqual(completed?.startedAt, running?.startedAt);
-      assert.equal(completed?.beforeTokenCount, 1500);
-      assert.equal(completed?.afterTokenCount, 400);
-      assert.isNotNull(completed?.completedAt);
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -4509,9 +4539,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["completed", "failed", "interrupted", "stop", "query_exit"] as const)(
-    "settles an unfinished compaction on %s",
-    (outcome) =>
+  it.effect.each([
+    { outcome: "result", turnStatus: "completed", itemStatus: "failed" },
+    { outcome: "interrupt", turnStatus: "interrupted", itemStatus: "interrupted" },
+    { outcome: "query_exit", turnStatus: "failed", itemStatus: "failed" },
+  ] as const)(
+    "settles unfinished compaction before the $outcome terminal receipt",
+    ({ outcome, turnStatus, itemStatus }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarnessWithOptions({
           close: (sdkMessages) => Queue.shutdown(sdkMessages),
@@ -4538,7 +4572,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         if (outcome === "query_exit") {
           yield* Queue.shutdown(harness.sdkMessages);
-        } else if (outcome === "stop") {
+        } else if (outcome === "interrupt") {
           const idAllocator = yield* IdAllocator.IdAllocatorV2;
           yield* harness.runtime.interruptTurn({
             providerThread: harness.providerThread,
@@ -4553,29 +4587,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             makeResultFrame({
               uuid: "00000000-0000-4000-8000-000000000222",
               result: "Stopped before the boundary.",
-              ...(outcome === "failed" ? { isError: true, terminalReason: "api_error" } : {}),
-              ...(outcome === "interrupted" ? { terminalReason: "aborted_streaming" } : {}),
             }),
           );
         }
         const terminal = yield* Queue.take(harness.terminalReceipts);
-        assert.equal(
-          terminal.status,
-          outcome === "stop" ? "interrupted" : outcome === "query_exit" ? "failed" : outcome,
-        );
+        assert.equal(terminal.status, turnStatus);
         const updates = harness.events.flatMap((event) =>
           event.type === "turn_item.updated" && event.turnItem.type === "compaction"
             ? [event.turnItem]
             : [],
         );
         assert.lengthOf(updates, 2);
-        assert.equal(updates[0]?.status, "running");
-        assert.equal(updates[1]?.id, updates[0]?.id);
-        assert.equal(
-          updates[1]?.status,
-          terminal.status === "completed" ? "failed" : terminal.status,
-        );
-        assert.isNotNull(updates[1]?.completedAt);
+        const [running, settled] = updates;
+        assert.equal(running?.status, "running");
+        assert.equal(settled?.status, itemStatus);
+        assert.equal(settled?.id, running?.id);
+        assert.equal(settled?.ordinal, running?.ordinal);
+        assert.deepEqual(settled?.startedAt, running?.startedAt);
+        assert.isNotNull(settled?.completedAt);
       }).pipe(
         Effect.scoped,
         Effect.provide(
