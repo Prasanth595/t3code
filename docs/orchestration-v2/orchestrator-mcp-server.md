@@ -304,10 +304,9 @@ the published task result.
 Stops the child thread with the internal `thread.stop` command, then stops every
 task the child delegated, and disposes automatic parent delivery. Like a user Stop,
 `thread.stop` interrupts the running turn, holds queued turns, and ends pull request
-watches. A nonterminal task with no interruptible run is rejected unless its
-finished turn still waits on background work or delegated tasks. A cancelled task
-settles as `interrupted` once its turn ends, without waiting for the work the Stop
-is ending. A terminal task
+watches. A nonterminal task with no interruptible run is rejected unless its finished
+turn still waits on background work or delegated tasks; a cancelled task then settles
+as `interrupted` once its turn ends. A terminal task
 returns its existing status, and its child thread still stops, including later
 runs and watch wakes. Published task results remain available. It accepts an
 optional cancellation reason.

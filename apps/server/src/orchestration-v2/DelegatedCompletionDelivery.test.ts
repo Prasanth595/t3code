@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -981,6 +982,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const settled = (yield* orchestrator.getThreadProjection(
               parentThreadId,
             )).subagents.find((task) => task.id === child.taskId)!;
+            // The cancel came before the follow-up started.
+            const cancelRequestedAt = DateTime.subtract(now, { seconds: 1 });
             yield* eventSink.write({
               commandId: reconcileCommandId("followup-original-cancelled"),
               events: [
@@ -990,7 +993,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                   threadId: parentThreadId,
                   nodeId: settled.id,
                   occurredAt: now,
-                  payload: { ...settled, cancelRequestedAt: now },
+                  payload: { ...settled, cancelRequestedAt },
                 },
               ],
             });
@@ -1108,6 +1111,24 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             commandId: reconcileCommandId(`followup-finish-${outcome}`),
             events: [
               {
+                id: EventId.make(`event:followup-question-${outcome}`),
+                type: "runtime-request.updated",
+                threadId: child.childThreadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: {
+                  id: RuntimeRequestId.make(`request:followup-${outcome}`),
+                  nodeId: run.rootNodeId!,
+                  providerTurnId: null,
+                  nativeRequestRef: null,
+                  kind: "user_input",
+                  status: "pending",
+                  responseCapability: { type: "message" },
+                  createdAt: now,
+                  resolvedAt: null,
+                },
+              },
+              {
                 id: EventId.make(`event:followup-finish-${outcome}`),
                 type: "run.updated",
                 threadId: child.childThreadId,
@@ -1130,6 +1151,10 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             ],
           });
           yield* orchestrator.recoverDelegatedTasks;
+          // Only an interrupted follow-up ends its question, even after the original was cancelled.
+          const ended = outcome === "stopped" || outcome === "interrupted";
+          const { runtimeRequests } = yield* orchestrator.getThreadProjection(child.childThreadId);
+          assert.equal(runtimeRequests[0]?.status, ended ? "resolved" : "pending");
           const finished = yield* orchestrator.getThreadProjection(parentThreadId);
           assert.deepEqual(
             finished.subagents.find((task) => task.id === child.taskId),

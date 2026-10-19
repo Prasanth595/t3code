@@ -55,10 +55,9 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-// A delegated Claude child ends its turn while a background native subagent (#17154) or shell
-// command (#16739) it started keeps running. task_cancel arrives once the run settles, while it
-// captures its checkpoint, or while the turn runs and then finishes before Stop reaches the work.
-// "recorded" exits after recording the cancel and stopping the child. Each case then restarts.
+// A delegated child ends its turn while a background native subagent (#17154) or shell (#16739)
+// it started keeps running. task_cancel arrives after the run settles, during its checkpoint, or
+// while the turn runs; "recorded" exits before anything settles. Each case then restarts.
 const cancelBackgroundOnlyTask = (
   background: "subagent" | "command",
   {
@@ -72,8 +71,7 @@ const cancelBackgroundOnlyTask = (
         readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
         readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
       }> = [];
-      const interrupted: Array<ProviderAdapter.ProviderAdapterV2InterruptInput["providerThread"]> =
-        [];
+      const interrupted: Array<ReadonlyArray<string> | undefined> = [];
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
@@ -141,7 +139,7 @@ const cancelBackgroundOnlyTask = (
               steerTurn: () => Effect.die("unused"),
               interruptTurn: ({ providerThread }) =>
                 Effect.sync(() => {
-                  interrupted.push(providerThread);
+                  interrupted.push(providerThread.pendingBackgroundTasks?.map((t) => t.taskId));
                 }),
               respondToRuntimeRequest: () => Effect.die("unused"),
               readThreadSnapshot: () => Effect.die("unused"),
@@ -383,26 +381,25 @@ const cancelBackgroundOnlyTask = (
           yield* Queue.offer(child.events, event);
         }
         yield* Fiber.join(started);
+        const turnEndEvents = [
+          {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: { ...childTurn, status: "completed", completedAt: now },
+          },
+          {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: childTurn.providerThreadId,
+            providerTurnId: childTurn.id,
+            runOrdinal: child.turn.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          },
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
         const endTurn = Effect.gen(function* () {
-          for (const event of [
-            {
-              type: "provider_turn.updated",
-              driver,
-              providerTurn: { ...childTurn, status: "completed", completedAt: now },
-            },
-            {
-              type: "turn.terminal",
-              driver,
-              providerThreadId: childTurn.providerThreadId,
-              providerTurnId: childTurn.id,
-              runOrdinal: child.turn.runOrdinal,
-              status: "completed",
-              failure: null,
-              threadDisposition: "reusable",
-            },
-          ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
-            yield* Queue.offer(child.events, event);
-          }
+          for (const event of turnEndEvents) yield* Queue.offer(child.events, event);
           yield* Fiber.join(waiting);
         });
         if (cancelAt !== "turn") yield* endTurn;
@@ -488,11 +485,7 @@ const cancelBackgroundOnlyTask = (
           nativeStatus,
         );
         // Stop reached the provider turn that owns the shell.
-        if (background === "command")
-          assert.deepEqual(
-            interrupted.map((thread) => thread.pendingBackgroundTasks?.map((work) => work.taskId)),
-            [["bg-sleep"]],
-          );
+        if (background === "command") assert.deepEqual(interrupted, [["bg-sleep"]]);
         assert.equal(childAfter.runs.length, 1);
         assert.equal(childAfter.runs[0]!.status, "completed");
         assert.deepEqual(

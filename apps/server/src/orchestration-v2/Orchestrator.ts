@@ -300,10 +300,7 @@ export interface OrchestratorV2Shape {
   readonly resumeQueuedRuns: Effect.Effect<number, OrchestratorV2Error>;
   readonly recoverDelegatedTasks: Effect.Effect<void>;
   readonly recoverDelegatedTask: (threadId: ThreadId, sourceRunId: RunId) => Effect.Effect<void>;
-  /**
-   * Runs a delegated task's child Stop under its parent's lock, after recording the cancel on
-   * an unsettled original task, which then settles as interrupted once its turn ends.
-   */
+  /** Runs a task's child Stop under the parent lock, first recording the cancel on the task. */
   readonly cancelDelegatedTask: <A, E, R>(input: {
     readonly parentThreadId: ThreadId;
     readonly taskId: NodeId;
@@ -10576,13 +10573,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      // A cancelled original task ends with its turn, and so do its questions.
+      // The run a cancel stopped ends with its task, and so do its questions; later runs do not.
       const originalTaskId = childControls.thread.forkedFrom.nodeId;
-      const originalCancelled = parent.subagents.some(
-        (task) => task.id === originalTaskId && task.cancelRequestedAt !== undefined,
-      );
-      const settled = originalCancelled ? afterTurn : progress;
-      const resultRun = childControls.runs.find((run) => run.id === settled.resultRun?.id);
+      const cancelledAt = parent.subagents.find(
+        (task) => task.id === originalTaskId,
+      )?.cancelRequestedAt;
+      const stoppedRun = childControls.runs.find((run) => run.id === afterTurn.resultRun?.id);
+      const originalCancelled =
+        cancelledAt !== undefined &&
+        stoppedRun !== undefined &&
+        DateTime.toEpochMillis(stoppedRun.startedAt ?? stoppedRun.requestedAt) <=
+          DateTime.toEpochMillis(cancelledAt);
+      const resultRun = originalCancelled
+        ? stoppedRun
+        : childControls.runs.find((run) => run.id === progress.resultRun?.id);
       if (
         resultRun === undefined ||
         (originalCancelled ? afterTurn.state === "working" : progress.state !== "result_available")
@@ -11637,19 +11641,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       ]);
     const logFailure = (cause: unknown) =>
-      Effect.logWarning("Failed to settle a cancelled delegated task", {
-        parentThreadId: input.parentThreadId,
-        taskId: input.taskId,
-        cause,
-      });
-    // Finalizers take the parent lock too, so none reads the task between the
-    // recorded cancel and the Stop it describes.
+      Effect.logWarning("Failed to settle a cancelled task", { taskId: input.taskId, cause });
+    // Finalizers take this lock too, so none runs between the recorded cancel and its Stop.
     return threadDispatch.withLock(
       input.parentThreadId,
       Effect.gen(function* () {
         const now = yield* DateTime.now;
-        // Only the original task waits on its child's background work, and only
-        // until its result is available; a finished task keeps its result.
+        // Only an original task whose result is not yet available waits on stopped work.
         const { task, recorded } = yield* Effect.gen(function* () {
           const { subagents } = yield* projectionStore.getThreadRecords(input.parentThreadId, [
             "subagents",
