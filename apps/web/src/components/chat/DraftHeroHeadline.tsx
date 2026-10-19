@@ -14,6 +14,7 @@ import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings } from "~/hooks/useSettings";
 import { hasExplicitComposerModelSelection } from "~/lib/chatThreadActions";
+import { cn } from "~/lib/utils";
 import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
@@ -221,6 +222,8 @@ export function DraftHeroHeadline({
     return true;
   };
 
+  const pickerBesideQuestionMark = hasResolvedProject && !isScratchDraft;
+
   const projectSelector = shouldShowProjectMenu ? (
     <Combobox
       items={pickerItems}
@@ -254,8 +257,12 @@ export function DraftHeroHeadline({
             <ComboboxTrigger
               render={<InlineButton tone="picker" />}
               data-draft-project-trigger=""
-              // Leaves room for the trailing "?" so a truncated name keeps it on its line.
-              className="pointer-events-auto max-w-[calc(100%-1em)] align-baseline"
+              // Leaves room for the trailing "?" so a truncated name keeps it on its line. Alone in the
+              // subtitle the percentage resolves against the picker's own width, which truncates it.
+              className={cn(
+                "pointer-events-auto align-baseline",
+                pickerBesideQuestionMark && "max-w-[calc(100%-1em)]",
+              )}
             />
           }
         >
@@ -355,7 +362,7 @@ export function DraftHeroHeadline({
       >
         {isScratchDraft ? (
           <>What should we work on?</>
-        ) : hasResolvedProject ? (
+        ) : pickerBesideQuestionMark ? (
           <>
             What should we build in <span className="whitespace-nowrap">{projectSelector}?</span>
           </>
