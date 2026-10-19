@@ -1260,10 +1260,6 @@ interface ThreadFeedPresentationBuild {
   readonly firstEntryByRun: ReadonlyMap<RunId, number>;
 }
 
-// Like `lastFeedBuild`: rows before the newest user messages are reused while
-// the inputs that reach them are unchanged.
-let lastPresentation: ThreadFeedPresentationBuild | null = null;
-
 function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLatestRun | null) {
   return (
     left === right ||
@@ -1330,8 +1326,9 @@ export function deriveThreadFeedPresentation(
   expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
   runlessWorkActive = false,
+  cache?: ThreadFeedCache,
 ): ThreadFeedEntry[] {
-  const previous = lastPresentation;
+  const previous = cache?.presentation ?? null;
   const restart = presentationRestart(
     previous,
     feed,
@@ -1504,17 +1501,19 @@ export function deriveThreadFeedPresentation(
     }
     return crossingRuns === 0;
   });
-  lastPresentation = {
-    feed,
-    latestRun,
-    expandedRunIds,
-    expandedWorkGroupIds,
-    activeWorkStartedAt,
-    runlessWorkActive,
-    rows: result,
-    restarts: cleanRestarts,
-    firstEntryByRun,
-  };
+  if (cache) {
+    cache.presentation = {
+      feed,
+      latestRun,
+      expandedRunIds,
+      expandedWorkGroupIds,
+      activeWorkStartedAt,
+      runlessWorkActive,
+      rows: result,
+      restarts: cleanRestarts,
+      firstEntryByRun,
+    };
+  }
   return result;
 }
 
@@ -1906,10 +1905,21 @@ interface ThreadFeedBuild {
   readonly restarts: ReadonlyArray<{ readonly row: number; readonly feedLength: number }>;
 }
 
-// A streamed chunk changes the newest rows of a thread that can hold thousands.
-// The last build lets the next one keep its unchanged prefix instead of
-// regrouping the whole thread.
-let lastFeedBuild: ThreadFeedBuild | null = null;
+/**
+ * A streamed chunk changes the newest rows of a thread that can hold thousands.
+ * A consumer that keeps one cache across renders lets `buildThreadFeed` and
+ * `deriveThreadFeedPresentation` keep the unchanged prefix of their last
+ * result instead of redoing the whole thread. Each feed on screen owns its
+ * cache, so two threads rendering at once never evict each other.
+ */
+export interface ThreadFeedCache {
+  feedBuild: ThreadFeedBuild | null;
+  presentation: ThreadFeedPresentationBuild | null;
+}
+
+export function createThreadFeedCache(): ThreadFeedCache {
+  return { feedBuild: null, presentation: null };
+}
 
 function setsEqual<T>(left: ReadonlySet<T>, right: ReadonlySet<T>): boolean {
   if (left.size !== right.size) return false;
@@ -1943,6 +1953,7 @@ export function buildThreadFeed(
     readonly anchoredMessages?: ReadonlyArray<LocalThreadMessage>;
     readonly attempts?: ReadonlyArray<OrchestrationV2RunAttempt>;
     readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
+    readonly cache?: ThreadFeedCache;
   },
 ): ThreadFeedEntry[] {
   const anchoredMessages = options?.anchoredMessages ?? [];
@@ -1980,7 +1991,8 @@ export function buildThreadFeed(
     }
   }
 
-  const previous = lastFeedBuild;
+  const cache = options?.cache;
+  const previous = cache?.feedBuild ?? null;
   let restartIndex = -1;
   if (
     previous !== null &&
@@ -2154,17 +2166,19 @@ export function buildThreadFeed(
           }),
   );
   const feed = prefix.length === 0 ? grouped : prefix.concat(grouped);
-  lastFeedBuild =
-    anchoredMessages.length > 0
-      ? null
-      : {
-          rows: visibleTurnItems,
-          attempts: options?.attempts,
-          nodes: options?.nodes,
-          foldedAnswerMessageIds,
-          delegatedChildrenByRun,
-          feed,
-          restarts,
-        };
+  if (cache) {
+    cache.feedBuild =
+      anchoredMessages.length > 0
+        ? null
+        : {
+            rows: visibleTurnItems,
+            attempts: options?.attempts,
+            nodes: options?.nodes,
+            foldedAnswerMessageIds,
+            delegatedChildrenByRun,
+            feed,
+            restarts,
+          };
+  }
   return feed;
 }

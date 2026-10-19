@@ -28,10 +28,12 @@ import {
   workEntryRowLabel,
   isContextHandoffActivityGroup,
   buildThreadFeed,
+  createThreadFeedCache,
   deriveThreadFeedPresentation,
   threadFeedActivityIsVisible,
   threadFeedRunIsUnsettled,
   type ThreadFeedActivity,
+  type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
   togglePendingUserInputOptionSelection,
@@ -3104,25 +3106,28 @@ describe("streamed feed updates", () => {
     byPosition.set(position, cached);
     return cached;
   };
-  const present = (step: (typeof steps)[number], expandedRunIds: ReadonlySet<RunId>) =>
+  const present = (
+    step: (typeof steps)[number],
+    expandedRunIds: ReadonlySet<RunId>,
+    cache?: ThreadFeedCache,
+  ) =>
     deriveThreadFeedPresentation(
-      buildThreadFeed(step.items.map(row)),
+      buildThreadFeed(step.items.map(row), { cache }),
       step.latestRun,
       expandedRunIds,
       new Set(),
       step.latestRun.status === "running" ? at(20) : null,
+      false,
+      cache,
     );
 
   it.each([
     { folds: "collapsed", expandedRunIds: new Set<RunId>() },
     { folds: "expanded", expandedRunIds: new Set<RunId>(runs) },
   ])("matches a fresh build after every update with $folds runs", ({ expandedRunIds }) => {
-    const streamed = steps.map((step) => present(step, expandedRunIds));
-    const fresh = steps.map((step) => {
-      buildThreadFeed([]);
-      deriveThreadFeedPresentation([], null, new Set());
-      return present(step, expandedRunIds);
-    });
+    const cache = createThreadFeedCache();
+    const streamed = steps.map((step) => present(step, expandedRunIds, cache));
+    const fresh = steps.map((step) => present(step, expandedRunIds));
     // Closures on activities are not part of what a row shows.
     const values = (rows: ReadonlyArray<ThreadFeedEntry>) => JSON.parse(JSON.stringify(rows));
     for (const [index, rows] of streamed.entries()) {
