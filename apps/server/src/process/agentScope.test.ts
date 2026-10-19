@@ -5,11 +5,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import { AgentScope, type AgentScopeShape } from "@t3tools/shared/AgentScope";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -65,20 +63,10 @@ describe("agentSliceMemoryLimits", () => {
   });
 });
 
-interface FakeUnit {
-  activeState: string;
-  result: string;
-  /** `oom_kill` in the scope's memory.events. */
-  oomKills?: number;
-}
-
-// Runs the real service against a fake user manager. `units` holds what
-// `systemctl show` and the cgroup files report for each scope. A manager
-// without `oomPolicy` (before systemd 253) rejects OOMPolicy on scopes.
 const withFakeSystemd = <A, E>(
   body: (input: {
     readonly scope: Effect.Success<typeof make>;
-    readonly units: Map<string, FakeUnit>;
+    readonly units: Map<string, { activeState: string; result: string }>;
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
   }) => Effect.Effect<A, E>,
@@ -89,7 +77,7 @@ const withFakeSystemd = <A, E>(
     for (const name of ["systemd-run", "systemctl", "agent"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
-    const units = new Map<string, FakeUnit>();
+    const units = new Map<string, { activeState: string; result: string }>();
     const calls: Array<ReadonlyArray<string>> = [];
     const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
@@ -115,24 +103,12 @@ const withFakeSystemd = <A, E>(
           return output(
             state === undefined
               ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\nControlGroup=/test.slice/${unit}\n`,
+              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
           );
         }),
     });
-    const fileSystem = yield* FileSystem.FileSystem;
     const scope = yield* make.pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
-      Effect.provideService(FileSystem.FileSystem, {
-        ...fileSystem,
-        readFileString: (file, encoding) =>
-          file.startsWith("/sys/fs/cgroup/")
-            ? Effect.succeed(
-                file.endsWith("/memory.events")
-                  ? `oom_kill ${units.get(NodePath.basename(NodePath.dirname(file)))?.oomKills ?? 0}\n`
-                  : "",
-              )
-            : fileSystem.readFileString(file, encoding),
-      }),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
     );
@@ -155,8 +131,7 @@ const unitOf = (launch: { readonly args: ReadonlyArray<string> }) =>
 const sliceOf = (launch: { readonly args: ReadonlyArray<string> }) =>
   launch.args.find((arg) => arg.startsWith("--slice="))?.slice("--slice=".length) ?? "";
 
-// Starts the Codex app-server the way its adapter does.
-const launchCodex = (scope: AgentScopeShape, threadId: string) =>
+const launchCodex = (scope: Effect.Success<typeof make>, threadId: string) =>
   makeCodexAppServerSpawnCommand({ command: "agent", args: ["app-server"], threadId }).pipe(
     Effect.provideService(AgentScope, scope),
     Effect.provideService(HostProcess.Platform, "linux"),
@@ -187,40 +162,30 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("launches the shared Codex app-server with OOMPolicy=continue", () =>
-    withFakeSystemd(({ scope }) =>
-      Effect.gen(function* () {
-        const codex = yield* launchCodex(scope, "a");
-        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "b" });
-        // OOMPolicy=stop would end the app-server of every Codex thread.
-        expect(codex.args).toContain("--property=OOMPolicy=continue");
-        expect(codex.args).not.toContain("--property=OOMPolicy=stop");
-        expect(codex.args).toContain("--property=TimeoutStopSec=10s");
-        // No thread reads a shared scope's result, so systemd may unload it.
-        expect(codex.args).toContain("--collect");
-        expect(agent.args).toContain("--property=OOMPolicy=stop");
-      }),
-    ),
-  );
+  it.effect(
+    "keeps shared Codex scopes running without attributing their OOM to the launch thread",
+    () =>
+      withFakeSystemd(({ scope, units, calls }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(agent.args).toContain("--property=OOMPolicy=stop");
+          units.set(unitOf(agent), { activeState: "failed", result: "oom-kill" });
+          expect(yield* scope.oomKilled("a")).toBe(true);
 
-  it.effect("does not wait on a shared scope that outlived an OOM kill", () =>
-    withFakeSystemd(({ scope, units }) =>
-      Effect.gen(function* () {
-        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
-        units.set(unitOf(agent), { activeState: "failed", result: "oom-kill" });
-        expect(yield* scope.oomKilled("a")).toBe(true);
-
-        // The thread moves to the shared app-server, and the kernel kills one
-        // of its tools. The scope keeps running and never records an OOM kill.
-        const codex = yield* launchCodex(scope, "a");
-        units.set(unitOf(codex), { activeState: "active", result: "success", oomKills: 1 });
-        const answer = yield* scope
-          .oomKilled("a")
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        expect(answer.pollUnsafe(), "answers without waiting for a stop").toBeDefined();
-        expect(yield* Fiber.join(answer)).toBe(false);
-      }),
-    ),
+          const codex = yield* launchCodex(scope, "a");
+          expect(codex.args).toContain("--property=OOMPolicy=continue");
+          expect(codex.args).not.toContain("--property=OOMPolicy=stop");
+          expect(codex.args).toContain("--property=TimeoutStopSec=10s");
+          expect(codex.args).toContain("--collect");
+          units.set(unitOf(codex), { activeState: "active", result: "success" });
+          expect(yield* scope.oomKilled("a")).toBe(false);
+          units.set(unitOf(codex), { activeState: "failed", result: "oom-kill" });
+          expect(yield* scope.oomKilled("a")).toBe(false);
+          expect(
+            calls.filter(([, verb, unit]) => verb === "show" && unit === unitOf(codex)),
+          ).toEqual([]);
+        }),
+      ),
   );
 
   it.effect("labels the shared Codex app-server's OOM kill on systemd without OOMPolicy", () =>
@@ -228,11 +193,11 @@ describe("AgentScope service", () => {
       ({ scope, units }) =>
         Effect.gen(function* () {
           const codex = yield* launchCodex(scope, "a");
-          // systemd 252 still stops a plain scope on an OOM kill and records it.
           units.set(unitOf(codex), { activeState: "failed", result: "oom-kill" });
           expect(yield* scope.oomKilled("a")).toBe(true);
           expect(codex.args.filter((arg) => arg.includes("OOMPolicy"))).toEqual([]);
           expect(codex.args).not.toContain("--collect");
+          expect(codex.args).toContain("--property=TimeoutStopSec=10s");
         }),
       { oomPolicy: false },
     ),
