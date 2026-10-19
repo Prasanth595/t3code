@@ -18,8 +18,7 @@ export async function readT3ProjectFile(
     {
       reportDefect: false,
       reportFailure: false,
-      // The connection can drop after the caller's availability check. This
-      // optional read must still settle so draft creation can use its fallback.
+      // A connection lost mid-read must not leave draft creation waiting.
       signal: AbortSignal.timeout(3_000),
     },
   );
