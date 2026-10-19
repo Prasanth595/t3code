@@ -56,7 +56,11 @@ export function dedupeChecks(
     const kept = newestByCheck.get(key);
     if (kept === undefined || isAtLeastAsNew(entry.at, kept.at)) newestByCheck.set(key, entry);
   }
-  const survivors = [...newestByCheck.values()];
+  const survivors = [...newestByCheck.values()].sort(
+    (a, b) =>
+      Number(b.check.status === "failure" || b.check.status === "cancelled") -
+      Number(a.check.status === "failure" || a.check.status === "cancelled"),
+  );
   const countsByName = new Map<string, number>();
   for (const entry of survivors) {
     countsByName.set(entry.check.name, (countsByName.get(entry.check.name) ?? 0) + 1);
