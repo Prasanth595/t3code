@@ -333,10 +333,6 @@ function findDiffReviewLineIndex(
     : findOnSide(selectedSide === "left" ? "right" : "left");
 }
 
-/**
- * Resolve the host-facing coordinates of a line selected in the diff viewer, or null when the
- * host cannot anchor a comment there.
- */
 export function resolveDiffReviewPosition(
   fileDiff: FileDiffMetadata,
   lineNumber: number,
