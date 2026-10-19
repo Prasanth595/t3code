@@ -1,3 +1,4 @@
+import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { pullRequestMediaResource } from "@t3tools/shared/pullRequestMedia";
 import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
@@ -14,7 +15,9 @@ export function pullRequestMediaSource(url: string, location: PullRequestMediaLo
     ? {
         environmentId: location.environmentId,
         resource,
-        ...(resource._tag === "bitbucket-media" ? { fallbackUri: url } : {}),
+        ...(resource._tag === "bitbucket-media"
+          ? { fallbackUri: url, srcFragment: markdownImageSourceFragment(url) }
+          : {}),
       }
     : { uri: url };
 }

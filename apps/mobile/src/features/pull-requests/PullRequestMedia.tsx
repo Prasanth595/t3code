@@ -6,6 +6,7 @@ import { pullRequestMediaResource } from "@t3tools/shared/pullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
+import { mediaPreviewUri } from "../../lib/mediaPreviewUri";
 import { AppText } from "../../components/ui/AppText";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
@@ -33,19 +34,24 @@ export function usePullRequestMediaUrl(url: string) {
   const source = pullRequestMediaSource(url, context);
   const fallbackUri = "fallbackUri" in source ? source.fallbackUri : undefined;
   const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource, fallbackUri);
-  const uri =
+  const srcFragment = "srcFragment" in source ? source.srcFragment : undefined;
+  const uri = mediaPreviewUri(
     asset._tag === "Success"
       ? asset.url
       : resource
         ? asset._tag === "Failure"
           ? (fallbackUri ?? null)
           : null
-        : url;
+        : url,
+    srcFragment,
+  );
   return {
     uri,
     unavailable: uri === null && resource !== null && asset._tag === "Failure",
     source,
-    resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
+    resolvePlaybackUri: resource
+      ? async () => mediaPreviewUri(await refresh(), srcFragment)
+      : undefined,
   };
 }
 

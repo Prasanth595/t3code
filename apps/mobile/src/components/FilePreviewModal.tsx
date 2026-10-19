@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Keyboard } from "react-native";
 
+import { mediaPreviewUri } from "../lib/mediaPreviewUri";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
 import { useRefreshAssetUrl } from "../state/assets";
 import { filePreviewGallery, filePreviewKey, filePreviewName } from "../lib/filePreviewGallery";
@@ -59,7 +60,7 @@ function PreviewItemResolver(props: {
       .then((url) => {
         if (cancelled) return;
         if (!url) throw new Error("Reconnect to this environment and try again.");
-        setUri(url + (source.srcFragment ?? ""));
+        setUri(mediaPreviewUri(url, source.srcFragment));
       })
       .catch((error: unknown) => {
         if (cancelled) return;

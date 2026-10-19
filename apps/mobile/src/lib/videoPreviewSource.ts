@@ -1,6 +1,7 @@
 import type { AssetResource, ChatFileAttachment, EnvironmentId } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 
+import { mediaPreviewUri } from "./mediaPreviewUri";
 import type { DraftComposerFileAttachment } from "./composerImages";
 import type { MediaActionsSource } from "./mediaActionsSource";
 
@@ -35,7 +36,7 @@ export function mediaVideoPreviewUri(
   assetUrl: string | null,
 ): string | null {
   if ("uri" in source) return source.uri;
-  return assetUrl === null ? null : assetUrl + (source.srcFragment ?? "");
+  return mediaPreviewUri(assetUrl, source.srcFragment);
 }
 
 export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string {
@@ -62,7 +63,13 @@ export function mediaVideoThumbnailKey(source: MediaVideoPreviewSource): string 
                 source.resource.url,
               ]
             : source.resource._tag === "bitbucket-media"
-              ? ["media-video", "bitbucket-media", source.environmentId, source.resource.url]
+              ? [
+                  "media-video",
+                  "bitbucket-media",
+                  source.environmentId,
+                  source.resource.url,
+                  source.srcFragment ?? "",
+                ]
               : [
                   "media-video",
                   "draft-workspace-file",
