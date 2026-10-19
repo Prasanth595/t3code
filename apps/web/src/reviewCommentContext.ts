@@ -346,6 +346,14 @@ export function resolveDiffReviewPosition(
   })[0];
   if (line === undefined) return null;
 
+  // An explicit selection must not resolve to a same-numbered line on the other side.
+  if (
+    (side === "additions" && line.newLineNumber !== lineNumber) ||
+    (side === "deletions" && line.oldLineNumber !== lineNumber)
+  ) {
+    return null;
+  }
+
   switch (line.change) {
     case "add":
       return line.newLineNumber === null ? null : { kind: "added", newLine: line.newLineNumber };

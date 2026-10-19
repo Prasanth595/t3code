@@ -149,6 +149,10 @@ describe("review comment context parsing", () => {
       ].join("\n"),
       "review-position-hunks",
     )[0]!.files[0]!;
+    // The Code tab tries the original partial patch before the hydrated viewer file.
+    expect(resolveDiffReviewPosition(fileDiff, 25, "additions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 23, "additions")).toBeNull();
+    expect(resolveDiffReviewPosition(fileDiff, 15, "deletions")).toBeNull();
     // Expanding the file loads both sides whole, so the gaps around the hunks become lines
     // the viewer can select but the host will not anchor a comment to.
     hydratePartialDiff("merge", fileDiff, {
