@@ -1361,7 +1361,8 @@ export default function GitActionsControl({
 
   const continuePendingDefaultBranchAction = (featureBranch: boolean) => {
     if (!isDefaultBranchDialogOpen || !pendingDefaultBranchAction || !canWriteSourceControl) return;
-    if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null)) return;
+    if (featureBranch && (!canChangeThreadBranch || featureBranchUnavailableReason !== null))
+      return;
     const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
     setIsDefaultBranchDialogOpen(false);
     void runGitActionWithToast({
