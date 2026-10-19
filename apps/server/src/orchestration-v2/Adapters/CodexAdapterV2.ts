@@ -1907,7 +1907,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           string,
           {
             stopped: boolean;
-            pendingResume: ProviderAdapter.ProviderAdapterV2TurnInput | undefined;
+            readonly resumeInput: ProviderAdapter.ProviderAdapterV2TurnInput | undefined;
+            // Stop can name earlier work before the claimed turn is projected.
+            resumeTurnId: ProviderTurnId | undefined;
           }
         >();
         // Codex can start a turn on its own while no run exists, such as when it
@@ -4471,7 +4473,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               rootProviderThreads.has(payload.threadId) &&
               (goalStops.has(payload.threadId) ||
                 activation?.stopped === true ||
-                (activation?.pendingResume === undefined &&
+                ((activation?.resumeInput === undefined || activation.resumeTurnId !== undefined) &&
                   goalsByNativeThread.get(payload.threadId)?.status === "active"))
             ) {
               yield* Effect.logWarning("orchestration-v2.codex-goal-turn-without-run", {
@@ -5833,7 +5835,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeThreadId != null &&
                 (goalsByNativeThread.get(nativeThreadId)?.status === "active" ||
                   activation !== undefined ||
-                  goalStops.has(nativeThreadId));
+                  (goalsByNativeThread.get(nativeThreadId) != null &&
+                    goalStops.has(nativeThreadId)));
               const completedTurn: OrchestrationV2ProviderTurn = {
                 id: input.context.providerTurnId,
                 providerThreadId: input.context.providerThread.id,
@@ -6183,12 +6186,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             // The run can settle while the pause is in flight, which drops its record.
             const activation = goalActivations.get(goalThreadId);
             if (activation !== undefined) activation.stopped = true;
-            // Stop can arrive before resume has applied settings or claimed a turn.
-            const pendingResume = activation?.pendingResume;
+            // Resume owns Stop throughout activation, even before its turn is projected.
+            const resumeInput = activation?.resumeInput;
             const requestedTurnId =
-              pendingResume === undefined
+              resumeInput === undefined
                 ? latestGoalTurnId(turnInput.providerTurnId)
-                : ((yield* claimGoalTurn(pendingResume, true)) ?? turnInput.providerTurnId);
+                : ((yield* claimGoalTurn(resumeInput, true)) ?? turnInput.providerTurnId);
             const heldBefore = goalHolds.get(goalThreadId)?.context;
             const turnsBefore = [
               ...(goalRuns.get(requestedTurnId) ?? []),
@@ -6304,13 +6307,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
               const activation = goalActivations.get(threadId);
-              if (activation?.stopped === true && !stopping) return;
-              if (activation?.pendingResume === turnInput) activation.pendingResume = undefined;
+              if (activation?.resumeInput !== turnInput || (activation.stopped && !stopping))
+                return;
+              if (activation.resumeTurnId !== undefined) {
+                return latestGoalTurnId(activation.resumeTurnId);
+              }
               const started = unownedRootTurns.get(threadId);
               if (started === undefined) {
-                return yield* completeGoalCommandTurn(turnInput, "Resuming goal.", true);
+                const providerTurnId = yield* completeGoalCommandTurn(
+                  turnInput,
+                  "Resuming goal.",
+                  true,
+                );
+                activation.resumeTurnId = providerTurnId;
+                return providerTurnId;
               }
               const context = yield* registerRootTurn({ turnInput, ...started });
+              activation.resumeTurnId = context.providerTurnId;
               unownedRootTurns.delete(threadId);
               return context.providerTurnId;
             }),
@@ -6329,7 +6342,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             rootProviderThreads.set(threadId, turnInput.providerThread);
             const activation = {
               stopped: false,
-              pendingResume: command.type === "resume" ? turnInput : undefined,
+              resumeInput: command.type === "resume" ? turnInput : undefined,
+              resumeTurnId: undefined as ProviderTurnId | undefined,
             };
             if (command.type === "resume") goalActivations.set(threadId, activation);
             yield* Effect.gen(function* () {
@@ -6419,9 +6433,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }).pipe(
               Effect.onError(() =>
                 Effect.gen(function* () {
-                  if (command.type !== "resume") return;
+                  if (command.type !== "resume" || goalActivations.get(threadId) !== activation)
+                    return;
                   activation.stopped = true;
-                  activation.pendingResume = undefined;
                   const started = unownedRootTurns.get(threadId);
                   unownedRootTurns.delete(threadId);
                   const context = yield* turnTerminalizationPermit.withPermits(1)(
@@ -6430,7 +6444,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         goalHolds.get(threadId)?.context,
                         ...(yield* Ref.get(activeTurns)).values(),
                       ];
-                      return owned.find((turn) => turn?.input.runId === turnInput.runId);
+                      return owned.find(
+                        (turn) =>
+                          turn?.subagent === null && turn.input.attemptId === turnInput.attemptId,
+                      );
                     }),
                   );
                   if (context !== undefined) {
@@ -6459,7 +6476,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }
                     if (activation.stopped) {
                       const hold = goalHolds.get(threadId);
-                      if (command.type === "resume" && hold?.context.input === turnInput) {
+                      if (
+                        command.type === "resume" &&
+                        hold?.context.input.attemptId === turnInput.attemptId
+                      ) {
                         goalHolds.delete(threadId);
                         yield* settleGoalHold(hold, "interrupted");
                       }
