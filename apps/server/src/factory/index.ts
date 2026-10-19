@@ -1,8 +1,7 @@
-// @effect-diagnostics nodeBuiltinImport:off - the host name goes on every `claimed` line, as softfac writes it; a gate lock and a checkout's project config are files.
+// @effect-diagnostics nodeBuiltinImport:off - the host name goes on every `claimed` line, as softfac writes it; a gate lock is a file.
 // @effect-diagnostics globalDate:off - the ledger stamps lines with the wall clock, as softfac does.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -180,16 +179,24 @@ interface ProjectReadError extends PassError {
 
 /** The checkout's own `.dw/config.yml`, for a repo whose default branch `branch` has none on GitHub. */
 const fromCheckout = (
-  file: string,
+  checkout: string,
   branch: string,
-): Effect.Effect<{ readonly file: string; readonly text: string }, ProjectReadError> =>
-  Effect.try({
-    try: () => ({ file, text: NodeFS.readFileSync(file, "utf8") }),
-    catch: (error): ProjectReadError => {
-      const reason = error instanceof Error ? error.message : String(error);
-      const message = `${PROJECT_CONFIG_PATH} is not on ${branch} on GitHub, and cannot read ${file}: ${reason}`;
-      return { kind: "config", message, errors: [{ file, message }] };
-    },
+): Effect.Effect<
+  { readonly file: string; readonly text: string },
+  ProjectReadError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const file = path.join(checkout, PROJECT_CONFIG_PATH);
+    const text = yield* fs.readFileString(file).pipe(
+      Effect.mapError((error): ProjectReadError => {
+        const message = `${PROJECT_CONFIG_PATH} is not on ${branch} on GitHub, and cannot read ${file}: ${error.message}`;
+        return { kind: "config", message, errors: [{ file, message }] };
+      }),
+    );
+    return { file, text };
   });
 
 /**
@@ -201,7 +208,11 @@ const fromCheckout = (
 const projectFromBase = (
   github: ReturnType<typeof makeGitHub>,
   checkout: string,
-): Effect.Effect<ProjectConfig, ProjectReadError, FactoryProcess> =>
+): Effect.Effect<
+  ProjectConfig,
+  ProjectReadError,
+  FactoryProcess | FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const found = yield* github.baseConfig().pipe(
       Effect.mapError((error): ProjectReadError => ({
@@ -218,7 +229,7 @@ const projectFromBase = (
     const { file, text } =
       found.text !== null
         ? { file: `${found.branch}:${PROJECT_CONFIG_PATH}`, text: found.text }
-        : yield* fromCheckout(NodePath.join(checkout, PROJECT_CONFIG_PATH), found.branch);
+        : yield* fromCheckout(checkout, found.branch);
     const parsed = parseProjectConfig(text, file);
     if (Result.isFailure(parsed)) {
       return yield* Effect.fail<ProjectReadError>({
@@ -228,7 +239,11 @@ const projectFromBase = (
       });
     }
     if (parsed.success.base !== found.branch) {
-      const message = `${file} names base \`${parsed.success.base}\`, but the repo's default branch is \`${found.branch}\`: the config must be committed on its own base branch`;
+      const rule =
+        found.text !== null
+          ? "the config must be committed on its own base branch"
+          : "a checkout's config must name the default branch as its base";
+      const message = `${file} names base \`${parsed.success.base}\`, but the repo's default branch is \`${found.branch}\`: ${rule}`;
       return yield* Effect.fail<ProjectReadError>({
         kind: "config",
         message,
@@ -374,6 +389,8 @@ export const liveWorld = (
   machine: MachineConfig,
   dataDir: string,
   process: FactoryProcess["Service"],
+  // What a pass reads a checkout's project config through.
+  files: Layer.Layer<FileSystem.FileSystem | Path.Path>,
   sessions: T3Sessions.FactorySessions["Service"],
   clock: () => number,
   host: string,
@@ -515,7 +532,9 @@ export const liveWorld = (
     });
   return {
     project: (watched) =>
-      withProcess(projectFromBase(githubFor(watched), watched.path)).pipe(
+      withProcess(
+        projectFromBase(githubFor(watched), watched.path).pipe(Effect.provide(files)),
+      ).pipe(
         Effect.tap((project) =>
           Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
         ),
@@ -819,6 +838,10 @@ const startFactory = (options: RuntimeOptions) =>
             machine,
             factoryDir,
             process,
+            Layer.mergeAll(
+              Layer.succeed(FileSystem.FileSystem)(fileSystem),
+              Layer.succeed(Path.Path)(path),
+            ),
             sessions,
             () => Date.now(),
             hostName(),
