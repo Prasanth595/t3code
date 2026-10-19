@@ -24,13 +24,13 @@ import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as DesktopTelemetryPublisher from "./DesktopTelemetryPublisher.ts";
 import * as DesktopRendererHistory from "./DesktopRendererHistory.ts";
 
-const historyLayer = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
+const layerHistory = Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
   register: () => Effect.void,
   recordMetrics: () => Effect.void,
   shutdown: Effect.void,
 });
 
-function makeElectronAppLayer(
+function layerElectronApp(
   metrics: ReadonlyArray<Electron.ProcessMetric>,
   onMetricsRead: () => void = () => undefined,
 ) {
@@ -39,6 +39,7 @@ function makeElectronAppLayer(
     name: Effect.succeed("T3 Code"),
     systemLocale: Effect.succeed("en-US"),
     whenReady: Effect.void,
+    requestSingleInstanceLock: Effect.succeed(true),
     quit: Effect.void,
     exit: () => Effect.void,
     relaunch: () => Effect.void,
@@ -65,7 +66,7 @@ describe("DesktopTelemetryPublisher", () => {
     Effect.gen(function* () {
       const pollStarted = yield* Deferred.make<void>();
       const blockPoll = yield* Deferred.make<void>();
-      const powerLayer = Layer.succeed(
+      const layerPower = Layer.succeed(
         ElectronPowerMonitor.ElectronPowerMonitor,
         ElectronPowerMonitor.ElectronPowerMonitor.of({
           isOnBatteryPower: Effect.succeed(false),
@@ -81,7 +82,7 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer, historyLayer)),
+        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
       );
       const scope = yield* Scope.make();
 
@@ -124,7 +125,7 @@ describe("DesktopTelemetryPublisher", () => {
           },
         } as Electron.ProcessMetric,
       ];
-      const powerLayer = Layer.succeed(
+      const layerPower = Layer.succeed(
         ElectronPowerMonitor.ElectronPowerMonitor,
         ElectronPowerMonitor.ElectronPowerMonitor.of({
           isOnBatteryPower: Ref.get(onBattery),
@@ -149,10 +150,10 @@ describe("DesktopTelemetryPublisher", () => {
       const layer = DesktopTelemetryPublisher.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
-            makeElectronAppLayer(metrics, () => {
+            layerElectronApp(metrics, () => {
               metricsReadCount += 1;
             }),
-            powerLayer,
+            layerPower,
             Layer.succeed(DesktopRendererHistory.DesktopRendererHistory, {
               register: () => Effect.void,
               shutdown: Effect.void,
@@ -413,7 +414,7 @@ describe("DesktopTelemetryPublisher", () => {
 
   it.effect("routes requestDesktopUpdate control messages and replays update reports", () =>
     Effect.gen(function* () {
-      const powerLayer = Layer.succeed(
+      const layerPower = Layer.succeed(
         ElectronPowerMonitor.ElectronPowerMonitor,
         ElectronPowerMonitor.ElectronPowerMonitor.of({
           isOnBatteryPower: Effect.succeed(false),
@@ -426,7 +427,7 @@ describe("DesktopTelemetryPublisher", () => {
         }),
       );
       const layer = DesktopTelemetryPublisher.layer.pipe(
-        Layer.provide(Layer.mergeAll(makeElectronAppLayer([]), powerLayer, historyLayer)),
+        Layer.provide(Layer.mergeAll(layerElectronApp([]), layerPower, layerHistory)),
       );
 
       yield* Effect.gen(function* () {
@@ -467,8 +468,6 @@ describe("DesktopTelemetryPublisher", () => {
         } as const;
         yield* publisher.publishUpdateReport(report);
 
-        // A subscriber that attaches after the publish (the backend spawned
-        // by a relaunch) still sees the latest report replayed.
         const decoder = new TextDecoder();
         const decodeMessage = Schema.decodeUnknownEffect(
           Schema.fromJsonString(DesktopHostTelemetryMessage),
@@ -562,7 +561,7 @@ describe("DesktopRendererHistory", () => {
               readonly written: Deferred.Deferred<Record>;
             }
           | undefined;
-        const fileLayer = Layer.succeed(FileSystem.FileSystem, {
+        const layerFile = Layer.succeed(FileSystem.FileSystem, {
           ...fileSystem,
           writeFile: (filePath, bytes, options) =>
             fileSystem.writeFile(filePath, bytes, options).pipe(
@@ -590,7 +589,7 @@ describe("DesktopRendererHistory", () => {
                   logDir: directory,
                 } as DesktopEnvironment.DesktopEnvironment["Service"]),
               ),
-              fileLayer,
+              layerFile,
             ),
           ),
         );
@@ -658,7 +657,6 @@ describe("DesktopRendererHistory", () => {
           assert.equal(crash.rendererPidSource, "last-known");
           assert.equal(crash.reason, "oom");
           assert.equal(crash.exitCode, -7);
-          // A restarted renderer can reuse the same numeric PID.
           const restarted = yield* Deferred.make<Record>();
           milestone = { matches: (row) => row.event === "dom-ready", written: restarted };
           previewPid = 7_003;
@@ -684,7 +682,6 @@ describe("DesktopRendererHistory", () => {
           yield* history.recordMetrics(metrics);
           assert.equal((yield* Deferred.await(afterDestroy)).webContentsId, 1);
           assert.isFalse(persisted.slice(previousCount).some((row) => row.webContentsId === 2));
-          // The app quit handshake drains before the history layer closes.
           for (let index = 0; index < 12; index++) main.emit("dom-ready");
           yield* history.shutdown;
           assert.equal(
@@ -735,7 +732,7 @@ describe("DesktopRendererHistory", () => {
         );
       }
       const written = yield* Deferred.make<void>();
-      const fileLayer = Layer.succeed(FileSystem.FileSystem, {
+      const layerFile = Layer.succeed(FileSystem.FileSystem, {
         ...fileSystem,
         writeFile: (target, bytes, options) =>
           fileSystem
@@ -751,7 +748,7 @@ describe("DesktopRendererHistory", () => {
                 logDir: directory,
               } as DesktopEnvironment.DesktopEnvironment["Service"]),
             ),
-            fileLayer,
+            layerFile,
           ),
         ),
       );

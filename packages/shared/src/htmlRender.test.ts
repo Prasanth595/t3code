@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_RENDER_MAX_HEIGHT,
   htmlRenderFrameHeight,
   htmlRenderReferencesEqual,
   htmlRenderTheme,
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
   htmlRenderThemeMessage,
+  readHtmlRenderContentHeight,
+  readHtmlRenderImageRequest,
+  readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
@@ -74,16 +78,21 @@ describe("injectHtmlRenderBootstrap", () => {
 
 describe("readHtmlRenderLinkRequest", () => {
   it("accepts only http(s) URLs in an MCP Apps ui/open-link request", () => {
-    const link = (url: unknown) => ({
+    const link = (url: unknown, modifiers = {}) => ({
       jsonrpc: "2.0",
       id: 1,
       method: "ui/open-link",
-      params: { url },
+      params: { url, ...modifiers },
     });
     expect(readHtmlRenderLinkRequest(link("https://example.com/a"))).toEqual({
       id: 1,
       url: "https://example.com/a",
+      metaKey: false,
+      ctrlKey: false,
     });
+    expect(
+      readHtmlRenderLinkRequest(link("https://example.com/a", { metaKey: true, ctrlKey: "yes" })),
+    ).toEqual({ id: 1, url: "https://example.com/a", metaKey: true, ctrlKey: false });
     expect(readHtmlRenderLinkRequest(link("javascript:alert(1)"))).toBeUndefined();
     expect(readHtmlRenderLinkRequest(link("file:///etc/passwd"))).toBeUndefined();
     expect(
@@ -96,6 +105,68 @@ describe("readHtmlRenderLinkRequest", () => {
     expect(
       readHtmlRenderLinkRequest({ type: "t3-html-render-link", url: "https://example.com" }),
     ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderImageRequest", () => {
+  it("accepts http(s) and inline image URLs in an open-image notification", () => {
+    const image = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/open-image",
+      params,
+    });
+    expect(
+      readHtmlRenderImageRequest(image({ src: "data:image/png;base64,AA", name: " Chart " })),
+    ).toEqual({
+      src: "data:image/png;base64,AA",
+      name: "Chart",
+    });
+    expect(readHtmlRenderImageRequest(image({ src: "https://example.com/a.png" }))).toEqual({
+      src: "https://example.com/a.png",
+      name: "Image",
+    });
+    expect(readHtmlRenderImageRequest(image({ src: "javascript:alert(1)" }))).toBeUndefined();
+    expect(readHtmlRenderImageRequest(image({ src: "data:text/html,<p>" }))).toBeUndefined();
+    expect(readHtmlRenderImageRequest(image({ src: "blob:null/1" }))).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderKeyDown", () => {
+  it("reads the key of a keydown notification and nothing else", () => {
+    const notification = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "t3/notifications/keydown",
+      params,
+    });
+    expect(readHtmlRenderKeyDown(notification({ key: "k", code: "KeyK", metaKey: true }))).toEqual({
+      key: "k",
+      code: "KeyK",
+      metaKey: true,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat: false,
+    });
+    expect(readHtmlRenderKeyDown(notification({ key: 1, code: "KeyK" }))).toBeUndefined();
+    expect(
+      readHtmlRenderKeyDown({ jsonrpc: "2.0", method: "ui/open-link", params: { key: "k" } }),
+    ).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderContentHeight", () => {
+  it("reads only the height of an MCP Apps size-changed notification", () => {
+    const notification = (params: unknown) => ({
+      jsonrpc: "2.0",
+      method: "ui/notifications/size-changed",
+      params,
+    });
+    expect(readHtmlRenderContentHeight(notification({ height: 412 }))).toBe(412);
+    expect(readHtmlRenderContentHeight(notification({ height: "412" }))).toBe(undefined);
+    expect(readHtmlRenderContentHeight(notification({ height: 0 }))).toBe(undefined);
+    expect(readHtmlRenderContentHeight({ ...notification({ height: 412 }), method: "x" })).toBe(
+      undefined,
+    );
   });
 });
 
@@ -180,7 +251,6 @@ describe("htmlRenderFrameHeight", () => {
   });
 
   it("takes the taller layout when a breakpoint falls between measured widths", () => {
-    // 900px tall below a 600px media query, 450px above it.
     const responsive = readHtmlRenderReference({
       ...reference,
       height: 2000,
@@ -193,9 +263,20 @@ describe("htmlRenderFrameHeight", () => {
     expect(htmlRenderFrameHeight(responsive, 640)).toBe(450);
   });
 
-  it("never exceeds the agent's height and falls back to it without measurements", () => {
-    expect(htmlRenderFrameHeight(measured, 1400)).toBe(1500);
+  it("fits a page the client lays out taller than the server measured", () => {
+    const fitted = { ...measured, height: 1403 };
+    expect(htmlRenderFrameHeight(fitted, 728, 1415)).toBe(1415);
+    expect(htmlRenderFrameHeight(fitted, 1400)).toBe(1660);
+    expect(htmlRenderFrameHeight(fitted, 728, 5000)).toBe(HTML_RENDER_MAX_HEIGHT);
+  });
+
+  it("keeps the agent's height when it asked for a scrolling frame or the page is unmeasured", () => {
+    const scrolling = { ...measured, height: 600 };
+    expect(htmlRenderFrameHeight(scrolling, 728, 1415)).toBe(600);
+    expect(htmlRenderFrameHeight(scrolling, 1400)).toBe(600);
     expect(htmlRenderFrameHeight(reference, 728)).toBe(reference.height);
+    expect(htmlRenderFrameHeight(reference, 728, 900)).toBe(reference.height);
+    expect(htmlRenderFrameHeight(reference, 728, 300)).toBe(300);
   });
 
   it("drops a malformed table and compares tables by value", () => {
