@@ -524,7 +524,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           (cause) => new EffectOutboxError({ operation: "reconcile-process-loss", cause }),
         ),
       ),
-      claimNext: Effect.fn("EffectOutbox.claimNext")(
+      // The worker polls for the next effect even when there is no work to claim.
+      claimNext: Effect.fnUntraced(
         function* ({ workerId, leaseDurationMs, excludeRestartContinuations = false }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
