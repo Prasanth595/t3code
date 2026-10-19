@@ -75,6 +75,7 @@ export interface ProviderEventRouteIdentity {
 export interface InheritedBackgroundTurnItemRoute {
   readonly id: TurnItemId;
   readonly runId: OrchestrationV2Run["id"];
+  readonly nativeTaskId: string | null;
 }
 
 type ProviderTerminalEvent = Extract<
@@ -137,7 +138,14 @@ export function selectInheritedBackgroundTurnItems(input: {
     settledPriorRunIds.has(turnItem.runId) &&
     backgroundCapableTurnItemTypes.has(turnItem.type) &&
     !isSettledTurnItemStatus(turnItem.status)
-      ? [{ id: turnItem.id, runId: turnItem.runId }]
+      ? [
+          {
+            id: turnItem.id,
+            runId: turnItem.runId,
+            nativeTaskId:
+              turnItem.type === "subagent" ? (turnItem.nativeItemRef?.nativeId ?? null) : null,
+          },
+        ]
       : [],
   );
 }
@@ -369,6 +377,8 @@ export function routeProviderEvent(
   });
 
   switch (event.type) {
+    case "subagent.native-task-ended":
+      return [event.threadId === input.threadId, state];
     case "provider_session.updated":
       return [false, state];
     case "app_thread.created": {
@@ -1164,6 +1174,15 @@ export const layer: Layer.Layer<
                   });
                 }
               }
+              if (event.type === "subagent.native-task-ended") {
+                yield* Ref.update(activeBackgroundTurnItems, (current) => {
+                  const next = new Set(current);
+                  for (const item of inheritedBackgroundTurnItems) {
+                    if (item.nativeTaskId === event.nativeTaskId) next.delete(item.id);
+                  }
+                  return next;
+                });
+              }
             });
           const shouldStopProviderEventIngestion = Effect.gen(function* () {
             if (!(yield* Ref.get(rootTerminalSeen))) {
@@ -1225,7 +1244,8 @@ export const layer: Layer.Layer<
                   event,
                   DateTime.toEpochMillis(yield* DateTime.now),
                 );
-                if (deliveredEvent) {
+                // Receipts are already persisted by the session pump; this run only releases tracking.
+                if (deliveredEvent && event.type !== "subagent.native-task-ended") {
                   const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
                   const isRootProviderThreadUpdate =
                     event.type === "provider_thread.updated" &&

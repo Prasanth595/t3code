@@ -25,6 +25,7 @@ import {
   RunId,
   RuntimeRequestId,
   TurnItemId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -2239,6 +2240,231 @@ layer("ProviderEventIngestorV2", (it) => {
         (yield* projectionStore.getThread(childThreadId)).modelSelection,
         reportedSelection,
       );
+    }),
+  );
+  it.effect("reconciles a native task after its provider instance was replaced", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const root = yield* threadCreatedEvent(now);
+      yield* sink.write({ events: [root] });
+      const sessionId = (yield* IdAllocator.IdAllocatorV2).allocate.providerSession;
+      const allocatedSessionId = yield* sessionId({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: root.threadId!,
+      });
+      const ingest = (
+        event: ProviderEventIngestor.ProviderEventIngestInput["event"],
+        instance = modelSelection.instanceId,
+      ) =>
+        ingestor.ingestNormalized({
+          providerSessionId: allocatedSessionId,
+          providerInstanceId: instance,
+          threadId: root.threadId!,
+          event,
+        });
+      const childThreadId = ThreadId.make("thread:old-native-child");
+      const appThread = yield* store.getThread(root.threadId!);
+      yield* ingest({
+        type: "app_thread.created",
+        driver: CODEX_DRIVER,
+        appThread: {
+          ...appThread,
+          id: childThreadId,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: appThread.id,
+            relationshipToParent: "subagent",
+            rootThreadId: appThread.id,
+          },
+        },
+      });
+      const task = {
+        id: NodeId.make("node:old-native-task"),
+        threadId: root.threadId!,
+        runId: null,
+        parentNodeId: NodeId.make("node:root"),
+        origin: "provider_native" as const,
+        createdBy: "agent" as const,
+        driver: CODEX_DRIVER,
+        providerInstanceId: modelSelection.instanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: { driver: CODEX_DRIVER, nativeId: "old-task", strength: "strong" as const },
+        prompt: "Review",
+        title: "Review",
+        model: null,
+        status: "running" as const,
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      yield* ingest({ type: "subagent.updated", driver: CODEX_DRIVER, subagent: task });
+      const childRootId = NodeId.make("node:old-native-child-root");
+      const childRoot = {
+        id: childRootId,
+        threadId: childThreadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: childRootId,
+        kind: "root_turn",
+        status: "running",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: task.nativeTaskRef,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      } satisfies OrchestrationV2ExecutionNode;
+      yield* ingest({ type: "node.updated", driver: CODEX_DRIVER, node: childRoot });
+      yield* ingest({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: {
+          ...childRoot,
+          id: task.id,
+          threadId: task.threadId,
+          parentNodeId: task.parentNodeId,
+          rootNodeId: task.parentNodeId,
+          kind: "subagent",
+        },
+      });
+
+      const parentItemId = TurnItemId.make("turn-item:old-native-parent");
+      yield* ingest({
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          id: parentItemId,
+          threadId: root.threadId!,
+          runId: null,
+          nodeId: task.id,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: { driver: CODEX_DRIVER, nativeId: "old-task", strength: "strong" },
+          parentItemId: null,
+          ordinal: 2,
+          status: "waiting",
+          title: "Review",
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+          type: "subagent",
+          subagentId: task.id,
+          origin: "provider_native",
+          driver: CODEX_DRIVER,
+          providerInstanceId: modelSelection.instanceId,
+          childThreadId,
+          prompt: "Review",
+          result: null,
+        },
+      });
+      const otherChildRootId = NodeId.make("node:old-native-other-child-root");
+      yield* ingest({
+        type: "node.updated",
+        driver: CODEX_DRIVER,
+        node: {
+          ...childRoot,
+          id: otherChildRootId,
+          rootNodeId: otherChildRootId,
+          nativeItemRef: { ...task.nativeTaskRef, nativeId: "other-task" },
+        },
+      });
+      const childItemId = TurnItemId.make("turn-item:old-native-child");
+      const childItem = {
+        id: childItemId,
+        threadId: childThreadId,
+        runId: null,
+        nodeId: childRootId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: { driver: CODEX_DRIVER, nativeId: "child-reasoning", strength: "strong" },
+        parentItemId: null,
+        ordinal: 1,
+        status: "waiting",
+        title: "Thinking",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "reasoning",
+        text: "partial",
+        streaming: true,
+      } satisfies OrchestrationV2TurnItem;
+      yield* ingest({ type: "turn_item.updated", driver: CODEX_DRIVER, turnItem: childItem });
+      const otherChildItemId = TurnItemId.make("turn-item:old-native-other-child");
+      yield* ingest({
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: {
+          ...childItem,
+          id: otherChildItemId,
+          nodeId: otherChildRootId,
+          nativeItemRef: { ...task.nativeTaskRef, nativeId: "other-reasoning" },
+          status: "running",
+        },
+      });
+      yield* ingest({
+        type: "subagent.updated",
+        driver: CODEX_DRIVER,
+        subagent: {
+          ...task,
+          id: NodeId.make("node:other-task"),
+          nativeTaskRef: { ...task.nativeTaskRef, nativeId: "other-task" },
+        },
+      });
+      const ended = {
+        type: "subagent.native-task-ended" as const,
+        driver: CODEX_DRIVER,
+        threadId: root.threadId!,
+        nativeTaskId: "old-task",
+        status: "cancelled" as const,
+        result: "Previous session ended",
+      };
+      yield* ingest(ended, ProviderInstanceId.make("codex-replacement"));
+      const projection = yield* store.getThreadProjection(root.threadId!);
+      const updated = projection.subagents.find((candidate) => candidate.id === task.id);
+      assert.equal(updated?.status, "cancelled");
+      assert.equal(projection.nodes.find((node) => node.id === task.id)?.status, "cancelled");
+      assert.equal(updated?.providerInstanceId, modelSelection.instanceId);
+      assert.equal(updated?.result, "Previous session ended");
+      assert.equal(
+        projection.turnItems.find((item) => item.id === parentItemId)?.status,
+        "cancelled",
+      );
+
+      const childProjection = yield* store.getThreadProjection(childThreadId);
+      assert.equal(
+        childProjection.nodes.find((node) => node.id === childRootId)?.status,
+        "cancelled",
+      );
+      assert.equal(
+        childProjection.nodes.find((node) => node.id === otherChildRootId)?.status,
+        "running",
+      );
+      const settledChildItem = childProjection.turnItems.find((item) => item.id === childItemId);
+      assert.equal(settledChildItem?.status, "cancelled");
+      assert.isNotNull(settledChildItem?.completedAt);
+      if (settledChildItem?.type !== "reasoning") {
+        assert.fail("expected the reconciled child item to be reasoning");
+      }
+      assert.isFalse(settledChildItem.streaming);
+      assert.equal(
+        childProjection.turnItems.find((item) => item.id === otherChildItemId)?.status,
+        "running",
+      );
+
+      assert.equal(
+        projection.subagents.find((candidate) => candidate.id !== task.id)?.status,
+        "running",
+      );
+      assert.lengthOf(yield* ingest(ended, ProviderInstanceId.make("codex-replacement")), 0);
+      assert.deepEqual(yield* store.getThreadProjection(root.threadId!), projection);
+      assert.deepEqual(yield* store.getThreadProjection(childThreadId), childProjection);
     }),
   );
 });
