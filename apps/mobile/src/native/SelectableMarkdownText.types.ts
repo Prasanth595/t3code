@@ -59,6 +59,7 @@ export interface MarkdownFileContextMenu {
 }
 
 export interface MarkdownLinkCustomization {
+  readonly plain?: boolean;
   readonly iconTintColor?: string;
   readonly color?: string;
   readonly label?: string;
