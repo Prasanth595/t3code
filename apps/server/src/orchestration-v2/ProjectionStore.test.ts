@@ -658,8 +658,6 @@ it.effect("memory projection keeps restart-cancelled work through a stale run.up
   restartCancelledWorkSurvivesStaleRunUpdate.pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
-// Clients read a failed thread's updatedAt as its failure edge, so background
-// writes must keep the orchestrator's timestamp in both stores.
 const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const createdAt = DateTime.makeUnsafe("2026-10-06T14:00:00.000Z");
@@ -694,24 +692,80 @@ const backgroundThreadUpdatesKeepTimestamp = Effect.gen(function* () {
     occurredAt: createdAt,
     payload: thread,
   });
+  const readActivity = Effect.gen(function* () {
+    const projection = yield* store.getThreadProjection(threadId);
+    const thread = yield* store.getThread(threadId);
+    const shell = yield* store.getThreadShell(threadId);
+    const listed = (yield* store.getShellSnapshot()).threads.find((entry) => entry.id === threadId);
+    assert.deepEqual(projection.thread.updatedAt, createdAt);
+    assert.deepEqual(thread.updatedAt, createdAt);
+    assert.deepEqual(shell?.updatedAt, createdAt);
+    assert.deepEqual(listed?.updatedAt, createdAt);
+    return projection;
+  });
+  const link = {
+    host: "github.com",
+    repository: "owner/repository",
+    number: 42,
+    url: "https://github.com/owner/repository/pull/42",
+    source: "manual" as const,
+    linkedAt: DateTime.formatIso(createdAt),
+    snapshot: null,
+    stack: null,
+  };
   yield* store.apply({
     id: EventId.make("event:background-updates:pull-request-synced"),
     type: "thread.pull-request-synced",
     threadId,
     occurredAt: DateTime.add(createdAt, { minutes: 45 }),
-    payload: thread,
+    payload: { ...thread, pullRequests: [link] },
   });
+  const synced = yield* readActivity;
+  assert.deepEqual(synced.updatedAt, createdAt);
+  assert.equal(synced.thread.pullRequests?.[0]?.number, 42);
+
+  const snapshot = {
+    state: "open" as const,
+    title: "Ship it",
+    headBranch: "feature",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: DateTime.formatIso(DateTime.add(createdAt, { minutes: 46 })),
+    syncedAt: DateTime.formatIso(DateTime.add(createdAt, { minutes: 47 })),
+    closedAt: null,
+    mergedAt: null,
+  };
+  yield* store.apply({
+    id: EventId.make("event:background-updates:pull-request-link-updated"),
+    type: "thread.pull-request-link-updated",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 48 }),
+    payload: { ...link, snapshot },
+  });
+  const refreshed = yield* readActivity;
+  assert.deepEqual(refreshed.updatedAt, createdAt);
+  assert.deepEqual(refreshed.thread.pullRequests?.[0]?.snapshot, snapshot);
+
   yield* store.apply({
     id: EventId.make("event:background-updates:active-reordered"),
     type: "thread.active-reordered",
     threadId,
     occurredAt: DateTime.add(createdAt, { minutes: 50 }),
-    payload: { ...thread, activeOrderKey: "a" },
+    payload: { ...refreshed.thread, activeOrderKey: "a" },
   });
-  const projection = yield* store.getThreadProjection(threadId);
-  assert.deepEqual(projection.thread.updatedAt, createdAt);
-  assert.deepEqual(projection.updatedAt, createdAt);
-  assert.deepEqual((yield* store.getThreadShell(threadId))?.updatedAt, createdAt);
+  const reordered = yield* readActivity;
+  assert.deepEqual(reordered.updatedAt, createdAt);
+  assert.equal(reordered.thread.activeOrderKey, "a");
+
+  // An already-unpinned thread keeps its activity time even when replay's envelope advances.
+  yield* store.apply({
+    id: EventId.make("event:background-updates:already-unpinned"),
+    type: "thread.unpinned",
+    threadId,
+    occurredAt: DateTime.add(createdAt, { minutes: 55 }),
+    payload: { ...reordered.thread, pinnedAt: null, pinOrderKey: null },
+  });
+  yield* readActivity;
 });
 
 it.effect("memory projection keeps background thread updates out of updatedAt", () =>

@@ -101,13 +101,8 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
   return false;
 }
 
-/**
- * When the thread's current failure happened, or undefined when it is not
- * failed. A failed run's completion is the failure edge; V2 runtime
- * summaries reuse the thread's updatedAt, which also moves on unrelated
- * metadata writes (PR sync, recovery choices) and would otherwise read as a
- * fresh failure. Legacy sessions stamp updatedAt on the status edge itself.
- */
+// V2 runtime.updatedAt includes metadata writes; prefer the failed run's completion.
+// Legacy sessions only expose the runtime timestamp.
 function failureEdgeAt(shell: ThreadSnoozeShell): string | null | undefined {
   const runtime = shell.runtime ?? shell.session ?? null;
   if (runtime?.status !== "error" && runtime?.status !== "failed") return undefined;
@@ -170,8 +165,7 @@ export function threadWokeAt(
     ) {
       return latestRun.completedAt;
     }
-    // A failure from before the snooze did not cause this wake (an approval
-    // or user input did), so its time would read as a wake the user already saw.
+    // An old failure must not replace the activity time of an approval or input wake.
     const failedAt = failureEdgeAt(shell);
     if (
       failedAt != null &&

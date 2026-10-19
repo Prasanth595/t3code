@@ -730,8 +730,6 @@ export function applyToProjection(
   };
 
   switch (event.type) {
-    // A background PR refresh is not activity: keep the thread's timestamp, as
-    // the SQL projection does.
     case "thread.pull-request-link-updated":
       return {
         ...projection,
@@ -758,8 +756,7 @@ export function applyToProjection(
         ...base,
         thread: event.payload,
       };
-    // Arranging and background PR refreshes are not activity: keep the
-    // timestamp the orchestrator chose, as the SQL projection does.
+    // Reordering and PR refreshes preserve the orchestrator's activity timestamp.
     case "thread.active-reordered":
     case "thread.pull-request-synced":
       return {

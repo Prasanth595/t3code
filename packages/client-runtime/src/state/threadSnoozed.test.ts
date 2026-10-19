@@ -119,36 +119,45 @@ describe("effectiveSnoozed", () => {
     ).toBe(true);
   });
 
-  it("stays snoozed when only metadata moved after snoozing a failed run", () => {
-    // V2 runtime summaries reuse thread.updatedAt, which PR sync or recovery
-    // choices can bump long after the failure the user already saw.
-    const shell: ThreadSnoozeShell = {
-      ...makeShell({ snoozedUntil: FUTURE_WAKE }),
-      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
-      latestRun: { status: "failed", completedAt: "2026-04-08T13:00:00.000Z" },
-    };
-    expect(effectiveSnoozed(shell, { now: NOW })).toBe(true);
-  });
-
-  it("wakes early when the run failed after the snooze", () => {
-    const shell: ThreadSnoozeShell = {
-      ...makeShell({ snoozedUntil: FUTURE_WAKE }),
-      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
-      latestRun: { status: "failed", completedAt: "2026-04-10T10:00:00.000Z" },
-    };
-    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
-    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:00:00.000Z");
-  });
-
-  it("dates an approval wake after the snooze, not at an earlier failure", () => {
-    const shell: ThreadSnoozeShell = {
-      ...makeShell({ snoozedUntil: FUTURE_WAKE, pending: "approval" }),
-      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
-      latestRun: { status: "failed", completedAt: "2026-04-08T13:00:00.000Z" },
-    };
-    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
-    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T11:00:00.000Z");
-  });
+  it.each([
+    {
+      reason: "stale failure",
+      completedAt: "2026-04-10T08:00:00.000Z",
+      pending: undefined,
+      wokeAt: null,
+    },
+    {
+      reason: "fresh failure",
+      completedAt: "2026-04-10T10:00:00.000Z",
+      pending: undefined,
+      wokeAt: "2026-04-10T10:00:00.000Z",
+    },
+    {
+      reason: "approval after a stale failure",
+      completedAt: "2026-04-10T08:00:00.000Z",
+      pending: "approval",
+      wokeAt: "2026-04-10T11:00:00.000Z",
+    },
+    {
+      reason: "input after a stale failure",
+      completedAt: "2026-04-10T08:00:00.000Z",
+      pending: "user-input",
+      wokeAt: "2026-04-10T11:00:00.000Z",
+    },
+  ] as const)(
+    "uses the wake event time for $reason despite newer metadata",
+    ({ completedAt, pending, wokeAt }) => {
+      const shell: ThreadSnoozeShell = {
+        ...makeShell({ snoozedUntil: FUTURE_WAKE }),
+        hasPendingApprovals: pending === "approval",
+        hasPendingUserInput: pending === "user-input",
+        runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
+        latestRun: { status: "failed", requestedAt: "2026-04-10T07:00:00.000Z", completedAt },
+      };
+      expect(effectiveSnoozed(shell, { now: NOW })).toBe(wokeAt === null);
+      expect(threadWokeAt(shell, { now: NOW })).toBe(wokeAt);
+    },
+  );
 
   it("stays snoozed while the session keeps working — snooze never pauses the agent", () => {
     expect(
