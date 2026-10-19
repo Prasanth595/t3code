@@ -56,10 +56,11 @@ export function shouldShowInstanceBadge(
   }>,
 ): boolean {
   if (entry.accentColor) return true;
-  // Count a historical thread's disabled owner, but only enabled siblings.
-  let sharedProviderCount = entry.enabled ? 0 : 1;
+  let sharedProviderCount = 0;
   for (const candidate of entries) {
-    if (!candidate.enabled || candidate.driverKind !== entry.driverKind) continue;
+    if (candidate.driverKind !== entry.driverKind) continue;
+    // Historical threads still need to distinguish accounts that are all disabled.
+    if (entry.enabled && !candidate.enabled) continue;
     if (
       entry.driverKind === "acpRegistry" &&
       candidate.acpRegistryAgentId !== entry.acpRegistryAgentId

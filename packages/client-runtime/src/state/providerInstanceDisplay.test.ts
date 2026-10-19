@@ -129,12 +129,14 @@ describe("shouldShowInstanceBadge", () => {
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
 
-  it("only badges the disabled instance when an enabled sibling remains", () => {
+  it("ignores disabled siblings for enabled instances while distinguishing historical owners", () => {
     const enabled = { driverKind: codex, enabled: true };
     const disabled = { driverKind: codex, enabled: false };
 
     expect(shouldShowInstanceBadge(enabled, [enabled, disabled])).toBe(false);
     expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
+    expect(shouldShowInstanceBadge(disabled, [disabled, { ...disabled }])).toBe(true);
+    expect(shouldShowInstanceBadge(disabled, [disabled])).toBe(false);
   });
 
   it("hides the badge for a single instance of a driver with no accent", () => {
