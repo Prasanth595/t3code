@@ -1366,6 +1366,70 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
+  it.effect(
+    "revokes a genuine recovery refusal delayed in transit with an accurate host clock",
+    () =>
+      Effect.gen(function* () {
+        const { store, values } = makeMemorySecretStore([
+          [
+            CLOUD_ENDPOINT_RUNTIME_CONFIG,
+            '{"providerKind":"cloudflare_tunnel","connectorToken":"old-token","tunnelId":"old-tunnel"}',
+          ],
+          [RELAY_URL_SECRET, "https://relay.example.test"],
+          [CLOUD_LINKED_USER_ID, "user-123"],
+          [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+        ]);
+        const applyConfigCalls: Array<unknown> = [];
+        const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+        const requestStarted = yield* Deferred.make<number>();
+        const response = yield* Deferred.make<Response>();
+
+        yield* Effect.gen(function* () {
+          const link = yield* CloudLink.CloudLink;
+          const recovery = yield* Effect.flip(
+            link.recoverManagedTunnel("http://127.0.0.1:3773"),
+          ).pipe(Effect.forkChild({ startImmediately: true }));
+          const sentAt = yield* Deferred.await(requestStarted);
+          const refusal = Response.json(
+            {
+              _tag: "RelayAuthInvalidError",
+              code: "auth_invalid",
+              reason: "not_authorized",
+              traceId: "trace-delayed-recovery-refusal",
+            },
+            {
+              status: 401,
+              headers: { date: DateTime.toDateUtc(DateTime.makeUnsafe(sentAt)).toUTCString() },
+            },
+          );
+
+          // The Date header predates transport delay, not a change to the host's clock.
+          yield* TestClock.adjust("75 seconds");
+          yield* Deferred.succeed(response, refusal);
+          const error = yield* Fiber.join(recovery);
+
+          expect(error).toMatchObject({ _tag: "RelayRequestError", rejection: "unauthorized" });
+          expect(requests).toHaveLength(1);
+          expect({
+            retryable: CloudLink.shouldRetryCloudLink(error),
+            revoked: values.has(CLOUD_LINK_REVOKED),
+            applyConfigCalls,
+          }).toEqual({ retryable: false, revoked: true, applyConfigCalls: [null] });
+        }).pipe(
+          provideReleaseHarness({
+            store,
+            applyConfigCalls,
+            requests,
+            onRequest: () =>
+              Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) => Deferred.succeed(requestStarted, now)),
+              ),
+            respondEffect: Deferred.await(response),
+          }),
+        );
+      }),
+  );
+
   it.effect("allows managed tunnel provisioning to take longer than ten seconds", () =>
     Effect.gen(function* () {
       const oldConfig =
