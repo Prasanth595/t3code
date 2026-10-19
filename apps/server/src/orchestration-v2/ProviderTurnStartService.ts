@@ -50,6 +50,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import { restartPendingMessageIds } from "./RestartSteering.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -931,18 +932,55 @@ export const layer: Layer.Layer<
       const routableSubagents = projection.subagents.filter((subagent) =>
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
-      const userText = projectComposerContextForProvider({
-        text: message.text,
-        records: message.context?.records ?? [],
-      });
-      // Delivered once: this run's provider turn marks the work as told. A
-      // restart continuation is prompted by its own text or resumes natively.
-      const noteContinuation = isRestartNoteContinuation(
-        run,
-        projection.runs,
-        projection.providerTurns,
-        projection.attempts,
+      const continuationSource = projection.runs.find(
+        (source) => source.id === run.restartContinuationOfRunId,
       );
+      const pendingSteeringIds =
+        continuationSource === undefined
+          ? []
+          : restartPendingMessageIds(
+              run,
+              projection.runs,
+              projection.providerTurns,
+              projection.attempts,
+            );
+      const steeringContinuation = pendingSteeringIds.length > 0;
+      const carriedSteering = steeringContinuation && !pendingSteeringIds.includes(message.id);
+      const pendingSteeringMessages = carriedSteering
+        ? (yield* projectionStore.getThreadRecords(input.threadId, ["messages"], {
+            messageIds: pendingSteeringIds,
+          })).messages
+        : steeringContinuation
+          ? [message]
+          : [];
+      // Resolve attachment hints at the adapter, budgeting each accepted message
+      // separately. Project originals, never the continuation's expanded context.
+      const attachmentPromptParts = (
+        carriedSteering ? pendingSteeringIds : steeringContinuation ? [message.id] : []
+      ).flatMap((id) =>
+        pendingSteeringMessages
+          .filter((candidate) => candidate.id === id)
+          .map((candidate) => ({
+            textLength: projectComposerContextForProvider({
+              text: candidate.text,
+              records: candidate.context?.records ?? [],
+            }).length,
+            attachments: candidate.attachments,
+          })),
+      );
+      const userText = carriedSteering
+        ? message.text
+        : projectComposerContextForProvider({
+            text: message.text,
+            records: message.context?.records ?? [],
+          });
+      const promptedContinuation =
+        isRestartNoteContinuation(
+          run,
+          projection.runs,
+          projection.providerTurns,
+          projection.attempts,
+        ) || steeringContinuation;
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
@@ -955,7 +993,12 @@ export const layer: Layer.Layer<
             )
             .map((candidate) => candidate.id),
         ),
-        run,
+        // This accepted message contains its original text, so the normal
+        // next-message path must also supply any cancelled background work.
+        run:
+          steeringContinuation && !carriedSteering
+            ? { ...run, restartContinuationOfRunId: undefined }
+            : run,
         attempts: projection.attempts,
       });
       const restartNote =
@@ -1152,7 +1195,7 @@ export const layer: Layer.Layer<
             .join("\n\n");
           const { restartContinuationOfRunId: _resumedRunId, ...promptedInput } = turnInput;
           yield* start({
-            ...(noteContinuation ? promptedInput : turnInput),
+            ...(promptedContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
               text: context === "" ? userText : `${context}\n\nUser message:\n${userText}`,
@@ -1199,7 +1242,7 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         missedItems.length === 0 &&
         restartNote === "" &&
-        !noteContinuation
+        !promptedContinuation
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       return runExecution.startRootRun({
@@ -1238,6 +1281,7 @@ export const layer: Layer.Layer<
         message: {
           messageId: message.id,
           text: userText,
+          ...(attachmentPromptParts.length === 0 ? {} : { attachmentPromptParts }),
           attachments: message.attachments,
           createdBy: message.createdBy,
           creationSource: message.creationSource,

@@ -1697,6 +1697,7 @@ export function makeClaudeUserMessage(input: {
 const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly attachmentPromptParts?: ProviderAdapter.ProviderAdapterV2TurnMessage["attachmentPromptParts"];
   readonly priority?: SDKUserMessage["priority"];
   readonly uuid?: SDKUserMessage["uuid"];
   readonly attachmentsDir: string;
@@ -1715,6 +1716,7 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   const textWithAttachmentPaths = providerMessageTextWithAttachmentPaths({
     text: input.text,
     attachments: input.attachments,
+    attachmentPromptParts: input.attachmentPromptParts,
     resolveAttachmentPath: (attachment) =>
       resolveAttachmentPath({ attachmentsDir: input.attachmentsDir, attachment }),
   });
@@ -8924,6 +8926,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       compileClaudeModelSelection(turnInput.modelSelection).promptEffort,
                     ),
                     attachments: turnInput.message.attachments,
+                    attachmentPromptParts: turnInput.message.attachmentPromptParts,
                     attachmentsDir,
                     fileSystem,
                     skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
@@ -9228,6 +9231,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 compileClaudeModelSelection(currentTurn.input.modelSelection).promptEffort,
               ),
               attachments: turnInput.message.attachments,
+              attachmentPromptParts: turnInput.message.attachmentPromptParts,
               priority: "now",
               attachmentsDir,
               fileSystem,
