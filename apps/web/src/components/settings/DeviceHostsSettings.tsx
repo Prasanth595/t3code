@@ -499,13 +499,18 @@ function DeviceHostList({
                   </details>
                 </div>
               ) : null}
-              {!compact && !error && first.state ? (
-                <DeviceHostDiagnostics
-                  className="mt-1"
-                  hosts={[host]}
-                  hostStatuses={first.state.hostStatuses}
-                />
-              ) : null}
+              {!compact
+                ? results.map((result) =>
+                    result.state ? (
+                      <DeviceHostDiagnostics
+                        key={result.environmentId}
+                        className="mt-1"
+                        hosts={[result.host]}
+                        hostStatuses={result.state.hostStatuses}
+                      />
+                    ) : null,
+                  )
+                : null}
             </div>
             {!compact && progress ? (
               <span
