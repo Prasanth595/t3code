@@ -178,7 +178,7 @@ describe("resolveBranchToolbarValue", () => {
 });
 
 describe("resolveBranchTriggerLabel", () => {
-  it("shows the origin ref when a new worktree will start from origin", () => {
+  it("shows the selected base ref when start from origin is enabled", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -187,10 +187,10 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
       }),
-    ).toBe("From origin/main");
+    ).toBe("From main");
   });
 
-  it("shows the origin ref for local branch names that contain slashes", () => {
+  it("preserves slashes in the selected local base ref", () => {
     expect(
       resolveBranchTriggerLabel({
         activeWorktreePath: null,
@@ -199,7 +199,7 @@ describe("resolveBranchTriggerLabel", () => {
         resolvedActiveBranchIsRemote: false,
         startFromOrigin: true,
       }),
-    ).toBe("From origin/feature/demo");
+    ).toBe("From feature/demo");
   });
 
   it("shows the local ref when start from origin is disabled", () => {
