@@ -4,16 +4,28 @@ import {
   type AtomCommandResult,
   mapAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { VcsSwitchRefInput, VcsSwitchRefResult } from "@t3tools/contracts";
+import type {
+  VcsListRefsInput,
+  VcsListRefsResult,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
+} from "@t3tools/contracts";
+import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 
+const VCS_REF_QUERY_MAX_LENGTH = 256;
+
 export async function checkoutNewTaskBranch<E>(input: {
   readonly branch: VcsRef;
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> | null;
   readonly workspaceMode: "local" | "worktree";
+  readonly readRefs: (request: {
+    readonly environmentId: EnvironmentProject["environmentId"];
+    readonly input: VcsListRefsInput;
+  }) => Promise<AtomCommandResult<VcsListRefsResult, E>>;
   readonly switchRef: (request: {
     readonly environmentId: EnvironmentProject["environmentId"];
     readonly input: VcsSwitchRefInput;
@@ -34,6 +46,27 @@ export async function checkoutNewTaskBranch<E>(input: {
     return AsyncResult.success(input.branch);
   }
 
+  // Remote refs omit local worktrees, and historical thread metadata can be stale.
+  const localName = localBranchName(input.branch);
+  let cursor: number | undefined;
+  for (;;) {
+    const refs = await input.readRefs({
+      environmentId: input.project.environmentId,
+      input: {
+        cwd: input.project.workspaceRoot,
+        // Bound the substring query; compare the full name across every page.
+        query: localName.slice(0, VCS_REF_QUERY_MAX_LENGTH),
+        refKind: "local",
+        ...(cursor === undefined ? { refresh: true } : { cursor }),
+      },
+    });
+    if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
+    const local = refs.value.refs.find((ref) => ref.name === localName);
+    if (local && (local.current || local.worktreePath)) return AsyncResult.success(local);
+    if (local || refs.value.nextCursor === null) break;
+    cursor = refs.value.nextCursor;
+  }
+
   const result = await input.switchRef({
     environmentId: input.project.environmentId,
     input: { cwd: input.project.workspaceRoot, refName: input.branch.name },
@@ -44,4 +77,13 @@ export async function checkoutNewTaskBranch<E>(input: {
     isRemote: false,
     name: value.refName ?? input.branch.name,
   }));
+}
+
+// A remote name can itself contain slashes; prefer the authoritative prefix.
+function localBranchName(branch: VcsRef): string {
+  if (!branch.isRemote) return branch.name;
+  const prefix = branch.remoteName ? `${branch.remoteName}/` : null;
+  return prefix && branch.name.startsWith(prefix)
+    ? branch.name.slice(prefix.length)
+    : deriveLocalBranchNameFromRemoteRef(branch.name);
 }
