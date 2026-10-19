@@ -584,81 +584,93 @@ describe("CodexAdapterV2 runtime policy", () => {
 
       assert.equal(params.collaborationMode?.mode, "plan");
       assert.notProperty(params.collaborationMode?.settings, "developer_instructions");
-    }),
-  );
-
-  it.effect("compiles per-turn Codex model options and cwd from their owning inputs", () =>
-    Effect.gen(function* () {
-      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-model-options",
-        codexInput: [{ type: "text", text: "test" }],
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "plan",
-          cwd: "/workspace/model-options",
-          reasoningEffort: "low",
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-          options: [
-            { id: "reasoningEffort", value: "xhigh" },
-            { id: "serviceTier", value: "priority" },
-          ],
-        },
-      });
-
-      assert.equal(params.model, "gpt-5.4");
-      assert.equal(params.effort, "xhigh");
-      assert.equal(params.serviceTier, "priority");
-      assert.equal(params.cwd, "/workspace/model-options");
-      assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
-      assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
-
-      const managed = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-model-options",
-        codexInput: [{ type: "text", text: "test" }],
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: "/workspace/model-options",
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-          options: [{ id: "serviceTier", value: "priority" }],
-        },
-        omitServiceTier: true,
-      });
-      assert.equal(managed.serviceTier, undefined);
-    }),
-  );
-
-  it.effect("leaves an unset effort to the model's default when T3 adds a collaboration mode", () =>
-    Effect.gen(function* () {
-      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
-        nativeThreadId: "native-default-effort",
-        codexInput: [{ type: "text", text: "test" }],
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: null,
-        },
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.4",
-        },
-        hasT3Mcp: true,
-      });
-
-      assert.equal(params.effort, undefined);
-      assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
       assert.notProperty(params.collaborationMode?.settings, "reasoning_effort");
-      assert.notInclude(
-        String(params.additionalContext?.t3_code_runtime?.value),
-        "reasoning effort",
-      );
+      assert.isUndefined(params.effort);
     }),
+  );
+
+  it.effect.each(["default", "plan"] as const)(
+    "compiles per-turn Codex model options and cwd from their owning inputs in %s mode",
+    (interactionMode) =>
+      Effect.gen(function* () {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-model-options",
+          hasT3Mcp: true,
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode,
+            cwd: "/workspace/model-options",
+            reasoningEffort: "low",
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            options: [
+              { id: "reasoningEffort", value: "xhigh" },
+              { id: "serviceTier", value: "priority" },
+            ],
+          },
+        });
+
+        assert.equal(params.model, "gpt-5.4");
+        assert.equal(params.effort, "xhigh");
+        assert.equal(params.serviceTier, "priority");
+        assert.equal(params.cwd, "/workspace/model-options");
+        assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
+        assert.equal(params.collaborationMode?.mode, interactionMode);
+        assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
+        assert.include(
+          params.additionalContext?.t3_code_runtime?.value ?? "",
+          "as gpt-5.4 with xhigh reasoning effort",
+        );
+
+        const managed = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-model-options",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: "/workspace/model-options",
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+            options: [{ id: "serviceTier", value: "priority" }],
+          },
+          omitServiceTier: true,
+        });
+        assert.equal(managed.serviceTier, undefined);
+      }),
+  );
+
+  it.effect.each(["default", "plan"] as const)(
+    "omits unset effort from T3 %s collaboration settings and runtime context",
+    (interactionMode) =>
+      Effect.gen(function* () {
+        const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: "native-unset-effort",
+          codexInput: [{ type: "text", text: "test" }],
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode,
+            cwd: null,
+          },
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          hasT3Mcp: true,
+        });
+
+        assert.isUndefined(params.effort);
+        assert.equal(params.collaborationMode?.mode, interactionMode);
+        assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
+        assert.notProperty(params.collaborationMode?.settings, "reasoning_effort");
+        const runtimeContext = params.additionalContext?.t3_code_runtime?.value ?? "";
+        assert.include(runtimeContext, "as gpt-5.4");
+        assert.notInclude(runtimeContext, "reasoning effort");
+      }),
   );
 });
 
