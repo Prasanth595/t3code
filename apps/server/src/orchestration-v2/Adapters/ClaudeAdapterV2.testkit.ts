@@ -848,8 +848,13 @@ function makeReplayQueryRunner(
         interrupt: Effect.tryPromise({
           try: async (signal) => {
             // Persisting inbound frames can yield before the recorded interrupt point.
-            while (transcript.entries[cursor]?.type === "emit_inbound") {
+            while (true) {
+              const entry = transcript.entries[cursor];
+              if (entry?.type !== "emit_inbound") break;
               throwIfFailed();
+              if (entry.label !== undefined) {
+                replayOptions.replayGate?.release(entry.label);
+              }
               await waitForCursorAdvance(cursorAdvanced.promise, signal);
               if (signal.aborted) return;
             }
