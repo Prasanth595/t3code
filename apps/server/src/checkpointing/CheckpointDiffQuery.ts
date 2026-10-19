@@ -207,15 +207,9 @@ export const make = Effect.gen(function* () {
       // Select retained paths before generating a patch, so imported bulk cannot exhaust its output limit.
       const pathBatches =
         retainedFiles.length === files.length ? [undefined] : batchFilePaths(retainedFiles);
-      const patches: string[] = [];
-      // Reserve the marker once for the entire query, including an unfiltered diff.
-      let remainingBytes =
-        CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER);
+      let diff = "";
+      let remainingBytes = CHECKPOINT_DIFF_MAX_OUTPUT_BYTES;
       for (const filePaths of pathBatches) {
-        if (remainingBytes === 0) {
-          patches.push(DIFF_TRUNCATED_MARKER);
-          break;
-        }
         const patch = yield* checkpointStore
           .diffCheckpoints({
             ...comparison,
@@ -225,20 +219,22 @@ export const make = Effect.gen(function* () {
           })
           .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
         const patchBytes = Buffer.byteLength(patch);
+        diff += patch;
         if (patchBytes > remainingBytes) {
+          // Reserve marker space only on overflow, which may trim an earlier batch.
           // Streaming decode drops an incomplete final UTF-8 character at the byte boundary.
-          patches.push(
-            new TextDecoder().decode(Buffer.from(patch).subarray(0, remainingBytes), {
-              stream: true,
-            }),
-            DIFF_TRUNCATED_MARKER,
-          );
+          diff =
+            new TextDecoder().decode(
+              Buffer.from(diff).subarray(
+                0,
+                CHECKPOINT_DIFF_MAX_OUTPUT_BYTES - Buffer.byteLength(DIFF_TRUNCATED_MARKER),
+              ),
+              { stream: true },
+            ) + DIFF_TRUNCATED_MARKER;
           break;
         }
-        patches.push(patch);
         remainingBytes -= patchBytes;
       }
-      const diff = patches.join("");
 
       const turnDiff = buildTurnDiffResult(input, diff);
       if (!isTurnDiffResult(turnDiff)) {

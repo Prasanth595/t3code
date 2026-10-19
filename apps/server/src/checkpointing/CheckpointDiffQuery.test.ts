@@ -329,8 +329,8 @@ it.effect("shares the turn and full-thread diff budget across real Git batches",
     assert.notInclude(turn.diff, "upstream.ts");
     assert.lengthOf(turnPatchSizes, 2);
     assert.deepEqual(patchSizes, turnPatchSizes);
-    assert.isBelow(turnPatchSizes[0]!, 9_999_987);
-    assert.isAtMost(
+    assert.isBelow(turnPatchSizes[0]!, 10_000_000);
+    assert.strictEqual(
       turnPatchSizes.reduce((sum, size) => sum + size, 0),
       10_000_001,
     );
@@ -343,7 +343,7 @@ it.effect("truncates a storage-cut UTF-8 character without replacement text", ()
     projection: Effect.succeed(makeProjection()),
     diffCheckpoints: (input) =>
       Effect.succeed(
-        Buffer.from(`${prefix}😀${"tail".repeat(10)}`)
+        Buffer.from(`${prefix}😀${"x".repeat(9)}😀tail`)
           .subarray(0, input.maxOutputBytes)
           .toString("utf8"),
       ),
@@ -358,7 +358,7 @@ it.effect("truncates a storage-cut UTF-8 character without replacement text", ()
 
 it.effect("preserves an exact-fit filtered patch across batches without a marker", () => {
   const ownPaths = Array.from({ length: 1_000 }, (_, index) => `src/module-${index}/file.ts`);
-  const patches = ["é".repeat(3_000_000), "x".repeat(3_999_987)];
+  const patches = ["é".repeat(3_000_000), "x".repeat(4_000_000)];
   let patchReads = 0;
   const layer = layerFor({
     projection: Effect.succeed(makeProjection()),
