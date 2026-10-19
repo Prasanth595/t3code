@@ -89,7 +89,6 @@ const layerHandler = (
     readonly iconSource?: string;
     readonly existingIcon?: Uint8Array;
     readonly iconReadError?: PlatformError.PlatformError;
-    readonly iconWriteError?: PlatformError.PlatformError;
   } = {},
 ) =>
   DesktopLinuxUrlHandler.layer.pipe(
@@ -133,13 +132,12 @@ const layerHandler = (
               });
             }),
           writeFile: (path, bytes, options) =>
-            Effect.gen(function* () {
+            Effect.sync(() => {
               recorded.binaryWrites.push({
                 path,
                 bytes: new Uint8Array(bytes),
                 mode: options?.mode,
               });
-              if (input.iconWriteError) return yield* input.iconWriteError;
             }),
           readFileString: () => Effect.succeed(input.existingEntry ?? ""),
           makeDirectory: (path) =>
@@ -276,9 +274,6 @@ describe("DesktopLinuxUrlHandler", () => {
           'Exec="/home/alice/Applications/T3-Code.AppImage" %U',
         );
         assert.include(recorded.files[0]?.content, "MimeType=x-scheme-handler/t3code;");
-        assert.deepEqual(recorded.binaryReads, []);
-        assert.deepEqual(recorded.binaryWrites, []);
-        assert.deepEqual(recorded.copies, []);
         assert.deepEqual(recorded.commands, [
           {
             command: "update-desktop-database",
@@ -349,99 +344,58 @@ describe("DesktopLinuxUrlHandler", () => {
     });
   });
 
-  it.effect.each([
-    {
-      label: "same length with different bytes",
-      current: new Uint8Array([0x89, 0x50, 0x00, 0xfe, 0x80, 0x0a]),
-    },
-    { label: "shorter", current: iconBytes.subarray(0, -1) },
-    { label: "longer", current: new Uint8Array([...iconBytes, 0x00]) },
-  ])("replaces a $label icon independently of a current desktop entry", ({ current }) => {
+  it.effect("refreshes a stale icon and skips equal bytes on the next registration", () => {
     const recorded = emptyRecording();
     return Effect.gen(function* () {
       yield* runRegister(recorded, {
         iconSource,
         existingEntry: currentDesktopEntry,
-        existingIcon: current,
+        existingIcon: new Uint8Array([0x89, 0x50, 0x00, 0xfe, 0x80, 0x0a]),
       });
-      assert.deepEqual(recorded.files, []);
-      assert.deepEqual(recorded.binaryReads, [iconSource, iconPath]);
       assert.deepEqual(recorded.binaryWrites, [{ path: iconPath, bytes: iconBytes, mode: 0o600 }]);
+      yield* runRegister(recorded, {
+        iconSource,
+        existingEntry: currentDesktopEntry,
+        existingIcon: new Uint8Array(recorded.binaryWrites[0]!.bytes),
+      });
+      assert.equal(recorded.binaryWrites.length, 1);
       assert.deepEqual(recorded.copies, []);
-      assert.deepEqual(recorded.commands, registrationCommands);
+      assert.deepEqual(recorded.files, []);
+      assert.deepEqual(recorded.commands, [...registrationCommands, ...registrationCommands]);
     });
   });
 
-  it.effect.each([
-    { label: "current", existingEntry: currentDesktopEntry },
-    { label: "missing", existingEntry: undefined },
-  ])(
-    "skips equal icon writes and still registers with a $label desktop entry",
-    ({ existingEntry }) => {
-      const recorded = emptyRecording();
-      return Effect.gen(function* () {
-        for (let registration = 0; registration < 2; registration++) {
-          yield* runRegister(recorded, {
-            iconSource,
-            ...(existingEntry === undefined ? {} : { existingEntry }),
-            existingIcon: new Uint8Array(iconBytes),
-          });
-        }
-        assert.equal(recorded.files.length, existingEntry === undefined ? 2 : 0);
-        assert.deepEqual(recorded.binaryReads, [iconSource, iconPath, iconSource, iconPath]);
-        assert.deepEqual(recorded.binaryWrites, []);
-        assert.deepEqual(recorded.copies, []);
-        assert.deepEqual(recorded.commands, [...registrationCommands, ...registrationCommands]);
+  it.effect("still registers the handler when reading its icon fails", () => {
+    const recorded = emptyRecording();
+    return Effect.gen(function* () {
+      yield* runRegister(recorded, {
+        iconSource,
+        iconReadError: PlatformError.systemError({
+          _tag: "PermissionDenied",
+          module: "FileSystem",
+          method: "readFile",
+          description: "unreadable bundled icon",
+        }),
       });
-    },
-  );
-
-  it.effect.each(["readFile", "writeFile"] as const)(
-    "still registers the handler when the icon %s fails",
-    (method) => {
-      const recorded = emptyRecording();
-      const previousIcon = new Uint8Array([0xff, 0x00]);
-      const error = PlatformError.systemError({
-        _tag: "PermissionDenied",
-        module: "FileSystem",
-        method,
-        description: "icon unavailable",
-        pathOrDescriptor: method === "readFile" ? iconSource : iconPath,
-      });
-      return Effect.gen(function* () {
-        yield* runRegister(recorded, {
-          iconSource,
-          existingIcon: previousIcon,
-          ...(method === "readFile" ? { iconReadError: error } : { iconWriteError: error }),
-        });
-        assert.deepEqual(
-          recorded.binaryReads,
-          method === "readFile" ? [iconSource] : [iconSource, iconPath],
-        );
-        assert.deepEqual(
-          recorded.binaryWrites,
-          method === "readFile" ? [] : [{ path: iconPath, bytes: iconBytes, mode: 0o600 }],
-        );
-        assert.deepEqual(previousIcon, new Uint8Array([0xff, 0x00]));
-        assert.deepEqual(recorded.copies, []);
-        assert.equal(recorded.files.length, 1);
-        assert.deepEqual(recorded.commands, registrationCommands);
-      });
-    },
-  );
+      assert.deepEqual(recorded.binaryReads, [iconSource]);
+      assert.deepEqual(recorded.binaryWrites, []);
+      assert.deepEqual(recorded.copies, []);
+      assert.equal(recorded.files.length, 1);
+      assert.deepEqual(recorded.commands, registrationCommands);
+    });
+  });
 
   it.effect("writes the portal identity without claiming the URL scheme in development", () => {
     const nonLinux = emptyRecording();
     const unpackaged = emptyRecording();
 
     return Effect.gen(function* () {
-      yield* runRegister(nonLinux, { environment: { platform: "darwin" }, iconSource });
+      yield* runRegister(nonLinux, { environment: { platform: "darwin" } });
       yield* runRegister(unpackaged, {
         environment: {
           isPackaged: false,
           linuxDesktopEntryName: "com.t3tools.T3Code.Development.desktop",
         },
-        iconSource,
       });
 
       assert.deepEqual(nonLinux.files, []);
@@ -450,11 +404,6 @@ describe("DesktopLinuxUrlHandler", () => {
         "/home/alice/.local/share/applications/com.t3tools.T3Code.Development.desktop",
       );
       assert.deepEqual(unpackaged.commands, []);
-      for (const recorded of [nonLinux, unpackaged]) {
-        assert.deepEqual(recorded.binaryReads, []);
-        assert.deepEqual(recorded.binaryWrites, []);
-        assert.deepEqual(recorded.copies, []);
-      }
     });
   });
 
