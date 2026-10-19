@@ -1082,6 +1082,7 @@ export async function waitForRevertedMessage(
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
+  const providerThreadId = initial?.thread.activeProviderThreadId;
   // Paging can omit the source run. Rollback commits the entire settled suffix atomically.
   const witness = initial?.runs.reduce<(typeof initial.runs)[number] | undefined>((latest, run) => {
     if (
@@ -1094,6 +1095,9 @@ export async function waitForRevertedMessage(
       return latest;
     return latest === undefined || run.ordinal > latest.ordinal ? run : latest;
   }, undefined);
+  if (witness === undefined) {
+    throw new Error("The thread has changed. Select a message to rewind again.");
+  }
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let accepted = false;
@@ -1117,7 +1121,14 @@ export async function waitForRevertedMessage(
       }
       if (
         accepted &&
-        thread.runs.some((run) => run.id === witness?.id && run.status === "rolled_back")
+        thread.thread.activeProviderThreadId === providerThreadId &&
+        thread.providerThreads.some(
+          (providerThread) =>
+            providerThread.id === providerThreadId &&
+            providerThread.status === "active" &&
+            providerThread.lastRunOrdinal === (turnCount === 0 ? null : turnCount),
+        ) &&
+        thread.runs.some((run) => run.id === witness.id && run.status === "rolled_back")
       )
         finish();
     };
