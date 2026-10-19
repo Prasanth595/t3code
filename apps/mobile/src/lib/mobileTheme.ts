@@ -514,7 +514,9 @@ export function getMobileThemePreviewColors(
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   return {
     canvas: themeColorToNativeColor(colors.canvas),
-    accent: themeColorToNativeColor(colors.accent),
+    accent: themeColorToNativeColor(
+      theme.id === "absolutely" ? colors.accentSurface : colors.accent,
+    ),
     messageAction: themeColorToNativeColor(colors.messageAction),
   };
 }
