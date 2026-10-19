@@ -1654,6 +1654,43 @@ describe("findProjectForRepository", () => {
     ).toBe(payments);
   });
 
+  it("keeps repository matches on the selected environment when project IDs overlap", () => {
+    const project = (id: string, environmentId: string, repository: string) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        canonicalKey: `github.com/${repository}`,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl: "" },
+        provider: "github",
+        displayName: repository,
+      },
+    });
+    const unrelated = project("p1", ENV_1, "acme/web");
+    const local = project("p2", ENV_1, "acme/api");
+    const remote = project("p1", ENV_2, "acme/api");
+    const projects = [unrelated, local, remote];
+
+    expect(findProjectForRepository(projects, { repository: "acme/api" })).toBe(local);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/api",
+        selectedEnvironmentId: ENV_2,
+      }),
+    ).toBe(remote);
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/web",
+        selectedEnvironmentId: ENV_2,
+      }),
+    ).toBeUndefined();
+    expect(
+      findProjectForRepository(projects, {
+        repository: "acme/api",
+        selectedEnvironmentId: "env-connecting",
+      }),
+    ).toBeUndefined();
+  });
+
   it.each([
     ["gitlab", "t3tools/platform/t3code", "T3Tools/Platform/T3Code"],
     ["github", "t3tools/t3code", "T3Tools/T3Code"],

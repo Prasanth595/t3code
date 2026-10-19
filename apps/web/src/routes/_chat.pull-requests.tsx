@@ -1800,18 +1800,6 @@ function usePullRequestScope(search: PullRequestsSearch) {
   const scopedProjects = pullRequestFilterProjects(projects, environmentLabels, scopedProject);
 
   const selectedHost = search.selectedHost ?? search.host;
-  const projectIdForRepository =
-    search.repository === undefined
-      ? undefined
-      : findProjectForRepository(projects, {
-          repository: search.repository,
-          host: selectedHost,
-          scopedProjectId,
-          scopedEnvironmentId,
-        })?.id;
-
-  const linkedProjectId = resolveProjectScope(search.selectedProjectId, projects, projectsKnown);
-  const selectedProjectId = linkedProjectId ?? projectIdForRepository ?? scopedProjectId;
   // A named server still connecting is kept named rather than falling back: falling back while it
   // is merely not ready yet would resolve the project against whatever other server has answered,
   // which can be the wrong one where two servers share a project id.
@@ -1820,7 +1808,21 @@ function usePullRequestScope(search: PullRequestsSearch) {
     knownEnvironmentIds,
     scopedEnvironmentId,
   );
-  const selectedProject = findScopedProject(projects, selectedEnvironmentId, selectedProjectId);
+  const projectForRepository =
+    search.repository === undefined
+      ? undefined
+      : findProjectForRepository(projects, {
+          repository: search.repository,
+          host: selectedHost,
+          selectedEnvironmentId,
+          scopedProjectId,
+          scopedEnvironmentId,
+        });
+  const linkedProjectId = resolveProjectScope(search.selectedProjectId, projects, projectsKnown);
+  const selectedProject =
+    linkedProjectId === undefined && search.repository !== undefined
+      ? projectForRepository
+      : findScopedProject(projects, selectedEnvironmentId, linkedProjectId ?? scopedProjectId);
   const queryEnvironmentIds = resolveQueryEnvironmentIds(
     environmentIds,
     projects,

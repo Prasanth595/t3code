@@ -974,17 +974,6 @@ export function largestPullRequestReadCount(
   return Math.max(0, ...counts.values());
 }
 
-/**
- * The project a repository-only link belongs to. The repository is the provider-native selector
- * the server checks a request against, and more than one project can answer it: two checkouts of
- * one repository, and on Azure DevOps two repositories that merely share a name across that
- * host's projects, since the selector there is the bare name `az repos pr` accepts.
- *
- * Where the page is already scoped to one of the candidates that one is chosen, because the scope
- * is the reader's own word about which project the link came from. A scope naming a project the
- * repository does not belong to is not believed over the repository: the first candidate stands,
- * as it would with no scope at all.
- */
 export function findProjectForRepository<
   Project extends {
     readonly id: string;
@@ -996,6 +985,7 @@ export function findProjectForRepository<
   input: {
     readonly repository: string;
     readonly host?: string | undefined;
+    readonly selectedEnvironmentId?: string | null | undefined;
     readonly scopedProjectId?: string | undefined;
     readonly scopedEnvironmentId?: string | null | undefined;
   },
@@ -1003,20 +993,22 @@ export function findProjectForRepository<
   const repository = input.repository.toLowerCase();
   const host = input.host?.toLowerCase();
   const candidates = projects.filter((project) => {
+    if (
+      input.selectedEnvironmentId != null &&
+      project.environmentId !== input.selectedEnvironmentId
+    ) {
+      return false;
+    }
     const identity = project.repositoryIdentity;
     if (!identity || sourceControlRepositorySelector(identity)?.toLowerCase() !== repository) {
       return false;
     }
-    // The same `owner/name` can exist on two hosts. Without this the first match wins, and a link
-    // that named its host opens the pull request from the other one.
     return (
       host === undefined ||
       pullRequestHostOf(identity, identity.provider as SourceControlProviderKind) === host
     );
   });
-  const scoped =
-    input.scopedProjectId === undefined
-      ? undefined
-      : findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
+  // Azure repository names can collide across projects on the same host.
+  const scoped = findScopedProject(candidates, input.scopedEnvironmentId, input.scopedProjectId);
   return scoped ?? candidates[0];
 }
