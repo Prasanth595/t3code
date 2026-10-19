@@ -3452,7 +3452,11 @@ export default function ChatView(props: ChatViewProps) {
       !readEnvironmentScope(environmentId, AuthTerminalReadScope)
         ? null
         : findReusableProjectScriptTerminal({
-            drawerTerminalIds: terminalUiState.terminalIds,
+            // Server sessions cover drawer terminals this client has not opened yet, such as a
+            // worktree setup shell; the helper drops the panel-owned ones.
+            drawerTerminalIds: [
+              ...new Set([...terminalUiState.terminalIds, ...activeServerOrderedTerminalIds]),
+            ],
             activeTerminalId: terminalUiState.activeTerminalId,
             panelTerminalIds,
             runningTerminalIds,
