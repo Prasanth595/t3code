@@ -49,5 +49,5 @@ function clockFixInstructions(platform: string): string {
 
 export function describeClockSkew(seconds: number, platform: string): string {
   const direction = seconds > 0 ? "ahead" : "behind";
-  return `The host computer's clock is ${skewAmount(seconds)} ${direction}, and T3 Connect needs it to be right. ${clockFixInstructions(platform)} T3 Connect reconnects by itself once the clock is correct.`;
+  return `The host computer's clock is ${skewAmount(seconds)} ${direction}, and T3 Connect needs it to be right. ${clockFixInstructions(platform)}`;
 }

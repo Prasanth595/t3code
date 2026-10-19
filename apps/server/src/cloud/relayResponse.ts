@@ -83,7 +83,7 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
           rejection,
           // The relay's own recovery advice does not apply until the clock is
           // fixed, so keep only what it said and its trace.
-          description: `${describeClockSkew(clockSkewSeconds, platform)} Relay response: ${
+          description: `${describeClockSkew(clockSkewSeconds, platform)} T3 Connect reconnects by itself once the clock is correct. Relay response: ${
             Option.isSome(decoded)
               ? `${decoded.value.message}. Trace ID: ${decoded.value.traceId}.`
               : `HTTP ${response.status}.${requestId}`
