@@ -47,13 +47,11 @@ export interface SqliteClientConfig {
   readonly checkpointWorker?: boolean | undefined;
 }
 
-/**
- * Set by `readOnly`. Also preserves the caller's interruption policy across
- * SqlClient's uninterruptible transaction acquisition.
- */
-const ReadOnly = Context.Reference<
-  (<A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>) | undefined
->("@t3tools/shared/nodeSqliteClient/ReadOnly", { defaultValue: () => undefined });
+// SqlClient masks transaction acquisition, so readOnly carries the caller's interruption policy.
+const ReadOnly = Context.Reference<typeof Effect.interruptible | undefined>(
+  "@t3tools/shared/nodeSqliteClient/ReadOnly",
+  { defaultValue: () => undefined },
+);
 
 /**
  * Wrap the whole transaction, as in
@@ -447,16 +445,15 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
     } catch (cause) {
       return turnOff(undefined, String(cause));
     }
-    // Waiting happens before any lock is taken. Ordinary reads may cancel,
-    // while interrupted shutdown finalizers must retain their protection.
     return Effect.flatMap(
       Effect.withFiber((fiber) => {
-        const restore = Context.get(fiber.context, ReadOnly);
-        const startup = Effect.timeoutOption(
-          Effect.promise(() => reader.started),
-          startupTimeout,
+        const restore = Context.get(fiber.context, ReadOnly) ?? identity;
+        return restore(
+          Effect.timeoutOption(
+            Effect.promise(() => reader.started),
+            startupTimeout,
+          ),
         );
-        return restore === undefined ? startup : restore(startup);
       }),
       (startup): Effect.Effect<Connection | undefined> =>
         // Another acquire may have timed out and retired this worker while this one
