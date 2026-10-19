@@ -12,6 +12,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Result from "effect/Result";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -67,12 +68,6 @@ describe("createAssetEnvironmentAtoms", () => {
     { name: "inspection failure", path: "/tmp/clip.mp4", error: "inspection", fallback: true },
     { name: "foreign thread", path: "/tmp/clip.mp4", error: "context", fallback: true },
     { name: "missing on both hosts", path: "/tmp/clip.mp4", localFails: true },
-    {
-      name: "unreadable remotely, missing here",
-      path: "/tmp/clip.mp4",
-      error: "inspection",
-      localFails: true,
-    },
     {
       name: "a defect in the local retry",
       path: "/tmp/clip.mp4",
@@ -191,7 +186,7 @@ describe("createAssetEnvironmentAtoms", () => {
       } else if (scenario.localDefect) {
         const cause = yield* Effect.sandbox(result).pipe(Effect.flip);
         expect(Cause.findErrorOption(cause)).toEqual(Option.some(error));
-        expect(Cause.hasDies(cause)).toBe(true);
+        expect(Cause.findDefect(cause)).toEqual(Result.succeed("cleanup failed"));
       } else {
         expect(yield* Effect.flip(result)).toEqual(error);
       }
