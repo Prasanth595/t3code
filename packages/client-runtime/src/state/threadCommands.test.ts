@@ -182,24 +182,25 @@ describe("remote thread lifecycle commands", () => {
       }),
   );
 
-  it.effect("re-acknowledges an early-woken thread on a same-time re-snooze", () =>
+  it.effect("restamps snoozedAt when re-snoozing to the same wake time", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
-      const staleSnoozedAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+      const earlierSnoozedAt = DateTime.makeUnsafe("2000-01-01T00:00:00.000Z");
       h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), {
         ...SNAPSHOT,
-        threads: [{ ...SNAPSHOT.threads[0]!, snoozedUntil: FUTURE, snoozedAt: staleSnoozedAt }],
+        threads: [{ ...SNAPSHOT.threads[0]!, snoozedUntil: FUTURE, snoozedAt: earlierSnoozedAt }],
       });
-      void h.commands.snooze.run(h.registry, {
+      const result = h.commands.snooze.run(h.registry, {
         environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
+        input: { threadId: THREAD_ID, snoozedUntil: DateTime.formatIso(FUTURE) },
       });
       const snoozedAt = h.registry.get(h.visibleAtom)?.threads[0]?.snoozedAt;
-      expect(snoozedAt).toBeDefined();
       expect(DateTime.toEpochMillis(snoozedAt!)).toBeGreaterThan(
-        DateTime.toEpochMillis(staleSnoozedAt),
+        DateTime.toEpochMillis(earlierSnoozedAt),
       );
-      yield* Queue.take(h.requests);
+      const request = yield* Queue.take(h.requests);
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
     }),
   );
 

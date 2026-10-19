@@ -116,6 +116,7 @@ export type {
   RespondToThreadApprovalInput,
   RespondToThreadUserInputInput,
   DismissThreadUserInputInput,
+  RetryWorkspacePreparationInput,
   RevertThreadCheckpointInput,
   SetThreadInteractionModeInput,
   SetThreadRuntimeModeInput,
@@ -442,8 +443,6 @@ export function createThreadEnvironmentAtoms<R, E>(
             ...thread,
             pendingRuntimeRequest: null,
             snoozedUntil: DateTime.makeUnsafe(input.snoozedUntil),
-            // Mirrors the server: every snooze re-acknowledges the thread, so a
-            // same-time re-snooze hides a thread that woke early.
             snoozedAt: now,
           },
     ),
