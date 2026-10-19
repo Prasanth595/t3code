@@ -989,6 +989,8 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        /** open() releases its own failed start while holding sessionOpen. */
+        readonly holdsSessionOpenLock?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1028,8 +1030,19 @@ export const layerWithOptions = (
                     releasedBackgroundTasks,
                     releasedAt,
                   };
+                  // Closing the scope can take a while. A shared session reopened
+                  // meanwhile owns the session row, so leave its status alone;
+                  // sessionOpen keeps a reopen from landing between check and write.
+                  const writeRecords = Effect.gen(function* () {
+                    const replaced = (yield* Ref.get(sessions)).has(
+                      sessionKey(input.providerSessionId),
+                    );
+                    yield* writeReleaseRecords({ ...records, replaced });
+                  });
                   const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
+                    input.holdsSessionOpenLock === true
+                      ? writeRecords
+                      : sessionOpen.withLock(input.providerSessionId, writeRecords),
                   );
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
@@ -2230,11 +2243,13 @@ export const layerWithOptions = (
                           providerSessionId: input.providerSessionId,
                           reason: "manual_shutdown",
                           detail: "The provider session start was interrupted.",
+                          holdsSessionOpenLock: true,
                         }
                       : {
                           providerSessionId: input.providerSessionId,
                           reason: "runtime_error",
                           detail: "Failed to persist the provider-session attachment.",
+                          holdsSessionOpenLock: true,
                         },
                   ).pipe(logReleaseFailure(input.providerSessionId)),
                 ),

@@ -167,6 +167,13 @@ function isRunOwnedSubagentTerminalStatus(
   return status === "interrupted" || status === "failed" || status === "cancelled";
 }
 
+/**
+ * Tags the write that fails a finalized run's native subagents after its
+ * provider died. No run update follows it, so the orchestrator watches this tag
+ * to settle the delegated task waiting on those subagents.
+ */
+export const PROVIDER_EXIT_SUBAGENT_CASCADE_COMMAND_PREFIX = "command:provider-exit-subagents:";
+
 function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
   return terminal.status === "failed" && terminal.childTurnsContinue === true;
 }
@@ -1165,6 +1172,29 @@ export const layer: Layer.Layer<
                 }
               }
             });
+          // A completed root keeps ingesting while its native subagents run on.
+          // If the provider dies then, no event will ever settle them.
+          const failOpenRunOwnedSubagentsAfterFinalization = Effect.gen(function* () {
+            const open = yield* Ref.getAndSet(
+              openRunOwnedSubagents,
+              emptyOpenRunOwnedSubagentProjection(),
+            );
+            const events = yield* cascadeTerminalizeRunOwnedSubagents({
+              run: input.run,
+              open,
+              status: "failed",
+              completedAt: yield* DateTime.now,
+              allocateEventId: () => idAllocator.allocate.event({ threadId: input.run.threadId }),
+            });
+            if (events.length === 0) return;
+            yield* eventSink.writeWithEffects({
+              commandId: CommandId.make(
+                `${PROVIDER_EXIT_SUBAGENT_CASCADE_COMMAND_PREFIX}${input.run.id}`,
+              ),
+              events,
+              effects: [],
+            });
+          });
           const shouldStopProviderEventIngestion = Effect.gen(function* () {
             if (!(yield* Ref.get(rootTerminalSeen))) {
               return false;
@@ -1339,7 +1369,7 @@ export const layer: Layer.Layer<
                     }).pipe(
                       Effect.andThen(
                         finalized
-                          ? Effect.void
+                          ? failOpenRunOwnedSubagentsAfterFinalization
                           : Ref.get(latestProviderThread).pipe(
                               Effect.flatMap((providerThread) =>
                                 Ref.get(latestTurnItemOrdinal).pipe(

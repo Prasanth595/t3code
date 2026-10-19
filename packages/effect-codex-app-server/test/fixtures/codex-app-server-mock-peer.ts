@@ -56,6 +56,11 @@ const handleMethod = (message: Record<string, unknown>) => {
         platformFamily: platform === "win32" ? "windows" : "unix",
         platformOs: platform === "darwin" ? "macos" : platform,
       });
+      const exitCode = process.env.CODEX_APP_SERVER_TEST_EXIT_AFTER_INITIALIZE;
+      if (exitCode !== undefined) {
+        // Simulate a crash with stdin still open, like an OOM kill mid-turn.
+        process.stdout.write("", () => process.exit(Number(exitCode)));
+      }
       return;
     }
     case "initialized": {

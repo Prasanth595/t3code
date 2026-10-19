@@ -2691,6 +2691,55 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 keeps a reopened session's status when the old release finishes later",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-reopened-during-release");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        // The old release stalls closing its process; a new turn reopens the
+        // shared session id meanwhile, as a completion wake does.
+        const release = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        yield* Deferred.await(scopeCloseReached);
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(release);
+
+        const projection = yield* projectionStore.getThreadProjection(threadId);
+        const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(stopping);
+        assert.equal(projection.providerSessions.at(-1)?.status, "ready");
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            spawnBeforeOpen: true,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 persists release when session scope close hangs", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
