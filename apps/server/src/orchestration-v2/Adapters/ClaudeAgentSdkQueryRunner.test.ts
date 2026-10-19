@@ -95,21 +95,27 @@ const realQueryRunner = layerQueryRunner.pipe(
   Layer.provide(NodeServices.layer),
 );
 
-describe("forkSession", () => {
-  const forkInput = {
-    sessionId: "source-session",
-    options: { dir: "/workspace" },
-    threadId: ThreadId.make("thread-fork-head"),
-    providerSessionId: ProviderSessionId.make("session-fork-head"),
-  };
-  const forkWith = (readMessages: () => Promise<Array<{ uuid: string }>>) =>
+it.effect.each(["readable", "unreadable"] as const)(
+  "forks with a %s transcript, retaining the inherited head when available",
+  (transcript) =>
     Effect.gen(function* () {
-      const fork = vi
-        .spyOn(ClaudeSdk, "forkSession")
-        .mockResolvedValue({ sessionId: "forked-session" });
-      const read = vi
-        .spyOn(ClaudeSdk, "getSessionMessages")
-        .mockImplementation(readMessages as () => Promise<ClaudeSdk.SessionMessage[]>);
+      let forkCompleted = false;
+      const fork = vi.spyOn(ClaudeSdk, "forkSession").mockImplementation(async () => {
+        forkCompleted = true;
+        return { sessionId: "forked-session" };
+      });
+      const read = vi.spyOn(ClaudeSdk, "getSessionMessages").mockImplementation(async () => {
+        assert.isTrue(forkCompleted);
+        if (transcript === "unreadable") throw new Error("transcript unreadable");
+        return ["remapped-user", "remapped-assistant"].map((uuid) => ({
+          type: "assistant" as const,
+          uuid,
+          session_id: "forked-session",
+          message: { role: "assistant", content: uuid },
+          parent_tool_use_id: null,
+          parent_agent_id: null,
+        }));
+      });
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           fork.mockRestore();
@@ -117,27 +123,22 @@ describe("forkSession", () => {
         }),
       );
       const runner = yield* ClaudeAgentSdkQueryRunner;
-      const forked = yield* runner.forkSession(forkInput);
-      return { forked, read };
-    }).pipe(Effect.provide(realQueryRunner));
-
-  it.effect("reports the last message of the forked session as its head", () =>
-    Effect.gen(function* () {
-      const { forked, read } = yield* forkWith(async () => [{ uuid: "first" }, { uuid: "last" }]);
-      assert.deepEqual(forked, { sessionId: "forked-session", headMessageId: "last" });
-      assert.deepEqual(read.mock.calls, [["forked-session", { dir: "/workspace" }]]);
-    }),
-  );
-
-  it.effect("still forks when the forked session cannot be read back", () =>
-    Effect.gen(function* () {
-      const { forked } = yield* forkWith(async () => {
-        throw new Error("transcript unreadable");
+      const forked = yield* runner.forkSession({
+        sessionId: "source-session",
+        options: { dir: "/workspace", upToMessageId: "source-assistant" },
+        threadId: ThreadId.make("thread-fork-head"),
+        providerSessionId: ProviderSessionId.make("session-fork-head"),
       });
-      assert.deepEqual(forked, { sessionId: "forked-session" });
-    }),
-  );
-});
+      assert.deepEqual(forked, {
+        sessionId: "forked-session",
+        ...(transcript === "readable" ? { headMessageId: "remapped-assistant" } : {}),
+      });
+      assert.deepEqual(fork.mock.calls, [
+        ["source-session", { dir: "/workspace", upToMessageId: "source-assistant" }],
+      ]);
+      assert.deepEqual(read.mock.calls, [["forked-session", { dir: "/workspace" }]]);
+    }).pipe(Effect.provide(realQueryRunner)),
+);
 
 function fakeClaudeCli(script: string): string {
   const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-cli-"));
