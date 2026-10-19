@@ -1855,6 +1855,10 @@ code {
   content: attr(data-marker) " ";
 }
 
+.chat-markdown ol > li[data-source-list-marker]::marker {
+  content: attr(data-source-list-marker) " ";
+}
+
 :is(.chat-markdown, .composer-tiptap) ul ul {
   list-style-type: circle;
 }

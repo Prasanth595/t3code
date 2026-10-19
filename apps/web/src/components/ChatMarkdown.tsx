@@ -387,11 +387,16 @@ function findTaskListMarkerOffset(markdown: string, listItemStart: number): numb
 function orderedListGutterStyle(
   itemCount: number,
   start: unknown,
+  sourceMarkerWidth = 0,
 ): { "--list-gutter": string } | undefined {
   const parsedStart = Number.parseInt(String(start ?? 1), 10);
   const firstNumber = Number.isNaN(parsedStart) ? 1 : parsedStart;
   const lastNumber = firstNumber + Math.max(itemCount - 1, 0);
-  const markerWidth = Math.max(String(firstNumber).length, String(lastNumber).length);
+  const markerWidth = Math.max(
+    String(firstNumber).length,
+    String(lastNumber).length,
+    sourceMarkerWidth,
+  );
   if (markerWidth <= 1) return undefined;
   return { "--list-gutter": `${markerWidth + 2}ch` };
 }
@@ -2824,10 +2829,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   ol: function MarkdownOrderedList({ node, start, style, ...props }) {
-    const itemCount =
-      node?.children?.filter((child) => child.type === "element" && child.tagName === "li")
-        .length ?? 0;
-    const gutterStyle = orderedListGutterStyle(itemCount, start);
+    const items =
+      node?.children?.filter((child) => child.type === "element" && child.tagName === "li") ?? [];
+    let sourceMarkerWidth = 0;
+    for (const item of items) {
+      if (item.type !== "element") continue;
+      const marker = item.properties.dataSourceListMarker;
+      if (typeof marker === "string") {
+        sourceMarkerWidth = Math.max(sourceMarkerWidth, marker.length - 1);
+      }
+    }
+    const gutterStyle = orderedListGutterStyle(items.length, start, sourceMarkerWidth);
     return (
       <ol {...props} start={start} style={gutterStyle ? { ...style, ...gutterStyle } : style} />
     );
