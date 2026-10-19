@@ -61,9 +61,7 @@ const closeServer = (server: NodeNet.Server) =>
   Effect.sync(() => {
     try {
       server.close();
-    } catch {
-      // Ignore cleanup failures in tests.
-    }
+    } catch {}
   });
 
 const getPort = (server: NodeNet.Server): number => {
