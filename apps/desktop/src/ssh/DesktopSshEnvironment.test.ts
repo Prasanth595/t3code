@@ -92,7 +92,7 @@ describe("sshEnvironment", () => {
         },
         {
           alias: "devbox",
-          hostname: "devbox.example.com",
+          hostname: "devbox",
           username: null,
           port: null,
           source: "ssh-config",
@@ -106,7 +106,7 @@ describe("sshEnvironment", () => {
         },
         {
           alias: "staging",
-          hostname: "staging.example.com",
+          hostname: "staging",
           username: null,
           port: null,
           source: "ssh-config",
