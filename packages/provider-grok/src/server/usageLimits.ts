@@ -31,6 +31,7 @@ const GrokUsageResponse = Schema.Struct({
       currentPeriod: Schema.optional(
         Schema.Struct({
           type: Schema.optional(Schema.String),
+          start: Schema.optional(Schema.Unknown),
           end: Schema.optional(Schema.String),
         }),
       ),
@@ -54,12 +55,21 @@ export function grokUsageResponseToLimits(
   const periodType = period?.type?.replace(/^USAGE_PERIOD_TYPE_/, "");
   const kind = periodType === "WEEKLY" ? "weekly" : periodType === "MONTHLY" ? "monthly" : "other";
   const reset = period?.end ? DateTime.make(period.end) : Option.none();
+  const start = typeof period?.start === "string" ? DateTime.make(period.start) : Option.none();
+  // Pace and the even-spend marker need the period length; months vary, so use the reported bounds.
+  const windowDurationMins =
+    Option.isSome(start) && Option.isSome(reset)
+      ? Math.round(
+          (DateTime.toEpochMillis(reset.value) - DateTime.toEpochMillis(start.value)) / 60_000,
+        )
+      : 0;
   const window: ServerProviderUsageWindow = {
     id: "subscription",
     kind,
     label: kind === "weekly" ? "Weekly" : kind === "monthly" ? "Monthly" : "Subscription",
     usedPercent: clampPercent(usedPercent),
     ...(Option.isSome(reset) ? { resetsAt: DateTime.formatIso(reset.value) } : {}),
+    ...(windowDurationMins > 0 ? { windowDurationMins } : {}),
   };
   return makeUsageLimits({ checkedAt, windows: [window] });
 }
