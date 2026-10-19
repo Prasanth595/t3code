@@ -461,8 +461,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
-    // Only an HTML page needs its folder, for the styles, scripts and images it
-    // links relatively. Every other preview, PDFs included, grants one file.
+    // Only an HTML page needs its folder, for relatively linked styles, scripts
+    // and images. A PDF or image link grants that one file.
     const exactFile = filePreviewKind({ name: resolved.relativePath }) !== "html";
     return {
       claims: exactFile
