@@ -110,6 +110,15 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
+      if (command === "thread.undo") {
+        if (event.repeat || isModelPickerOpen()) return;
+        if (undoLatestThreadAction()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
