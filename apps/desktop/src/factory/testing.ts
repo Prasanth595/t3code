@@ -6,14 +6,18 @@ import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Scope from "effect/Scope";
 
+import * as DesktopAppIdentity from "../app/DesktopAppIdentity.ts";
+import * as DesktopLegacyLocalStorage from "../app/DesktopLegacyLocalStorage.ts";
 import * as DesktopAppActivation from "../app/DesktopAppActivation.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
+import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import * as PreviewManager from "../preview/Manager.ts";
+import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const textDecoder = new TextDecoder();
@@ -141,4 +145,23 @@ export const layerIpcInstallDependencies = Layer.mergeAll(
     subscribePointerEvents: () => Effect.void,
     subscribeOpenLinks: () => Effect.void,
   } as unknown as PreviewManager.PreviewManager["Service"]),
+);
+
+/**
+ * The services bootstrap calls before it reaches the factory hook, each answering nothing.
+ * Partial stubs: these services are large and bootstrap uses one method of each.
+ */
+export const layerBootstrapStubs = Layer.mergeAll(
+  Layer.succeed(ElectronProtocol.ElectronProtocol, {
+    registerDesktopProtocol: () => Effect.void,
+  } as unknown as ElectronProtocol.ElectronProtocol["Service"]),
+  Layer.succeed(DesktopLegacyLocalStorage.DesktopLegacyLocalStorage, {
+    load: () => Effect.void,
+  } as unknown as DesktopLegacyLocalStorage.DesktopLegacyLocalStorage["Service"]),
+  Layer.succeed(DesktopAppIdentity.DesktopAppIdentity, {
+    resolveUserDataPath: Effect.succeed("/tmp/t3-factory-user-data"),
+  } as unknown as DesktopAppIdentity.DesktopAppIdentity["Service"]),
+  Layer.succeed(DesktopSnapShot.DesktopSnapShot, {
+    initialize: Effect.void,
+  } as unknown as DesktopSnapShot.DesktopSnapShot["Service"]),
 );
