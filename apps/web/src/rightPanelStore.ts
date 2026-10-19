@@ -154,6 +154,7 @@ interface RightPanelStoreState {
       repository: string;
       number: number;
       url?: string;
+      detailTab?: PullRequestDetailTab;
     },
   ) => void;
   setPullRequestDetailTab: (
@@ -281,6 +282,7 @@ export function pullRequestSurface(target: {
   repository: string;
   number: number;
   url?: string;
+  detailTab?: PullRequestDetailTab;
 }): PullRequestSurface {
   return {
     id: pullRequestSurfaceId(target),
@@ -291,6 +293,7 @@ export function pullRequestSurface(target: {
     repository: target.repository,
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
+    ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
   };
 }
 
@@ -701,7 +704,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           );
           if (existing?.kind !== "pull-request" || (existing.detailTab ?? "summary") === detailTab)
             return state;
-          return userAction(state, threadKey, (current) => ({
+          return automaticUpdate(state, threadKey, (current) => ({
             ...current,
             surfaces: current.surfaces.map((surface) =>
               surface.id === surfaceId && surface.kind === "pull-request"
