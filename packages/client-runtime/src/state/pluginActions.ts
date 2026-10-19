@@ -117,9 +117,17 @@ export function pluginActionLabels(actions: ReadonlyArray<PluginAction>): Readon
   for (const action of actions) {
     titleCounts.set(action.title, (titleCounts.get(action.title) ?? 0) + 1);
   }
-  return actions.map((action) =>
+  const labels = actions.map((action) =>
     (titleCounts.get(action.title) ?? 0) > 1
       ? `${action.title} (${action.pluginName})`
       : action.title,
   );
+  const labelCounts = new Map<string, number>();
+  for (const label of labels) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  return labels.map((label, index) => {
+    const action = actions[index]!;
+    return (labelCounts.get(label) ?? 0) > 1
+      ? `${label} [${action.pluginId}/${action.name}]`
+      : label;
+  });
 }
