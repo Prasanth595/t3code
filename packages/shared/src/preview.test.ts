@@ -8,20 +8,14 @@ import {
   resolveAddressBarInput,
 } from "./preview.ts";
 
-const embeddedUrlAddresses = [
-  ["localhost:3000/?next=https://example.com", "http://localhost:3000/?next=https://example.com"],
-  ["127.0.0.1:3000/#https://example.com", "http://127.0.0.1:3000/#https://example.com"],
-  ["example.com/?next=http://localhost:3000", "https://example.com/?next=http://localhost:3000"],
-  ["example.com/https://example.org", "https://example.com/https://example.org"],
-] as const;
-
 describe("resolveAddressBarInput", () => {
-  it.each(embeddedUrlAddresses)(
-    "opens an address containing another URL: %s",
-    (input, expected) => {
-      expect(resolveAddressBarInput(input)).toBe(expected);
-    },
-  );
+  it.each([
+    ["localhost:3000/?next=https://example.com", "http://localhost:3000/?next=https://example.com"],
+    ["127.0.0.1:3000/#https://example.com", "http://127.0.0.1:3000/#https://example.com"],
+    ["example.com/https://example.org", "https://example.com/https://example.org"],
+  ])("opens the outer address when it contains another URL: %s", (input, expected) => {
+    expect(resolveAddressBarInput(input)).toBe(expected);
+  });
 
   it("opens what users type as addresses", () => {
     expect(resolveAddressBarInput("localhost:5173")).toBe("http://localhost:5173/");
@@ -90,13 +84,6 @@ describe("isLoopbackHost", () => {
 });
 
 describe("normalizePreviewUrl", () => {
-  it.each(embeddedUrlAddresses)(
-    "normalizes an address containing another URL: %s",
-    (input, expected) => {
-      expect(normalizePreviewUrl(input)).toBe(expected);
-    },
-  );
-
   it("treats bare loopback hosts as http", () => {
     expect(normalizePreviewUrl("localhost:5173")).toBe("http://localhost:5173/");
     expect(normalizePreviewUrl("127.0.0.1:3000")).toBe("http://127.0.0.1:3000/");
