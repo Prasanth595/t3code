@@ -694,7 +694,7 @@ const makeTestRuntime = Effect.fn("makeTestRuntime")(function* (
 });
 
 it.effect.each(["unavailable", "operation"] as const)(
-  "observes host summaries carried by a %s list error and preserves legacy failures",
+  "preserves a %s list failure with or without host metadata",
   (kind) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -741,11 +741,7 @@ it.effect.each(["unavailable", "operation"] as const)(
             environmentId: TARGET.environmentId,
             input: { state: "open" },
           });
-          if (includeResult) {
-            expect(yield* AtomRegistry.getResult(registry, atom)).toEqual(listResult);
-          } else {
-            expect(yield* AtomRegistry.getResult(registry, atom).pipe(Effect.flip)).toBe(error);
-          }
+          expect(yield* AtomRegistry.getResult(registry, atom).pipe(Effect.flip)).toBe(error);
         }
       }),
     ),

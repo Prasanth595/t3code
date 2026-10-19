@@ -351,12 +351,16 @@ export const PullRequestListCursors = Schema.Record(
 );
 export type PullRequestListCursors = typeof PullRequestListCursors.Type;
 
+export const PULL_REQUEST_LIST_PROJECT_LIMIT = 100;
+
 export const PullRequestListInput = Schema.Struct({
   state: PullRequestListState,
   involvement: Schema.optional(PullRequestInvolvement),
   filters: Schema.optional(PullRequestListFilters),
   projectId: Schema.optional(ProjectId),
-  projectIds: Schema.optional(Schema.Array(ProjectId).check(Schema.isMaxLength(100))),
+  projectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(PULL_REQUEST_LIST_PROJECT_LIMIT)),
+  ),
   host: Schema.optional(TrimmedNonEmptyString),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 500 }))),
   cursors: Schema.optional(PullRequestListCursors),

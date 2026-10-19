@@ -6,7 +6,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const fixture = vi.hoisted(() => ({
-  search: { state: "open", involvement: "all", sort: "updated" },
+  search: {
+    state: "open",
+    involvement: "all",
+    sort: "updated",
+    environmentId: undefined as string | undefined,
+  },
   primaryConfigured: false,
   remoteConfigured: true,
   revision: 1,
@@ -54,6 +59,9 @@ vi.mock(import("../../state/environments"), async (original) => ({
 }));
 vi.mock(import("../../state/pullRequests"), async (original) => {
   const actual = await original();
+  const { AsyncResult } = await import("effect/reactivity");
+  const Cause = await import("effect/Cause");
+  const { PullRequestUnavailableError } = await import("@t3tools/contracts");
   const { mergePullRequestLists } = await import("./pullRequestList.logic");
   const cache = new Map<string, ReturnType<typeof actual.usePullRequestList>>();
   const refresh = vi.fn();
@@ -67,15 +75,33 @@ vi.mock(import("../../state/pullRequests"), async (original) => {
       const key = JSON.stringify([fixture.revision, targets]);
       const cached = cache.get(key);
       if (cached) return cached;
-      const values = targets.map(({ environmentId }) => {
+      const values: Array<readonly [EnvironmentId, PullRequestListResult]> = [];
+      const observations: Array<readonly [EnvironmentId, PullRequestListResult, number]> = [];
+      let error: string | null = null;
+      for (const { environmentId } of targets) {
         fixture.targets.add(environmentId);
-        return [environmentId, answer(environmentId)] as const;
-      });
+        const value = answer(environmentId);
+        if (value.providers[0]!.configured) {
+          values.push([environmentId, value]);
+          observations.push([environmentId, value, Date.now()]);
+        } else {
+          const failure = new PullRequestUnavailableError({
+            reason: "cli-unauthenticated",
+            provider: "bitbucket" as never,
+            listResult: value,
+          });
+          const observation = actual.observeFailedPullRequestList(
+            AsyncResult.failure(Cause.fail(failure)),
+          )!;
+          observations.push([environmentId, observation.value, observation.observedAt]);
+          error ??= failure.message;
+        }
+      }
       const result = {
         data: mergePullRequestLists(values),
-        error: null,
+        error,
         isPending: false,
-        observations: values.map(([id, value]) => [id, value, fixture.revision] as const),
+        observations,
         refresh,
       };
       cache.set(key, result);
@@ -116,7 +142,6 @@ function answer(environmentId: EnvironmentId): PullRequestListResult {
         kind: "bitbucket" as never,
         searchesOnHost: false,
         projectCount: 1,
-        projectIds: [projectId],
         configured,
         detail: configured ? null : "Bitbucket rejected the configured credentials.",
       },
@@ -162,6 +187,8 @@ await View.preload?.();
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  fixture.search.environmentId = undefined;
+  vi.spyOn(Date, "now").mockImplementation(() => fixture.revision * 1000);
   fixture.primaryConfigured = false;
   fixture.remoteConfigured = true;
   fixture.revision++;
@@ -175,6 +202,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
 });
 
 it("shows the shared repository from the server that can read it", async () => {
@@ -187,6 +215,7 @@ it("shows the shared repository from the server that can read it", async () => {
 it("stops falling back when neither server can read the host", async () => {
   fixture.remoteConfigured = false;
   await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Bitbucket rejected");
   expect(container.textContent).not.toContain("Handle reconnects without dropping pending work");
   expect([...fixture.targets]).toEqual(["env-1", "env-2"]);
 });
@@ -203,4 +232,12 @@ it("retries the preferred server on refresh after its credentials are fixed", as
   expect(container.textContent).toContain("Handle reconnects without dropping pending work");
   expect(container.textContent).toContain("Local server");
   expect(container.textContent).not.toContain("Remote server");
+});
+
+it("keeps the setup error visible when a failing server is explicitly selected", async () => {
+  fixture.search.environmentId = "env-1";
+  await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Bitbucket rejected");
+  expect(container.textContent).not.toContain("No pull requests");
+  expect([...fixture.targets]).toEqual(["env-1"]);
 });

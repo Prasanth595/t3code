@@ -16,11 +16,14 @@ import type {
   PullRequestSummary,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { PullRequestOperationError, PullRequestUnavailableError } from "@t3tools/contracts";
 import {
   threadPullRequestKeyOf,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
 import * as Option from "effect/Option";
+import * as Cause from "effect/Cause";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useLayoutEffect } from "react";
 
@@ -245,6 +248,26 @@ interface MergedEnvironmentQueryView<A> {
   readonly observations: ReadonlyArray<readonly [EnvironmentId, A, number]>;
 }
 
+const failedListObservedAt = new WeakMap<object, number>();
+const isUnavailableList = Schema.is(PullRequestUnavailableError);
+const isFailedList = Schema.is(PullRequestOperationError);
+
+export function observeFailedPullRequestList(
+  result: AsyncResult.Failure<PullRequestListResult, unknown>,
+): { readonly value: PullRequestListResult; readonly observedAt: number } | undefined {
+  if (result.waiting) return undefined;
+  const error = Option.getOrNull(Cause.findErrorOption(result.cause));
+  if ((!isUnavailableList(error) && !isFailedList(error)) || error.listResult === undefined) {
+    return undefined;
+  }
+  let observedAt = failedListObservedAt.get(result.cause);
+  if (observedAt === undefined) {
+    observedAt = Date.now();
+    failedListObservedAt.set(result.cause, observedAt);
+  }
+  return { value: error.listResult, observedAt };
+}
+
 /**
  * React cannot subscribe to a list of atoms whose length changes, so the fan-out happens inside
  * one derived atom keyed by the targets — the same shape the cross-environment thread search uses.
@@ -256,6 +279,9 @@ function createMergedEnvironmentQuery<Input, A>(
   atomFor: (
     target: EnvironmentQueryTarget<Input>,
   ) => Atom.Atom<AsyncResult.AsyncResult<A, unknown>>,
+  observeFailure?: (
+    result: AsyncResult.Failure<A, unknown>,
+  ) => { readonly value: A; readonly observedAt: number } | undefined,
 ) {
   const family = Atom.family((key: string) =>
     Atom.make((get): MergedEnvironmentQueryView<A> => {
@@ -274,6 +300,11 @@ function createMergedEnvironmentQuery<Input, A>(
         if (value !== null) values.push([target.environmentId, value]);
         if (result._tag === "Success") {
           observations.push([target.environmentId, result.value, result.timestamp]);
+        } else if (result._tag === "Failure") {
+          const observation = observeFailure?.(result);
+          if (observation !== undefined) {
+            observations.push([target.environmentId, observation.value, observation.observedAt]);
+          }
         }
       }
       return { values, error, isPending, observations };
@@ -302,6 +333,7 @@ function createMergedEnvironmentQuery<Input, A>(
 const usePullRequestListsQuery = createMergedEnvironmentQuery(
   "web-pull-requests:list",
   pullRequestEnvironment.list,
+  observeFailedPullRequestList,
 );
 
 const usePullRequestStatsQuery = createMergedEnvironmentQuery(

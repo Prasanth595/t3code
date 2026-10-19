@@ -103,7 +103,7 @@ import {
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
 import {
-  assignProjectsToEnvironments,
+  pullRequestProjectQueries,
   rememberPullRequestHosts,
   type PullRequestHostAvailability,
   type PullRequestHostRead,
@@ -466,9 +466,9 @@ function PullRequestsRouteView() {
     localFilters,
     hasLocalFilters,
   } = usePullRequestQueryFilters(search, typedQuery);
-  const turnRefreshes = usePullRequestTurnRefreshes(
-    environmentQueries.map(({ environmentId }) => environmentId),
-  );
+  const turnRefreshes = usePullRequestTurnRefreshes([
+    ...new Set(environmentQueries.map(({ environmentId }) => environmentId)),
+  ]);
   const turnRefreshToken = turnRefreshes
     .map(([environmentId, revision]) => `${environmentId}:${revision}`)
     .join("|");
@@ -1072,7 +1072,13 @@ function PullRequestsRouteView() {
     const requestedStatsScope = statsScope;
     // Retry preferred servers after credentials change, without replaying cached failures.
     setHostReads(
-      (previous) => new Map([...previous].map(([id, read]) => [id, { ...read, hosts: new Map() }])),
+      (previous) =>
+        new Map(
+          [...previous].map(([id, read]) => [
+            id,
+            { ...read, resetAt: read.observedAt, hosts: new Map() },
+          ]),
+        ),
     );
     setInvalidating(true);
     // Atom commands settle into results rather than throwing.
@@ -1858,22 +1864,7 @@ function usePullRequestScope(
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
-    const assignment = assignProjectsToEnvironments(
-      projects,
-      queryEnvironmentIds,
-      queryEnvironmentIds[0],
-      hostAvailability,
-    );
-    const totals = new Map<EnvironmentId, number>();
-    for (const project of projects) {
-      totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
-    }
-    return queryEnvironmentIds.flatMap((environmentId) => {
-      const projectIds = assignment.get(environmentId);
-      if (projectIds === undefined) return [];
-      if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
-      return [{ environmentId, projectIds }];
-    });
+    return pullRequestProjectQueries(projects, queryEnvironmentIds, hostAvailability);
   })();
   const assignmentKey = environmentQueries
     .map(({ environmentId, projectIds }) => `${environmentId}#${projectIds?.join("+") ?? "*"}`)

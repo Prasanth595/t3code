@@ -463,7 +463,7 @@ export function mergePullRequestLists(
 ): MergedPullRequestList | null {
   if (answers.length === 0) return null;
   const viewers: Record<string, string> = {};
-  const truncatedEnvironments: string[] = [];
+  const truncatedEnvironments = new Set<string>();
   const providers = new Map<string, PullRequestListResult["providers"][number]>();
   const entries: EnvironmentPullRequestEntry[] = [];
   const errors: EnvironmentPullRequestError[] = [];
@@ -490,9 +490,9 @@ export function mergePullRequestLists(
     entries.push(...answer.entries.map((entry) => ({ ...entry, environmentId })));
     errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));
     truncated ||= answer.truncated;
-    if (answer.truncated) truncatedEnvironments.push(environmentId);
+    if (answer.truncated) truncatedEnvironments.add(environmentId);
     if (Object.keys(answer.nextCursors).length > 0) {
-      nextCursors[environmentId] = answer.nextCursors;
+      nextCursors[environmentId] = { ...nextCursors[environmentId], ...answer.nextCursors };
     }
   }
   return {
@@ -502,7 +502,7 @@ export function mergePullRequestLists(
     errors,
     truncated,
     nextCursors,
-    truncatedEnvironments,
+    truncatedEnvironments: [...truncatedEnvironments],
   };
 }
 

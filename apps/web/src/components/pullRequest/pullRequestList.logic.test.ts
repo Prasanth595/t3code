@@ -1271,6 +1271,17 @@ describe("merging the environments' own listings", () => {
     });
   });
 
+  it("keeps continuations from every project batch on the same environment", () => {
+    const merged = mergePullRequestLists([
+      [ENV_1, answer({ truncated: true, nextCursors: { "github.com acme/first": "cursor-1" } })],
+      [ENV_1, answer({ truncated: true, nextCursors: { "github.com acme/second": "cursor-2" } })],
+    ]);
+    expect(merged?.nextCursors).toEqual({
+      [ENV_1]: { "github.com acme/first": "cursor-1", "github.com acme/second": "cursor-2" },
+    });
+    expect(merged?.truncatedEnvironments).toEqual([ENV_1]);
+  });
+
   it("reads the same key whichever order the environments connected in", () => {
     expect(pullRequestEnvironmentSetKey(["env-2", "env-1"])).toBe(
       pullRequestEnvironmentSetKey(["env-1", "env-2"]),

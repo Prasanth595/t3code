@@ -1,9 +1,16 @@
-import type { EnvironmentId, ProjectId, PullRequestProviderSummary } from "@t3tools/contracts";
+import {
+  PullRequestListInput,
+  type EnvironmentId,
+  type ProjectId,
+  type PullRequestProviderSummary,
+} from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   assignProjectsToEnvironments,
   rememberPullRequestHosts,
+  pullRequestProjectQueries,
   resolvePickableEnvironments,
   type AssignableProject,
 } from "./pullRequestProjectAssignment.logic";
@@ -23,10 +30,11 @@ const envs = (...ids: ReadonlyArray<string>) => ids as ReadonlyArray<Environment
 
 const plain = (assignment: Map<EnvironmentId, ProjectId[]>) =>
   Object.fromEntries([...assignment].map(([id, projectIds]) => [id, projectIds]));
+const decodeListInput = Schema.decodeSync(PullRequestListInput);
 
 const hostAvailability = (hosts: ReadonlyMap<string, boolean>) => ({
-  hosts,
-  projectHosts: new Map<ProjectId, string>(),
+  hosts: new Map([...hosts].map(([host, configured]) => [host, { configured, observedAt: 0 }])),
+  projectHosts: new Map<ProjectId, { host: string; observedAt: number }>(),
 });
 
 const provider = (host: string, configured: boolean): PullRequestProviderSummary => ({
@@ -48,16 +56,23 @@ describe("host read results", () => {
     const next = rememberPullRequestHosts(failed, [
       [environmentId, { providers: [provider("github.com", true)] }, 200],
     ]);
-    expect([...next.get(environmentId)!.hosts]).toEqual([
+    expect(
+      [...next.get(environmentId)!.hosts].map(([host, read]) => [host, read.configured]),
+    ).toEqual([
       ["bitbucket.org", false],
       ["github.com", true],
     ]);
-    expect([...failed.get(environmentId)!.hosts]).toEqual([["bitbucket.org", false]]);
+    expect(
+      [...failed.get(environmentId)!.hosts].map(([host, read]) => [host, read.configured]),
+    ).toEqual([["bitbucket.org", false]]);
   });
 
   it("does not replay cached failures after refresh clears availability", () => {
     const cleared = new Map([
-      [environmentId, { observedAt: 100, ...hostAvailability(new Map<string, boolean>()) }],
+      [
+        environmentId,
+        { observedAt: 100, resetAt: 100, ...hostAvailability(new Map<string, boolean>()) },
+      ],
     ]);
     expect(
       rememberPullRequestHosts(cleared, [
@@ -67,7 +82,7 @@ describe("host read results", () => {
     const refreshed = rememberPullRequestHosts(cleared, [
       [environmentId, { providers: [provider("bitbucket.org", true)] }, 200],
     ]);
-    expect(refreshed.get(environmentId)!.hosts.get("bitbucket.org")).toBe(true);
+    expect(refreshed.get(environmentId)!.hosts.get("bitbucket.org")?.configured).toBe(true);
   });
 
   it("ignores an older answer when a newer read has already succeeded", () => {
@@ -93,9 +108,90 @@ describe("host read results", () => {
     const next = rememberPullRequestHosts(first, [
       [environmentId, { providers: [provider("forge.example:4000", true)] }, 200],
     ]);
-    expect(next.get(environmentId)!.projectHosts.get(projectId)).toBe("forge.example:3000");
-    expect(next.get(environmentId)!.hosts.get("forge.example:3000")).toBe(false);
-    expect(next.get(environmentId)!.hosts.get("forge.example:4000")).toBe(true);
+    expect(next.get(environmentId)!.projectHosts.get(projectId)?.host).toBe("forge.example:3000");
+    expect(next.get(environmentId)!.hosts.get("forge.example:3000")?.configured).toBe(false);
+    expect(next.get(environmentId)!.hosts.get("forge.example:4000")?.configured).toBe(true);
+  });
+
+  it("accepts another host's older batch without replacing a newer host read", () => {
+    const first = rememberPullRequestHosts(new Map(), [
+      [environmentId, { providers: [provider("github.com", true)] }, 200],
+    ]);
+    const next = rememberPullRequestHosts(first, [
+      [environmentId, { providers: [provider("bitbucket.org", false)] }, 100],
+    ]);
+    expect(next.get(environmentId)!.hosts.get("bitbucket.org")?.configured).toBe(false);
+    expect(next.get(environmentId)!.hosts.get("github.com")?.configured).toBe(true);
+    expect(
+      rememberPullRequestHosts(next, [
+        [environmentId, { providers: [provider("github.com", false)] }, 150],
+      ]),
+    ).toBe(next);
+  });
+
+  it("does not replace a project's newer host mapping with an older batch", () => {
+    const projectId = "ssh" as ProjectId;
+    const first = rememberPullRequestHosts(new Map(), [
+      [
+        environmentId,
+        { providers: [{ ...provider("forge.example:3000", false), projectIds: [projectId] }] },
+        200,
+      ],
+    ]);
+    const next = rememberPullRequestHosts(first, [
+      [
+        environmentId,
+        { providers: [{ ...provider("forge.example:4000", true), projectIds: [projectId] }] },
+        100,
+      ],
+    ]);
+    expect(next.get(environmentId)!.projectHosts.get(projectId)?.host).toBe("forge.example:3000");
+  });
+});
+
+describe("assignment query limits", () => {
+  it("splits the healthy remainder after fallback into valid project filters", () => {
+    const healthy = Array.from({ length: 101 }, (_, index) =>
+      project(`healthy-${index}`, "env-1", `github.com/acme/repo-${index}`),
+    );
+    const projects = [
+      project("shared", "env-1", "bitbucket.org/acme/app"),
+      ...healthy,
+      project("copy", "env-2", "bitbucket.org/acme/app"),
+    ];
+    const queries = pullRequestProjectQueries(
+      projects,
+      envs("env-1", "env-2"),
+      new Map([["env-1" as EnvironmentId, hostAvailability(new Map([["bitbucket.org", false]]))]]),
+    );
+    expect(
+      queries.map(({ environmentId, projectIds }) => [environmentId, projectIds?.length]),
+    ).toEqual([
+      ["env-1", 100],
+      ["env-1", 1],
+      ["env-2", undefined],
+    ]);
+    expect(
+      queries
+        .filter(({ environmentId }) => environmentId === "env-1")
+        .flatMap(({ projectIds }) => projectIds ?? []),
+    ).toEqual(healthy.map(({ id }) => id));
+    for (const { projectIds } of queries)
+      expect(() =>
+        decodeListInput({
+          state: "open",
+          ...(projectIds === undefined ? {} : { projectIds }),
+        }),
+      ).not.toThrow();
+  });
+
+  it("keeps an unfiltered read when a large server owns all its projects", () => {
+    const projects = Array.from({ length: 102 }, (_, index) =>
+      project(`p-${index}`, "env-1", `github.com/acme/repo-${index}`),
+    );
+    expect(pullRequestProjectQueries(projects, envs("env-1"))).toEqual([
+      { environmentId: "env-1" },
+    ]);
   });
 });
 

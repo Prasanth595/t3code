@@ -1327,7 +1327,7 @@ it.effect("retains an unavailable host's summary when it is the only queried hos
             configured,
             projectIds: projectIds?.map(String),
           })),
-          [{ host: "github.com", configured: false, projectIds: ["p1"] }],
+          [{ host: "github.com", configured: false, projectIds: undefined }],
         );
         assert.strictEqual(result.providers[0]?.detail?.includes("GitHub"), true);
         assert.deepStrictEqual(
@@ -1381,7 +1381,7 @@ it.effect(
             configured,
             projectIds: projectIds?.map(String),
           })),
-          [{ host: "bitbucket.org", configured: false, projectIds: ["bitbucket"] }],
+          [{ host: "bitbucket.org", configured: false, projectIds: undefined }],
         );
         assert.deepStrictEqual(result.entries, []);
         assert.deepStrictEqual(
@@ -1480,7 +1480,7 @@ it.effect("reads a repository once when several worktrees share it", () =>
 
     assert.strictEqual(calls, 1);
     assert.strictEqual(result.entries.length, 1);
-    assert.deepStrictEqual(result.providers[0]?.projectIds?.map(String), ["p1", "p2"]);
+    assert.isUndefined(result.providers[0]?.projectIds);
   }),
 );
 

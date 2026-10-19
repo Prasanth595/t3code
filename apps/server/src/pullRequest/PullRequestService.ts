@@ -318,7 +318,7 @@ interface WorkspaceProjects {
     { readonly kind: SourceControlProviderKind; readonly projectCount: number }
   >;
   readonly viewerRoots: ReadonlyMap<string, ReadonlyArray<string>>;
-  readonly projectIdsByHost: ReadonlyMap<string, ReadonlyArray<ProjectId>>;
+  readonly refinedProjectIdsByHost: ReadonlyMap<string, ReadonlyArray<ProjectId>>;
 }
 
 interface RepositoryBatch {
@@ -706,7 +706,7 @@ export const make = Effect.gen(function* () {
           { kind: SourceControlProviderKind; projectCount: number }
         >();
         const viewerRoots = new Map<string, string[]>();
-        const projectIdsByHost = new Map<string, ProjectId[]>();
+        const refinedProjectIdsByHost = new Map<string, ProjectId[]>();
         const seen = new Set<string>();
         for (const project of projects) {
           if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
@@ -731,9 +731,13 @@ export const make = Effect.gen(function* () {
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
             continue;
           }
-          const projectIds = projectIdsByHost.get(host);
-          if (projectIds === undefined) projectIdsByHost.set(host, [project.id]);
-          else projectIds.push(project.id);
+          if (
+            host !== pullRequestHostOf(identity, identity.provider as SourceControlProviderKind)
+          ) {
+            const projectIds = refinedProjectIdsByHost.get(host);
+            if (projectIds === undefined) refinedProjectIdsByHost.set(host, [project.id]);
+            else projectIds.push(project.id);
+          }
           const api = registry.get(kind);
           if (api !== null) {
             const roots = viewerRoots.get(host);
@@ -762,7 +766,7 @@ export const make = Effect.gen(function* () {
               repositoryKey === null ? null : canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
         }
-        return { supported, unimplemented, viewerRoots, projectIdsByHost };
+        return { supported, unimplemented, viewerRoots, refinedProjectIdsByHost };
       }),
     );
 
@@ -1088,7 +1092,7 @@ export const make = Effect.gen(function* () {
         supported: projects,
         unimplemented,
         viewerRoots,
-        projectIdsByHost,
+        refinedProjectIdsByHost,
       } = yield* listWorkspaceProjects(input);
       const projectCounts = new Map<string, number>();
       for (const { host } of projects) {
@@ -1111,7 +1115,7 @@ export const make = Effect.gen(function* () {
             searchesOnHost: capabilities?.search ?? false,
             actions: capabilities?.actions ?? [],
             projectCount: projectCounts.get(result.host) ?? 1,
-            projectIds: projectIdsByHost.get(result.host) ?? [],
+            projectIds: refinedProjectIdsByHost.get(result.host),
             configured: result.viewer !== null,
             detail: result.error === null ? null : providerDetail(result.error),
           };
@@ -1122,7 +1126,7 @@ export const make = Effect.gen(function* () {
           searchesOnHost: false,
           actions: [],
           projectCount,
-          projectIds: projectIdsByHost.get(host) ?? [],
+          projectIds: refinedProjectIdsByHost.get(host),
           configured: false,
           detail: "This host cannot be browsed here yet.",
         })),

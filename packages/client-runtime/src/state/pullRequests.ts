@@ -40,7 +40,6 @@ import { createPullRequestRouter } from "./pullRequestRouting.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { request } from "../rpc/client.ts";
 
 export {
   type PullRequestDiffLoadError,
@@ -245,19 +244,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       label: "environment-data:pull-requests:list",
       persistence: persistQuery(PullRequestListResult),
       tag: WS_METHODS.pullRequestsList,
-      execute: (input) =>
-        request(WS_METHODS.pullRequestsList, input).pipe(
-          Effect.catchTags({
-            PullRequestUnavailableError: (error) =>
-              error.listResult === undefined
-                ? Effect.fail(error)
-                : Effect.succeed(error.listResult),
-            PullRequestOperationError: (error) =>
-              error.listResult === undefined
-                ? Effect.fail(error)
-                : Effect.succeed(error.listResult),
-          }),
-        ),
       staleTimeMs: 30_000,
       refreshTrigger: ({ environmentId, input }) =>
         input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,

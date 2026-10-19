@@ -1,5 +1,6 @@
 import {
   pullRequestHostOf,
+  PULL_REQUEST_LIST_PROJECT_LIMIT,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectId,
@@ -24,8 +25,15 @@ export type PullRequestHostAvailability = ReadonlyMap<
 
 export type PullRequestHostRead = {
   readonly observedAt: number;
-  readonly hosts: ReadonlyMap<string, boolean>;
-  readonly projectHosts: ReadonlyMap<ProjectId, string>;
+  readonly resetAt?: number;
+  readonly hosts: ReadonlyMap<
+    string,
+    { readonly configured: boolean; readonly observedAt: number }
+  >;
+  readonly projectHosts: ReadonlyMap<
+    ProjectId,
+    { readonly host: string; readonly observedAt: number }
+  >;
 };
 
 export function rememberPullRequestHosts(
@@ -41,15 +49,30 @@ export function rememberPullRequestHosts(
   let next = previous;
   for (const [environmentId, { providers }, observedAt] of observations) {
     const before = next.get(environmentId);
-    if (before !== undefined && observedAt <= before.observedAt) continue;
+    if (observedAt <= (before?.resetAt ?? -Infinity)) continue;
     const hosts = new Map(before?.hosts);
     const projectHosts = new Map(before?.projectHosts);
+    let changed = false;
     for (const provider of providers) {
       const host = provider.host.toLowerCase();
-      hosts.set(host, provider.configured);
-      for (const projectId of provider.projectIds ?? []) projectHosts.set(projectId, host);
+      if (observedAt > (hosts.get(host)?.observedAt ?? -Infinity)) {
+        hosts.set(host, { configured: provider.configured, observedAt });
+        changed = true;
+      }
+      for (const projectId of provider.projectIds ?? []) {
+        if (observedAt > (projectHosts.get(projectId)?.observedAt ?? -Infinity)) {
+          projectHosts.set(projectId, { host, observedAt });
+          changed = true;
+        }
+      }
     }
-    next = new Map(next).set(environmentId, { observedAt, hosts, projectHosts });
+    if (!changed) continue;
+    next = new Map(next).set(environmentId, {
+      ...before,
+      observedAt: Math.max(before?.observedAt ?? -Infinity, observedAt),
+      hosts,
+      projectHosts,
+    });
   }
   return next;
 }
@@ -69,12 +92,12 @@ export function assignProjectsToEnvironments(
   const unreadable = (project: AssignableProject) => {
     const availability = hostAvailability?.get(project.environmentId);
     const host =
-      availability?.projectHosts.get(project.id) ??
+      availability?.projectHosts.get(project.id)?.host ??
       pullRequestHostOf(
         project.repositoryIdentity,
         (project.repositoryIdentity?.provider ?? "unknown") as SourceControlProviderKind,
       );
-    return availability?.hosts.get(host) === false;
+    return availability?.hosts.get(host)?.configured === false;
   };
   for (const project of projects) {
     const key = repositoryKey(project);
@@ -110,6 +133,39 @@ export function assignProjectsToEnvironments(
     else listed.push(project.id);
   }
   return assignment;
+}
+
+export function pullRequestProjectQueries(
+  projects: ReadonlyArray<AssignableProject>,
+  environmentIds: ReadonlyArray<EnvironmentId>,
+  hostAvailability?: PullRequestHostAvailability,
+): ReadonlyArray<{
+  readonly environmentId: EnvironmentId;
+  readonly projectIds?: ReadonlyArray<ProjectId>;
+}> {
+  const assignment = assignProjectsToEnvironments(
+    projects,
+    environmentIds,
+    environmentIds[0],
+    hostAvailability,
+  );
+  const totals = new Map<EnvironmentId, number>();
+  for (const project of projects)
+    totals.set(project.environmentId, (totals.get(project.environmentId) ?? 0) + 1);
+  return environmentIds.flatMap((environmentId) => {
+    const projectIds = assignment.get(environmentId);
+    if (projectIds === undefined) return [];
+    if (projectIds.length === totals.get(environmentId)) return [{ environmentId }];
+    const queries: Array<{ environmentId: EnvironmentId; projectIds: ReadonlyArray<ProjectId> }> =
+      [];
+    for (let offset = 0; offset < projectIds.length; offset += PULL_REQUEST_LIST_PROJECT_LIMIT) {
+      queries.push({
+        environmentId,
+        projectIds: projectIds.slice(offset, offset + PULL_REQUEST_LIST_PROJECT_LIMIT),
+      });
+    }
+    return queries;
+  });
 }
 
 export interface PickableEnvironment {
