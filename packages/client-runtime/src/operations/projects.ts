@@ -88,21 +88,14 @@ export function addProjectRemoteSourceProvider(
 
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
-/** The user-facing line from a lookup/clone repository error, if the RPC sent one. */
-export function sourceControlRepositoryErrorDetail(error: unknown): string | null {
-  if (!isSourceControlRepositoryError(error)) return null;
-  const detail = error.detail.trim();
-  return detail.length > 0 ? detail : null;
-}
-
-export function sourceControlRepositoryErrorMessage(
-  error: unknown,
-  fallback = "An error occurred.",
-): string {
-  return (
-    sourceControlRepositoryErrorDetail(error) ??
-    (error instanceof Error && error.message.trim().length > 0 ? error.message : fallback)
-  );
+export function sourceControlRepositoryErrorMessage(error: unknown): string {
+  if (isSourceControlRepositoryError(error)) {
+    const detail = error.detail.trim();
+    if (detail.length > 0) return detail;
+  }
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "An error occurred.";
 }
 
 export function parseAddProjectRemoteSource(

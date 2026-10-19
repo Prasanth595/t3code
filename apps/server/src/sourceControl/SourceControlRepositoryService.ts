@@ -83,12 +83,7 @@ const CLONE_ENV = {
   LC_ALL: "C",
 } satisfies NodeJS.ProcessEnv;
 
-/**
- * GitHub already writes these as user-facing copy. Raw provider `detail` still
- * stays off the wire (#3336): only this exact allowlist, plus Bitbucket's locator
- * constant, may become `SourceControlRepositoryError.detail`.
- * Keep in lockstep with `GitHubSourceControlProvider` lookup/auth/rate-limit strings.
- */
+// These fixed GitHub messages are safe to display; arbitrary provider detail may contain credentials.
 const USER_SAFE_GITHUB_REPOSITORY_DETAILS = new Set([
   "Repositories are named owner/name.",
   "Repository not found. Check the owner and name and try again.",

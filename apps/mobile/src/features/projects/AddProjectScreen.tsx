@@ -821,6 +821,7 @@ export function AddProjectRepositoryScreen(props: {
     });
     if (startedGeneration !== lookupGeneration.current) return;
     setIsSubmitting(false);
+    if (!navigation.isFocused()) return;
     if (AsyncResult.isFailure(result)) {
       setError(sourceControlRepositoryErrorMessage(Cause.squash(result.cause)));
     } else {

@@ -41,7 +41,7 @@ function CommandPaletteEmptyState(props: {
   const isError = props.emptyStateTone === "error";
   return (
     <div
-      {...(isError ? { role: "alert" as const } : {})}
+      role={isError ? "alert" : undefined}
       className={cn(
         "py-10 text-center text-sm",
         isError ? "text-destructive" : "text-muted-foreground",

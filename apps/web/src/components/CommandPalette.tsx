@@ -876,11 +876,11 @@ function OpenCommandPaletteDialog(props: {
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const [cloneLookupError, setCloneLookupError] = useState<string | null>(null);
-  const invalidatePendingCloneLookup = () => {
+  const invalidatePendingCloneLookup = useStableCallback(() => {
     cloneLookupGeneration.current += 1;
     setIsRemoteProjectLookingUp(false);
     setCloneLookupError(null);
-  };
+  });
   const { environmentLabelById, projectEnvironmentLocationById } = useEnvironmentLookups();
   const projectGroups = useSortedProjectGroups(environmentLabelById);
   const contextualProjectRef = resolveThreadActionProjectRef({
@@ -1309,6 +1309,7 @@ function OpenCommandPaletteDialog(props: {
   // highlight ref it writes.
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
     browseNavigation.invalidate();
+    invalidatePendingCloneLookup();
     dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
     setHighlightedItemValue(null);
@@ -1355,7 +1356,6 @@ function OpenCommandPaletteDialog(props: {
           : Promise.resolve(),
       () => {
         setAddProjectEnvironmentId(environmentId);
-        invalidatePendingCloneLookup();
         setAddProjectCloneFlow(null);
         pushPaletteView(view);
       },
@@ -1367,7 +1367,6 @@ function OpenCommandPaletteDialog(props: {
     source: AddProjectRemoteSource,
   ): void => {
     setAddProjectEnvironmentId(environmentId);
-    invalidatePendingCloneLookup();
     setAddProjectCloneFlow({ step: "repository", environmentId, source });
     pushPaletteView({
       addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
@@ -1385,7 +1384,6 @@ function OpenCommandPaletteDialog(props: {
     sourcesEnvironmentId: EnvironmentId | null,
   ): void => {
     setAddProjectEnvironmentId(environmentId);
-    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow({ environmentId, sourcesEnvironmentId });
     setNewProjectPublishes(false);
@@ -1519,7 +1517,6 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     setAddProjectEnvironmentId(environmentId);
-    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     pushPaletteView({
       addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
@@ -1573,7 +1570,6 @@ function OpenCommandPaletteDialog(props: {
   ];
 
   const openAddProjectFlow = () => {
-    invalidatePendingCloneLookup();
     if (addProjectEnvironmentOptions.length === 0) {
       setOpen(false);
       void navigate({ to: "/settings/connections" });

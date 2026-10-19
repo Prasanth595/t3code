@@ -28,17 +28,19 @@ import {
 import type { EnvironmentProject } from "../state/models.ts";
 
 describe("add project shared logic", () => {
-  it("prefers the repository error detail over the wrapped lookup message", () => {
-    const error = new SourceControlRepositoryError({
+  it("formats repository guidance and falls back for other lookup failures", () => {
+    const repositoryError = new SourceControlRepositoryError({
       provider: SourceControlProviderKind.make("github"),
       operation: "lookupRepository",
       detail: "Repository not found. Check the owner and name and try again.",
     });
-    expect(sourceControlRepositoryErrorMessage(error)).toBe(
-      "Repository not found. Check the owner and name and try again.",
-    );
-    expect(sourceControlRepositoryErrorMessage(new Error("network down"))).toBe("network down");
-    expect(sourceControlRepositoryErrorMessage("nope")).toBe("An error occurred.");
+    const transportError = Object.assign(new Error("Connection closed."), {
+      detail: "raw transport diagnostic",
+    });
+
+    expect(sourceControlRepositoryErrorMessage(repositoryError)).toBe(repositoryError.detail);
+    expect(sourceControlRepositoryErrorMessage(transportError)).toBe("Connection closed.");
+    expect(sourceControlRepositoryErrorMessage(null)).toBe("An error occurred.");
   });
 
   it("only allows project creation in connected environments", () => {
