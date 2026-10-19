@@ -80,6 +80,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
+import { armedLimitResetAtMs } from "./UsageLimitRecovery.ts";
 import {
   isCheckpointRestoreIsolated,
   SHARED_WORKSPACE_RESTORE_MESSAGE,
@@ -10880,7 +10881,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
             ),
           );
+        const shell = thread.limitRecovery?.autoResume
+          ? yield* projectionStore
+              .getThreadShell(command.threadId)
+              .pipe(
+                Effect.mapError(
+                  (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+                ),
+              )
+          : null;
+        const limitResetAtMs = shell === null ? null : armedLimitResetAtMs(shell);
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         if (
+          (limitResetAtMs !== null && limitResetAtMs > nowMs) ||
           thread.settledOverride !== null ||
           DateTime.toEpochMillis(thread.updatedAt) > DateTime.toEpochMillis(command.snapshotAt)
         ) {

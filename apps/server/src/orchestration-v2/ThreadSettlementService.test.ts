@@ -207,29 +207,6 @@ describe("isAutoSettlementCandidate", () => {
       ),
     ).toBe(true);
   });
-
-  it("keeps a thread armed to auto-resume parked until its usage limit resets", () => {
-    const recovery = {
-      runId: RunId.make("run-1"),
-      resetAt: DateTime.formatIso(at(3 * DAY_MS)),
-      autoResume: true,
-    };
-    const armed = shell({
-      status: "failed",
-      latestRunId: RunId.make("run-1"),
-      latestRunCompletedAt: at(-4 * DAY_MS),
-      limitRecovery: recovery,
-    });
-    expect(ThreadSettlementService.isAutoSettlementCandidate(armed, NOW_MS)).toBe(false);
-    for (const thread of [
-      shell({ ...armed, limitRecovery: { ...recovery, autoResume: false } }),
-      shell({ ...armed, limitRecovery: { ...recovery, runId: RunId.make("run-0") } }),
-      shell({ ...armed, latestRunId: null }),
-      shell({ ...armed, limitRecovery: { ...recovery, resetAt: DateTime.formatIso(at(-1_000)) } }),
-    ]) {
-      expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(true);
-    }
-  });
 });
 
 describe("threadHasQueuedTurnStart", () => {
@@ -346,27 +323,49 @@ describe("resolveAutoSettlementAt", () => {
     ).toEqual(at(-1_000));
   });
 
-  it("waits out an armed auto-resume and restarts inactivity at its reset", () => {
+  it("holds only matching armed recovery until reset, then restarts inactivity", () => {
+    const recovery = {
+      runId: RunId.make("run-1"),
+      resetAt: DateTime.formatIso(at(DAY_MS)),
+      autoResume: true,
+    };
     const thread = shell({
       status: "failed",
-      latestRunId: RunId.make("run-1"),
+      latestRunId: recovery.runId,
       latestRunCompletedAt: at(-4 * DAY_MS),
-      limitRecovery: {
-        runId: RunId.make("run-1"),
-        resetAt: DateTime.formatIso(at(DAY_MS)),
-        autoResume: true,
-      },
+      limitRecovery: recovery,
     });
     const input = {
       thread,
       pullRequest: null,
       nowMs: NOW_MS,
       autoSettleAfterDays: 1,
-      autoSettleOnMerge: false,
+      autoSettleOnMerge: true,
     };
     expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
     expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1_000)) },
+      }),
+    ).toBeNull();
+    for (const overrides of [
+      { limitRecovery: { ...recovery, autoResume: false } },
+      { limitRecovery: { ...recovery, runId: RunId.make("run-0") } },
+      { latestRunId: null },
+    ]) {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: { ...thread, ...overrides },
+        }),
+      ).toEqual(at(-4 * DAY_MS));
+    }
+    expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + DAY_MS }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + 2 * DAY_MS }),
     ).toBeNull();
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, nowMs: NOW_MS + 2 * DAY_MS + 1 }),
