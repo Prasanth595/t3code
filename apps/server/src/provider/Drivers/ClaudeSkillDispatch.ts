@@ -5,7 +5,7 @@
 const SKILL_MENTION_PATTERN =
   /(^|\s)\p{Sc}(?![0-9][0-9_]*(?:[kKmMbBtT]|[eE][0-9]+)?(?:\s|$))(?=[a-zA-Z0-9:_-]*[a-zA-Z])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/gu;
 
-const LEADING_SLASH_COMMAND_PATTERN = /^\/[a-zA-Z0-9][a-zA-Z0-9:_-]*(?=\s|$)/u;
+const LEADING_SLASH_COMMAND_PATTERN = /^\/([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?=\s|$)/u;
 
 export interface ClaudeSkillDispatch {
   /** The whole rewritten prompt when dispatching a skill from within the request. */
@@ -38,8 +38,9 @@ export function planClaudeSkillDispatch(
     )
     .trimEnd();
 
-  // A leading command takes precedence over inline skills; paths like /tmp/file do not.
-  if (LEADING_SLASH_COMMAND_PATTERN.test(prompt)) {
+  // Preserve /goal and known slash skills without mistaking root paths for commands.
+  const leadingCommandName = LEADING_SLASH_COMMAND_PATTERN.exec(prompt)?.[1];
+  if (leadingCommandName === "goal" || (leadingCommandName && skillNames.has(leadingCommandName))) {
     return {
       leadingText: undefined,
       commandText: promptWithInlineSlashes,
