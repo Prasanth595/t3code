@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, BufRead, BufWriter, Write};
+use std::io::{self, BufRead, BufWriter, Read, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,6 +15,7 @@ const PROCESS_START_TIME_PRECISION_MS: u64 = 1_000;
 const HISTORY_RETENTION_MS: u64 = 60 * 60_000;
 const MAX_HISTORY_SNAPSHOTS: usize = 3_600;
 const INPUT_QUEUE_CAPACITY: usize = 64;
+const MAX_COMMAND_BYTES: usize = 1024 * 1024;
 const MAX_HISTORY_RETAINED_ENTRIES: usize = 20_000;
 const MAX_HISTORY_RETAINED_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PROCESS_NAME_BYTES: usize = 1_024;
@@ -682,13 +683,28 @@ fn clamp_sample_interval(sample_interval_ms: u64) -> Option<Duration> {
     })
 }
 
+fn read_command_line(reader: &mut impl BufRead, max_bytes: usize) -> io::Result<Option<String>> {
+    let mut line = String::new();
+    let count = reader.take(max_bytes as u64 + 1).read_line(&mut line)?;
+    if count > max_bytes {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "command exceeds the input byte limit",
+        ));
+    }
+    Ok((count > 0).then_some(line))
+}
+
 fn spawn_input_reader() -> Receiver<Input> {
     let (sender, receiver) = mpsc::sync_channel(INPUT_QUEUE_CAPACITY);
     thread::spawn(move || {
         let stdin = io::stdin();
-        for line in stdin.lock().lines() {
-            let line = match line {
-                Ok(line) => line,
+        let mut reader = stdin.lock();
+        loop {
+            // Bound each allocation too: queue capacity alone cannot bound a partial line.
+            let line = match read_command_line(&mut reader, MAX_COMMAND_BYTES) {
+                Ok(Some(line)) => line,
+                Ok(None) => return,
                 Err(error) => {
                     let _ = sender.send(Input::Invalid(format!(
                         "failed reading command stream: {error}"
@@ -967,6 +983,27 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounds_command_reads_before_parsing_or_waiting_for_a_newline() {
+        let mut input = io::Cursor::new(b"123456789abcdef\n");
+        let error = read_command_line(&mut input, 8).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(input.position(), 9);
+    }
+
+    #[test]
+    fn accepts_bounded_lines_crlf_and_final_commands_without_a_newline() {
+        let mut input = io::Cursor::new(b"1234567\nhi\r\nlast");
+        assert_eq!(
+            read_command_line(&mut input, 8).unwrap().unwrap(),
+            "1234567\n"
+        );
+        assert_eq!(read_command_line(&mut input, 8).unwrap().unwrap(), "hi\r\n");
+        assert_eq!(read_command_line(&mut input, 8).unwrap().unwrap(), "last");
+        assert!(read_command_line(&mut input, 8).unwrap().is_none());
+        assert!(read_command_line(&mut io::Cursor::new(b"\xff\n"), 8).is_err());
+    }
 
     #[test]
     fn selects_roots_and_all_descendants() {
