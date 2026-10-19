@@ -1619,6 +1619,67 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("does not hand off again when renewed tokens expire within the refresh skew", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => ({
+              ...PREPARED_CONNECTION,
+              target: RELAY_TARGET,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: `access-token-${attempt}`,
+                expiresAtEpochMs: now + 30_000,
+              },
+            })),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("29 seconds");
+      // The first token is already inside the skew, so it is replaced once. The
+      // renewed token is too short for another handoff, so its session ends at
+      // expiry and reconnects instead of looping.
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits at least the refresh skew between handoffs", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((now) => ({
+              ...PREPARED_CONNECTION,
+              target: RELAY_TARGET,
+              httpAuthorization: {
+                _tag: "Dpop" as const,
+                accessToken: `access-token-${attempt}`,
+                expiresAtEpochMs: now + 90_000,
+              },
+            })),
+          ),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* TestClock.adjust("5 minutes");
+      // Handoffs at 30 s, a skew before the first token expires, then every
+      // 60 s: 90, 150, 210 and 270 s.
+      expect(yield* Ref.get(harness.sessionCount)).toBe(6);
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connected",
+        generation: 1,
+      });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps the session while a failed replacement retries before expiry", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

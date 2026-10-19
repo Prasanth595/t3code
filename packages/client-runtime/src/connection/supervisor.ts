@@ -640,16 +640,22 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   // The server closes a socket when the DPoP access token it opened with
   // expires, so a replacement opens on a renewed token first. Starting inside
   // the refresh skew makes the authorization service mint a new token instead
-  // of returning the one that is about to expire.
+  // of returning the one that is about to expire. After a handoff, the next one
+  // waits at least the skew, so tokens issued for less than that can't start
+  // a loop; their sessions end at expiry and reconnect with backoff instead.
   const replaceBeforeExpiry = Effect.fnUntraced(function* (
     lease: ConnectionDriver.EnvironmentConnectionLease,
+    minimumDelayMs: number,
   ) {
     const authorization = lease.prepared.httpAuthorization;
     if (authorization?._tag !== "Dpop") return yield* Effect.never;
     const untilExpiry = Clock.currentTimeMillis.pipe(
       Effect.map((now) => Math.max(0, authorization.expiresAtEpochMs - now)),
     );
-    yield* Effect.sleep(Math.max(0, (yield* untilExpiry) - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS));
+    const lifetimeMs = yield* untilExpiry;
+    const delayMs = Math.max(minimumDelayMs, lifetimeMs - DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS);
+    if (delayMs >= lifetimeMs) return yield* Effect.never;
+    yield* Effect.sleep(delayMs);
     const attemptScope = yield* Scope.Scope;
     const routeId = connectionRouteId(lease.prepared.target);
     for (let failureCount = 0; ; failureCount += 1) {
@@ -827,7 +833,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       retryAt: null,
     });
 
-    const awaitConnectedEvent = (current: typeof active) => {
+    const awaitConnectedEvent = (current: typeof active, minimumReplacementDelayMs: number) => {
       const traced = (error: ConnectionAttemptError): TracedAttemptFailure => ({
         error,
         attemptSpan: current.attemptSpan,
@@ -838,12 +844,12 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           Effect.map((resetRetry) => ({ _tag: "Ended" as const, resetRetry })),
           Effect.mapError(traced),
         ),
-        replaceBeforeExpiry(current.lease).pipe(
+        replaceBeforeExpiry(current.lease, minimumReplacementDelayMs).pipe(
           Effect.map((replacement) => ({ _tag: "Replaced" as const, replacement })),
         ),
       ]).pipe(exitUnlessInterrupted);
     };
-    let connectedExit = yield* awaitConnectedEvent(active);
+    let connectedExit = yield* awaitConnectedEvent(active, 0);
     while (Exit.isSuccess(connectedExit) && connectedExit.value._tag === "Replaced") {
       // A disconnect signal lost to the race must not keep the replacement.
       if (!(yield* Ref.get(intent)).desired) break;
@@ -863,7 +869,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       );
       active = { attemptSpan: active.attemptSpan, lease: replacement.lease };
       activeScope = replacement.scope;
-      connectedExit = yield* awaitConnectedEvent(active);
+      connectedExit = yield* awaitConnectedEvent(active, DPOP_ACCESS_TOKEN_REFRESH_SKEW_MS);
     }
     const connectedForMs = (yield* Clock.currentTimeMillis) - connectedAt;
     if (Exit.isSuccess(connectedExit)) {

@@ -41,7 +41,9 @@ operation. The server closes a socket when the session it authenticated with
 expires, so the supervisor opens a replacement on a renewed DPoP token shortly
 before that and moves the session to it without leaving the connected state or
 changing the transport generation. The previous socket stays open until its
-token expires, for requests already running on it.
+token expires, for requests already running on it. Handoffs on one connection
+are at least the refresh skew apart, so a session whose token lasts less than
+that ends at expiry and reconnects instead.
 
 Session listings must retain unrevoked connected sessions after credential expiry
 so an open connection does not disappear from connection management. This does
