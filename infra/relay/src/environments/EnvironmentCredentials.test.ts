@@ -22,7 +22,7 @@ const layerWithDb = (db: RelayDb.RelayDb["Service"]) =>
 const makeCredentialStore = (options: {
   readonly beforeRevoke?: Effect.Effect<void, Error>;
   readonly onLockWait?: Effect.Effect<void>;
-  readonly commit?: Effect.Effect<void>;
+  readonly commit?: Effect.Effect<void, SqlError.SqlError>;
 }) => {
   let active = new Set<string>();
   const lock = Semaphore.makeUnsafe(1);
@@ -112,7 +112,7 @@ describe("EnvironmentCredentials", () => {
     const commitFailure = new SqlError.SqlError({
       reason: new SqlError.ConnectionError({ cause: new Error("connection reset") }),
     });
-    const store = makeCredentialStore({ commit: Effect.die(commitFailure) });
+    const store = makeCredentialStore({ commit: Effect.fail(commitFailure) });
 
     return Effect.gen(function* () {
       const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
