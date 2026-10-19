@@ -11,6 +11,7 @@ import {
   mapManagedRelayError,
   mapRemoteDpopEnvironmentError,
   mapRemoteEnvironmentError,
+  PAIRING_REVOKED_MESSAGE,
 } from "./errors.ts";
 import { DPOP_RETRY_HINT, DPOP_UNKNOWN_HINT } from "../relay/errorPresentation.ts";
 import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
@@ -107,6 +108,19 @@ describe("mapManagedRelayError", () => {
     );
 
     expect(mapped.message).toBe(`Relay rejected the DPoP proof. ${DPOP_RETRY_HINT}`);
+  });
+});
+
+describe("mapRemoteEnvironmentError", () => {
+  it("says that a refused direct session needs a new pairing", () => {
+    const error = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-direct",
+    });
+    const mapped = mapRemoteEnvironmentError(error);
+    expect(mapped._tag).toBe("ConnectionBlockedError");
+    expect(mapped.message).toBe(PAIRING_REVOKED_MESSAGE);
   });
 });
 

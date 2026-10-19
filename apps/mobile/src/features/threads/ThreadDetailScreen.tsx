@@ -150,6 +150,8 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { connectionNoticeAction } from "../connection/connectionNoticeAction";
+import { usePairAgain } from "../connection/forkPairAgain";
 
 export interface ThreadDetailScreenProps {
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
@@ -449,12 +451,20 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  const pairAgain = usePairAgain();
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: props.connectionError,
       connectionState: props.connectionStateLabel,
       environmentLabel: props.environmentLabel,
-      onReconnect: props.onReconnectEnvironment,
+      // Fork: a refused pairing opens Add environment instead of retrying (forkPairAgain.ts).
+      onReconnect:
+        connectionNoticeAction({
+          phase: props.connectionStateLabel,
+          error: props.connectionError,
+        }) === "pair-again"
+          ? pairAgain
+          : props.onReconnectEnvironment,
     });
     if (connectionStatus !== null) {
       return connectionStatus;

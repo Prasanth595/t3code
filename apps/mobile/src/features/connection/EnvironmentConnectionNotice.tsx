@@ -1,5 +1,7 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ConnectionTraceId } from "./ConnectionTraceId";
+import { connectionNoticeAction } from "./connectionNoticeAction";
+import { usePairAgain } from "./forkPairAgain";
 import {
   type EnvironmentConnectionPhase,
   type EnvironmentConnectionPresentation,
@@ -61,6 +63,9 @@ export function EnvironmentConnectionNotice(props: {
 }) {
   const isRetrying =
     props.connection.phase === "connecting" || props.connection.phase === "reconnecting";
+  // Fork: a refused pairing offers "Pair again" instead of "Retry now" (forkPairAgain.ts).
+  const action = connectionNoticeAction(props.connection);
+  const pairAgain = usePairAgain();
 
   return (
     <View className="flex-1 items-center justify-center px-8">
@@ -86,13 +91,15 @@ export function EnvironmentConnectionNotice(props: {
           ) : null}
         </Text>
 
-        {props.connection.phase !== "offline" && props.connection.phase !== "unsupported" ? (
+        {action !== null ? (
           <Pressable
             accessibilityRole="button"
             className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
-            onPress={props.onRetry}
+            onPress={action === "pair-again" ? pairAgain : props.onRetry}
           >
-            <Text className="text-sm font-t3-bold text-foreground">Retry now</Text>
+            <Text className="text-sm font-t3-bold text-foreground">
+              {action === "pair-again" ? "Pair again" : "Retry now"}
+            </Text>
           </Pressable>
         ) : null}
       </View>

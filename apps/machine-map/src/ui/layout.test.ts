@@ -82,6 +82,24 @@ describe("placePairs (MM-1103)", () => {
     const pair = { ...(spot ?? { x: 0, y: 0 }), ...size };
     for (const machine of machines) expect(overlaps(pair, machine)).toBe(false);
   });
+
+  it("keeps a wide pair card off tall machines when no nearby candidate fits", () => {
+    const machines = [
+      { x: 100, y: 100, w: 224, h: 280 },
+      { x: 700, y: 100, w: 224, h: 279 },
+      { x: 400, y: 450, w: 224, h: 132 },
+    ];
+    const note = { x: 1000, y: 70, w: 190, h: 137 };
+    const size = { w: 597, h: 96 };
+    const [spot] = placePairs(
+      [{ a: machines[0]!, b: machines[1]!, ...size, fixed: null }],
+      machines,
+      [note],
+    );
+    expect(spot).toBeDefined();
+    const pair = { ...spot!, ...size };
+    for (const obstacle of [...machines, note]) expect(overlaps(pair, obstacle)).toBe(false);
+  });
 });
 
 describe("pair placement (MM-1108)", () => {
@@ -138,6 +156,23 @@ describe("pair placement (MM-1108)", () => {
 });
 
 describe("zoom and pan (MM-1116)", () => {
+  it.each([390, 768, 1280])("fits every card above the controls at %s pixels wide", (width) => {
+    const boxes = [
+      { x: 100, y: 100, w: 224, h: 280 },
+      { x: 700, y: 100, w: 224, h: 279 },
+      { x: 1100, y: 470, w: 190, h: 158 },
+    ];
+    const view = fitView(boxes, width, 600)!;
+    for (const box of boxes) {
+      const topLeft = toScreenPoint(view, { x: box.x - box.w / 2, y: box.y - box.h / 2 });
+      const bottomRight = toScreenPoint(view, { x: box.x + box.w / 2, y: box.y + box.h / 2 });
+      expect(topLeft.x).toBeGreaterThanOrEqual(0);
+      expect(topLeft.y).toBeGreaterThanOrEqual(0);
+      expect(bottomRight.x).toBeLessThanOrEqual(width);
+      expect(bottomRight.y).toBeLessThan(600 - 64);
+    }
+  });
+
   it("keeps the point under the pointer, stops at the limits, and fits every card", () => {
     const view = zoomAt({ x: 40, y: 10, k: 1 }, { x: 300, y: 200 }, 1.5);
     expect(toScreenPoint(view, toMapPoint({ x: 40, y: 10, k: 1 }, { x: 300, y: 200 }))).toEqual({

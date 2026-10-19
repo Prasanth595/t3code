@@ -10,6 +10,9 @@ import {
   ConnectionTransientError,
 } from "./model.ts";
 
+/** Fork: the server refused the saved session of a direct connection; only a new pairing helps. */
+export const PAIRING_REVOKED_MESSAGE = "This pairing expired or was revoked. Pair again.";
+
 /** Fork: MM-718. What a client shows while the machine map pause locks the environment. */
 export const MACHINE_PAUSED_MESSAGE =
   "Paused from the machine map portal. Only the desktop app on this machine works until Resume.";
@@ -148,7 +151,11 @@ export function mapRemoteEnvironmentError(
       if (error.reason === "machine_paused") return machinePausedError(error.traceId);
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: "The environment credential is invalid.",
+        // A direct connection holds the session of a pairing link, which expires or is revoked.
+        detail:
+          connectionMethod === "direct"
+            ? PAIRING_REVOKED_MESSAGE
+            : "The environment credential is invalid.",
         traceId: error.traceId,
       });
     case "EnvironmentScopeRequiredError":

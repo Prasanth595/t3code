@@ -123,6 +123,9 @@ To add a phone from the map, select "Add phone", or double-click empty map space
 After a passkey check, the dialog returns and makes the invite without another click. On the same phone, select "Open in the T3 app" in the dialog or invite page, then tap Add environment in the app. Or copy the link, open the T3 app, open Environments, tap +, and paste it in Address. Older app builds need this copy-and-paste path.
 
 - In the mobile app, scan the code in Add environment, or paste its link in Address. The app then pairs with every machine that it may reach.
+- The app keeps the token, also when a machine does not pair at once. It pairs again by itself when a machine ends its session, for example after an access change, an expiry, a resume or a `clientAccess` change.
+- The app reads its machines from the portal when it opens and when it returns to the foreground. Settings > Fork > App token > Refresh machines reads them at once. A machine with access `none` is disabled, and comes back when it gets access again.
+- When the portal no longer accepts the token, for example after "Remove client", the machine says so. Use "Invite an app" for this phone again.
 
 ### Emergency pause
 

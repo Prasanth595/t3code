@@ -66,6 +66,12 @@ const ScratchProjectRef = Schema.Struct({ environmentId: EnvironmentId, projectI
 export type ScratchProjectRef = typeof ScratchProjectRef.Type;
 const isScratchProjectRef = Schema.is(ScratchProjectRef);
 const isMobileNewThreadProject = Schema.is(MobileNewThreadProject);
+const AppTokenClient = Schema.Struct({
+  machinesUrl: Schema.String,
+  clientId: Schema.optionalKey(Schema.String),
+});
+export type AppTokenClient = typeof AppTokenClient.Type;
+const isAppTokenClient = Schema.is(AppTokenClient);
 
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
@@ -113,6 +119,10 @@ export interface Preferences {
   readonly newThreadProjectMode?: MobileNewThreadProject;
   /** Fork: the open sidebar group tab of the home thread list. */
   readonly sidebarGroupTabId?: string;
+  /** Fork: environments that the app token repair disabled because the portal no longer lists them. */
+  readonly appTokenDisabledEnvironmentIds?: ReadonlyArray<string>;
+  /** Fork: the app token client of this phone (MM-913) and its machine list (MM-914). */
+  readonly appTokenClient?: AppTokenClient;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -188,6 +198,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     scratchProject?: ScratchProjectRef;
     newThreadProjectMode?: MobileNewThreadProject;
     sidebarGroupTabId?: string;
+    appTokenDisabledEnvironmentIds?: ReadonlyArray<string>;
+    appTokenClient?: AppTokenClient;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -333,6 +345,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.sidebarGroupTabId === "string") {
     preferences.sidebarGroupTabId = parsed.sidebarGroupTabId;
+  }
+  if (
+    Array.isArray(parsed.appTokenDisabledEnvironmentIds) &&
+    parsed.appTokenDisabledEnvironmentIds.every((value: unknown) => typeof value === "string")
+  ) {
+    preferences.appTokenDisabledEnvironmentIds = parsed.appTokenDisabledEnvironmentIds;
+  }
+  if (isAppTokenClient(parsed.appTokenClient)) {
+    preferences.appTokenClient = parsed.appTokenClient;
   }
   return preferences;
 }
