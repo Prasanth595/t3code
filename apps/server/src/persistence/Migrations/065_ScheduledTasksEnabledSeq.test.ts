@@ -5,21 +5,21 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-describe("064_ScheduledTasksEnabledSeq", () => {
+describe("065_ScheduledTasksEnabledSeq", () => {
   it.effect("adds enabled_seq to scheduled_tasks tables created by released migration 54", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 63 });
+      yield* runMigrations({ toMigrationInclusive: 64 });
       const before = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(scheduled_tasks)
       `;
       assert.ok(!before.some((column) => column.name === "enabled_seq"));
 
-      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 64 }), [
-        [64, "ScheduledTasksEnabledSeq"],
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 65 }), [
+        [65, "ScheduledTasksEnabledSeq"],
       ]);
-      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 64 }), []);
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 65 }), []);
       const after = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(scheduled_tasks)
       `;
@@ -44,7 +44,7 @@ describe("064_ScheduledTasksEnabledSeq", () => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 63 });
+      yield* runMigrations({ toMigrationInclusive: 64 });
       // A thread archived (and later unarchived) before the upgrade leaves an
       // archive event behind; a NULL enabled_seq would compare as older than
       // it, so the startup sweep would pause a task the user never touched.
@@ -70,7 +70,7 @@ describe("064_ScheduledTasksEnabledSeq", () => {
         SELECT sequence FROM orchestration_events WHERE event_id = 'archive'
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 64 });
+      yield* runMigrations({ toMigrationInclusive: 65 });
       const rows = yield* sql<{ readonly task_id: string; readonly enabled_seq: number | null }>`
         SELECT task_id, enabled_seq FROM scheduled_tasks ORDER BY task_id
       `;
@@ -88,11 +88,11 @@ describe("064_ScheduledTasksEnabledSeq", () => {
       // Databases created while the column briefly lived inside migration 54's
       // CREATE TABLE already carry it; the guard keeps this migration safe to
       // run there instead of failing on a duplicate column.
-      yield* runMigrations({ toMigrationInclusive: 63 });
+      yield* runMigrations({ toMigrationInclusive: 64 });
       yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN enabled_seq INTEGER`;
 
-      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 64 }), [
-        [64, "ScheduledTasksEnabledSeq"],
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 65 }), [
+        [65, "ScheduledTasksEnabledSeq"],
       ]);
       const columns = yield* sql<{ readonly name: string }>`
         PRAGMA table_info(scheduled_tasks)

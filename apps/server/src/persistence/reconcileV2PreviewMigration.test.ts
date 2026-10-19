@@ -43,8 +43,9 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
-        [64, "ScheduledTasksEnabledSeq"],
-        [65, "ArchivedThreadEventsIndex"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "ScheduledTasksEnabledSeq"],
+        [66, "ArchivedThreadEventsIndex"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -59,10 +60,6 @@ describe("V2 preview upgrade", () => {
         yield* sql`SELECT created_at FROM effect_sql_migrations WHERE migration_id = 55`,
         [{ created_at: "2026-09-15 00:00:00" }],
       );
-      const scheduledTasksColumns = yield* sql<{ readonly name: string }>`
-        PRAGMA table_info(scheduled_tasks)
-      `;
-      assert.ok(scheduledTasksColumns.some((column) => column.name === "enabled_seq"));
       yield* sql`
         INSERT INTO pull_request_files_viewed
           (provider, host, repository, number, viewer, path, revision, viewed_at)
@@ -135,8 +132,9 @@ describe("V2 preview upgrade", () => {
         [61, "PullRequestReviewGuides"],
         [62, "ThreadFailureLookupIndex"],
         [63, "DropUnusedV1Projections"],
-        [64, "ScheduledTasksEnabledSeq"],
-        [65, "ArchivedThreadEventsIndex"],
+        [64, "CanonicalizeThreadPullRequestLinks"],
+        [65, "ScheduledTasksEnabledSeq"],
+        [66, "ArchivedThreadEventsIndex"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
