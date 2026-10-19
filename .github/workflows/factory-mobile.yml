@@ -1,0 +1,251 @@
+name: Factory mobile
+
+# Builds the fork's iOS app (app, widgets and share extension) with its own
+# identity, signs it for App Store distribution with the material in the
+# mobile-release environment and uploads it to TestFlight, where the internal
+# testing group installs it. No Expo account or EAS build is involved.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - apps/mobile/**
+      - packages/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only the newest commit on main is worth uploading. A re-run gets a group of
+# its own, so re-running an old run never cancels the build of a newer commit.
+concurrency:
+  group: factory-mobile${{ github.run_attempt > 1 && format('-rerun-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+jobs:
+  testflight:
+    name: Build, sign and upload to TestFlight (iOS)
+    runs-on: macos-15
+    timeout-minutes: 90
+    # The secrets live in this environment, which only main may deploy from.
+    environment: mobile-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # Nothing here pushes, so drop checkout's credentials before dependency
+      # install and build scripts run. persist-credentials: false would do this,
+      # but checkout then strips them with `git submodule foreach`, which fails
+      # hard on the gitlinks under .repos/alchemy-effect that have no .gitmodules
+      # entry.
+      - name: Drop checkout credentials
+        run: |
+          git config --local --name-only --get-regexp '^includeIf\.gitdir:' | while read -r key; do
+            git config --local --unset-all "$key"
+          done
+          rm -f "$RUNNER_TEMP"/git-credentials-*.config
+
+      - name: Check signing secrets
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_APP_PROFILE: ${{ secrets.IOS_APP_PROFILE }}
+          IOS_WIDGETS_PROFILE: ${{ secrets.IOS_WIDGETS_PROFILE }}
+          IOS_SHARING_PROFILE: ${{ secrets.IOS_SHARING_PROFILE }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: factory/scripts/mobile-preflight.sh
+
+      # The image's default Xcode can be older than the SDK App Store Connect
+      # accepts, so take the newest release Xcode installed on it.
+      - name: Select Xcode
+        run: |
+          set -euo pipefail
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -viE 'beta|release_candidate' | sort -V | tail -1)"
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Install
+        run: vp i
+
+      - name: Prebuild the iOS project
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: production
+          EXPO_NO_GIT_STATUS: "1"
+        run: node_modules/.bin/expo prebuild --platform ios --clean
+
+      - name: Install the signing certificate and profiles
+        id: signing
+        env:
+          IOS_DIST_CERT_P12: ${{ secrets.IOS_DIST_CERT_P12 }}
+          IOS_DIST_CERT_PASSWORD: ${{ secrets.IOS_DIST_CERT_PASSWORD }}
+          IOS_APP_PROFILE: ${{ secrets.IOS_APP_PROFILE }}
+          IOS_WIDGETS_PROFILE: ${{ secrets.IOS_WIDGETS_PROFILE }}
+          IOS_SHARING_PROFILE: ${{ secrets.IOS_SHARING_PROFILE }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/factory-mobile.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          cert_path="$RUNNER_TEMP/factory-mobile.p12"
+          printf '%s' "$IOS_DIST_CERT_P12" | base64 --decode > "$cert_path"
+          security import "$cert_path" -k "$keychain" -P "$IOS_DIST_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          rm -f "$cert_path"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" >/dev/null
+          # codesign finds the identity only in a keychain on the search list.
+          existing=()
+          while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            existing+=("${line//\"/}")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
+
+          # Xcode 16 reads profiles from the second folder, older ones from the first.
+          dirs=("$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles")
+          mkdir -p "${dirs[@]}"
+          for pair in app:IOS_APP_PROFILE widgets:IOS_WIDGETS_PROFILE sharing:IOS_SHARING_PROFILE; do
+            output=${pair%%:*} name=${pair#*:}
+            profile_path="$RUNNER_TEMP/$name.mobileprovision"
+            printf '%s' "${!name}" | base64 --decode > "$profile_path"
+            security cms -D -i "$profile_path" > "$RUNNER_TEMP/$name.plist"
+            uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/$name.plist")"
+            for dir in "${dirs[@]}"; do cp "$profile_path" "$dir/$uuid.mobileprovision"; done
+            {
+              echo "$output<<PROFILE_NAME"
+              /usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/$name.plist"
+              echo "PROFILE_NAME"
+            } >> "$GITHUB_OUTPUT"
+          done
+
+      - id: project
+        name: Sign the project and stamp the build number
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APP_PROFILE: ${{ steps.signing.outputs.app }}
+          WIDGETS_PROFILE: ${{ steps.signing.outputs.widgets }}
+          SHARING_PROFILE: ${{ steps.signing.outputs.sharing }}
+        run: |
+          set -euo pipefail
+          app_id=au.com.originalsolutions.t3codefactory
+          node factory/scripts/mobile-sign-project.ts apps/mobile "$APPLE_TEAM_ID" \
+            "$app_id=$APP_PROFILE" \
+            "$app_id.widgets=$WIDGETS_PROFILE" \
+            "$app_id.sharing=$SHARING_PROFILE"
+
+          # The run number makes every upload's CFBundleVersion unique. The app and
+          # its extensions must carry the same one.
+          while IFS= read -r plist; do
+            plutil -replace CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$plist"
+          done < <(find apps/mobile/ios -mindepth 2 -maxdepth 2 -name Info.plist -not -path '*/Pods/*')
+
+          workspaces=(apps/mobile/ios/*.xcworkspace)
+          if [[ ${#workspaces[@]} -ne 1 || ! -d ${workspaces[0]} ]]; then
+            echo "::error::Expected one .xcworkspace in apps/mobile/ios."
+            exit 1
+          fi
+          scheme="$(basename "${workspaces[0]}" .xcworkspace)"
+          version="$(plutil -extract CFBundleShortVersionString raw "apps/mobile/ios/$scheme/Info.plist")"
+          {
+            echo "workspace=${workspaces[0]}"
+            echo "scheme=$scheme"
+            echo "version=$version"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $version ($GITHUB_RUN_NUMBER)"
+
+      - name: Archive
+        env:
+          WORKSPACE: ${{ steps.project.outputs.workspace }}
+          SCHEME: ${{ steps.project.outputs.scheme }}
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/factory-mobile.xcarchive"
+
+      - id: export
+        name: Export for App Store Connect
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APP_PROFILE: ${{ steps.signing.outputs.app }}
+          WIDGETS_PROFILE: ${{ steps.signing.outputs.widgets }}
+          SHARING_PROFILE: ${{ steps.signing.outputs.sharing }}
+        run: |
+          set -euo pipefail
+          app_id=au.com.originalsolutions.t3codefactory
+          options="$RUNNER_TEMP/factory-mobile-export-options"
+          # jq escapes the profile names, which PlistBuddy would split on quotes.
+          jq -n \
+            --arg team "$APPLE_TEAM_ID" \
+            --arg app_id "$app_id" \
+            --arg app "$APP_PROFILE" \
+            --arg widgets "$WIDGETS_PROFILE" \
+            --arg sharing "$SHARING_PROFILE" \
+            '{
+              method: "app-store-connect",
+              destination: "export",
+              teamID: $team,
+              signingStyle: "manual",
+              signingCertificate: "Apple Distribution",
+              manageAppVersionAndBuildNumber: false,
+              provisioningProfiles: {
+                ($app_id): $app,
+                ($app_id + ".widgets"): $widgets,
+                ($app_id + ".sharing"): $sharing
+              }
+            }' > "$options.json"
+          plutil -convert xml1 -o "$options.plist" "$options.json"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/factory-mobile.xcarchive" \
+            -exportPath "$RUNNER_TEMP/factory-mobile-export" \
+            -exportOptionsPlist "$options.plist"
+          shopt -s nullglob
+          ipas=("$RUNNER_TEMP"/factory-mobile-export/*.ipa)
+          if [[ ${#ipas[@]} -ne 1 ]]; then
+            echo "::error::Expected one .ipa in the export."
+            ls -la "$RUNNER_TEMP/factory-mobile-export"
+            exit 1
+          fi
+          echo "ipa=${ipas[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to TestFlight
+        env:
+          IPA: ${{ steps.export.outputs.ipa }}
+          VERSION: ${{ steps.project.outputs.version }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          # altool finds AuthKey_<id>.p8 in API_PRIVATE_KEYS_DIR.
+          export API_PRIVATE_KEYS_DIR="$RUNNER_TEMP/private_keys"
+          mkdir -p "$API_PRIVATE_KEYS_DIR"
+          printf '%s' "$APPLE_API_KEY" > "$API_PRIVATE_KEYS_DIR/AuthKey_${APPLE_API_KEY_ID}.p8"
+          xcrun altool --upload-app -f "$IPA" -t ios --apiKey "$APPLE_API_KEY_ID" --apiIssuer "$APPLE_API_ISSUER"
+          echo "Uploaded T3 Code Factory $VERSION (build $GITHUB_RUN_NUMBER) to TestFlight." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Delete the signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/factory-mobile.keychain-db" 2>/dev/null || true
+          rm -rf "$RUNNER_TEMP/private_keys"
