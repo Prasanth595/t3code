@@ -10,6 +10,7 @@ import {
   EnvironmentId,
   NodeId,
   OrchestratorMcpThreadReadResult,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
@@ -86,10 +87,24 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
 
-const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
-  Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
-);
+const layerThreadToolkitWith = (
+  launch?: ThreadLaunchService.ThreadLaunchService["Service"]["launch"],
+) =>
+  McpHttpServer.layerThreadToolkit.pipe(
+    Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+    Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+    Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)(launch ? { launch } : {})),
+    Layer.provide(
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () => Effect.succeedSome({ workspaceRoot: "/repo" } as never),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({ listWorktreePaths: () => Effect.succeed(["/repo"]) }),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
+const layerThreadToolkit = layerThreadToolkitWith();
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
@@ -230,6 +245,74 @@ it.effect("returns a bounded public failure without serializing storage causes",
       ),
     ),
   ),
+);
+
+it.effect("maps fork launch failures and foreign worktrees to public MCP failures", () =>
+  Effect.gen(function* () {
+    const failure = (cause: unknown) =>
+      new ThreadLaunchService.ThreadLaunchError({
+        operation: "create-thread",
+        commandId: CommandId.make("mcp-core-fork"),
+        projectId: ProjectId.make("project:mcp-test"),
+        cause,
+      });
+    for (const [cause, worktreePath, code, message] of [
+      [
+        new OrchestratorDispatchError({
+          commandId: CommandId.make("mcp-core-fork"),
+          commandType: "thread.fork",
+          cause: "The source run is still running.",
+        }),
+        "/repo",
+        "orchestration_error",
+        "The source run is still running.",
+      ],
+      [
+        "private-storage-path",
+        "/repo",
+        "orchestration_error",
+        "Thread launch mcp-core-fork failed during create-thread.",
+      ],
+      [
+        undefined,
+        "/outside",
+        "invalid_request",
+        "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
+      ],
+    ] as const) {
+      const result = yield* Effect.gen(function* () {
+        const server = yield* McpServer.McpServer;
+        return yield* server.callTool({
+          name: "t3_thread_fork",
+          arguments: {
+            sourcePoint: { type: "latest_stable" },
+            workspaceStrategy: { type: "existing_worktree", worktreePath },
+          },
+        });
+      }).pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.provide(
+          layerThreadToolkitWith(() => Effect.fail(failure(cause))).pipe(
+            Layer.provideMerge(McpServer.McpServer.layer),
+            Layer.provide(NodeCrypto.layer),
+            Layer.provide(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+                getProjectThreadRecords: ({ threadId }) =>
+                  Effect.succeed(
+                    McpToolAccessTestkit.idleThreadProjection(
+                      McpToolAccessTestkit.liveThreadShell(threadId),
+                    ),
+                  ),
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(declaredFailure(result)).toEqual({ _tag: "OrchestratorMcpFailure", code, message });
+    }
+  }),
 );
 
 it("bounds public command rejections and redacts internal dispatch causes", () => {

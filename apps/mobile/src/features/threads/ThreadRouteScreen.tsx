@@ -1,9 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import { buildProjectThreadStartTurnInput } from "../../lib/projectThreadStartTurn";
 import { useWorktreeSetup } from "./use-worktree-setup";
-import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  forkWorkspacePreparingAtom,
+  worktreeSetupAgentStarted,
+} from "@t3tools/client-runtime/worktree-setup";
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
@@ -762,10 +766,16 @@ function ThreadRouteContent(
     );
   };
   const setupTurnStartedAt = composer.selectedThreadActivityRun?.startedAt ?? null;
+  const forkWorkspacePreparing = useAtomValue(
+    forkWorkspacePreparingAtom(
+      selectedThread ? scopedThreadKey(selectedThread.environmentId, selectedThread.id) : "",
+    ),
+  );
   const { snapshot: worktreeSetupSnapshot, visible: worktreeSetup } = useWorktreeSetup({
     environmentId: selectedThread?.environmentId ?? null,
     threadId: selectedThread?.id ?? null,
     preparing:
+      forkWorkspacePreparing ||
       composer.selectedThreadActivityRun?.status === "preparing" ||
       selectedThread?.runtime?.status === "preparing" ||
       selectedThread?.worktreePath != null ||
@@ -782,7 +792,8 @@ function ThreadRouteContent(
   const awaitingBootstrapTurn =
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
+      : forkWorkspacePreparing ||
+        (selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup);
   const handleCancelWorktreeSetup = () => {
     if (!selectedThread) return;
@@ -951,6 +962,7 @@ function ThreadRouteContent(
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
           threadCwd={selectedThreadCwd}
+          isGitRepo={gitStatus.data?.isRepo === true}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           queuedMessages={composer.selectedThreadQueuedMessages}
           dispatchingMessageId={composer.dispatchingQueuedMessageId}

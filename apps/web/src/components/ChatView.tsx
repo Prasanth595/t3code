@@ -1,5 +1,6 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
+import { ForkThreadDialog } from "./chat/ForkThreadDialog";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   isThreadWokeUnseen,
@@ -79,6 +80,7 @@ import {
   ProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
   RuntimeMode,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "@t3tools/contracts";
 import { type EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import {
@@ -158,7 +160,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -414,6 +416,7 @@ import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/M
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
@@ -1194,6 +1197,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const router = useRouter();
   // Selects primitives: an object here is new on every router store update, which
   // re-renders ChatView on unrelated navigation state changes.
   const citationHref = useLocation({ select: (location) => location.href });
@@ -1282,6 +1286,13 @@ export default function ChatView(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [forkSource, setForkSource] = useState<{
+    sourceThreadId: ThreadId;
+    runId: RunId;
+    threadKey: string;
+  } | null>(null);
+  // ChatView survives route changes; a pending fork must not reopen its dialog on return.
+  if (forkSource !== null && forkSource.threadKey !== routeThreadKey) setForkSource(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
@@ -2838,6 +2849,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
   );
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
+  const forkWorkspacePreparing = useAtomValue(forkWorkspacePreparingAtom(routeThreadKey));
   const {
     worktreeSetup,
     isPreparingWorktree,
@@ -2854,7 +2866,7 @@ export default function ChatView(props: ChatViewProps) {
     threadRef: activeThreadRef,
     serverProjection,
     activityRun: activeActivityRun,
-    localPreparing: isLocallyPreparingWorktree,
+    localPreparing: isLocallyPreparingWorktree || forkWorkspacePreparing,
     sendQueuesBehindSetup,
     // Counts the optimistic send too, so the row retires the moment the
     // follow-up is on screen rather than when the server echoes it back.
@@ -5845,27 +5857,73 @@ export default function ChatView(props: ChatViewProps) {
     readonly runId: RunId;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
+    setForkSource({ ...input, threadKey: routeThreadKey });
+  };
+  const onForkWorkspaceSelected = async (
+    workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ) => {
+    if (!activeThread || activeEnvironmentUnavailable) return;
+    if (forkSource?.threadKey !== routeThreadKey) return;
     const targetThreadId = newThreadId();
     const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
-    const result = await forkThreadFromRun({
+    const sourceThreadRef = scopeThreadRef(environmentId, activeThread.id);
+    const preparingAtom = forkWorkspacePreparingAtom(scopedThreadKey(targetThreadRef));
+    const preparesWorktree = workspaceStrategy.type === "worktree";
+    if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+    const pendingResult = forkThreadFromRun({
       environmentId,
       input: {
-        sourceThreadId: input.sourceThreadId,
+        sourceThreadId: forkSource.sourceThreadId,
         targetThreadId,
-        runId: input.runId,
+        runId: forkSource.runId,
         title: `${activeThread.title} fork`,
+        workspaceStrategy,
       },
-    });
+    }).finally(() => appAtomRegistry.set(preparingAtom, false));
+    // The fork request settles only once its new worktree is ready. Open the
+    // fork as soon as its thread exists so it shows setup progress meanwhile,
+    // like a new thread started in a new worktree.
+    const openedEarly =
+      preparesWorktree &&
+      (await Promise.race([waitForThreadShell(targetThreadRef), pendingResult.then(() => false)]));
+    if (openedEarly) {
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(targetThreadRef),
+      });
+    }
+    const result = await pendingResult;
+    setForkSource((current) => (current === forkSource ? null : current));
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to fork this response.",
-        );
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      const message = error instanceof Error ? error.message : "Failed to fork this response.";
+      if (!openedEarly) {
+        setThreadError(activeThread.id, message);
+        return;
+      }
+      // The server deletes a fork whose worktree could not be prepared.
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not fork this response",
+          description: message,
+        }),
+      );
+      const forkPathname = router.buildLocation({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(targetThreadRef),
+      }).pathname;
+      if (router.state.location.pathname === forkPathname) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(sourceThreadRef),
+          replace: true,
+        });
       }
       return;
     }
+    if (openedEarly) return;
     const targetThreadReady = await waitForThreadShell(targetThreadRef);
     if (!targetThreadReady) {
       setThreadError(
@@ -5880,6 +5938,8 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onForkFromRunStable = useStableCallback(onForkFromRun);
+  const onForkWorkspaceSelectedStable = useStableCallback(onForkWorkspaceSelected);
+  const closeForkDialogStable = useStableCallback(() => setForkSource(null));
   const onCompactContext = () => {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", "Failed to compact context.");
@@ -7838,6 +7898,15 @@ export default function ChatView(props: ChatViewProps) {
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
+      {forkSource?.threadKey === routeThreadKey && activeThread ? (
+        <ForkThreadDialog
+          worktreePath={activeThread.worktreePath}
+          branch={activeThread.branch}
+          isGitRepo={isGitRepo}
+          onClose={closeForkDialogStable}
+          onSelect={onForkWorkspaceSelectedStable}
+        />
+      ) : null}
       <DeviceSetupDialogHost
         threadKey={activeThreadKey}
         threadRef={activeThreadRef}

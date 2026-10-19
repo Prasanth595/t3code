@@ -14,15 +14,23 @@ import {
   ChatAttachmentId,
   ComposerContextId,
   type ChatAttachment,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   EnvironmentId,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
+  EventId,
   MessageId,
+  NodeId,
+  type OrchestrationV2ServerCommand,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   OrchestrationV2ThreadProjectionJson,
+  RunId,
   ScheduledTaskId,
   type ServerProvider,
   ThreadId,
@@ -57,6 +65,7 @@ import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
@@ -128,6 +137,7 @@ interface HarnessOptions {
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  readonly beforeDispatch?: (command: OrchestrationV2ServerCommand) => Effect.Effect<void>;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
@@ -140,10 +150,23 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
-  const layerThreadManagement = ThreadManagement.layer.pipe(
-    Layer.provide(layerOrchestrator),
-    Layer.provide(layerServerSettings),
-    Layer.provide(layerReceipts),
+  const layerThreadManagement = Layer.effect(
+    ThreadManagement.ThreadManagementService,
+    Effect.map(ThreadManagement.ThreadManagementService, (threads) => ({
+      ...threads,
+      dispatch: (command) =>
+        (options.beforeDispatch?.(command) ?? Effect.void).pipe(
+          Effect.andThen(threads.dispatch(command)),
+        ),
+    })),
+  ).pipe(
+    Layer.provide(
+      ThreadManagement.layer.pipe(
+        Layer.provide(layerOrchestrator),
+        Layer.provide(layerServerSettings),
+        Layer.provide(layerReceipts),
+      ),
+    ),
   );
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(
@@ -257,6 +280,8 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   return {
     layer: Layer.mergeAll(
+      layerOrchestrator,
+      layerReceipts,
       layerLaunch,
       layerRegistry,
       layerThreadManagement,
@@ -318,6 +343,405 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
     assert.fail("Condition was not reached before timeout.");
   });
 }
+
+const forkSourceThreadId = ThreadId.make("thread:fork-source");
+
+const seedForkRun = Effect.fn("seedForkRun")(function* (
+  name: string,
+  ordinal: number,
+  checkpointStatus: "ready" | "missing" = "ready",
+  providerThreadId: ProviderThreadId | null = null,
+) {
+  const sink = yield* EventSink.EventSinkV2;
+  const now = yield* DateTime.now;
+  const threadId = forkSourceThreadId;
+  const runId = RunId.make(`run:${name}`);
+  const checkpointId = CheckpointId.make(`checkpoint:${name}`);
+  const nativeThreadRef = { driver: adapter.driver, nativeId: name, strength: "strong" as const };
+  yield* sink.write({
+    events: [
+      ...(providerThreadId === null
+        ? []
+        : [
+            {
+              id: EventId.make(`event:${name}-provider-thread`),
+              type: "provider-thread.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerThreadId,
+                driver: adapter.driver,
+                providerInstanceId: modelSelection.instanceId,
+                providerSessionId: null,
+                appThreadId: threadId,
+                ownerNodeId: null,
+                nativeThreadRef,
+                nativeConversationHeadRef: null,
+                status: "idle" as const,
+                firstRunOrdinal: ordinal,
+                lastRunOrdinal: ordinal,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ]),
+      {
+        id: EventId.make(`event:${name}-run`),
+        type: "run.created",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make(`message:${name}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "completed",
+          queuePosition: null,
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId,
+          contextHandoffId: null,
+        },
+      },
+      {
+        id: EventId.make(`event:${name}-checkpoint`),
+        type: "checkpoint.captured",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          id: checkpointId,
+          threadId,
+          scopeId: CheckpointScopeId.make("scope:fork-source"),
+          runId,
+          nodeId: NodeId.make(`node:${name}`),
+          parentCheckpointId: null,
+          ordinalWithinScope: ordinal,
+          appRunOrdinal: ordinal,
+          ref: CheckpointRef.make(`refs/t3/checkpoint/${name}`),
+          status: checkpointStatus,
+          files: [],
+          capturedAt: now,
+        },
+      },
+    ],
+  });
+  return runId;
+});
+
+/** A source thread with one completed run; a provider thread lets a fork's first send start. */
+const seedForkSource = Effect.fn("seedForkSource")(function* (
+  checkpointStatus: "ready" | "missing" = "ready",
+  providerThread = false,
+) {
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  yield* threads.dispatch({
+    type: "thread.create",
+    commandId: CommandId.make("create:fork-source"),
+    threadId: forkSourceThreadId,
+    projectId,
+    title: "Source",
+    modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: "feature/source",
+    worktreePath: "/repo-source",
+    createdBy: "user",
+    creationSource: "web",
+  });
+  const providerThreadId = providerThread ? ProviderThreadId.make("provider-thread:source") : null;
+  const runId = yield* seedForkRun("fork-source", 1, checkpointStatus, providerThreadId);
+  return { sourceThreadId: forkSourceThreadId, sourcePoint: { type: "run" as const, runId } };
+});
+
+const forkInput = (
+  name: string,
+  forkSource: NonNullable<ThreadLaunch.ThreadLaunchInput["forkSource"]>,
+  workspace: ThreadLaunch.ThreadLaunchWorkspaceStrategy = { type: "worktree", baseRef: "main" },
+) => ({
+  ...launchInput({ command: `fork:${name}`, thread: `thread:fork-${name}`, workspace }),
+  forkSource,
+});
+
+const sendTo = (threadId: ThreadId, name: string) =>
+  ({
+    type: "message.dispatch",
+    commandId: CommandId.make(`fork:${name}`),
+    threadId,
+    messageId: MessageId.make(`fork:${name}`),
+    text: "Continue from another client",
+    attachments: [],
+    dispatchMode: { type: "start_immediately" },
+    createdBy: "user",
+    creationSource: "mobile",
+  }) as const;
+
+const startedSetup = (
+  completion: Effect.Effect<{ exitCode: number; durationMs: number }>,
+  async = false,
+) =>
+  Effect.succeed({
+    status: "started" as const,
+    async,
+    scriptId: "setup",
+    scriptName: "Setup",
+    scriptCommand: "vp install",
+    terminalId: "setup",
+    cwd: "/repo-worktrees/feature",
+    completion,
+  });
+
+const forkReady = (input: { readonly commandId: CommandId }) =>
+  CommandReceiptStore.CommandReceiptStoreV2.pipe(
+    Effect.flatMap((receipts) =>
+      receipts.getByCommandId(CommandId.make(`${input.commandId}:fork-ready`)),
+    ),
+    Effect.map((receipt) => Option.getOrUndefined(receipt)?.status),
+  );
+
+it.effect.each([
+  { type: "root" as const },
+  { type: "existing_worktree" as const, worktreePath: "/repo-source", branch: "feature/source" },
+  { type: "worktree" as const, baseRef: "unrelated-main", startFromOrigin: true },
+])("forks into $type without starting a turn or changing the source checkout", (workspace) => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const forkSource = yield* seedForkSource();
+    const input = forkInput("destination", forkSource, workspace);
+    const result = yield* launches.launch(input);
+    assert.deepEqual(result.projection.thread.forkedFrom, {
+      type: "run",
+      threadId: forkSource.sourceThreadId,
+      runId: forkSource.sourcePoint.runId,
+    });
+    assert.isEmpty(result.projection.runs);
+    assert.equal(result.projection.contextTransfers[0]?.status, "pending");
+    const created = workspace.type === "worktree" ? 1 : 0;
+    assert.equal(
+      result.projection.thread.worktreePath,
+      { root: null, existing_worktree: "/repo-source", worktree: "/repo-worktrees/feature" }[
+        workspace.type
+      ],
+    );
+    assert.equal(harness.runSetup.mock.calls.length, created);
+    if (created) {
+      // The source checkpoint wins over the requested base and origin.
+      assert.equal(
+        harness.createWorktree.mock.calls[0]?.[0].refName,
+        "refs/t3/checkpoint/fork-source",
+      );
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const stages = (yield* tracker.get(result.threadId))?.stages.map((stage) => stage.id);
+      assert.notInclude(stages ?? [], "agent");
+    }
+    const replay = yield* launches.launch(input);
+    assert.equal(replay.threadId, result.threadId);
+    assert.isTrue(replay.resumed);
+    assert.equal(harness.createWorktree.mock.calls.length, created);
+    const source = yield* threads.getThreadProjection(forkSource.sourceThreadId);
+    assert.equal(source.thread.worktreePath, "/repo-source");
+    assert.equal(source.thread.branch, "feature/source");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each(["checkout", "setup"] as const)(
+  "holds a new-worktree fork and its sends until %s finishes, even when its caller leaves",
+  (stage) =>
+    Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>();
+      const proceed = yield* Deferred.make<void>();
+      const gate = Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(proceed)),
+      );
+      const harness = makeHarness(
+        stage === "checkout"
+          ? {
+              createWorktree: (input) =>
+                gate.pipe(
+                  Effect.as({
+                    worktree: { path: "/repo-worktrees/feature", refName: input.newRefName },
+                  } as never),
+                ),
+            }
+          : { runSetup: () => startedSetup(gate.pipe(Effect.as({ exitCode: 0, durationMs: 1 }))) },
+      );
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const input = forkInput("held", yield* seedForkSource("ready", true));
+        const first = yield* launches.launch(input).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+
+        // Clients already show the fork, so it is named before its checkout exists.
+        const pending = yield* threads.getThreadProjection(input.threadId);
+        assert.match(pending.thread.branch ?? "", /^t3\/[0-9a-f]{8}$/);
+        assert.equal(harness.createWorktree.mock.calls[0]?.[0].newRefName, pending.thread.branch);
+        assert.equal(
+          pending.thread.worktreePath,
+          stage === "checkout" ? null : "/repo-worktrees/feature",
+        );
+        assert.isUndefined(yield* forkReady(input));
+
+        const conflict = yield* launches
+          .launch({ ...input, workspaceStrategy: { type: "root" } })
+          .pipe(Effect.flip);
+        assert(conflict._tag === "ThreadLaunchError");
+        assert.include(String(conflict.cause), "cannot be replayed");
+
+        const premature = yield* threads
+          .dispatch(sendTo(input.threadId, "early"))
+          .pipe(Effect.flip);
+        assert(premature._tag === "OrchestratorDispatchError");
+        assert.include(String(premature.cause), "workspace is not ready");
+        assert.isEmpty(yield* outbox.listByCommandId(CommandId.make("fork:early")));
+
+        // A retry waits for the original, which survives losing its caller.
+        const replay = yield* launches.launch(input).pipe(Effect.forkChild);
+        yield* Fiber.interrupt(first);
+        yield* Deferred.succeed(proceed, undefined);
+        const result = yield* Fiber.join(replay);
+        assert.isTrue(result.resumed);
+        assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+        assert.isEmpty(result.projection.runs);
+        assert.equal(yield* forkReady(input), "accepted");
+        assert.equal(harness.createWorktree.mock.calls.length, 1);
+        assert.equal(harness.runSetup.mock.calls.length, 1);
+
+        yield* threads.dispatch(sendTo(input.threadId, "ready"));
+        const prepared = yield* threads.getThreadProjection(input.threadId);
+        assert.equal(prepared.runs[0]?.status, "starting");
+        assert.equal(prepared.checkpointScopes[0]?.cwd, "/repo-worktrees/feature");
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
+it.effect("lets a fork start while its asynchronous setup script continues", () =>
+  Effect.gen(function* () {
+    const completion = yield* Deferred.make<{ exitCode: number; durationMs: number }>();
+    const harness = makeHarness({ runSetup: () => startedSetup(Deferred.await(completion), true) });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = forkInput("async", yield* seedForkSource("ready", true));
+      const result = yield* launches.launch(input);
+      assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.equal((yield* tracker.get(result.threadId))?.phase, "running");
+      assert.equal(yield* forkReady(input), "accepted");
+      yield* threads.dispatch(sendTo(input.threadId, "async-send"));
+      assert.equal(
+        (yield* threads.getThreadProjection(input.threadId)).runs[0]?.status,
+        "starting",
+      );
+      yield* Deferred.succeed(completion, { exitCode: 0, durationMs: 1 });
+      yield* tracker.stream(result.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
+  { failing: "checkout", operation: "provision-worktree", replay: "create-thread" },
+  { failing: "setup", operation: "run-setup-script", replay: "provision-worktree" },
+] as const)("refuses to resume a fork whose $failing failed", ({ failing, operation, replay }) => {
+  const harness = makeHarness(
+    failing === "checkout"
+      ? {
+          createWorktree: () =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "createWorktree",
+                command: "git",
+                cwd: project.workspaceRoot,
+                detail: "Cannot create worktree",
+              }),
+            ),
+        }
+      : { runSetup: () => startedSetup(Effect.succeed({ exitCode: 1, durationMs: 1 })) },
+  );
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = forkInput("failed", yield* seedForkSource());
+    const error = yield* launches.launch(input).pipe(Effect.flip);
+    assert(error._tag === "ThreadLaunchError");
+    assert.equal(error.operation, operation);
+    // An unbound fork is deleted; a bound one stays, but nobody can send to it.
+    const target = yield* threads.getThreadProjection(input.threadId);
+    assert.equal(target.thread.deletedAt !== null, failing === "checkout");
+    const replayError = yield* launches.launch(input).pipe(Effect.flip);
+    assert(replayError._tag === "ThreadLaunchError");
+    assert.equal(replayError.operation, replay);
+    assert.equal(harness.createWorktree.mock.calls.length, 1);
+    if (failing === "setup") {
+      const sendError = yield* threads.dispatch(sendTo(input.threadId, "late")).pipe(Effect.flip);
+      assert.include(String(sendError.cause), "workspace is not ready");
+    }
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  { checkpoint: "ready", startFromOrigin: true, base: "refs/t3/checkpoint/fork-source" },
+  { checkpoint: "missing", startFromOrigin: true, base: "remote-main-sha" },
+  { checkpoint: "missing", startFromOrigin: false, base: "main" },
+] as const)(
+  "starts a fork from $base when its checkpoint is $checkpoint",
+  ({ checkpoint, startFromOrigin, base }) => {
+    const fetchRemote = vi.fn(() => Effect.void);
+    const harness = makeHarness({ fetchRemote });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const forkSource = yield* seedForkSource(checkpoint);
+      yield* launches.launch(
+        forkInput("base", forkSource, { type: "worktree", baseRef: "main", startFromOrigin }),
+      );
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0].refName, base);
+      assert.equal(fetchRemote.mock.calls.length, base === "remote-main-sha" ? 1 : 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect("pins a latest-stable fork's history to the run used for its checkpoint", () => {
+  let advanceSource = Effect.void;
+  const harness = makeHarness({
+    beforeDispatch: (command) => (command.type === "thread.fork" ? advanceSource : Effect.void),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const forkSource = yield* seedForkSource();
+    advanceSource = seedForkRun("advanced-source", 2).pipe(
+      Effect.provideService(EventSink.EventSinkV2, yield* EventSink.EventSinkV2),
+      Effect.asVoid,
+      Effect.orDie,
+    );
+    const result = yield* launches.launch(
+      forkInput("latest-stable", { ...forkSource, sourcePoint: { type: "latest_stable" } }),
+    );
+    assert.deepEqual(result.projection.thread.forkedFrom, {
+      type: "run",
+      threadId: forkSource.sourceThreadId,
+      runId: forkSource.sourcePoint.runId,
+    });
+    assert.equal(
+      harness.createWorktree.mock.calls[0]?.[0].refName,
+      "refs/t3/checkpoint/fork-source",
+    );
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>

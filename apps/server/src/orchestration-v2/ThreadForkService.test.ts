@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   ContextTransferId,
   MessageId,
   type ModelSelection,
@@ -180,6 +181,21 @@ it.effect("forks from a usage-limited failed run", () =>
       threadId: sourceThreadId,
       runId: sourceRunId,
     });
+  }),
+);
+
+it.effect("does not inherit the source fork's workspace readiness command", () =>
+  Effect.gen(function* () {
+    const sourceRun = makeSourceRun("completed");
+    const sourceProjection = makeSourceProjection(sourceRun);
+    const result = yield* planFork(sourceRun, {
+      ...sourceProjection,
+      thread: {
+        ...sourceProjection.thread,
+        workspacePreparationCommandId: CommandId.make("source:workspace-preparation"),
+      },
+    });
+    assert.isUndefined(result.targetThread.workspacePreparationCommandId);
   }),
 );
 

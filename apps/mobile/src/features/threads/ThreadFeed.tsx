@@ -18,7 +18,11 @@ import { useViewabilityAmount, type LegendListRef } from "@legendapp/list/react-
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
-import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  canForkProjectedAssistantItem,
+  threadForkWorkspaceChoices,
+} from "@t3tools/client-runtime/state/thread-workflows";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   type OrchestrationMessageContext,
@@ -29,6 +33,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type RunId,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
@@ -290,6 +295,7 @@ export interface ThreadFeedProps {
   readonly threadId: ThreadId;
   readonly threadTitle: string;
   readonly workspaceRoot?: string | null;
+  readonly isGitRepo?: boolean;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -361,6 +367,8 @@ function UserMessageCopyButton(props: {
 
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly isGitRepo: boolean;
   readonly iconColor: ColorValue;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
@@ -381,41 +389,87 @@ function AssistantForkButton(props: {
 
   if (!canFork || runId === null) return null;
 
+  const fork = async (workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy) => {
+    const targetThreadId = ThreadId.make(uuidv4());
+    const preparingAtom = forkWorkspacePreparingAtom(
+      scopedThreadKey(props.environmentId, targetThreadId),
+    );
+    const preparesWorktree = workspaceStrategy.type === "worktree";
+    const openFork = () =>
+      navigation.navigate("Thread", {
+        environmentId: props.environmentId,
+        threadId: targetThreadId,
+      });
+    if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+    const pendingResult = forkFromRun({
+      environmentId: props.environmentId,
+      input: {
+        sourceThreadId: props.projectedItem.sourceThreadId,
+        targetThreadId,
+        runId,
+        title: `${props.sourceTitle} fork`,
+        creationSource: "mobile",
+        workspaceStrategy,
+      },
+    }).finally(() => appAtomRegistry.set(preparingAtom, false));
+    // The request settles once a new worktree is ready. Open the fork as soon as
+    // its thread exists so it shows setup progress meanwhile.
+    const openedEarly =
+      preparesWorktree &&
+      (await Promise.race([
+        waitForThreadShell(props.environmentId, targetThreadId),
+        pendingResult.then(() => false),
+      ]));
+    if (openedEarly) openFork();
+    const result = await pendingResult;
+    if (result._tag !== "Success") {
+      // The server deletes a fork whose worktree could not be prepared.
+      const state = navigation.getState();
+      const focused = state?.routes[state.index]?.params;
+      if (openedEarly && focused && "threadId" in focused && focused.threadId === targetThreadId) {
+        navigation.navigate("Thread", {
+          environmentId: props.environmentId,
+          threadId: props.threadId,
+        });
+      }
+      return;
+    }
+    if (openedEarly) return;
+    const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
+    if (!targetThreadReady) {
+      Dialog.alert(
+        "Fork created",
+        "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+      );
+      return;
+    }
+    openFork();
+  };
+
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel="Fork from this response"
       disabled={busy}
       onPress={() => {
-        const targetThreadId = ThreadId.make(uuidv4());
-        setBusy(true);
+        const thread = appAtomRegistry.get(
+          environmentThreadShells.threadShellAtom(
+            scopeThreadRef(props.environmentId, props.threadId),
+          ),
+        );
+        if (!thread) return;
         void Haptics.selectionAsync();
-        void forkFromRun({
-          environmentId: props.environmentId,
-          input: {
-            sourceThreadId: props.projectedItem.sourceThreadId,
-            targetThreadId,
-            runId,
-            title: `${props.sourceTitle} fork`,
-            creationSource: "mobile",
-          },
-        })
-          .then(async (result) => {
-            if (result._tag !== "Success") return;
-            const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
-            if (!targetThreadReady) {
-              Dialog.alert(
-                "Fork created",
-                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
-              );
-              return;
-            }
-            navigation.navigate("Thread", {
-              environmentId: props.environmentId,
-              threadId: targetThreadId,
-            });
-          })
-          .finally(() => setBusy(false));
+        const choices = threadForkWorkspaceChoices({ ...thread, isGitRepo: props.isGitRepo });
+        Dialog.alert("Fork thread from here", "Choose where to continue from this response.", [
+          ...choices.map((choice) => ({
+            text: choice.label,
+            onPress: () => {
+              setBusy(true);
+              void fork(choice.workspaceStrategy).finally(() => setBusy(false));
+            },
+          })),
+          { text: "Cancel", style: "cancel" },
+        ]);
       }}
       className="h-7 w-7 items-center justify-center disabled:opacity-40"
     >
@@ -978,6 +1032,7 @@ function renderFeedEntry(
     | "onEditPendingMessage"
     | "threadId"
     | "workspaceRoot"
+    | "isGitRepo"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1424,6 +1479,8 @@ function renderFeedEntry(
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
+                threadId={props.threadId}
+                isGitRepo={props.isGitRepo ?? false}
                 iconColor={iconSubtleColor}
                 projectedItem={message.projectedItem}
                 sourceTitle={props.threadTitle}
@@ -2392,6 +2449,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             threadTitle: props.threadTitle,
             skills: props.skills,
             workspaceRoot: props.workspaceRoot,
+            isGitRepo: props.isGitRepo,
             workflowOpening,
           })}
           {props.worktreeSetup && info.index === setupAnchorIndex ? (

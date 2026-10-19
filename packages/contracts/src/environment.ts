@@ -125,6 +125,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadVisitedTracking: Schema.optionalKey(Schema.Boolean),
   threadPullRequestLinking: Schema.optionalKey(Schema.Boolean),
   serverResolvedCommandContext: Schema.optionalKey(Schema.Boolean),
+  /** Server accepts forkSource on thread launch and binds the selected checkout.
+      Older servers must use thread.fork to retain conversation history. */
+  threadForkWorkspaceSelection: Schema.optionalKey(Schema.Boolean),
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
   threadPullRequestWatch: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),

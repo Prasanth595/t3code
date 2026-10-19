@@ -290,6 +290,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
+export const isOrchestratorV2Error = Schema.is(OrchestratorV2Error);
 
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
@@ -627,7 +628,7 @@ function latestStableRun(
   );
 }
 
-function runForSourcePoint(
+export function runForSourcePoint(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "checkpoints">,
   sourcePoint: Extract<
     OrchestrationV2Command,
@@ -3700,6 +3701,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         transferId,
         targetThreadId: command.targetThreadId,
         ...(command.title === undefined ? {} : { title: command.title }),
+        ...(command.workspace === undefined ? {} : { workspace: command.workspace }),
         createdBy: command.createdBy,
         creationSource: command.creationSource,
         createdAt: now,
@@ -4598,6 +4600,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      const preparationCommandId = projection.thread.workspacePreparationCommandId;
+      // Forks have no preparing run. The fork-ready receipt gates every sender,
+      // including other clients, and honors the setup script's wait policy.
+      if (preparationCommandId !== undefined) {
+        const ready = Option.getOrUndefined(
+          yield* commandReceipts
+            .getByCommandId(CommandId.make(`${preparationCommandId}:fork-ready`))
+            .pipe(mapDispatchError(command)),
+        );
+        if (ready?.status !== "accepted" || ready.threadId !== command.threadId)
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "The fork's workspace is not ready. Wait for preparation to finish, or create a new fork if preparation failed.",
+          });
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
