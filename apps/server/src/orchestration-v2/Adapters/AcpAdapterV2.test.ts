@@ -32,6 +32,7 @@ import {
   ThreadId,
   type OrchestrationV2ProviderThread,
   type ProviderOptionDescriptor,
+  type ProviderUserInputAnswers,
 } from "@t3tools/contracts";
 import { GrokSettings } from "@t3tools/provider-grok/settings";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -97,6 +98,8 @@ import {
   type AcpAdapterV2RuntimeInput,
   type AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
+
+import { appendUserInputAttachmentPaths } from "../../provider/userInputAttachments.ts";
 
 import { makeGrokAdapterV2 } from "@t3tools/provider-grok/testing";
 import {
@@ -652,6 +655,25 @@ describe("AcpAdapterV2", () => {
       },
     },
     {
+      scenario: "preserves selected labels and attachment paths in custom answers",
+      schema: droidSchema,
+      questions: droidQuestions,
+      withAttachments: true,
+      answers: {
+        question_1: "option_1",
+        question_2: "option_1\n\nAttached notes: keep this custom text",
+      },
+      result: (directory: string) => ({
+        action: "accept",
+        content: {
+          question_1: "other",
+          question_1_other: `Plain text\n\nAttached image "shot.png": ${JSON.stringify(NodePath.join(directory, "droid-shot.png"))}\nAttached file "spec.txt": ${JSON.stringify(NodePath.join(directory, "droid-spec.txt"))}`,
+          question_2: "other",
+          question_2_other: "option_1\n\nAttached notes: keep this custom text",
+        },
+      }),
+    },
+    {
       scenario: "cancels without accepting answers",
       schema: droidSchema,
       questions: droidQuestions,
@@ -678,12 +700,40 @@ describe("AcpAdapterV2", () => {
       answers: { question_1: "Markdown" },
       result: { action: "accept", content: { question_1: "Markdown" } },
     },
-  ])("Droid elicitation $scenario", ({ schema, questions, answers, result }) =>
+  ])("Droid elicitation $scenario", ({ schema, questions, answers, result, withAttachments }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-droid-form-" });
       const statusPath = path.join(directory, "status.json");
+      const expectedResult = typeof result === "function" ? result(directory) : result;
+      let preparedAnswers: ProviderUserInputAnswers | undefined = answers;
+      if (withAttachments && answers !== undefined) {
+        yield* fileSystem.writeFileString(path.join(directory, "droid-shot.png"), "image");
+        yield* fileSystem.writeFileString(path.join(directory, "droid-spec.txt"), "spec");
+        preparedAnswers = yield* appendUserInputAttachmentPaths({
+          answers,
+          attachmentsDir: directory,
+          attachmentsByQuestionId: {
+            question_1: [
+              {
+                type: "image",
+                id: "droid-shot",
+                name: "shot.png",
+                mimeType: "image/png",
+                sizeBytes: 5,
+              },
+              {
+                type: "file",
+                id: "droid-spec",
+                name: "spec.txt",
+                mimeType: "text/plain",
+                sizeBytes: 4,
+              },
+            ],
+          },
+        });
+      }
       const driver = ProviderDriverKind.make("acpRegistry");
       const transcript = yield* decodeAcpReplayTranscript(
         {
@@ -738,7 +788,7 @@ describe("AcpAdapterV2", () => {
               frame: {
                 kind: "response",
                 method: "elicitation/create",
-                result,
+                result: expectedResult,
               },
             },
             {
@@ -815,7 +865,7 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(item.turnItem.questions, questions);
       yield* runtime.respondToRuntimeRequest({
         requestId: item.turnItem.requestId,
-        ...(answers === undefined ? {} : { answers }),
+        ...(preparedAnswers === undefined ? {} : { answers: preparedAnswers }),
       });
       const terminal = yield* runtime.events.pipe(
         Stream.filter((event) => event.type === "turn.terminal"),

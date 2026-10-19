@@ -63,7 +63,19 @@ export const extractDroidElicitationForm: NonNullable<
         if (question.options.some((option) => option.value === answer)) {
           entries.push([question.id, answer]);
         } else {
-          entries.push([question.id, "other"], [`${question.id}_other`, answer]);
+          // Intake appends server attachment references to the selected choice ID.
+          const attachmentStart = answer.indexOf("\n\n");
+          const selectedOption = question.options.find(
+            (option) =>
+              option.value === answer.slice(0, attachmentStart) &&
+              /^\n\nAttached (?:image|file) "(?:\\.|[^"\\\r\n])*": "/.test(
+                answer.slice(attachmentStart),
+              ),
+          );
+          const text = selectedOption
+            ? `${selectedOption.label}${answer.slice(attachmentStart)}`
+            : answer;
+          entries.push([question.id, "other"], [`${question.id}_other`, text]);
         }
       }
       return { action: "accept", content: Object.fromEntries(entries) };
