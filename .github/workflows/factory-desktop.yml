@@ -48,6 +48,9 @@ jobs:
           done
           rm -f "$RUNNER_TEMP"/git-credentials-*.config
 
+      - name: Retry stapler on dropped connections
+        run: echo "$GITHUB_WORKSPACE/factory/scripts/xcrun-retry" >> "$GITHUB_PATH"
+
       - name: Check signing secrets
         env:
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
