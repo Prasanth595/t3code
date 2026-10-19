@@ -5,7 +5,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Base64 from "effect/encoding/Base64";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -14,6 +16,7 @@ import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
@@ -23,17 +26,17 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const { legacyKeys, keyReads } = vi.hoisted(() => ({
   legacyKeys: new Map<string, Buffer>(),
-  keyReads: vi.fn<(path: string) => void>(),
+  keyReads: vi.fn<(path: string) => Effect.Effect<void>>(),
 }));
 vi.mock("../preview/BrowserImport/ChromiumKeys.ts", async (original) => {
   const actual = await original<typeof import("../preview/BrowserImport/ChromiumKeys.ts")>();
   return {
     ...actual,
     readWindowsKey: (path: string) =>
-      Effect.suspend(() => {
-        keyReads(path);
+      Effect.gen(function* () {
+        yield* keyReads(path);
         const key = legacyKeys.get(path);
-        return key
+        return yield* key
           ? Effect.succeed(key)
           : Effect.fail(new actual.ChromiumKeyError({ reason: "readFailed" }));
       }),
@@ -41,7 +44,7 @@ vi.mock("../preview/BrowserImport/ChromiumKeys.ts", async (original) => {
 });
 beforeEach(() => {
   legacyKeys.clear();
-  keyReads.mockReset();
+  keyReads.mockReset().mockReturnValue(Effect.void);
 });
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
@@ -578,7 +581,7 @@ describe("Windows catalog key recovery", () => {
           legacyKeys.delete(stable.statePath);
         }
         keyReads.mockImplementation(() =>
-          assert.isAbove(fixture.nativeDecrypt.mock.calls.length, 0),
+          Effect.sync(() => assert.isAbove(fixture.nativeDecrypt.mock.calls.length, 0)),
         );
         const initial = encryptedDocument(seal("saved connections", key));
         yield* fixture.replaceCatalog(initial);
@@ -598,6 +601,70 @@ describe("Windows catalog key recovery", () => {
           );
         }
       }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
+  it.effect("bounds stalled key lookups, continues recovery, and caches timed-out candidates", () =>
+    Effect.gen(function* () {
+      const fixture = yield* cryptoStore();
+      const started = yield* Deferred.make<void>();
+      const interrupted = yield* Deferred.make<void>();
+      keyReads.mockImplementation((path) =>
+        path.includes("T3 Code (Alpha)")
+          ? Effect.void
+          : Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+            ),
+      );
+      yield* fixture.replaceCatalog(encryptedDocument(seal("Alpha connections", alphaKey)));
+      const recovery = yield* fixture.store.get.pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("10 seconds");
+      // Assert before joining so a missing deadline fails without waiting on the stalled fiber.
+      assert.isTrue(yield* Deferred.isDone(interrupted));
+      assert.deepStrictEqual(yield* Fiber.join(recovery), Option.some("Alpha connections"));
+      assert.isTrue(yield* fixture.store.set("updated Alpha connections"));
+      assert.equal(yield* fixture.readWithKey(alphaKey), "updated Alpha connections");
+      assert.equal(keyReads.mock.calls.length, 2);
+
+      const allStalled = yield* cryptoStore();
+      const candidates = yield* Effect.forEach(allStalled.profiles.slice(0, 2), ({ statePath }) =>
+        Effect.gen(function* () {
+          return {
+            statePath,
+            started: yield* Deferred.make<void>(),
+            interrupted: yield* Deferred.make<void>(),
+          };
+        }),
+      );
+      keyReads.mockImplementation((path) => {
+        const candidate = candidates.find(({ statePath }) => path === statePath)!;
+        return Deferred.succeed(candidate.started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(candidate.interrupted, undefined)),
+        );
+      });
+      const nativeError = new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+        cause: new Error("native catalog key does not match"),
+      });
+      allStalled.nativeDecrypt.mockReturnValue(Effect.fail(nativeError));
+      const initial = encryptedDocument(seal("unavailable connections", stableKey));
+      yield* allStalled.replaceCatalog(initial);
+      const failed = yield* allStalled.store.get.pipe(Effect.flip, Effect.forkChild);
+      for (const candidate of candidates) {
+        yield* Deferred.await(candidate.started);
+        yield* TestClock.adjust("10 seconds");
+        assert.isTrue(yield* Deferred.isDone(candidate.interrupted));
+      }
+      assert.strictEqual((yield* Fiber.join(failed)).cause, nativeError);
+      assert.strictEqual((yield* allStalled.store.get.pipe(Effect.flip)).cause, nativeError);
+      assert.strictEqual(
+        (yield* allStalled.store.set("must not overwrite").pipe(Effect.flip)).cause,
+        nativeError,
+      );
+      assert.equal(yield* allStalled.readCatalog, initial);
+      assert.equal(keyReads.mock.calls.length, 4);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("authenticates writes before any read and follows a replacement catalog key", () =>

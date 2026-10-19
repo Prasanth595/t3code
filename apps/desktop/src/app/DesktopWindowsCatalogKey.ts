@@ -25,7 +25,10 @@ export const make = Effect.fn("desktop.windowsCatalogKey.make")(function* (
   // Failed lookups are cached too; restoring a profile key requires an app restart.
   const keys = yield* Effect.cached(
     Effect.forEach(["t3code", "T3 Code (Alpha)"], (profile) =>
-      readWindowsKey(path.join(appDataDirectory, profile, "Local State")).pipe(Effect.option),
+      readWindowsKey(path.join(appDataDirectory, profile, "Local State")).pipe(
+        Effect.timeout("10 seconds"),
+        Effect.option,
+      ),
     ).pipe(Effect.provide(context)),
   );
   return Effect.fn("desktop.windowsCatalogKey.decrypt")(function* (encrypted: Uint8Array) {
