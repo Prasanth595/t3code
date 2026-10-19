@@ -376,7 +376,7 @@ function usageCandidates(
         };
         records.push(candidate);
         // Display fallbacks (including a generation at the same idx) cannot establish identity.
-        // Prefer the row's model over the usage enum, which can hide differing model labels.
+        // Either the row model or the usage enum can distinguish otherwise identical calls.
         let copyModel = entry.model || MODEL_IDS[numberAt(usage, 1)] || "";
         if (
           keys.length > 0 ||
@@ -391,6 +391,7 @@ function usageCandidates(
         }
         const identity = JSON.stringify([
           copyModel,
+          modelName("", numberAt(usage, 1)),
           ...USAGE_COUNTER_FIELDS.map((key) => numberAt(usage, key)),
         ]);
         const group = copies.get(identity) ?? [[], []];

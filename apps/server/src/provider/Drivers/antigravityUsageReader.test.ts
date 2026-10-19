@@ -380,16 +380,45 @@ describe("readAntigravityUsage", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("retains differing source model labels despite a shared usage model enum", () =>
+  it.effect.each([
+    {
+      name: "retains differing source model labels despite a shared usage model enum",
+      stepModel: "claude-opus-4-6",
+      generationModel: "claude-sonnet-4-6",
+      stepEnum: 1016,
+      generationEnum: 1016,
+      expectedModels: ["gemini-3.1-pro", "gemini-3.1-pro"],
+    },
+    {
+      name: "retains differing usage model enums despite a shared source model label",
+      stepModel: "claude-opus-4-6",
+      generationModel: "claude-opus-4-6",
+      stepEnum: 1016,
+      generationEnum: 1026,
+      expectedModels: ["gemini-3.1-pro", "claude-opus-4-6"],
+    },
+  ])("$name", ({ stepModel, generationModel, stepEnum, generationEnum, expectedModels }) =>
     Effect.gen(function* () {
-      const usage = attemptUsage(1, protoNumber(1, 1016));
       const read = yield* readUsageRows(
-        [usageRow("step", usage, [], "claude-opus-4-6")],
-        [usageRow("generation", usage, [], "claude-sonnet-4-6", 1780000010)],
+        [usageRow("step", attemptUsage(1, protoNumber(1, stepEnum)), [], stepModel)],
+        [
+          usageRow(
+            "generation",
+            attemptUsage(1, protoNumber(1, generationEnum)),
+            [],
+            generationModel,
+            1780000010,
+          ),
+        ],
       );
+      assert.strictEqual(read.length, 2);
       assert.deepStrictEqual(
         read.map((record) => record.totals),
         [attemptTotals(1), attemptTotals(1)],
+      );
+      assert.deepStrictEqual(
+        read.map((record) => record.model),
+        expectedModels,
       );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
