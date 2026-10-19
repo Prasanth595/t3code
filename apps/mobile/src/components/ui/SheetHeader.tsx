@@ -1,56 +1,27 @@
-import type { ReactNode } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { AppActivityIndicator } from "./AppActivityIndicator";
-import { AndroidScreenHeader } from "./AndroidScreenHeader";
 import { AppText } from "./AppText";
 import { SymbolView } from "./AppSymbol";
-import { Button } from "./Button";
 import { IconButton } from "./IconButton";
 import { Toolbar } from "./Toolbar";
 import { useControlTheme } from "./useControlTheme";
+import type { SheetCloseButtonProps, SheetHeaderProps } from "./SheetHeader.types";
 
-type SheetDismissAction =
-  | { readonly onCancel: () => void; readonly onClose?: never }
-  | { readonly onClose: () => void; readonly onCancel?: never };
-
-type SheetConfirmation = {
-  readonly label: string;
-  readonly onPress: () => void;
-  readonly disabled?: boolean;
-  readonly loading?: boolean;
-};
-
-type SheetHeaderProps = SheetDismissAction & {
-  readonly title: string;
-  readonly subtitle?: string;
-  readonly accessibilityLabel?: string;
-  readonly dismissDisabled?: boolean;
-  readonly confirm?: SheetConfirmation;
-  readonly presentation?: "native" | "inline";
-  readonly trailing?: ReactNode;
-};
-
-export function SheetCloseButton(
-  props: SheetDismissAction & {
-    readonly accessibilityLabel?: string;
-    readonly disabled?: boolean;
-  },
-) {
+export function SheetCloseButton(props: SheetCloseButtonProps) {
   return (
     <IconButton
       icon="xmark"
       accessibilityLabel={props.accessibilityLabel ?? (props.onCancel ? "Cancel" : "Close")}
       disabled={props.disabled}
-      tintColorClassName={Platform.OS === "android" ? "accent-header-foreground" : undefined}
       onPress={props.onCancel ?? props.onClose}
     />
   );
 }
 
 export function SheetHeader(props: SheetHeaderProps) {
-  return Platform.OS === "ios" && props.presentation !== "inline" ? (
+  return props.presentation !== "inline" ? (
     <NativeSheetHeader {...props} />
   ) : (
     <InlineSheetHeader {...props} />
@@ -115,17 +86,13 @@ function NativeSheetHeader(props: SheetHeaderProps) {
   );
 }
 
-function InlineConfirmation({ confirmation }: { readonly confirmation: SheetConfirmation }) {
+function InlineConfirmation({
+  confirmation,
+}: {
+  readonly confirmation: NonNullable<SheetHeaderProps["confirm"]>;
+}) {
   const confirmDisabled = confirmation.disabled || confirmation.loading;
-  return Platform.OS === "android" ? (
-    <Button
-      label={confirmation.label}
-      tone="text"
-      loading={confirmation.loading}
-      disabled={confirmation.disabled}
-      onPress={confirmation.onPress}
-    />
-  ) : (
+  return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={confirmation.label}
@@ -173,18 +140,6 @@ function InlineSheetHeader(props: SheetHeaderProps) {
       </View>
     ) : undefined;
 
-  if (Platform.OS === "android") {
-    return (
-      <AndroidScreenHeader
-        embedded={props.presentation === "inline"}
-        title={props.title}
-        subtitle={props.subtitle}
-        leading={close}
-        trailing={trailing}
-        hideBottomBorder
-      />
-    );
-  }
   return (
     <View className="flex-row items-center gap-3 px-4 pt-3 pb-3">
       {close}
