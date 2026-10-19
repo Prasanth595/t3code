@@ -128,7 +128,9 @@ describe("runProcess", () => {
           clearTimeout(safetyTimer);
 
           expect(safetyKillNeeded).toBe(false);
-          expect(() => process.kill(childPid!, 0)).toThrow();
+          expect(() => process.kill(childPid!, 0)).toThrow(
+            expect.objectContaining({ code: "ESRCH" }),
+          );
           if (timeoutBehavior === "error") {
             expect(result).toMatchObject({
               _tag: "Failure",
