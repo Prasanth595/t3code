@@ -444,11 +444,21 @@ export function resolveThreadGitStatus(
     if (
       link.source === "stack-dismissed" ||
       snapshot?.state !== "open" ||
-      snapshot.headBranch !== status.refName
+      snapshot.headBranch !== status.refName ||
+      !snapshot.headRepositoryNameWithOwner
     )
       continue;
-    const key = legacyThreadPullRequestKey(link, link.host);
-    if (canonicalRepositoryKey(`${key.host}/${key.repository}`) !== canonicalKey) continue;
+    let url: URL;
+    try {
+      url = new URL(link.url);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+    const headKey = canonicalRepositoryKey(
+      `${url.host}/${snapshot.headRepositoryNameWithOwner}`.trim().toLowerCase(),
+    );
+    if (headKey !== canonicalKey) continue;
     return {
       ...status,
       pr: {

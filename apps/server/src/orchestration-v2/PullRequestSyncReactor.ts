@@ -58,6 +58,9 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     state: summary.state,
     title: summary.title,
     headBranch: summary.headBranch,
+    ...(summary.headRepositoryNameWithOwner === undefined
+      ? {}
+      : { headRepositoryNameWithOwner: summary.headRepositoryNameWithOwner }),
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
     updatedAt: summary.updatedAt,
@@ -89,6 +92,7 @@ function snapshotFieldsEqual(left: SnapshotFields, right: SnapshotFields): boole
     left.state === right.state &&
     left.title === right.title &&
     left.headBranch === right.headBranch &&
+    (left.headRepositoryNameWithOwner ?? null) === (right.headRepositoryNameWithOwner ?? null) &&
     left.baseBranch === right.baseBranch &&
     left.isDraft === right.isDraft &&
     left.updatedAt === right.updatedAt &&

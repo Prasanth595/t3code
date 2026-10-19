@@ -471,6 +471,7 @@ export const PullRequestSummary = Schema.Struct({
   state: PullRequestState,
   isDraft: Schema.optional(Schema.Boolean),
   headBranch: TrimmedNonEmptyString,
+  headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   baseBranch: TrimmedNonEmptyString,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
