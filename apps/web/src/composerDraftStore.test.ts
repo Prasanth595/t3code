@@ -362,52 +362,27 @@ describe("composerDraftStore addImages", () => {
   });
 });
 
-describe("composerUndoHistoryKey", () => {
+it("keeps promoted draft history but separates queued-message edits on either route", () => {
   const routeThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-undo"));
   const routeDraftId = DraftId.make("draft-undo");
   const queuedEdit = DraftId.make("queued-edit:thread-undo:run-1");
-
-  it("separates a queued-message edit from the thread draft", () => {
-    const threadKey = composerUndoHistoryKey({
-      routeThreadRef,
-      routeDraftId: null,
-      composerDraftTarget: routeThreadRef,
-    });
-    const queuedEditKey = composerUndoHistoryKey({
-      routeThreadRef,
-      routeDraftId: null,
-      composerDraftTarget: queuedEdit,
-    });
-    expect(queuedEditKey).not.toBe(threadKey);
+  const threadKey = composerUndoHistoryKey({
+    routeThreadRef,
+    routeDraftId: null,
+    composerDraftTarget: routeThreadRef,
   });
-
-  it("separates a queued-message edit from a draft route that already has a server thread", () => {
-    const draftKey = composerUndoHistoryKey({
-      routeThreadRef,
-      routeDraftId,
-      composerDraftTarget: routeDraftId,
-    });
-    const queuedEditKey = composerUndoHistoryKey({
-      routeThreadRef,
-      routeDraftId,
-      composerDraftTarget: queuedEdit,
-    });
-    expect(queuedEditKey).not.toBe(draftKey);
-  });
-
-  it("keeps a draft's history when it is promoted to a server thread", () => {
-    const draftKey = composerUndoHistoryKey({
-      routeThreadRef,
-      routeDraftId,
-      composerDraftTarget: routeDraftId,
-    });
-    const promotedKey = composerUndoHistoryKey({
-      routeThreadRef,
-      routeDraftId: null,
-      composerDraftTarget: routeThreadRef,
-    });
-    expect(promotedKey).toBe(draftKey);
-  });
+  expect(
+    composerUndoHistoryKey({ routeThreadRef, routeDraftId, composerDraftTarget: routeDraftId }),
+  ).toBe(threadKey);
+  for (const draftId of [routeDraftId, null]) {
+    expect(
+      composerUndoHistoryKey({
+        routeThreadRef,
+        routeDraftId: draftId,
+        composerDraftTarget: queuedEdit,
+      }),
+    ).not.toBe(threadKey);
+  }
 });
 
 describe("composerDraftStore clearComposerContent", () => {
