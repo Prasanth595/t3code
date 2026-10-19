@@ -10,12 +10,14 @@ import {
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
 import "~/index.css";
 
-const { newThread, prepareThread, refresh } = vi.hoisted(() => ({
+const { newThread, prepareThread, refresh, hostCommand, queries } = vi.hoisted(() => ({
+  hostCommand: vi.fn(),
+  queries: { diff: undefined as unknown },
   newThread: vi.fn(),
   prepareThread: vi.fn(),
   refresh: vi.fn(),
@@ -44,17 +46,20 @@ vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: (() => hostCommand) as never,
 }));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   const { Atom } = await import("effect/reactivity");
   const cannotWriteGuides = Atom.make(false);
+  const diff = Atom.make(null);
+  queries.diff = diff;
   return {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       detail: (() => "detail") as never,
+      diff: (() => diff) as never,
       activity: (() => "activity") as never,
       reviewGuide: (() => "review-guide") as never,
       generateReviewGuide: {
@@ -67,7 +72,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: unknown) => ({
-    data: query === "detail" ? detail : null,
+    data: query === "detail" ? currentDetail : query === queries.diff ? diff : null,
     dataUpdatedAt: 0,
     failure: null,
     isPending: false,
@@ -86,8 +91,7 @@ vi.mock(import("~/state/usePullRequestStack"), async (original) => ({
     refresh,
   })) as never,
 }));
-// The real tabs load diffs, markdown and checks from the environment; these stand-ins
-// expose the actions they hand back to the panel and a tall scroller.
+// The summary stand-in exposes its panel actions and nested scrolling.
 vi.mock(import("./PullRequestSummaryTab"), async (original) => ({
   ...(await original()),
   PullRequestSummaryTab: (({
@@ -113,41 +117,10 @@ vi.mock(import("./PullRequestSummaryTab"), async (original) => ({
     </div>
   )) as never,
 }));
-vi.mock(import("./PullRequestCodeTab"), async (original) => ({
-  ...(await original()),
-  default: (({
-    onAddToAgentSelection,
-    scrollerRef,
-  }: ComponentProps<typeof import("./PullRequestCodeTab").default>) => (
-    <div ref={scrollerRef} data-testid="code-scroller" className="h-full overflow-y-auto">
-      <button
-        type="button"
-        onClick={() =>
-          onAddToAgentSelection?.({
-            request: "Fix this line",
-            comment: {
-              id: "note-1",
-              sectionId: "file:a.ts",
-              sectionTitle: "a.ts",
-              filePath: "a.ts",
-              startIndex: 0,
-              endIndex: 0,
-              rangeLabel: "L1",
-              text: "Please fix",
-              diff: "+broken()",
-            },
-          })
-        }
-      >
-        Add to agent
-      </button>
-      <div className="h-[3000px]" />
-    </div>
-  )) as never,
-}));
 
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
+import { usePullRequestReviewStore } from "./pullRequestReviewStore";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -201,6 +174,24 @@ const detail: PullRequestDetailView = {
   },
 };
 
+let currentDetail = detail;
+
+// Enough lines to exercise the panel's title folding with the real virtualized Code tab.
+const diff = {
+  patch: [
+    "diff --git a/a.ts b/a.ts",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/a.ts",
+    "@@ -0,0 +1,100 @@",
+    "+broken()",
+    ...Array.from({ length: 99 }, (_, index) => `+// line ${index + 2}`),
+    "",
+  ].join("\n"),
+  truncated: false,
+  nextCursor: null,
+};
+
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
@@ -240,7 +231,10 @@ function render(props: Partial<ComponentProps<typeof PullRequestDetailPanel>> = 
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  currentDetail = detail;
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  usePullRequestReviewStore.setState({ drafts: {}, summaries: {} });
+  hostCommand.mockReset();
   newThread
     .mockReset()
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
@@ -279,9 +273,27 @@ const unrelatedThread = {
 
 const tab = (name: string) => page.getByRole("button", { name, exact: true });
 
+const selectionDraft = () => page.getByRole("textbox", { name: "Comment on lines a.ts:1" });
+
+async function selectFirstLine() {
+  const line = page.getByText("broken()", { exact: true });
+  await expect.element(line).toBeVisible();
+  const host = line.element().getRootNode() as ShadowRoot;
+  const gutter = host.querySelector<HTMLElement>('[data-column-number="1"]')!;
+  await userEvent.click(gutter);
+}
+
 async function runAction(action: string) {
   if (action === "Add to agent") {
     await tab("Code").click();
+    await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+    await selectFirstLine();
+    const draft = page.getByRole("textbox", { name: "Comment on lines a.ts:1" });
+    await expect.element(draft).toBeVisible();
+    expect(
+      page.getByRole("button", { name: "Add to review", exact: true }).elements(),
+    ).toHaveLength(0);
+    await draft.fill("Fix this line");
   }
   if (["Ask a question", "Explain this PR"].includes(action) || action.startsWith("Fix findings")) {
     await page.getByRole("button", { name: "More pull request actions" }).click();
@@ -318,6 +330,17 @@ describe.each([
     "Fix check",
     "Add to agent",
   ])("%s writes to the correct composer", async (action) => {
+    // Cover both a host without inline comments and an account that cannot write them.
+    currentDetail =
+      thread === stackThread
+        ? {
+            ...detail,
+            capabilities: {
+              ...detail.capabilities,
+              review: { ...detail.capabilities.review, inlineComment: true },
+            },
+          }
+        : { ...detail, viewerPermissions: { ...detail.viewerPermissions, comment: true } };
     if (target) useComposerDraftStore.getState().setPrompt(target, "Keep my draft");
     await renderPanel();
     await runAction(target ? action : action.replace("in this thread", "in a thread"));
@@ -333,8 +356,20 @@ describe.each([
     if (action === "Add to agent") {
       expect(draft()?.prompt).toContain("Fix this line");
       expect(draft()?.reviewComments).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: "note-1", diff: "+broken()" })]),
+        expect.arrayContaining([
+          expect.objectContaining({
+            filePath: "a.ts",
+            diff: expect.stringContaining("+broken()"),
+            startIndex: 0,
+            endIndex: 0,
+          }),
+        ]),
       );
+      expect(usePullRequestReviewStore.getState().drafts).toEqual({});
+      expect(hostCommand).not.toHaveBeenCalled();
+      await expect
+        .element(page.getByRole("textbox", { name: "Comment on lines a.ts:1" }))
+        .not.toBeInTheDocument();
     }
     if (target) {
       expect(draft()?.prompt).toContain("Keep my draft");
@@ -346,13 +381,72 @@ describe.each([
   });
 });
 
+it("offers both selection actions and queues a permitted host review locally", async () => {
+  currentDetail = {
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, inlineComment: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  await render({ composerDraftTarget: draftId, threadRef });
+  await tab("Code").click();
+  await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await selectFirstLine();
+  const addToReview = page.getByRole("button", { name: "Add to review", exact: true });
+  await expect.element(addToReview).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Add to agent", exact: true }))
+    .toBeVisible();
+  await selectionDraft().fill("Fix this line before merging");
+  await addToReview.click();
+  await expect.element(selectionDraft()).not.toBeInTheDocument();
+  expect(Object.values(usePullRequestReviewStore.getState().drafts).flat()).toEqual([
+    expect.objectContaining({ path: "a.ts", body: "Fix this line before merging" }),
+  ]);
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments ?? []).toEqual(
+    [],
+  );
+  expect(hostCommand).not.toHaveBeenCalled();
+});
+
+it("cancels an agent-only selection and submits a fresh one with the keyboard without a host review", async () => {
+  await render({ composerDraftTarget: draftId, threadRef });
+  await tab("Code").click();
+  await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await selectFirstLine();
+  await selectionDraft().fill("Discard this request");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect.element(selectionDraft()).not.toBeInTheDocument();
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.reviewComments ?? []).toEqual(
+    [],
+  );
+  expect(usePullRequestReviewStore.getState().drafts).toEqual({});
+  expect(hostCommand).not.toHaveBeenCalled();
+
+  await selectFirstLine();
+  await expect.element(selectionDraft()).toHaveValue("");
+  await selectionDraft().fill("Fix this line");
+  await userEvent.keyboard("{Control>}{Enter}{/Control}");
+  await expect.element(selectionDraft()).not.toBeInTheDocument();
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toContain(
+    "Fix this line",
+  );
+  expect(usePullRequestReviewStore.getState().drafts).toEqual({});
+  expect(hostCommand).not.toHaveBeenCalled();
+});
+
 it("folds the title only for the active tab's own scroller", async () => {
   await render();
   const title = page.getByRole("heading", { level: 1, name: "Test pull request" });
   await expect.element(title).toBeVisible();
   const titleFold = () => title.element().closest("[inert]") !== null;
   const scrollTo = async (testId: string, top: number) => {
-    const scroller = page.getByTestId(testId).element() as HTMLElement;
+    const scroller =
+      testId === "code-scroller"
+        ? document.querySelector<HTMLElement>(".\\@container.overflow-auto")!
+        : (page.getByTestId(testId).element() as HTMLElement);
     await act(async () => {
       scroller.scrollTop = top;
       scroller.dispatchEvent(new Event("scroll"));
@@ -374,7 +468,8 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(true));
 
   await tab("Code").click();
-  await expect.element(page.getByTestId("code-scroller")).toBeInTheDocument();
+  await page.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await expect.element(page.getByText("broken()", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(titleFold()).toBe(false));
   await scrollTo("code-scroller", 600);
   await vi.waitFor(() => expect(titleFold()).toBe(true));
