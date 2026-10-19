@@ -15,7 +15,6 @@ import {
   type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
   type OrchestrationV2Actor,
-  type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
@@ -47,6 +46,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -429,11 +429,12 @@ export interface ThreadManagementServiceShape {
     void,
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
-  /** Applies ordinary lifecycle commands through subagent lineage, including provider-native children. */
   readonly cascadeSubagentLifecycle: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly operation: "archive" | "unarchive" | "delete";
+    readonly sourceSequence?: number | undefined;
+    readonly archiveCommandId?: CommandId | null | undefined;
   }) => Effect.Effect<
     void,
     | Orchestrator.OrchestratorV2Error
@@ -1134,15 +1135,9 @@ const make = Effect.gen(function* () {
     input,
   ) => {
     const { operation } = input;
-    const reached = (thread: OrchestrationV2AppThread) =>
-      thread.deletedAt !== null ||
-      (operation === "archive"
-        ? thread.archivedAt !== null
-        : operation === "unarchive" && thread.archivedAt === null);
     // Rejected receipts are permanent. Retry with stable suffixes, reusing the
     // first unused or accepted id so accepted commands never run twice.
     const commandIdFrom = Effect.fnUntraced(function* (derived: CommandId) {
-      // Leave headroom for process-loss recovery beyond normal outbox retries.
       const maxCommandIds = 32;
       for (let retry = 0; retry < maxCommandIds; retry++) {
         const id = retry === 0 ? derived : CommandId.make(`${derived}:retry:${retry}`);
@@ -1155,64 +1150,82 @@ const make = Effect.gen(function* () {
         cause: `All ${maxCommandIds} subagent lifecycle command IDs were rejected.`,
       });
     });
-    const cascade = Effect.gen(function* () {
+    const walk = Effect.gen(function* () {
+      const receipt = yield* receipts.getByCommandId(input.commandId);
+      if (operation !== "delete" && (Option.isNone(receipt) || receipt.value.status !== "accepted"))
+        return;
+      const sourceSequence =
+        input.sourceSequence ?? (Option.isSome(receipt) ? receipt.value.resultSequence : 0);
+      const lifecycle = yield* receipts.getLatestLifecycle(input.threadId);
+      const { thread } = yield* orchestrator.getThreadRecords(input.threadId, []);
       const limit = yield* DispatchModeLimit;
+      if (
+        (limit !== undefined && exceededDispatchModeLimit(limit, thread) !== undefined) ||
+        (operation !== "delete" &&
+          (thread.deletedAt !== null ||
+            (lifecycle !== null &&
+              lifecycle.resultSequence > sourceSequence &&
+              lifecycle.commandId !== input.commandId)))
+      )
+        return;
+      const archiveCommandId =
+        operation === "delete"
+          ? null
+          : operation === "archive"
+            ? input.commandId
+            : input.archiveCommandId !== undefined
+              ? input.archiveCommandId
+              : ((yield* receipts.getLatestLifecycle(input.threadId, sourceSequence - 1))
+                  ?.commandId ?? null);
       const children = yield* orchestrator.getSubagentChildThreads(input.threadId, {
         includeDeleted: operation === "delete",
       });
       const [, failures] = yield* Effect.partition(children, (child) =>
         Effect.gen(function* () {
           if (limit !== undefined && exceededDispatchModeLimit(limit, child) !== undefined) return;
-          const derived = CommandId.make(`${input.commandId}:subagent:${child.id}`);
-          const descend = commandIdFrom(derived).pipe(
-            Effect.flatMap((commandId) =>
-              cascadeSubagentLifecycle({ ...input, commandId, threadId: child.id }),
-            ),
+          const commandId = yield* commandIdFrom(
+            CommandId.make(`${input.commandId}:subagent:${child.id}`),
           );
-          if (reached(child)) return yield* descend;
-          const commandId = yield* commandIdFrom(derived);
-          yield* dispatch({ type: `thread.${operation}`, commandId, threadId: child.id }).pipe(
-            Effect.catch((cause) =>
-              Effect.gen(function* () {
-                if (cause._tag === "OrchestratorThreadAboveModeLimitError") return;
-                const { thread } = yield* orchestrator.getThreadRecords(child.id, []);
-                if (!reached(thread)) return yield* Effect.fail(cause);
-                if (thread.deletedAt === null || operation === "delete") yield* descend;
-              }),
+          const childArchiveId =
+            operation === "archive"
+              ? commandId
+              : archiveCommandId === null
+                ? null
+                : yield* commandIdFrom(CommandId.make(`${archiveCommandId}:subagent:${child.id}`));
+          if (operation === "delete" && child.deletedAt !== null) {
+            return yield* cascadeSubagentLifecycle({ ...input, commandId, threadId: child.id });
+          }
+          const result = yield* dispatch({
+            type: `thread.${operation}`,
+            commandId,
+            threadId: child.id,
+          }).pipe(
+            Effect.provideService(
+              EffectOutbox.SubagentLifecycle,
+              operation === "delete"
+                ? undefined
+                : {
+                    sourceSequence,
+                    archiveCommandId: childArchiveId,
+                  },
             ),
+            Effect.catchTags({ OrchestratorThreadAboveModeLimitError: () => Effect.succeed(null) }),
           );
+          if (result !== null && result.storedEvents.length === 0) {
+            yield* cascadeSubagentLifecycle({
+              ...input,
+              commandId,
+              threadId: child.id,
+              sourceSequence,
+              archiveCommandId: childArchiveId,
+            });
+          }
         }),
       );
-      // Typed failures must not strand healthy siblings. Defects and interruption
-      // still abort immediately, leaving durable replay to the outbox worker.
+      // Finish healthy siblings before reporting a failure to the durable worker.
       if (failures[0] !== undefined) return yield* Effect.fail(failures[0]);
     });
-    if (operation === "delete") return cascade;
-    // Hold each recursive parent's lock through its walk so later choices win.
-    // Non-reentrant locks nest parent before child, never child before parent.
-    return threadDispatch.withLock(
-      input.threadId,
-      Effect.gen(function* () {
-        const { thread } = yield* orchestrator.getThreadRecords(input.threadId, []);
-        const limit = yield* DispatchModeLimit;
-        if (
-          thread.deletedAt !== null ||
-          (limit !== undefined && exceededDispatchModeLimit(limit, thread) !== undefined)
-        )
-          return;
-        // Even a skipped child needs a receipt so replay preserves later choices.
-        yield* receipts.insertIfAbsent({
-          commandId: input.commandId,
-          threadId: input.threadId,
-          commandType: `thread.${operation}`,
-          acceptedAt: yield* DateTime.now,
-          resultSequence: yield* orchestrator.getThreadEventSequence(input.threadId),
-          status: "accepted",
-          error: null,
-        });
-        if (reached(thread)) yield* cascade;
-      }),
-    );
+    return threadDispatch.withLock(input.threadId, walk);
   };
 
   return ThreadManagementService.of({

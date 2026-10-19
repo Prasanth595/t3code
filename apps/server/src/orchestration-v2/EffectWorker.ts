@@ -502,6 +502,8 @@ export const layerExecutor: Layer.Layer<
                 commandId: effect.commandId,
                 threadId: effect.threadId,
                 operation: effect.request.operation,
+                sourceSequence: effect.request.sourceSequence,
+                archiveCommandId: effect.request.archiveCommandId,
               })
               .pipe(
                 Effect.provideService(DispatchModeLimit, effect.request.limit),

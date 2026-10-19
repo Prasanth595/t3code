@@ -276,7 +276,7 @@ const layerTest = Layer.mergeAll(
 ).pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
   Layer.provide(McpProviderSessions.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
   Layer.provide(ServerSettings.layerTest()),
@@ -6424,7 +6424,7 @@ describe("subagent lifecycle", () => {
     };
   });
   const fixture = Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const outbox = yield* EffectOutbox.EffectOutboxV2;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -6452,7 +6452,7 @@ describe("subagent lifecycle", () => {
       ["foreign", parent, "subagent"],
     ] as const) {
       const id = ThreadId.make(name);
-      yield* orchestrator.dispatch({
+      yield* threads.dispatch({
         type: "thread.create",
         commandId: CommandId.make(`create:${id}`),
         threadId: id,
@@ -6475,159 +6475,274 @@ describe("subagent lifecycle", () => {
       });
     }
     const command = (operation: Lifecycle, id = parent) =>
-      orchestrator.dispatch({
+      threads.dispatch({
         type: `thread.${operation}`,
         commandId: CommandId.make(`${operation}:${id}`),
         threadId: id,
       });
-    const cascade = (operation: Lifecycle) =>
-      ThreadManagementService.ThreadManagementService.use((threads) =>
-        threads.cascadeSubagentLifecycle({
-          threadId: parent,
-          commandId: CommandId.make(operation),
-          operation,
-        }),
-      );
+    const cascadeEffect = (operation: Lifecycle) =>
+      outbox
+        .get(`effect:${operation}:${parent}:subagent-threads.cascade`)
+        .pipe(Effect.map(Option.getOrThrow));
     const archived = (id: ThreadId) =>
       store.getThread(id).pipe(Effect.map((thread) => thread.archivedAt !== null));
-    return { orchestrator, store, outbox, worker, now, set, command, cascade, archived };
+    return { threads, store, outbox, worker, now, set, command, cascadeEffect, archived };
   });
 
-  it.effect("cascades committed lifecycle through subagents, preserving forks and projects", () =>
-    Effect.gen(function* () {
-      const f = yield* fixture;
-      yield* f.set(app, { archivedAt: f.now }); // Independently archived intermediate.
-      for (const operation of ["archive", "unarchive", "delete"] as const) {
-        if (operation === "delete") yield* f.set(app, { deletedAt: f.now }); // Traverse a tombstone.
-        yield* f.command(operation);
-        if (operation === "archive") assert.isFalse(yield* f.archived(native));
+  it.effect(
+    "archives, restores and deletes both kinds of subagent recursively, leaving forks and other projects alone",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        for (const operation of ["archive", "unarchive", "delete"] as const) {
+          // A deleted intermediate must not hide surviving descendants from deletion.
+          if (operation === "delete") yield* f.set(app, { deletedAt: f.now });
+          yield* f.command(operation);
+          if (operation === "archive") assert.isFalse(yield* f.archived(native));
+          yield* f.worker.drain();
+          for (const id of [native, app, grandchild]) {
+            const thread = yield* f.store.getThread(id);
+            if (operation === "delete") assert.isNotNull(thread.deletedAt);
+            else assert.equal(thread.archivedAt !== null, operation === "archive");
+          }
+          for (const name of ["fork", "fork-child", "foreign"]) {
+            const thread = yield* f.store.getThread(ThreadId.make(name));
+            assert.isNull(thread.archivedAt);
+            assert.isNull(thread.deletedAt);
+          }
+          assert.equal((yield* f.cascadeEffect(operation)).status, "succeeded");
+          if (operation !== "unarchive") {
+            const effects = yield* f.outbox.listByCommandId(
+              CommandId.make(`${operation}:${parent}:subagent:${native}`),
+            );
+            assert.isTrue(
+              effects.some(
+                (effect) =>
+                  effect.request.type === "terminal.cleanup" && effect.status === "succeeded",
+              ),
+              "descendant lifecycle uses ordinary cleanup effects",
+            );
+          }
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "restores only descendants archived by this parent, including through an independently archived child",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        yield* f.command("archive", app);
         yield* f.worker.drain();
-        for (const id of [native, app, grandchild]) {
-          const thread = yield* f.store.getThread(id);
-          if (operation === "delete") assert.isNotNull(thread.deletedAt);
-          else assert.equal(thread.archivedAt !== null, operation === "archive");
+        yield* f.command("unarchive", grandchild);
+        yield* f.worker.drain();
+
+        yield* f.command("archive");
+        yield* f.worker.drain();
+        for (const id of [app, native, grandchild]) assert.isTrue(yield* f.archived(id));
+        yield* f.command("unarchive", native);
+        yield* f.worker.drain();
+        yield* f.command("archive", native);
+        yield* f.worker.drain();
+
+        for (const id of [parent, app, native, grandchild]) {
+          yield* f.threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(id + ":rename"),
+            threadId: id,
+            title: "Renamed after archiving",
+          });
         }
-        for (const name of ["fork", "fork-child", "foreign"]) {
-          const thread = yield* f.store.getThread(ThreadId.make(name));
-          assert.isNull(thread.archivedAt);
-          assert.isNull(thread.deletedAt);
-        }
-        const effectId = `effect:${operation}:${parent}:subagent-threads.cascade`;
-        assert.equal(Option.getOrThrow(yield* f.outbox.get(effectId)).status, "succeeded");
-      }
-    }).pipe(Effect.provide(layerTest)),
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        assert.isAbove((yield* maintenance.compactEventStore).deletedEventCount, 0);
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepEqual(
+          yield* sql`
+          SELECT sequence FROM orchestration_events
+          WHERE event_type IN ('thread.archived', 'thread.unarchived')
+        `,
+          [],
+        );
+        yield* sql`
+          UPDATE orchestration_v2_effect_outbox
+          SET completed_at = ${DateTime.formatIso(DateTime.subtract(f.now, { days: 8 }))}
+          WHERE status = 'succeeded'
+        `;
+        assert.isAbove(yield* f.outbox.pruneSettled, 0);
+        yield* f.command("unarchive");
+        yield* f.worker.drain();
+
+        assert.isTrue(yield* f.archived(app), "pre-existing independent archive");
+        assert.isTrue(yield* f.archived(native), "newer independent archive");
+        assert.isFalse(yield* f.archived(grandchild), "archive owned by the parent cascade");
+      }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each(
-    (["archive", "unarchive"] as const).flatMap((operation) =>
-      (["runtime", "interaction"] as const).flatMap((mode) =>
-        (["changing", "reached", "nested", "locked-changing", "locked-reached"] as const)
-          .filter((path) => mode === "runtime" || !path.startsWith("locked"))
-          .map((path) => ({ operation, mode, path })),
-      ),
-    ),
-  )("keeps the durable caller boundary for %j", ({ operation, mode, path }) =>
+  it.effect("keeps a child's newer restore when the parent's archive has not dispatched yet", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      const receipts = yield* Receipts.CommandReceiptStoreV2;
-      const target = operation === "archive";
-      const reached = path.endsWith("reached");
-      for (const id of [parent, app, native, grandchild])
-        yield* f.set(id, { ...limit, archivedAt: target ? null : f.now });
-      if (reached) yield* f.set(app, { archivedAt: target ? f.now : null });
-      yield* f.command(operation).pipe(Effect.provideService(DispatchModeLimit, limit));
-      const claimed = Option.getOrThrow(
-        yield* f.outbox.claimNext({ workerId: "lost-caller", leaseDurationMs: 60000 }),
-      );
-      assert.deepEqual(claimed.request, { type: "subagent-threads.cascade", operation, limit });
-      assert.equal((yield* f.outbox.reconcileAfterProcessLoss).requeued, 1);
-      if (path.startsWith("locked")) {
-        const probe = yield* probeChildLock;
-        const raise = yield* f.orchestrator
-          .dispatch({
-            type: "thread.runtime-mode.set",
-            commandId: CommandId.make("raise"),
-            threadId: app,
-            runtimeMode: "full-access",
-          })
-          .pipe(Effect.forkChild({ startImmediately: true }));
-        yield* probe.acquired;
-        const walk = yield* f.worker.runOnce.pipe(Effect.forkChild({ startImmediately: true }));
-        // Consume the raise's request, then the competing walk's request.
-        yield* probe.requested;
-        yield* probe.requested;
-        yield* probe.resume;
-        yield* Fiber.join(raise);
-        yield* Fiber.join(walk);
-      } else {
-        yield* f.set(
-          path === "nested" ? grandchild : app,
-          mode === "runtime" ? { runtimeMode: "full-access" } : { interactionMode: "default" },
-        );
-      }
+      yield* f.command("archive", app);
       yield* f.worker.drain();
-      assert.equal(yield* f.archived(native), target);
-      assert.equal(yield* f.archived(app), reached || path === "nested" ? target : !target);
-      assert.equal(yield* f.archived(grandchild), !target);
-      const deniedId = CommandId.make(
-        `${operation}:${parent}:subagent:${app}${path === "nested" ? `:subagent:${grandchild}` : ""}`,
-      );
-      assert.isTrue(Option.isNone(yield* receipts.getByCommandId(deniedId)));
-      assert.equal(Option.getOrThrow(yield* f.outbox.get(claimed.id)).status, "succeeded");
+      yield* f.command("archive");
+      assert.equal((yield* f.cascadeEffect("archive")).status, "pending");
+      yield* f.command("unarchive", app);
+      yield* f.worker.drain();
+
+      assert.isTrue(yield* f.archived(parent));
+      assert.isTrue(yield* f.archived(native));
+      assert.isFalse(yield* f.archived(app));
+      assert.isFalse(yield* f.archived(grandchild));
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect.each([31, 32, "archive", "unarchive"] as const)(
-    "replays lifecycle receipts or reports exhausted rejected ids for %s",
-    (scenario) =>
+  it.effect("keeps a child's newer archive when the parent's restore has not dispatched yet", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      yield* f.command("archive");
+      yield* f.worker.drain();
+      yield* f.command("unarchive", app);
+      yield* f.worker.drain();
+      yield* f.command("unarchive");
+      assert.equal((yield* f.cascadeEffect("unarchive")).status, "pending");
+      yield* f.command("archive", app);
+      yield* f.worker.drain();
+
+      assert.isFalse(yield* f.archived(parent));
+      assert.isFalse(yield* f.archived(native));
+      assert.isTrue(yield* f.archived(app));
+      assert.isTrue(yield* f.archived(grandchild));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "reuses the last accepted receipt after process loss without undoing a later child restore",
+    () =>
       Effect.gen(function* () {
         const f = yield* fixture;
         const receipts = yield* Receipts.CommandReceiptStoreV2;
-        const operation = typeof scenario === "number" ? "archive" : scenario;
-        const rejections = typeof scenario === "number" ? scenario : 0;
-        const target = operation === "archive";
-        yield* f.set(parent, { archivedAt: target ? f.now : null });
-        if (typeof scenario !== "number")
-          for (const id of [app, grandchild])
-            yield* f.set(id, { archivedAt: target ? f.now : null });
-        const id = (retry: number) =>
-          CommandId.make(`${operation}:subagent:${app}${retry ? `:retry:${retry}` : ""}`);
-        for (let retry = 0; retry < rejections; retry++)
+        const childCommand = "archive:parent:subagent:app";
+        for (let retry = 0; retry < 31; retry++) {
           yield* receipts.upsert({
-            commandId: id(retry),
+            commandId: CommandId.make(`${childCommand}${retry ? `:retry:${retry}` : ""}`),
             threadId: app,
-            commandType: `thread.${operation}`,
+            commandType: "thread.archive",
             acceptedAt: f.now,
             resultSequence: 0,
             status: "rejected",
             error: "Transient failure",
           });
-        if (rejections === 32) {
-          const error = yield* f.cascade(operation).pipe(Effect.flip);
-          assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
-          assert.equal(error.commandId, id(0));
-          assert.equal(error.cause, "All 32 subagent lifecycle command IDs were rejected.");
-          assert.isFalse(yield* f.archived(app));
-          assert.isTrue(yield* f.archived(native));
-          assert.isTrue(Option.isNone(yield* receipts.getByCommandId(id(rejections))));
-          return;
         }
-        yield* f.cascade(operation);
-        assert.equal(
-          Option.getOrThrow(yield* receipts.getByCommandId(id(rejections))).status,
-          "accepted",
+        yield* f.command("archive");
+        // Lose only the outbox acknowledgement, after the real child commands commit.
+        vi.spyOn(f.outbox, "succeed").mockImplementationOnce(() => Effect.succeed(true));
+        yield* f.worker.drain();
+        assert.equal((yield* f.cascadeEffect("archive")).status, "running");
+        const acceptedId = CommandId.make(`${childCommand}:retry:31`);
+        const accepted = Option.getOrThrow(yield* receipts.getByCommandId(acceptedId));
+        assert.equal(accepted.status, "accepted");
+        for (const id of [app, native, grandchild]) assert.isTrue(yield* f.archived(id));
+
+        yield* f.command("unarchive", app);
+        yield* f.worker.drain();
+        assert.equal((yield* f.outbox.reconcileAfterProcessLoss).requeued, 1);
+        yield* f.worker.drain();
+        assert.isFalse(yield* f.archived(app));
+        assert.isFalse(yield* f.archived(grandchild));
+        assert.isTrue(yield* f.archived(native));
+        assert.equal((yield* f.cascadeEffect("archive")).status, "succeeded");
+        assert.deepEqual(Option.getOrThrow(yield* receipts.getByCommandId(acceptedId)), accepted);
+        assert.isTrue(
+          Option.isNone(yield* receipts.getByCommandId(CommandId.make(`${childCommand}:retry:32`))),
         );
-        if (typeof scenario === "number") yield* f.set(grandchild, { archivedAt: null });
-        yield* f.cascade(operation);
-        assert.equal(yield* f.archived(grandchild), target);
-        const descendantId = CommandId.make(`${id(rejections)}:subagent:${grandchild}`);
-        assert.equal((yield* receipts.getByCommandId(descendantId))._tag, "Some");
-        yield* f.command(target ? "unarchive" : "archive", app);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("reports 32 rejected receipts to the outbox while healthy siblings still archive", () =>
+    Effect.gen(function* () {
+      const f = yield* fixture;
+      const receipts = yield* Receipts.CommandReceiptStoreV2;
+      const childCommand = "archive:parent:subagent:app";
+      for (let retry = 0; retry < 32; retry++) {
+        yield* receipts.upsert({
+          commandId: CommandId.make(`${childCommand}${retry ? `:retry:${retry}` : ""}`),
+          threadId: app,
+          commandType: "thread.archive",
+          acceptedAt: f.now,
+          resultSequence: 0,
+          status: "rejected",
+          error: "Transient failure",
+        });
+      }
+      yield* f.command("archive");
+      yield* f.worker.drain();
+      const effect = yield* f.cascadeEffect("archive");
+      assert.equal(effect.status, "pending");
+      assert.equal(effect.attemptCount, 1);
+      assert.include(effect.lastError, "OrchestratorDispatchError");
+      assert.include(effect.lastError, "All 32 subagent lifecycle command IDs were rejected.");
+      assert.isFalse(yield* f.archived(app));
+      assert.isFalse(yield* f.archived(grandchild));
+      assert.isTrue(yield* f.archived(native));
+      assert.isTrue(
+        Option.isNone(yield* receipts.getByCommandId(CommandId.make(`${childCommand}:retry:32`))),
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    { mode: "runtime", alreadyArchived: false },
+    { mode: "interaction", alreadyArchived: true },
+  ] as const)(
+    "retains the caller's $mode limit through recovery and rechecks it under the child lock",
+    ({ mode, alreadyArchived }) =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const receipts = yield* Receipts.CommandReceiptStoreV2;
+        for (const id of [parent, app, native, grandchild]) yield* f.set(id, limit);
+        if (alreadyArchived) yield* f.set(app, { archivedAt: f.now });
+        yield* f.command("archive").pipe(Effect.provideService(DispatchModeLimit, limit));
+        const claimed = Option.getOrThrow(
+          yield* f.outbox.claimNext({ workerId: "lost-caller", leaseDurationMs: 60000 }),
+        );
+        assert.equal(claimed.request.type, "subagent-threads.cascade");
+        assert.equal((yield* f.outbox.reconcileAfterProcessLoss).requeued, 1);
+        const probe = yield* probeChildLock;
+        const raise = yield* f.threads
+          .dispatch(
+            mode === "runtime"
+              ? {
+                  type: "thread.runtime-mode.set",
+                  commandId: CommandId.make("raise"),
+                  threadId: app,
+                  runtimeMode: "full-access",
+                }
+              : {
+                  type: "thread.interaction-mode.set",
+                  commandId: CommandId.make("raise"),
+                  threadId: app,
+                  interactionMode: "default",
+                },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* probe.acquired;
+        const walk = yield* f.worker.runOnce.pipe(Effect.forkChild({ startImmediately: true }));
+        // Both operations read the old limit before the queued mode change commits.
+        yield* probe.requested;
+        yield* probe.requested;
+        yield* probe.resume;
+        yield* Fiber.join(raise);
+        yield* Fiber.join(walk);
         yield* f.worker.drain();
-        yield* f.cascade(operation);
-        yield* f.worker.drain();
-        for (const id of [app, grandchild]) assert.equal(yield* f.archived(id), !target);
-        assert.isTrue(Option.isNone(yield* receipts.getByCommandId(id(rejections + 1))));
+
+        assert.equal(yield* f.archived(app), alreadyArchived);
+        assert.isFalse(yield* f.archived(grandchild), "the entire above-limit subtree is excluded");
+        assert.isTrue(yield* f.archived(native), "an eligible sibling still progresses");
+        assert.isTrue(
+          Option.isNone(
+            yield* receipts.getByCommandId(CommandId.make("archive:parent:subagent:app")),
+          ),
+        );
+        assert.equal((yield* f.cascadeEffect("archive")).status, "succeeded");
       }).pipe(Effect.provide(layerTest)),
   );
 });

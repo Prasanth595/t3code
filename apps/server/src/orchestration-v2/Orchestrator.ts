@@ -3364,6 +3364,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.commandId,
           command.threadId,
           command.type === "thread.archive" ? "archive" : "unarchive",
+          command.type === "thread.unarchive"
+            ? ((yield* commandReceipts
+                .getLatestLifecycle(command.threadId)
+                .pipe(mapDispatchError(command)))?.commandId ?? null)
+            : command.commandId,
         );
         yield* Ref.update(effects, (existing) => [...existing, cascade]);
       }
@@ -11386,6 +11391,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
+    const cascade = yield* EffectOutbox.SubagentLifecycle;
+    if (
+      cascade !== undefined &&
+      (command.type === "thread.archive" || command.type === "thread.unarchive")
+    ) {
+      const lifecycle = yield* commandReceipts
+        .getLatestLifecycle(command.threadId)
+        .pipe(mapDispatchError(command));
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (
+        thread.deletedAt !== null ||
+        (lifecycle !== null && lifecycle.resultSequence > cascade.sourceSequence) ||
+        (command.type === "thread.archive"
+          ? thread.archivedAt !== null
+          : thread.archivedAt === null || lifecycle?.commandId !== cascade.archiveCommandId)
+      ) {
+        const sequence = yield* eventSink
+          .latestSequence({ threadId: command.threadId })
+          .pipe(mapDispatchError(command));
+        // An acknowledgement must not become the child's latest lifecycle choice.
+        yield* commandReceipts
+          .insertIfAbsent({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            commandType: "subagent-threads.cascade",
+            acceptedAt: yield* DateTime.now,
+            resultSequence: sequence,
+            status: "accepted",
+            error: null,
+          })
+          .pipe(mapDispatchError(command));
+        return { sequence, storedEvents: [] };
+      }
     }
 
     const plan = yield* dispatchOnce(command).pipe(

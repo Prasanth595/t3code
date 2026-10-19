@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   CommandId,
   MessageId,
+  NonNegativeInt,
   NodeId,
   ProviderSessionId,
   RunAttemptId,
@@ -30,6 +31,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { forkParked } from "../serverActivation.ts";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
+
+export const SubagentLifecycle = Context.Reference<
+  { readonly sourceSequence: number; readonly archiveCommandId: CommandId | null } | undefined
+>("t3/orchestration-v2/SubagentLifecycle", { defaultValue: () => undefined });
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
@@ -109,6 +114,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("subagent-threads.cascade"),
     operation: Schema.Literals(["archive", "unarchive", "delete"]),
+    sourceSequence: Schema.optional(NonNegativeInt),
+    archiveCommandId: Schema.optional(Schema.NullOr(CommandId)),
     limit: Schema.optional(
       Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
     ),
@@ -190,13 +197,14 @@ export interface PendingOrchestrationEffectV2 {
   readonly availableAt?: DateTime.Utc;
 }
 
-/** Queue before native cleanup so descendants do not wait for the parent's provider teardown. */
 export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycleEffect")(function* (
   commandId: CommandId,
   threadId: ThreadId,
   operation: "archive" | "unarchive" | "delete",
+  archiveCommandId: CommandId | null = null,
 ) {
   const limit = yield* DispatchModeLimit;
+  const cascade = yield* SubagentLifecycle;
   return {
     id: `effect:${commandId}:subagent-threads.cascade`,
     commandId,
@@ -204,6 +212,13 @@ export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycle
     request: {
       type: "subagent-threads.cascade",
       operation,
+      sourceSequence: cascade?.sourceSequence,
+      archiveCommandId:
+        operation === "archive"
+          ? commandId
+          : cascade === undefined
+            ? archiveCommandId
+            : cascade.archiveCommandId,
       limit:
         limit === undefined
           ? undefined
