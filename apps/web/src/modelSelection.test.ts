@@ -781,7 +781,7 @@ describe("instance-scoped model selection", () => {
     ).toEqual(saved);
   });
 
-  describe("an existing thread saved without options", () => {
+  describe("composer model option precedence", () => {
     const instanceId = ProviderInstanceId.make("claudeAgent");
     const driver = ProviderDriverKind.make("claudeAgent");
     const base = provider({ provider: driver, instanceId, models: ["claude-opus-5-5"] });
@@ -802,16 +802,6 @@ describe("instance-scoped model selection", () => {
                 ],
                 currentValue: "medium",
               },
-              {
-                id: "contextWindow",
-                label: "Context",
-                type: "select" as const,
-                options: [
-                  { id: "200k", label: "200K" },
-                  { id: "1m", label: "1M", isDefault: true },
-                ],
-                currentValue: "1m",
-              },
             ],
           },
         })),
@@ -819,7 +809,6 @@ describe("instance-scoped model selection", () => {
     ];
     const settingsDefault = createModelSelection(instanceId, "claude-opus-5-5", [
       { id: "effort", value: "high" },
-      { id: "contextWindow", value: "1m" },
     ]);
     const dispatchedSelection = (
       threadModelSelection: ReturnType<typeof createModelSelection> | null,
@@ -847,7 +836,7 @@ describe("instance-scoped model selection", () => {
       );
     };
 
-    it("runs at its own defaults rather than the settings default's options", () => {
+    it("does not inherit settings options for an optionless existing thread", () => {
       const threadSelection = createModelSelection(instanceId, "claude-opus-5-5");
       expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
     });
@@ -855,7 +844,6 @@ describe("instance-scoped model selection", () => {
     it("keeps the options it was saved with", () => {
       const threadSelection = createModelSelection(instanceId, "claude-opus-5-5", [
         { id: "effort", value: "medium" },
-        { id: "contextWindow", value: "200k" },
       ]);
       expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
     });
