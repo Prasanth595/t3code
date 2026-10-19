@@ -350,6 +350,73 @@ describe("V2 session presentation", () => {
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
     });
 
+    it("preserves a notification-only wake run while ignoring inherited and unrelated work", () => {
+      const fixture = makeStreamingTimelineFixture();
+      const first = fixture.visibleTurnItems[0]!;
+      if (first.item.type !== "user_message") throw new Error("Expected a user message fixture.");
+      const notification = {
+        ...first,
+        item: {
+          ...first.item,
+          id: TurnItemId.make("wake-item"),
+          runId: runId(2),
+          type: "notification" as const,
+          source: { kind: "delegated_task" as const, taskIds: [NodeId.make("task-1")] },
+          outcome: "unknown" as const,
+          summary: "Delegated task finished",
+        },
+      };
+      const inherited = {
+        ...notification,
+        visibility: "inherited" as const,
+        sourceThreadId: ThreadId.make("parent-thread"),
+        sourceItemId: TurnItemId.make("inherited-wake"),
+        item: {
+          ...notification.item,
+          id: TurnItemId.make("inherited-wake"),
+          threadId: ThreadId.make("parent-thread"),
+          runId: runId(7),
+        },
+      };
+      const work: TimelineEntry = {
+        id: "background-work",
+        kind: "work",
+        createdAt: "2026-06-20T00:00:02.000Z",
+        entry: {
+          id: "background-work",
+          createdAt: "2026-06-20T00:00:02.000Z",
+          runId: runId(8),
+          itemType: "command_execution",
+          label: "Background work",
+          tone: "tool",
+        },
+      };
+
+      expect(
+        Object.fromEntries(
+          deriveRevertTurnCountByUserMessageId({
+            timelineEntries: [
+              ...turn(1),
+              ...deriveTimelineEntriesFromVisibleTurnItems({
+                visibleTurnItems: [notification, inherited],
+                optimisticMessages: [],
+              }),
+              work,
+              ...turn(3),
+            ],
+            checkpoints: [
+              checkpoint(1),
+              checkpoint(2),
+              checkpoint(3),
+              checkpoint(7),
+              checkpoint(8),
+            ],
+            threadStartCheckpointReady: true,
+          }),
+        ),
+      ).toEqual({ "user-1": 0, "user-3": 2 });
+    });
+
     it("hides edit when the predecessor is unavailable or the run is unsettled", () => {
       expect(targets([1, 2], [checkpoint(2)])).toEqual({ "user-1": 0 });
       expect(targets([1, 2], [checkpoint(1, "stale"), checkpoint(2)])).toEqual({ "user-1": 0 });
@@ -360,6 +427,19 @@ describe("V2 session presentation", () => {
       expect(targets([1, 2], [checkpoint(1), checkpoint(2)], { unsettledRunId: runId(2) })).toEqual(
         { "user-1": 0 },
       );
+    });
+
+    it("can edit a cancelled run but cannot target its checkpoint without a provider turn", () => {
+      expect(
+        Object.fromEntries(
+          deriveRevertTurnCountByUserMessageId({
+            timelineEntries: [1, 2, 3].flatMap(turn),
+            checkpoints: [checkpoint(1), checkpoint(2), checkpoint(3)],
+            threadStartCheckpointReady: true,
+            availableRevertTurnCounts: new Set([0, 1]),
+          }),
+        ),
+      ).toEqual({ "user-1": 0, "user-2": 1 });
     });
 
     it("leaves inherited history uneditable and restores the first local run to thread start", () => {

@@ -2259,7 +2259,7 @@ describe("waitForRevertedMessage", () => {
 
   it("rejects with the projected reason when the rollback fails for good", async () => {
     const { state, projection } = projectionAtom();
-    const waiting = waitForRevertedMessage(threadRef, messageId, 1, requestId, async () => {});
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {});
     await Promise.resolve();
     appAtomRegistry.set(state, {
       data: Option.some({
@@ -2274,10 +2274,77 @@ describe("waitForRevertedMessage", () => {
     await expect(waiting).rejects.toThrow("The provider could not roll back.");
   });
 
+  it("waits for the retained rollback suffix when the edited message and run are paged out", async () => {
+    vi.useFakeTimers();
+    const { state, projection } = projectionAtom();
+    const latestRunId = RunId.make("latest-run-9");
+    const latestRun = {
+      id: latestRunId,
+      threadId: projection.thread.id,
+      ordinal: 9,
+      providerInstanceId: projection.thread.providerInstanceId,
+      modelSelection: projection.thread.modelSelection,
+      providerThreadId: null,
+      userMessageId: MessageId.make("latest-message-9"),
+      rootNodeId: null,
+      activeAttemptId: null,
+      status: "cancelled" as const,
+      requestedAt: projection.updatedAt,
+      startedAt: projection.updatedAt,
+      completedAt: projection.updatedAt,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const bounded = {
+      ...projection,
+      messages: [],
+      runs: [
+        {
+          ...latestRun,
+          id: RunId.make("old-rewound-run-3"),
+          userMessageId: MessageId.make("old-rewound-message-3"),
+          ordinal: 3,
+          status: "rolled_back" as const,
+        },
+        latestRun,
+      ],
+    };
+    appAtomRegistry.set(state, { data: Option.some(bounded) });
+    let outcome = "pending";
+    const waiting = waitForRevertedMessage(threadRef, 2, requestId, async () => {}).then(
+      () => {
+        outcome = "reverted";
+      },
+      (error: Error) => {
+        outcome = error.message;
+      },
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("pending");
+
+      appAtomRegistry.set(state, {
+        data: Option.some({
+          ...bounded,
+          runs: bounded.runs.map((run) =>
+            run.id === latestRunId ? { ...run, status: "rolled_back" as const } : run,
+          ),
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(outcome).toBe("reverted");
+      await waiting;
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores a failure recorded for an earlier rollback", async () => {
     vi.useFakeTimers();
     const { state, projection } = projectionAtom();
-    const waiting = waitForRevertedMessage(threadRef, messageId, 1, requestId, async () => {}, 50);
+    const waiting = waitForRevertedMessage(threadRef, 1, requestId, async () => {}, 50);
     const settled = expect(waiting).rejects.toThrow("Timed out waiting for the thread to rewind.");
     appAtomRegistry.set(state, {
       data: Option.some({

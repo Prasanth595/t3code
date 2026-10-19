@@ -1074,7 +1074,6 @@ export async function waitForStartedServerThread(
 
 export async function waitForRevertedMessage(
   threadRef: ScopedThreadRef,
-  messageId: MessageId,
   turnCount: number,
   requestId: CommandId,
   revert: () => Promise<void>,
@@ -1083,10 +1082,18 @@ export async function waitForRevertedMessage(
   const threadAtom = environmentThreadDetails.stateAtom(threadRef);
   const readProjection = () => Option.getOrNull(appAtomRegistry.get(threadAtom).data);
   const initial = readProjection();
-  if (!initial?.messages.some((message) => message.id === messageId)) {
-    throw new Error("The message to rewind is no longer available.");
-  }
-  const messageRunId = initial.messages.find((message) => message.id === messageId)?.runId;
+  // Paging can omit the source run. Rollback commits the entire settled suffix atomically.
+  const witness = initial?.runs.reduce<(typeof initial.runs)[number] | undefined>((latest, run) => {
+    if (
+      run.ordinal <= turnCount ||
+      (run.status !== "completed" &&
+        run.status !== "interrupted" &&
+        run.status !== "failed" &&
+        run.status !== "cancelled")
+    )
+      return latest;
+    return latest === undefined || run.ordinal > latest.ordinal ? run : latest;
+  }, undefined);
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     let accepted = false;
@@ -1110,10 +1117,7 @@ export async function waitForRevertedMessage(
       }
       if (
         accepted &&
-        thread.runs.some(
-          (run) =>
-            run.id === messageRunId && run.ordinal > turnCount && run.status === "rolled_back",
-        )
+        thread.runs.some((run) => run.id === witness?.id && run.status === "rolled_back")
       )
         finish();
     };

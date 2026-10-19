@@ -1017,6 +1017,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly threadStartCheckpointReady: boolean;
+  readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
   const readyTurnCountByRunId = new Map<RunId, number>();
@@ -1030,24 +1031,38 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   let previousRunId: RunId | null = null;
   for (const entry of input.timelineEntries) {
     // Inherited history belongs to the source thread, not our checkpoint scope.
-    if (entry.kind !== "message" || entry.projectedItem?.visibility === "inherited") continue;
-    const { message } = entry;
-    if (message.runId === null) continue;
-    if (!targetByRunId.has(message.runId)) {
+    if (entry.kind !== "message" && entry.kind !== "work") continue;
+    const projectedItem =
+      entry.kind === "message" ? entry.projectedItem : entry.entry.projectedItem;
+    if (projectedItem?.visibility === "inherited") continue;
+    const runId =
+      entry.kind === "message"
+        ? entry.message.runId
+        : entry.entry.itemType === "notification"
+          ? entry.entry.runId
+          : null;
+    if (runId == null) continue;
+    if (!targetByRunId.has(runId)) {
       targetByRunId.set(
-        message.runId,
+        runId,
         previousRunId === null
           ? input.threadStartCheckpointReady
             ? 0
             : undefined
           : readyTurnCountByRunId.get(previousRunId),
       );
-      previousRunId = message.runId;
+      previousRunId = runId;
     }
+    if (entry.kind !== "message") continue;
+    const { message } = entry;
     if (message.role !== "user" || message.runId === input.unsettledRunId) continue;
     if (message.inputIntent !== "turn_start" && message.inputIntent !== "queued_turn") continue;
-    const target = targetByRunId.get(message.runId);
-    if (target !== undefined) byUserMessageId.set(message.id, target);
+    const target = targetByRunId.get(runId);
+    if (
+      target !== undefined &&
+      (input.availableRevertTurnCounts === undefined || input.availableRevertTurnCounts.has(target))
+    )
+      byUserMessageId.set(message.id, target);
   }
   return byUserMessageId;
 }
