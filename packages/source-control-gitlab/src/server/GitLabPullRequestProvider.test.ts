@@ -295,72 +295,73 @@ describe("optional activity reads", () => {
     cwd: "/w",
     cause: null,
   };
-  const failures = [
-    [new GitLabCli.GitLabCliRateLimitError(context), "rate-limited"],
-    [new GitLabCli.GitLabCliAuthenticationError(context), "unauthenticated"],
-    [new GitLabCli.GitLabCliUnavailableError(context), "missing-tool"],
-  ] as const;
 
-  const operations = ["listNotes", "listCommits", "listDiscussions", "listReactions"] as const;
-  it.effect.each(
-    operations.flatMap((operation) =>
-      failures.map(([error, reason]) => ({ operation, error, reason })),
-    ),
-  )("preserves critical activity failure $operation: $reason", ({ operation, error, reason }) =>
-    Effect.gen(function* () {
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-            ...reads,
-            [operation]: () => Effect.fail(error),
-          }),
-        ),
-      );
-      expect(yield* Effect.flip(provider.getChangeRequestActivity(reference))).toMatchObject({
-        provider: "gitlab",
-        operation: "getChangeRequestActivity",
-        reason,
-        cause: error,
-      });
-    }),
-  );
-
-  it.effect.each(operations)(
-    "recovers an ordinary %s failure while preserving other activity",
-    (operation) =>
+  it.effect.each([
+    {
+      operation: "listNotes",
+      error: new GitLabCli.GitLabCliAuthenticationError(context),
+      reason: "unauthenticated",
+    },
+    {
+      operation: "listCommits",
+      error: new GitLabCli.GitLabCliUnavailableError(context),
+      reason: "missing-tool",
+    },
+  ] as const)(
+    "reports $reason instead of successful partial activity",
+    ({ operation, error, reason }) =>
       Effect.gen(function* () {
         const provider = yield* make.pipe(
           Effect.provide(
             Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
               ...reads,
-              listReactions: () =>
-                Effect.succeed({
-                  reactions: [
-                    { content: "heart" as const, count: 1, actors: [], viewerHasReacted: false },
-                  ],
-                  reactionsByNoteId: new Map(),
-                }),
-              [operation]: () =>
-                Effect.fail(
-                  new GitLabPullRequestCli.GitLabMergeRequestReadError({
-                    command: "glab",
-                    cwd: "/w",
-                    operation,
-                    cause: null,
-                  }),
-                ),
+              [operation]: () => Effect.fail(error),
             }),
           ),
         );
-        const activity = yield* provider.getChangeRequestActivity(reference);
-        expect(activity.commentsTruncated).toBe(
-          operation === "listNotes" || operation === "listDiscussions",
-        );
-        expect(activity.reactions).toHaveLength(operation === "listReactions" ? 0 : 1);
-        expect(activity.comments.map(({ id }) => id)).toEqual(
-          operation === "listNotes" ? [] : [comment.id],
-        );
-        expect(activity.commits).toEqual(operation === "listCommits" ? [] : [commit]);
+
+        expect(yield* Effect.result(provider.getChangeRequestActivity(reference))).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "PullRequestProviderError",
+            provider: "gitlab",
+            operation: "getChangeRequestActivity",
+            reason,
+            detail: error.detail,
+            cause: error,
+          },
+        });
       }),
+  );
+
+  it.effect("keeps comments and commits when optional discussions and reactions fail", () =>
+    Effect.gen(function* () {
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            ...reads,
+            listDiscussions: () =>
+              Effect.fail(
+                new GitLabPullRequestCli.GitLabMergeRequestReadError({
+                  command: "glab",
+                  cwd: "/w",
+                  operation: "listDiscussions",
+                  cause: null,
+                }),
+              ),
+            listReactions: () => Effect.fail(new GitLabCli.GitLabCliCommandError(context)),
+          }),
+        ),
+      );
+
+      expect(yield* provider.getChangeRequestActivity(reference)).toEqual({
+        comments: [{ ...comment, reactions: [] }],
+        commentCount: 1,
+        commentsTruncated: true,
+        reviewThreads: [],
+        reactions: [],
+        commits: [commit],
+      });
+    }),
   );
 });

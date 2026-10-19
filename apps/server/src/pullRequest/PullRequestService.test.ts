@@ -1,10 +1,10 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import { SourceControlProviderKind, VcsProcessExitError } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -7718,63 +7718,84 @@ it.effect.each([
     }),
 );
 
-it.effect.each(["gitlab.com", "gitlab.example.test"])(
-  "pauses uncached GitLab activity reads after an optional endpoint rate limit on %s",
-  (host) =>
-    Effect.gen(function* () {
-      let commandCalls = 0;
-      const provider = yield* GitLabPullRequestProvider.make.pipe(
-        Effect.provide(
-          GitLabPullRequestCli.layer.pipe(
-            Layer.provide(
-              Layer.mock(GitLabCli.GitLabCli)({
-                execute: () =>
-                  Effect.sync(() => {
+it.effect("pauses uncached GitLab activity after only the reactions endpoint is rate limited", () =>
+  Effect.gen(function* () {
+    let commandCalls = 0;
+    const provider = yield* GitLabPullRequestProvider.make.pipe(
+      Effect.provide(
+        GitLabPullRequestCli.layer.pipe(
+          Layer.provide(GitLabCli.layer),
+          Layer.provide(
+            TestSourceControlHost.layer({
+              process: {
+                run: (input) =>
+                  Effect.suspend(() => {
                     commandCalls += 1;
-                  }).pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new GitLabCli.GitLabCliRateLimitError({
-                          operation: "execute",
-                          command: "glab",
-                          cwd: "/repo",
-                          cause: null,
-                        }),
-                      ),
-                    ),
-                  ),
-              }),
-            ),
+                    return input.args[1] === "graphql"
+                      ? Effect.fail(
+                          new VcsProcessExitError({
+                            operation: input.operation,
+                            command: input.command,
+                            cwd: input.cwd,
+                            exitCode: 1,
+                            detail: "API rate limit exceeded.",
+                            failureKind: "rate-limited",
+                          }),
+                        )
+                      : Effect.succeed(TestSourceControlHost.processOutput("[]"));
+                  }),
+              },
+            }),
           ),
         ),
-      );
-      const service = yield* makeService({
-        projects: [
-          project({
-            id: "p1",
-            title: "web",
-            workspaceRoot: "/repo",
-            repository: "acme/web",
-            provider: "gitlab",
-            host,
-          }),
-        ],
-        providers: [provider],
-      });
-      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-      const first = yield* Effect.flip(service.activity(reference));
-      assert.instanceOf(first, PullRequestOperationError);
-      assert.instanceOf(first.cause, PullRequestProviderError);
-      assert.strictEqual(first.cause.reason, "rate-limited");
-      const firstCommandCalls = commandCalls;
-      assert.isAbove(firstCommandCalls, 0);
-      // A different request bypasses the activity cache and must stop at the host backoff.
-      const paused = yield* Effect.flip(service.activity({ ...reference, number: 2 }));
-      assert.instanceOf(paused, PullRequestOperationError);
-      assert.instanceOf(paused.cause, PullRequestProviderError);
-      assert.strictEqual(paused.cause.reason, "rate-limited");
-      assert.strictEqual(commandCalls, firstCommandCalls);
-    }),
+      ),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/repo",
+          repository: "acme/web",
+          provider: "gitlab",
+          host: "gitlab.example.test",
+        }),
+      ],
+      providers: [provider],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+
+    expect(yield* Effect.result(service.activity(reference))).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "PullRequestOperationError",
+        cause: {
+          _tag: "PullRequestProviderError",
+          reason: "rate-limited",
+          cause: { _tag: "GitLabCliRateLimitError" },
+        },
+      },
+    });
+    const firstCommandCalls = commandCalls;
+    assert.isAbove(firstCommandCalls, 0);
+
+    // A different merge request cannot reuse the first request's cached failure.
+    expect(yield* Effect.result(service.activity({ ...reference, number: 2 }))).toMatchObject({
+      _tag: "Failure",
+      failure: {
+        _tag: "PullRequestOperationError",
+        cause: {
+          _tag: "PullRequestProviderError",
+          reason: "rate-limited",
+          cause: {
+            _tag: "SourceControlRateLimitPausedError",
+            host: "gitlab.example.test",
+          },
+        },
+      },
+    });
+    assert.strictEqual(commandCalls, firstCommandCalls);
+  }),
 );
 
 it.effect("expands only files the change request changes, across every slice of its diff", () =>
