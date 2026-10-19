@@ -35,18 +35,24 @@ const resolveClientFilePath = Effect.fn("AntigravityClientFiles.resolveClientFil
     const missing: Array<string> = [];
     const real = yield* Effect.gen(function* () {
       while (true) {
-        const canonical = yield* input.fileSystem.realPath(candidate).pipe(Effect.option);
-        if (canonical._tag === "Some") {
-          return path.join(canonical.value, ...missing);
+        const canonical = yield* input.fileSystem
+          .realPath(candidate)
+          .pipe(
+            Effect.catch((error) =>
+              error.reason._tag === "NotFound" ? Effect.void : Effect.fail(outside),
+            ),
+          );
+        if (canonical !== undefined) {
+          return path.join(canonical, ...missing);
         }
-        // Resolve the nearest existing ancestor before appending missing
-        // directories. A dangling or unreadable link must not be followed.
-        const entryExists = yield* input.fileSystem.readLink(candidate).pipe(
+        // A failed realpath can be a dangling link rather than a missing entry.
+        const isLink = yield* input.fileSystem.readLink(candidate).pipe(
           Effect.as(true),
-          Effect.catch(() => input.fileSystem.exists(candidate)),
-          Effect.orElseSucceed(() => true),
+          Effect.catch((error) =>
+            error.reason._tag === "NotFound" ? Effect.succeed(false) : Effect.fail(outside),
+          ),
         );
-        if (entryExists) return yield* outside;
+        if (isLink) return yield* outside;
         const parent = path.dirname(candidate);
         if (parent === candidate) return yield* outside;
         missing.unshift(path.basename(candidate));
