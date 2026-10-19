@@ -349,16 +349,44 @@ describe("rightPanelStore", () => {
     const nextTurn = { ...completedDiff, turnId: RunId.make("turn-2") };
     expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+
+    const completedWhileOpen = { ...completedDiff, turnId: RunId.make("turn-3") };
+    const existingDiff = selectActiveRightPanelSurface(
+      useRightPanelStore.getState().byThreadKey,
+      refA,
+    );
+    expect(store.openProactive(refA, completedWhileOpen, store.getUserActionRevision(refA))).toBe(
+      false,
+    );
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      existingDiff,
+    );
     store.closeSurface(refA, "diff");
+    await reloadRightPanelStore();
+    expect(store.openProactive(refA, completedWhileOpen, store.getUserActionRevision(refA))).toBe(
+      false,
+    );
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
 
     // A later storage migration must preserve the dismissal, just like an ordinary reload.
     const { storage, name, version } = useRightPanelStore.persist.getOptions();
     const persisted = await storage!.getItem(name!);
     await storage!.setItem(name!, { ...persisted!, version: version! - 1 });
     await reloadRightPanelStore();
-    expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(false);
+    expect(store.openProactive(refA, completedWhileOpen, store.getUserActionRevision(refA))).toBe(
+      false,
+    );
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
 
+    expect(
+      store.openProactive(
+        refA,
+        { ...completedDiff, turnId: RunId.make("turn-4") },
+        store.getUserActionRevision(refA),
+      ),
+    ).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    store.closeSurface(refA, "diff");
     store.open(refA, "diff");
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
@@ -378,6 +406,14 @@ describe("rightPanelStore", () => {
 
     const nextTurn = { ...completedDiff, turnId: RunId.make("turn-2") };
     store.openPullRequest(refA, linkedPullRequest);
+    expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      linkedPullRequest,
+    );
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([linkedPullRequest]);
+    await reloadRightPanelStore();
     expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(false);
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
       linkedPullRequest,

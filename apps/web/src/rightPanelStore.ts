@@ -612,7 +612,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               activePanel === "pull-request" || activePanel === "pull-requests";
             opened =
               (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
-                expectedUserActionRevision && !pullRequestActive;
+                expectedUserActionRevision &&
+              activePanel !== "diff" &&
+              !pullRequestActive;
             // Record the offer even when refused, so a revisit does not retry this turn.
             return automaticUpdate(state, threadKey, (thread) => ({
               ...(opened ? upsertSurface(thread, singletonSurface("diff")) : thread),

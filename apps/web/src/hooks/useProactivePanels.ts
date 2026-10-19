@@ -169,7 +169,6 @@ export function useProactivePanels(input: {
       ? resolveProactiveTurnDiffAction({
           checkpoint: completedCheckpoint,
           isGitRepo,
-          activeSurfaceKind: openSurface?.kind ?? null,
         })
       : "ignore";
     proactivePanelObservationRef.current = {
