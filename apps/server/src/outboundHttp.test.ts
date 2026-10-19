@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - the test runs a real TLS h2 server to see which protocol fetch negotiates.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeHttp from "node:http";
 import * as NodeHttp2 from "node:http2";
 import * as NodeNet from "node:net";
 import * as NodeTls from "node:tls";
@@ -13,6 +15,7 @@ import {
   builtinFetchUsesHttp2,
   extendConnectionAttemptTimeout,
   installHttp1FetchDispatcher,
+  noProxyWithLoopback,
 } from "./outboundHttp.ts";
 
 // Test-only self-signed P-256 certificate for 127.0.0.1, valid until 2126; not a
@@ -94,6 +97,116 @@ describe("installHttp1FetchDispatcher", () => {
         installHttp1FetchDispatcher();
         expect(yield* versionViaBuiltinFetch()).toBe("1.1");
       }),
+  );
+});
+
+describe("noProxyWithLoopback", () => {
+  it("adds loopback to the configured bypass list and keeps the wildcard", () => {
+    expect(noProxyWithLoopback({})).toBe("localhost,127.0.0.1,[::1]");
+    expect(noProxyWithLoopback({ NO_PROXY: "corp.example" })).toBe(
+      "corp.example,localhost,127.0.0.1,[::1]",
+    );
+    expect(noProxyWithLoopback({ NO_PROXY: "corp.example", no_proxy: "" })).toBe(
+      "localhost,127.0.0.1,[::1]",
+    );
+    expect(noProxyWithLoopback({ NO_PROXY: "*" })).toBeUndefined();
+  });
+});
+
+const listenHttp = (server: NodeHttp.Server) =>
+  Effect.acquireRelease(
+    Effect.callback<number>((resume) => {
+      server.listen(0, "127.0.0.1", () =>
+        resume(Effect.succeed((server.address() as NodeNet.AddressInfo).port)),
+      );
+    }),
+    () =>
+      Effect.callback<void>((resume) => {
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
+  );
+
+/** A proxy that refuses every CONNECT and absolute-form request but records who asked. */
+const loopbackRefusingProxy = Effect.gen(function* () {
+  const authorities: string[] = [];
+  const proxy = NodeHttp.createServer((request, response) => {
+    authorities.push(request.headers.host ?? "");
+    response.writeHead(403);
+    response.end();
+  });
+  proxy.on("connect", (request, socket) => {
+    authorities.push(request.url ?? "");
+    socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+  });
+  const port = yield* listenHttp(proxy);
+  return { authorities, url: `http://127.0.0.1:${port}` };
+});
+
+const USE_ENV_PROXY_PROBE = `
+const { configureOutboundFetch } = await import(process.env.OUTBOUND_HTTP_MODULE);
+configureOutboundFetch();
+const probe = async (url) => {
+  try {
+    return await (await fetch(url)).text();
+  } catch (error) {
+    return "error:" + (error.cause?.code ?? error.message);
+  }
+};
+console.log(JSON.stringify({
+  dispatcher: globalThis[Symbol.for("undici.globalDispatcher.1")].constructor.name,
+  loopback: await probe(process.env.LOOPBACK_URL),
+  external: await probe(process.env.EXTERNAL_URL),
+  noProxy: process.env.NO_PROXY,
+}));
+`;
+
+// Only Node's own `--use-env-proxy` installs the agent class its fetch
+// dispatches through, so the probe runs in a child Node process.
+const probeWithEnvProxy = (env: Record<string, string>) =>
+  Effect.callback<{ dispatcher: string; loopback: string; external: string; noProxy: string }>(
+    (resume) => {
+      NodeChildProcess.execFile(
+        process.execPath,
+        ["--use-env-proxy", "--input-type=module", "--eval", USE_ENV_PROXY_PROBE],
+        {
+          env: {
+            PATH: process.env.PATH,
+            OUTBOUND_HTTP_MODULE: new URL("./outboundHttp.ts", import.meta.url).href,
+            ...env,
+          },
+        },
+        (error, stdout, stderr) =>
+          resume(
+            error
+              ? Effect.die(new Error(`probe failed: ${error.message}\n${stderr}`))
+              : Effect.succeed(JSON.parse(stdout)),
+          ),
+      );
+    },
+  );
+
+describe("configureOutboundFetch", () => {
+  it.effect("keeps loopback off the env proxy while external requests still use it", () =>
+    Effect.gen(function* () {
+      const proxy = yield* loopbackRefusingProxy;
+      const port = yield* listenHttp(
+        NodeHttp.createServer((_request, response) => response.end("direct")),
+      );
+      const result = yield* probeWithEnvProxy({
+        HTTP_PROXY: proxy.url,
+        NO_PROXY: "corp.example",
+        LOOPBACK_URL: `http://127.0.0.1:${port}/`,
+        EXTERNAL_URL: `http://external-proof.invalid:${port}/`,
+      });
+      expect(result).toEqual({
+        dispatcher: "EnvHttpProxyAgent",
+        loopback: "direct",
+        external: "error:0",
+        noProxy: "corp.example",
+      });
+      expect(proxy.authorities).toEqual([`external-proof.invalid:${port}`]);
+    }),
   );
 });
 

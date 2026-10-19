@@ -1,4 +1,3 @@
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import {
   CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS,
   PREVIEW_URL_MAX_LENGTH,
@@ -883,12 +882,3 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 
 export const layer = Layer.effect(PortDiscovery, make);
-
-/**
- * Probes only ever reach loopback, so they get their own `node:http` agents
- * instead of the shared fetch client. Under `--use-env-proxy` every fetch,
- * loopback included, goes to the proxy, and a proxy that refuses loopback
- * would hide every running dev server. External requests and the proxy
- * settings provider and terminal children inherit are untouched.
- */
-export const layerHttpClient = NodeHttpClient.layerNodeHttp;
