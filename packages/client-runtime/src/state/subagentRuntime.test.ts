@@ -90,6 +90,8 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
   it("uses a settled member's wall-clock completion separately from its execution duration", () => {
     const [, settled] = projectedSubagentsToRuntime([
       subagent({
+        status: "completed",
+        completedAt: at("2026-08-01T10:00:09.000Z"),
         workflow: {
           phases: [],
           agents: [
@@ -126,7 +128,12 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
             agents: [
               member(),
               member({ index: 2, state: "queued" }),
-              member({ index: 3, state: "completed" }),
+              member({
+                index: 3,
+                state: "completed",
+                startedAt: Date.UTC(2026, 7, 1, 10, 0, 0),
+                durationMs: 1500,
+              }),
             ],
           },
         }),
@@ -134,7 +141,11 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       expect(groups[0]?.workflow.status).toBe(status);
       const members = groups[0]?.phases.flatMap((phase) => phase.members);
       expect(members?.map((agent) => agent.status)).toEqual([status, status, "completed"]);
-      expect(members?.[0]?.completedAt).toBe("2026-08-01T10:00:09.000Z");
+      expect(members?.map((agent) => agent.completedAt)).toEqual([
+        "2026-08-01T10:00:09.000Z",
+        "2026-08-01T10:00:09.000Z",
+        "2026-08-01T10:00:09.000Z",
+      ]);
     },
   );
 

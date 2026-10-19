@@ -76,11 +76,13 @@ describe("mergeClaudeWorkflowProgress", () => {
           toolCalls: 3,
           durationMs: 1277,
           startedAt: 1_700_000_000_000,
+          lastProgressAt: 1_700_000_004_432,
           queuedAt: 1_699_999_999_000,
           promptPreview: "Reply with exactly: A1",
           resultPreview: "A1",
         }),
-        agent({ index: 2, label: "alpha:two", state: "queued" }),
+        agent({ index: 2, label: "alpha:two", state: "queued", lastProgressAt: 1000 }),
+        agent({ index: 3, state: "progress", lastProgressAt: 2000 }),
       ]),
     });
     expect(workflow?.phases).toEqual([{ index: 1, title: "Alpha" }]);
@@ -98,10 +100,13 @@ describe("mergeClaudeWorkflowProgress", () => {
       durationMs: 1277,
       queuedAt: 1_699_999_999_000,
       startedAt: 1_700_000_000_000,
+      completedAt: 1_700_000_004_432,
       prompt: "Reply with exactly: A1",
       result: "A1",
     });
     expect(workflow?.agents[1]?.state).toBe("queued");
+    expect(workflow?.agents[1]).not.toHaveProperty("completedAt");
+    expect(workflow?.agents[2]).not.toHaveProperty("completedAt");
   });
 
   it.each(["something-new", "toString", "constructor", "__proto__"])(
@@ -171,22 +176,6 @@ describe("mergeClaudeWorkflowProgress", () => {
     expect(second?.phases.map((entry) => entry.title)).toEqual(["Alpha", "Beta", "Gamma"]);
   });
 
-  it.each(["done", "error", "start", "progress", "queued"])(
-    "uses terminal wall-clock progress for a %s member",
-    (state) => {
-      const workflow = mergeClaudeWorkflowProgress({
-        previous: undefined,
-        message: snapshotFrame([
-          agent({ state, startedAt: 1000, durationMs: 500, lastProgressAt: 4432 }),
-        ]),
-      });
-      expect(workflow?.agents[0]?.completedAt).toBe(
-        state === "done" || state === "error" ? 4432 : undefined,
-      );
-      expect(workflow?.agents[0]?.durationMs).toBe(500);
-    },
-  );
-
   it("keeps other members and phase links when a sparse frame starts a new attempt", () => {
     const first = mergeClaudeWorkflowProgress({
       previous: undefined,
@@ -207,6 +196,8 @@ describe("mergeClaudeWorkflowProgress", () => {
         agent({ index: 2, state: "done" }),
       ]),
     });
+    expect(first?.agents[0]?.completedAt).toBe(2010);
+    expect(first?.agents[1]).not.toHaveProperty("completedAt");
     const second = mergeClaudeWorkflowProgress({
       previous: first,
       message: snapshotFrame([
