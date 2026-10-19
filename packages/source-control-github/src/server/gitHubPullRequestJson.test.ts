@@ -1342,15 +1342,6 @@ describe("viewer permission decoding", () => {
     });
   });
 
-  it("carries a repository's auto-merge switch, off as well as on", () => {
-    const access = expectSuccess(
-      decodeViewerPermissionsJson(
-        viewerJson({ autoMergeAllowed: false, viewerPermission: "READ", pullRequest: null }),
-      ),
-    );
-    expect(access.autoMergeAllowed).toBe(false);
-  });
-
   it("says no to a passer-by on a repository they can only read", () => {
     expect(
       expectSuccess(

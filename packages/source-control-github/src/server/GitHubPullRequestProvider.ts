@@ -61,10 +61,7 @@ export function gitHubViewerPermissions(
     ...(access.canWrite ? { stackRebase: true } : {}),
     actions: [
       ...(access.canDeleteBranch === true ? (["delete-branch"] as const) : []),
-      // Arming a merge and taking the arming back are the merge, deferred: whoever may not
-      // merge here may not leave an instruction to merge later either. Arming also needs the
-      // repository to allow it, while an arming made before it was switched off can still go.
-      // Where a merge would go through now there is nothing to wait on, so only merge is offered.
+      // Keep disabling available if the repository has since turned auto-merge off.
       ...(access.canWrite
         ? ([
             "merge",

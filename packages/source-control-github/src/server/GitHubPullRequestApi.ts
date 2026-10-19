@@ -2481,10 +2481,8 @@ export const make = Effect.gen(function* () {
             }
           }
         }
-        // A merge queue takes a pull request through auto-merge rather than a direct merge, and
-        // `--auto` on a pull request that is mergeable right now simply merges it, as `gh` does.
-        // The detail stops offering auto-merge in that state, so this only meets a pull request
-        // whose requirements passed after the page was drawn.
+        // Merge queues always use auto-merge. A PR that became ready since detail loaded
+        // merges directly, matching `gh pr merge --auto`.
         const auto =
           state.isMergeQueueEnabled === true ||
           (action === "enable-auto-merge" &&

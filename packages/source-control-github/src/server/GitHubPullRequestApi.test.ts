@@ -2467,29 +2467,39 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
   it.effect.each([
     { mergeStateStatus: "BLOCKED", autoMergeAllowed: true, offered: true },
-    // Nothing required is outstanding, so GitHub would merge at once rather than arm.
-    { mergeStateStatus: "UNSTABLE", autoMergeAllowed: true, offered: false },
-    { mergeStateStatus: "CLEAN", autoMergeAllowed: true, offered: false },
-    { mergeStateStatus: "HAS_HOOKS", autoMergeAllowed: true, offered: false },
-    // Still being computed: leave the choice open and let the action decide.
     { mergeStateStatus: "UNKNOWN", autoMergeAllowed: true, offered: true },
+    { mergeStateStatus: "CLEAN", autoMergeAllowed: true, offered: false },
+    { mergeStateStatus: "UNSTABLE", autoMergeAllowed: true, offered: false },
+    { mergeStateStatus: "HAS_HOOKS", autoMergeAllowed: true, offered: false },
     { mergeStateStatus: "BLOCKED", autoMergeAllowed: false, offered: false },
   ])(
-    "offers auto-merge for a $mergeStateStatus pull request only where it can wait ($autoMergeAllowed)",
+    "gates auto-merge detail and fresh access for $mergeStateStatus (repository allows: $autoMergeAllowed)",
     ({ mergeStateStatus, autoMergeAllowed, offered }) =>
       Effect.gen(function* () {
         const answer = coreResponse({ mergeStateStatus });
         answer.data.repository.autoMergeAllowed = autoMergeAllowed;
         mockedExecute.mockReturnValue(Effect.succeed(output(encodeJson(answer))));
         const provider = yield* GitHubPullRequestProvider.make;
-        const detail = yield* provider.getChangeRequest({
+        const reference = {
           cwd: "/w",
           repository: "acme/web",
           host: "github.com",
           number: 7,
-        });
+        };
+        const detail = yield* provider.getChangeRequest(reference);
         expect(detail.viewerPermissions.actions.includes("enable-auto-merge")).toBe(offered);
-        expect(detail.viewerPermissions.actions).toContain("merge");
+        expect(detail.viewerPermissions.actions).toEqual(
+          expect.arrayContaining(["merge", "disable-auto-merge"]),
+        );
+
+        const permissions = yield* provider.getViewerPermissions({
+          ...reference,
+          includeUpdateBranch: false,
+        });
+        expect(permissions.actions.includes("enable-auto-merge")).toBe(autoMergeAllowed);
+        expect(permissions.actions).toEqual(
+          expect.arrayContaining(["merge", "disable-auto-merge"]),
+        );
       }),
   );
 

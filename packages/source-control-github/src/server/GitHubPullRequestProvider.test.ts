@@ -290,20 +290,6 @@ describe("gitHubViewerPermissions", () => {
     });
   });
 
-  it("withholds arming auto-merge where the repository has it switched off", () => {
-    const { actions } = gitHubViewerPermissions({
-      canWrite: true,
-      canTriage: true,
-      canUpdate: true,
-      didAuthor: false,
-      autoMergeAllowed: false,
-    });
-    expect(actions).not.toContain("enable-auto-merge");
-    // An arming made before the switch was turned off can still be taken back.
-    expect(actions).toContain("disable-auto-merge");
-    expect(actions).toContain("merge");
-  });
-
   it("leaves a passer-by on a repository they can only read nothing but the review", () => {
     expect(
       gitHubViewerPermissions({

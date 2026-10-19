@@ -1509,7 +1509,6 @@ export function toReviewThreadCommentsPage(result: ReviewThreadComments.Result):
 
 export interface GitHubRepositoryAccess {
   readonly mergeCapabilities: PullRequestMergeCapabilities;
-  /** GitHub refuses to arm auto-merge where the repository has it switched off. */
   readonly autoMergeAllowed: boolean;
   readonly canWrite: boolean;
 }
@@ -1676,10 +1675,7 @@ export interface GitHubViewerAccess {
    * something to update" at once. Absent where the comparison was not read.
    */
   readonly canUpdateBranch?: boolean;
-  /**
-   * GitHub's `mergeStateStatus` says a merge would go through right now, leaving auto-merge
-   * nothing to wait on. Read with the core detail; absent elsewhere.
-   */
+  /** Detail-only readiness; omitted by the lightweight action permission read. */
   readonly canMergeNow?: boolean;
 }
 
