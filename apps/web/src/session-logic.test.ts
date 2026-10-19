@@ -362,7 +362,7 @@ describe("V2 session presentation", () => {
       ["message-1", 0],
       ["message-4", 1],
     ]);
-    expect(targets([1, 4], survivingRuns, true)).toEqual([["message-4", 1]]);
+    expect(targets([4], survivingRuns, true)).toEqual([["message-4", 1]]);
     expect(targets([4], [run(4, "completed")], true)).toEqual([]);
     // Loading all transcript rows does not fill gaps in bounded run metadata.
     expect(targets([1, 3], [run(3, "completed")])).toEqual([]);
@@ -430,18 +430,21 @@ describe("V2 session presentation", () => {
     }
 
     // Forks retain source run IDs in inherited messages, but only project local runs/checkpoints.
-    expect
-      .soft(
-        [
-          ...deriveRevertTurnCountByUserMessageId({
-            timelineEntries: timeline([10, 11, 1]),
-            runs: [run(1, "completed")],
-            checkpoints: checkpoints.slice(0, 1),
-          }),
-        ],
-        "first local fork run",
-      )
-      .toEqual([["message-1", 0]]);
+    for (const hasMoreHistory of [false, true]) {
+      expect
+        .soft(
+          [
+            ...deriveRevertTurnCountByUserMessageId({
+              timelineEntries: timeline([10, 11, 1]),
+              runs: [run(1, "completed")],
+              checkpoints: checkpoints.slice(0, 1),
+              hasMoreHistory,
+            }),
+          ],
+          `first local fork run with ${hasMoreHistory ? "paged" : "complete"} inherited history`,
+        )
+        .toEqual([["message-1", 0]]);
+    }
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
