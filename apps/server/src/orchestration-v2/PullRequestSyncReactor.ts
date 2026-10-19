@@ -1,6 +1,7 @@
 import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
+  type ProjectId,
   type PullRequestSummary,
   type ThreadId,
   type ThreadPullRequestKey,
@@ -159,15 +160,20 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
+  const missing = new Map<string, ProjectId>();
   // Rate limit pauses by project and host, since each project reads with its own credential.
   // A paused host refuses every read without asking it, so the sweep leaves its pull requests
   // due until the pause ends rather than failing each of them every minute.
   const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
-    if (requested.has(key) || retryStacks.has(key)) return true;
-    if (entries.some((entry) => entry.link.snapshot === null)) return true;
+    if (requested.has(key)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
+    if (active.length === 0) return false;
+    const last = lastSyncedAt.get(key);
+    const slowDue = last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    if (missing.has(key)) return slowDue;
+    if (retryStacks.has(key) || active.some((entry) => entry.link.snapshot === null)) return true;
     // A merged snapshot without its merge time cannot settle the thread, so it keeps the slow
     // cadence until the host supplies one (Bitbucket snapshots saved before it was read).
     if (
@@ -178,8 +184,7 @@ export const make = Effect.gen(function* () {
       return false;
     }
     if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
-    const last = lastSyncedAt.get(key);
-    return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    return slowDue;
   };
 
   const logSkipped =
@@ -212,6 +217,12 @@ export const make = Effect.gen(function* () {
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const [key, projectId] of missing) {
+      if (groups.get(key)?.[0]?.thread.projectId !== projectId) {
+        missing.delete(key);
+        lastSyncedAt.delete(key);
+      }
+    }
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
@@ -295,7 +306,19 @@ export const make = Effect.gen(function* () {
       if (refreshRequested || missingMergedAt) {
         yield* pullRequests.invalidate({ reference: ref });
       }
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
+        Effect.tapError((error) =>
+          error.reason === "not-found"
+            ? Effect.sync(() => {
+                missing.set(key, ref.projectId);
+                // Not-found is a host answer: consume only this refresh and start its backoff.
+                lastSyncedAt.set(key, nowMs);
+                if (requested.get(key) === generation) requested.delete(key);
+              })
+            : Effect.void,
+        ),
+      );
+      missing.delete(key);
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         refreshRequested ||
@@ -422,6 +445,28 @@ export const make = Effect.gen(function* () {
       Effect.catchCause(logSkipped("pull request refresh after run skipped", { threadId })),
     );
 
+  const requestUnsyncedLinks = Effect.fnUntraced(
+    function* (links: ReadonlyArray<ThreadPullRequestLink>) {
+      const unsynced = links.filter((link) => link.snapshot === null);
+      const threads = unsynced.some((link) => missing.has(threadPullRequestKeyOf(link)))
+        ? yield* projections.getThreadsWithPullRequests()
+        : [];
+      for (const link of unsynced) {
+        const projectId = missing.get(threadPullRequestKeyOf(link));
+        if (projectId !== undefined) {
+          const first = threads.find((thread) =>
+            visibleThreadPullRequests(thread.pullRequests ?? []).some((candidate) =>
+              threadPullRequestKeysEqual(candidate, link),
+            ),
+          );
+          if (first === undefined || first.projectId === projectId) continue;
+        }
+        yield* requestSync(link);
+      }
+    },
+    Effect.catchCause(logSkipped("pull request refresh after link update skipped", {})),
+  );
+
   const start: PullRequestSyncReactor["Service"]["start"] = Effect.fn(
     "PullRequestSyncReactor.start",
   )(function* () {
@@ -439,14 +484,10 @@ export const make = Effect.gen(function* () {
       Stream.runForEach(events, (event) => {
         switch (event.type) {
           case "thread.pull-request-link-updated":
-            return event.payload.snapshot === null ? requestSync(event.payload) : Effect.void;
+            return requestUnsyncedLinks([event.payload]);
           case "thread.pull-request-synced":
-            return Effect.forEach(
-              visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
-                (link) => link.snapshot === null,
-              ),
-              requestSync,
-              { discard: true },
+            return requestUnsyncedLinks(
+              visibleThreadPullRequests(event.payload.pullRequests ?? []),
             );
           // An agent can merge or close its pull request from a shell (`gh pr merge`), which
           // sends no merge notification. When a run that ran such a command ends, read the
