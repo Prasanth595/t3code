@@ -32,6 +32,7 @@ import * as Exit from "effect/Exit";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -3807,10 +3808,77 @@ it.effect("does not start a turn whose run settled during the app context read",
   }),
 );
 
+it.effect.each(["declined", "rejected"] as const)(
+  "closes the event subscription once when the turn is %s before ingestion starts",
+  (scenario) =>
+    Effect.gen(function* () {
+      const guardCalls = yield* Ref.make(0);
+      const providerStarts = yield* Ref.make(0);
+      const ingestionStarts = yield* Ref.make(0);
+      const { subscriptionCloses } = yield* captureRootRunTermination({
+        key: `subscription-close:${scenario}`,
+        waitForIngestion: false,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        shouldStartProviderTurn: () =>
+          Ref.getAndUpdate(guardCalls, (calls) => calls + 1).pipe(
+            Effect.map((calls) => calls === 0 || scenario === "rejected"),
+          ),
+        events: () =>
+          Stream.unwrap(
+            Ref.update(ingestionStarts, (count) => count + 1).pipe(Effect.as(Stream.never)),
+          ),
+        startTurn: (input) =>
+          Ref.update(providerStarts, (count) => count + 1).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause: "provider rejected the turn",
+                }),
+              ),
+            ),
+          ),
+      });
+      assert.equal(yield* Ref.get(guardCalls), 2);
+      assert.equal(yield* Ref.get(providerStarts), scenario === "rejected" ? 1 : 0);
+      assert.equal(yield* Ref.get(ingestionStarts), 0);
+      assert.equal(subscriptionCloses, 1);
+    }),
+);
+
+it.effect(
+  "closes the event subscription once when startup is interrupted during the MCP context read",
+  () =>
+    Effect.gen(function* () {
+      const contextReadStarted = yield* Deferred.make<void>();
+      const releaseEvents = yield* Deferred.make<void>();
+      const providerStarts = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const { subscriptionCloses } = yield* captureRootRunTermination({
+          key: "subscription-close:context-read-interrupted",
+          waitForIngestion: false,
+          interruptStartupWhen: contextReadStarted,
+          shouldFinalizeRun: () => Effect.succeed(true),
+          appContext: Deferred.succeed(contextReadStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+          events: () =>
+            Stream.fromEffect(Deferred.await(releaseEvents).pipe(Effect.andThen(Effect.interrupt))),
+          startTurn: () => Ref.update(providerStarts, (count) => count + 1),
+        });
+        assert.equal(yield* Ref.get(providerStarts), 0);
+        assert.equal(subscriptionCloses, 1);
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseEvents, undefined)));
+    }),
+);
+
 it.effect("refreshes pull requests only once when startup failure closes its event stream", () =>
   Effect.gen(function* () {
     const ingestionStarted = yield* Deferred.make<void>();
-    const { observed, written } = yield* captureRootRunTermination({
+    const { observed, written, subscriptionCloses } = yield* captureRootRunTermination({
       key: "pull-request-refresh:startup-error",
       shouldFinalizeRun: () => Effect.succeed(true),
       events: () =>
@@ -3830,6 +3898,7 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
           ),
         ),
     });
+    assert.equal(subscriptionCloses, 1);
     assert.equal(observed.filter((item) => item === "pull-requests-refreshed").length, 1);
     assert.equal(observed[0], "run:failed");
     const error = written.find((item) => item.type === "error");
@@ -3839,18 +3908,21 @@ it.effect("refreshes pull requests only once when startup failure closes its eve
 
 it.effect("keeps completed runs completed when pull request refresh fails", () =>
   Effect.gen(function* () {
-    const { observed } = yield* captureRootRunTermination({
+    const { observed, subscriptionCloses } = yield* captureRootRunTermination({
       key: "pull-request-refresh:refresh-failure",
       shouldFinalizeRun: () => Effect.succeed(true),
       events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
       refreshAfterTurn: Effect.die("refresh failed"),
     });
     assert.deepEqual(observed, ["run:waiting", "pull-requests-refreshed"]);
+    assert.equal(subscriptionCloses, 1);
   }),
 );
 
 function captureRootRunTermination(input: {
   readonly key: string;
+  readonly waitForIngestion?: boolean;
+  readonly interruptStartupWhen?: Deferred.Deferred<void>;
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
@@ -3882,6 +3954,7 @@ function captureRootRunTermination(input: {
     const submittedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const committedEffects = yield* Ref.make<ReadonlyArray<PendingOrchestrationEffectV2>>([]);
     const ingestionDone = yield* Deferred.make<void>();
+    const subscriptionCloses = yield* Ref.make(0);
     const captureTurnItem = (payload: OrchestrationV2TurnItem) =>
       Ref.update(writtenItems, (current) => [...current, payload]);
     const captureFinalEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
@@ -3949,7 +4022,7 @@ function captureRootRunTermination(input: {
       ),
     );
 
-    yield* Effect.gen(function* () {
+    const startup = Effect.gen(function* () {
       const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
       yield* runExecution.startRootRun({
         commandId: CommandId.make(`command:${input.key}`),
@@ -3984,7 +4057,9 @@ function captureRootRunTermination(input: {
                   : []),
                 rootTerminalEvent(ids, "interrupted"),
               ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>),
-            close: Deferred.succeed(ingestionDone, undefined),
+            close: Ref.update(subscriptionCloses, (count) => count + 1).pipe(
+              Effect.andThen(Deferred.succeed(ingestionDone, undefined)),
+            ),
           }),
           startTurn: input.startTurn ?? (() => Effect.void),
         } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
@@ -4042,8 +4117,21 @@ function captureRootRunTermination(input: {
       });
     }).pipe(Effect.provide(layerTest));
 
-    yield* Deferred.await(ingestionDone);
+    if (input.interruptStartupWhen !== undefined) {
+      const caller = yield* startup.pipe(Effect.interruptible, Effect.forkChild);
+      yield* Deferred.await(input.interruptStartupWhen);
+      yield* Fiber.interrupt(caller);
+      const exit = yield* Fiber.await(caller);
+      assert.isTrue(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause));
+    } else {
+      yield* startup;
+    }
+
+    if (input.waitForIngestion !== false) {
+      yield* Deferred.await(ingestionDone);
+    }
     return {
+      subscriptionCloses: yield* Ref.get(subscriptionCloses),
       written: yield* Ref.get(writtenItems),
       finalEvents: yield* Ref.get(finalEvents),
       observed: yield* Ref.get(observed),
