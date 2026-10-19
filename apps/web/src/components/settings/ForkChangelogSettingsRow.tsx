@@ -1,7 +1,7 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { ForkChangelogDialog } from "../forkChangelog/ForkChangelogDialog";
 import { Button } from "../ui/button";
 import { Switch } from "../ui/switch";
@@ -13,7 +13,6 @@ const selectForkChangelogEnabled = (settings: ClientSettings) => settings.forkCh
 /** Fork setting: turns on the changelog, and opens it from the About section. */
 export function ForkChangelogSettingsRow() {
   const enabled = useClientSettings(selectForkChangelogEnabled);
-  const updateSettings = useUpdateClientSettings();
   const [open, setOpen] = useState(false);
 
   return (
@@ -25,7 +24,7 @@ export function ForkChangelogSettingsRow() {
           <SettingResetButton
             label="fork changelog"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 forkChangelogEnabled: DEFAULT_CLIENT_SETTINGS.forkChangelogEnabled,
               })
             }
@@ -42,7 +41,7 @@ export function ForkChangelogSettingsRow() {
           <Switch
             checked={enabled}
             onCheckedChange={(checked) =>
-              void updateSettings({ forkChangelogEnabled: Boolean(checked) })
+              void updateClientSettings({ forkChangelogEnabled: Boolean(checked) })
             }
             aria-label="Fork changelog"
           />

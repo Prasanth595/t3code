@@ -2,7 +2,7 @@ import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts
 import { isElectronAccelerator } from "@t3tools/shared/electronAccelerator";
 import { useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { Input } from "../ui/input";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -22,7 +22,6 @@ const parseShortcuts = (text: string) => [
 /** Fork, desktop only: `appToggleShortcuts`, global keys that show and hide the app. */
 export function AppToggleShortcutsSettingsRow() {
   const shortcuts = useClientSettings(selectAppToggleShortcuts);
-  const updateSettings = useUpdateClientSettings();
   const saved = shortcuts.join(", ");
   // The field keeps what the user typed until it saves, so a rejected key stays visible.
   const [draft, setDraft] = useState<string | null>(null);
@@ -35,7 +34,7 @@ export function AppToggleShortcutsSettingsRow() {
     setInvalid(rejected);
     if (rejected.length > 0) return;
     setDraft(null);
-    void updateSettings({ appToggleShortcuts: next });
+    void updateClientSettings({ appToggleShortcuts: next });
   };
 
   return (
@@ -57,7 +56,7 @@ export function AppToggleShortcutsSettingsRow() {
             onClick={() => {
               setDraft(null);
               setInvalid([]);
-              void updateSettings({
+              void updateClientSettings({
                 appToggleShortcuts: DEFAULT_CLIENT_SETTINGS.appToggleShortcuts,
               });
             }}

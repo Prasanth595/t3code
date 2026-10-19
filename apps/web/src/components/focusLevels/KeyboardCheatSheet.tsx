@@ -4,7 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { isElectron } from "../../env";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -41,7 +41,6 @@ export function KeyboardCheatSheet() {
   const [query, setQuery] = useState("");
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const focusLevels = useClientSettings(selectFocusLevels);
-  const updateSettings = useUpdateClientSettings();
   const navigate = useNavigate();
 
   useEffect(
@@ -92,7 +91,7 @@ export function KeyboardCheatSheet() {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => void updateSettings({ keyboardFocusLevels: true })}
+                onClick={() => void updateClientSettings({ keyboardFocusLevels: true })}
               >
                 Turn on
               </Button>

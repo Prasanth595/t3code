@@ -12,7 +12,7 @@ import {
 } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Linking, Pressable, StyleSheet, View } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -103,19 +103,19 @@ export function ConnectionsNewRouteScreen({
     }
   }, [pairingConnectionError]);
 
-  const handleHostChange = useCallback((value: string) => {
+  const handleHostChange = (value: string) => {
     setHostInput(value);
     setPendingConnectionError(null);
-  }, []);
+  };
 
-  const handleCodeChange = useCallback((value: string) => {
+  const handleCodeChange = (value: string) => {
     setCodeInput(value);
     setPendingConnectionError(null);
-  }, []);
+  };
 
   useEffect(() => () => setPendingConnectionError(null), []);
 
-  const handleScanPress = useCallback(async () => {
+  const handleScanPress = async () => {
     const permission = await requestCameraPermission();
     if (permission.granted) {
       setScanComplete(false);
@@ -130,72 +130,63 @@ export function ConnectionsNewRouteScreen({
         { text: "Open Settings", onPress: () => void Linking.openSettings() },
       ],
     );
-  }, [requestCameraPermission]);
+  };
 
-  const handleQrScan = useCallback(
-    ({ data }: { readonly data: string }) => {
-      if (scannerLocked) {
-        return;
-      }
+  const handleQrScan = ({ data }: { readonly data: string }) => {
+    if (scannerLocked) {
+      return;
+    }
 
-      setScannerLocked(true);
-      if (enrollInvite(data)) {
-        setScanComplete(true);
-        setScannerLocked(false);
-        return;
-      }
+    setScannerLocked(true);
+    if (enrollInvite(data)) {
+      setScanComplete(true);
+      setScannerLocked(false);
+      return;
+    }
 
-      try {
-        const pairingUrl = extractPairingUrlFromQrPayload(data);
-        const { host, code } = parsePairingUrl(pairingUrl);
-        setHostInput(host);
-        setCodeInput(code);
-        onChangeConnectionPairingUrl(pairingUrl);
-        setScanComplete(true);
-        setScannerLocked(false);
-      } catch (error) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        Dialog.alert(
-          "Invalid QR code",
-          error instanceof Error ? error.message : "Scanned QR code was not recognized.",
-        );
-        setTimeout(() => {
-          setScannerLocked(false);
-        }, 600);
-      }
-    },
-    [enrollInvite, onChangeConnectionPairingUrl, scannerLocked],
-  );
-
-  const connectAndClose = useCallback(
-    async (pairingUrl: string): Promise<boolean> => {
-      setIsSubmitting(true);
+    try {
+      const pairingUrl = extractPairingUrlFromQrPayload(data);
+      const { host, code } = parsePairingUrl(pairingUrl);
+      setHostInput(host);
+      setCodeInput(code);
       onChangeConnectionPairingUrl(pairingUrl);
-      try {
-        const result = await onConnectPress(pairingUrl, params.routeFor);
-        void Haptics.notificationAsync(
-          AsyncResult.isSuccess(result)
-            ? Haptics.NotificationFeedbackType.Success
-            : Haptics.NotificationFeedbackType.Error,
-        );
-        if (AsyncResult.isSuccess(result)) {
-          // Return to whatever opened the sheet. Replacing it with Home would
-          // nest Home inside any sheet still below it.
-          if (!navigation.canGoBack()) {
-            navigation.dispatch(StackActions.replace("Home"));
-          } else {
-            navigation.goBack();
-          }
-        }
-        return AsyncResult.isSuccess(result);
-      } finally {
-        setIsSubmitting(false);
-      }
-    },
-    [navigation, onChangeConnectionPairingUrl, onConnectPress, params.routeFor],
-  );
+      setScanComplete(true);
+      setScannerLocked(false);
+    } catch (error) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Dialog.alert(
+        "Invalid QR code",
+        error instanceof Error ? error.message : "Scanned QR code was not recognized.",
+      );
+      setTimeout(() => {
+        setScannerLocked(false);
+      }, 600);
+    }
+  };
 
-  const handleSubmit = useCallback(async () => {
+  const connectAndClose = async (pairingUrl: string): Promise<boolean> => {
+    setIsSubmitting(true);
+    onChangeConnectionPairingUrl(pairingUrl);
+    const result = await onConnectPress(pairingUrl, params.routeFor);
+    setIsSubmitting(false);
+    void Haptics.notificationAsync(
+      AsyncResult.isSuccess(result)
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Error,
+    );
+    if (AsyncResult.isSuccess(result)) {
+      // Return to whatever opened the sheet. Replacing it with Home would
+      // nest Home inside any sheet still below it.
+      if (!navigation.canGoBack()) {
+        navigation.dispatch(StackActions.replace("Home"));
+      } else {
+        navigation.goBack();
+      }
+    }
+    return AsyncResult.isSuccess(result);
+  };
+
+  const handleSubmit = async () => {
     if (enrollInvite(hostInput)) return;
     const pairingUrl = buildPairingUrl(hostInput, codeInput);
     setIsSubmitting(true);
@@ -205,7 +196,7 @@ export function ConnectionsNewRouteScreen({
       return setPendingConnectionError(staged.error);
     }
     if (!(await connectAndClose(pairingUrl))) await staged.undo();
-  }, [access, codeInput, connectAndClose, enrollInvite, hostInput]);
+  };
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {

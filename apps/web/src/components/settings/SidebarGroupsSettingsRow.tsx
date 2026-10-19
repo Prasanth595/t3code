@@ -1,6 +1,6 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -13,7 +13,6 @@ const selectSingleThreadOpens = (settings: ClientSettings) =>
 export function SidebarGroupsSettingsRow() {
   const enabled = useClientSettings(selectEnabled);
   const singleThreadOpens = useClientSettings(selectSingleThreadOpens);
-  const updateSettings = useUpdateClientSettings();
   return (
     <>
       <SettingsRow
@@ -24,7 +23,7 @@ export function SidebarGroupsSettingsRow() {
             <SettingResetButton
               label="sidebar groups"
               onClick={() =>
-                void updateSettings({
+                void updateClientSettings({
                   sidebarGroupsEnabled: DEFAULT_CLIENT_SETTINGS.sidebarGroupsEnabled,
                 })
               }
@@ -35,7 +34,7 @@ export function SidebarGroupsSettingsRow() {
           <Switch
             checked={enabled}
             onCheckedChange={(checked) =>
-              void updateSettings({ sidebarGroupsEnabled: Boolean(checked) })
+              void updateClientSettings({ sidebarGroupsEnabled: Boolean(checked) })
             }
             aria-label="Sidebar groups"
           />
@@ -50,7 +49,7 @@ export function SidebarGroupsSettingsRow() {
               <SettingResetButton
                 label="single-thread tabs"
                 onClick={() =>
-                  void updateSettings({
+                  void updateClientSettings({
                     sidebarGroupSingleThreadOpens:
                       DEFAULT_CLIENT_SETTINGS.sidebarGroupSingleThreadOpens,
                   })
@@ -62,7 +61,7 @@ export function SidebarGroupsSettingsRow() {
             <Switch
               checked={singleThreadOpens}
               onCheckedChange={(checked) =>
-                void updateSettings({ sidebarGroupSingleThreadOpens: Boolean(checked) })
+                void updateClientSettings({ sidebarGroupSingleThreadOpens: Boolean(checked) })
               }
               aria-label="Single-thread tabs open the thread"
             />
