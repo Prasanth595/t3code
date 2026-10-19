@@ -735,6 +735,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         )
           // Publish even an empty recovery so waiting run ingestion can finish.
           yield* syncBackground();
+        return result;
       });
       const publishItem = Effect.fnUntraced(function* (
         turn: ActiveTurn,
@@ -991,16 +992,20 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         detail?: string,
         disposition: "reusable" | "broken" = "reusable",
         quota?: { readonly resetsAtMs: number },
+        inventory?: typeof MuseTaskList.Type,
       ) {
         if (active !== turn || seenTerminals.has(turn.nativeId)) return;
         seenTerminals.add(turn.nativeId);
         const completedAt = yield* DateTime.now;
         for (const item of turn.items.values()) {
+          // A non-success root can leave background work alive; a failed read proves nothing.
           if (
             isBackgroundItem(item) &&
             item.status === "inProgress" &&
-            status === "completed" &&
-            disposition === "reusable"
+            disposition === "reusable" &&
+            (status === "completed" ||
+              inventory === undefined ||
+              inventory.tasks.some((task) => task.taskId === item.itemId))
           )
             continue;
           if (turn.dirty.has(item.itemId) || item.status === "inProgress")
@@ -1494,13 +1499,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "interrupted"
                     : "cancelled"
                   : "failed";
-            if (status === "completed") yield* refreshTasks();
+            // Stop is confirmed by the native terminal, even if the inventory read stalls.
+            yield* Deferred.succeed(turn.done, undefined);
+            const inventory = yield* refreshTasks();
             yield* finish(
               turn,
               status,
               result.error?.message ?? result.reason,
               "reusable",
               result.error?.quota,
+              inventory,
             );
             break;
           }
