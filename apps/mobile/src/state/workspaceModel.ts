@@ -82,11 +82,12 @@ export function projectWorkspaceConnectionState(input: {
     (environment) => environment.connectionError !== null,
   );
   // The detail must explain the state the title names, so prefer an
-  // environment in that state over whichever failed first.
+  // environment in that state. The status banner still surfaces any enabled
+  // environment's failure, but a switched-off host only speaks for itself.
   const connectionError =
     (
       withError.find((environment) => environment.connectionState === connectionState) ??
-      withError[0]
+      withError.find((environment) => environment.isEnabled)
     )?.connectionError ?? null;
 
   return {
