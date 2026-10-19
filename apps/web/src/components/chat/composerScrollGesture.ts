@@ -100,7 +100,7 @@ export function listenForComposerScrollGestures({
 }: {
   gestureState: ComposerScrollGestureState;
   getTimelineScrollableNode: () => HTMLElement | null;
-  isTimelineAtLogicalEnd: () => boolean;
+  isTimelineAtLogicalEnd: (scrollOffset?: number) => boolean;
   isCollapseEligible: () => boolean;
   onCollapse: () => void;
   restoreAfterTimelineReachedEnd: () => void;
@@ -180,10 +180,19 @@ export function listenForComposerScrollGestures({
       cancelPointerScroll();
       return;
     }
-    // Toggle-mode autoscroll continues after release until another input stops it.
-    if (activeInput === "middle-click") return;
+    if (activeInput === "middle-click") {
+      // Chromium can suppress the pointerdown that stops toggle-mode autoscroll.
+      if (
+        event.type === "pointerup" &&
+        event instanceof MouseEvent &&
+        (hasScrolled || event.button !== 1)
+      ) {
+        cancelPointerScroll();
+      }
+      return;
+    }
     if (activeInput === "touch" && event.type === "touchend") {
-      // Follow scrolls must not extend the fling window or open it after a motionless release.
+      // Later scroll events must not extend the fling window.
       touchScrollUntil = hasScrolled ? window.performance.now() + POINTER_SCROLL_TAIL_MS : 0;
       activeInput = null;
     } else if (activeInput === "scrollbar" && event.type === "pointerup") {
@@ -198,11 +207,15 @@ export function listenForComposerScrollGestures({
   const targetsTimeline = (target: EventTarget | null, scrollNode: HTMLElement) =>
     isTimelineScrollTarget(target, scrollNode, -1) && isTimelineScrollTarget(target, scrollNode, 1);
   const handleTimelinePointerDown = (event: PointerEvent) => {
-    // The click that stops autoscroll must not start a new gesture.
-    if (endMiddleClickAutoscroll()) return;
+    endMiddleClickAutoscroll();
     const scrollNode = getTimelineScrollableNode();
     if (!scrollNode) return;
-    if (event.button === 1 && targetsTimeline(event.target, scrollNode)) {
+    if (
+      event.button === 1 &&
+      event.target instanceof Element &&
+      !event.target.closest("a[href]") &&
+      targetsTimeline(event.target, scrollNode)
+    ) {
       beginPointerScroll("middle-click", scrollNode);
     } else if (event.button === 0 && event.target === scrollNode && event.pointerType !== "touch") {
       beginPointerScroll("scrollbar", scrollNode);
@@ -226,10 +239,7 @@ export function listenForComposerScrollGestures({
 
     // This capture listener runs before the list records the new offset,
     // so the list's end state can lag by one scroll step.
-    const atLogicalEnd =
-      deltaY > 0 &&
-      (scrollNode.scrollHeight - scrollTop - scrollNode.clientHeight <= 1 ||
-        isTimelineAtLogicalEnd());
+    const atLogicalEnd = deltaY > 0 && isTimelineAtLogicalEnd(scrollTop);
     if (atLogicalEnd) {
       restoreAfterTimelineReachedEnd();
     }

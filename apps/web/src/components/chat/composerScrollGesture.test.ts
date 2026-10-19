@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { resolveTimelineIsAtEnd } from "./MessagesTimeline.logic";
 import {
   createComposerScrollGestureState,
   listenForComposerScrollGestures,
@@ -136,6 +137,10 @@ describe("composer timeline scroll input", () => {
     target.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button }));
   }
 
+  function pointerUp(button = 0) {
+    window.dispatchEvent(new MouseEvent("pointerup", { button }));
+  }
+
   function scrollTo(scrollTop: number) {
     timeline.scrollTop = scrollTop;
     timeline.dispatchEvent(new Event("scroll"));
@@ -157,7 +162,12 @@ describe("composer timeline scroll input", () => {
     dispose = listenForComposerScrollGestures({
       gestureState: createComposerScrollGestureState(),
       getTimelineScrollableNode: () => timeline,
-      isTimelineAtLogicalEnd: () => atLogicalEnd,
+      isTimelineAtLogicalEnd: (scrollOffset) =>
+        atLogicalEnd ||
+        resolveTimelineIsAtEnd(
+          { isAtEnd: false, contentLength: 1500, scroll: 500, scrollLength: 500 },
+          scrollOffset,
+        ) === true,
       isCollapseEligible: () => !collapsed,
       onCollapse: () => {
         collapsed = true;
@@ -184,7 +194,7 @@ describe("composer timeline scroll input", () => {
       if (input === "touch") content.dispatchEvent(new Event("touchmove", { bubbles: true }));
       if (input === "middle click") {
         pointerDown(content, 1);
-        window.dispatchEvent(new Event("pointerup"));
+        pointerUp(1);
         vi.advanceTimersByTime(1000);
       }
 
@@ -202,6 +212,31 @@ describe("composer timeline scroll input", () => {
       expect(collapsed).toBe(false);
     },
   );
+
+  it("restores in the logical end band before the list records the new offset", () => {
+    scrollTo(900);
+    pointerDown(timeline);
+    scrollTo(950);
+    expect(collapsed).toBe(true);
+
+    scrollTo(960);
+    expect(collapsed).toBe(false);
+    scrollTo(985);
+    expect(collapsed).toBe(false);
+  });
+
+  it("does not track middle-clicks on links as timeline scrolling", () => {
+    const link = document.createElement("a");
+    link.href = "https://example.com";
+    const label = document.createElement("span");
+    link.append(label);
+    content.append(link);
+
+    pointerDown(label, 1);
+    pointerUp(1);
+    scrollTo(550);
+    expect(collapsed).toBe(false);
+  });
 
   it("ends the release tail even when scrolls and duplicate releases keep arriving", () => {
     content.dispatchEvent(new Event("touchmove", { bubbles: true }));
@@ -251,10 +286,11 @@ describe("composer timeline scroll input", () => {
     },
   );
 
-  it("ends middle-click autoscroll on a key, a click, or a wheel without leaving a hold", () => {
-    for (const stop of ["key", "click", "wheel"]) {
+  it.each(["key", "primary release", "middle release", "wheel"])(
+    "ends toggle-mode middle-click autoscroll on %s without leaving a hold",
+    (stop) => {
       pointerDown(content, 1);
-      window.dispatchEvent(new Event("pointerup"));
+      pointerUp(1);
       vi.advanceTimersByTime(1000);
       scrollTo(450);
       expect(collapsed).toBe(true);
@@ -263,14 +299,39 @@ describe("composer timeline scroll input", () => {
       expect(collapsed).toBe(false);
 
       if (stop === "key") document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
-      if (stop === "click") pointerDown(timeline);
+      // Chromium suppresses pointerdown when a click stops active autoscroll.
+      if (stop === "primary release") pointerUp();
+      if (stop === "middle release") pointerUp(1);
       if (stop === "wheel") {
         content.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 30 }));
       }
       atLogicalEnd = false;
       scrollTo(750);
       expect(collapsed).toBe(false);
-    }
+    },
+  );
+
+  it("ends hold-mode middle autoscroll when the middle button is released", () => {
+    pointerDown(content, 1);
+    scrollTo(450);
+    expect(collapsed).toBe(true);
+    atLogicalEnd = true;
+    scrollTo(700);
+    expect(collapsed).toBe(false);
+
+    pointerUp(1);
+    atLogicalEnd = false;
+    scrollTo(750);
+    expect(collapsed).toBe(false);
+  });
+
+  it("starts a scrollbar gesture after a stationary middle-click toggle", () => {
+    pointerDown(content, 1);
+    pointerUp(1);
+
+    pointerDown(timeline);
+    scrollTo(470);
+    expect(collapsed).toBe(true);
   });
 
   it("leaves no gesture active after the composer stops tracking this timeline", () => {
