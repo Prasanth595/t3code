@@ -158,15 +158,20 @@ export const make = Effect.gen(function* () {
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
+  const missing = new Set<string>();
   // Rate limit pauses by project and host, since each project reads with its own credential.
   // A paused host refuses every read without asking it, so the sweep leaves its pull requests
   // due until the pause ends rather than failing each of them every minute.
   const pausedUntil = new Map<string, number>();
 
   const isDue = (key: string, entries: ReadonlyArray<LinkEntry>, nowMs: number): boolean => {
-    if (requested.has(key) || retryStacks.has(key)) return true;
-    if (entries.some((entry) => entry.link.snapshot === null)) return true;
+    if (requested.has(key)) return true;
     const active = entries.filter((entry) => isUnsettled(entry.thread));
+    if (active.length === 0) return false;
+    const last = lastSyncedAt.get(key);
+    const slowDue = last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    if (missing.has(key)) return slowDue;
+    if (retryStacks.has(key) || active.some((entry) => entry.link.snapshot === null)) return true;
     // A merged snapshot without its merge time cannot settle the thread, so it keeps the slow
     // cadence until the host supplies one (Bitbucket snapshots saved before it was read).
     if (
@@ -177,8 +182,7 @@ export const make = Effect.gen(function* () {
       return false;
     }
     if (active.some((entry) => entry.link.snapshot?.state === "open")) return true;
-    const last = lastSyncedAt.get(key);
-    return last === undefined || nowMs - last >= SLOW_SYNC_INTERVAL_MS;
+    return slowDue;
   };
 
   const logSkipped =
@@ -204,6 +208,7 @@ export const make = Effect.gen(function* () {
 
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
+    for (const key of missing) if (!groups.has(key)) missing.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
@@ -287,7 +292,19 @@ export const make = Effect.gen(function* () {
       if (generation !== undefined || missingMergedAt) {
         yield* pullRequests.invalidate({ reference: ref });
       }
-      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
+      const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false }).pipe(
+        Effect.tapError((error) =>
+          error.reason === "not-found"
+            ? Effect.sync(() => {
+                missing.add(key);
+                // Not-found is a host answer: consume only this refresh and start its backoff.
+                lastSyncedAt.set(key, nowMs);
+                if (requested.get(key) === generation) requested.delete(key);
+              })
+            : Effect.void,
+        ),
+      );
+      missing.delete(key);
       const fields = snapshotFieldsOf(summary);
       const needsStack =
         generation !== undefined ||
@@ -432,11 +449,14 @@ export const make = Effect.gen(function* () {
       Stream.runForEach(events, (event) => {
         switch (event.type) {
           case "thread.pull-request-link-updated":
-            return event.payload.snapshot === null ? requestSync(event.payload) : Effect.void;
+            return event.payload.snapshot === null &&
+              !missing.has(threadPullRequestKeyOf(event.payload))
+              ? requestSync(event.payload)
+              : Effect.void;
           case "thread.pull-request-synced":
             return Effect.forEach(
               visibleThreadPullRequests(event.payload.pullRequests ?? []).filter(
-                (link) => link.snapshot === null,
+                (link) => link.snapshot === null && !missing.has(threadPullRequestKeyOf(link)),
               ),
               requestSync,
               { discard: true },
