@@ -1175,11 +1175,10 @@ export const layerWithOptions = (
           );
         });
 
-      // A process launched with since-renewed credentials fails auth on every
-      // turn until it restarts. A running turn keeps it; pending background
-      // work does not, since the next turn on that process would fail anyway.
-      const releaseIfStaleCredentials = (entry: LiveSessionEntry) =>
-        Effect.gen(function* () {
+      // Renewed launch credentials require a restart, even with background work.
+      // releaseEntry rechecks busy turns and idle generation after the probe yields.
+      const releaseIfStaleCredentials = Effect.fnUntraced(
+        function* (entry: LiveSessionEntry) {
           const runtime = entry.runtime;
           if (entry.busyTurns.size > 0 || runtime.hasStaleCredentials === undefined) return;
           if (!(yield* runtime.hasStaleCredentials)) return;
@@ -1189,14 +1188,9 @@ export const layerWithOptions = (
             detail: "Provider credentials were renewed.",
             onlyIfIdleGeneration: entry.idleGeneration,
           });
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("orchestration-v2.driver-session.stale-credentials-release-failed", {
-              providerSessionId: entry.runtime.providerSessionId,
-              cause,
-            }),
-          ),
-        );
+        },
+        (effect, entry) => effect.pipe(logReleaseFailure(entry.runtime.providerSessionId)),
+      );
 
       const withActivityError = <A, E, R>(
         providerSessionId: ProviderSessionId,
