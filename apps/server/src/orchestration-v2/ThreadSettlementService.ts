@@ -565,9 +565,18 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
-    runSweep(null, threadId),
-  );
+  let fullSweepPending = false;
+  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) => {
+    // Clear at the start so events during this sweep can request one follow-up.
+    if (threadId === undefined) fullSweepPending = false;
+    return runSweep(null, threadId);
+  });
+  const enqueueFullSweep = () =>
+    Effect.suspend(() => {
+      if (fullSweepPending) return Effect.void;
+      fullSweepPending = true;
+      return worker.enqueue(undefined);
+    });
 
   // Then the project's settle script runs in the thread's own worktree; a
   // thread in the shared checkout skips it, because other threads may still be
@@ -585,8 +594,8 @@ export const make = Effect.gen(function* () {
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
-      // A subagent in its parent's worktree settled with the parent, whose own
-      // settlement already ran the script there.
+      // The parent's worktree belongs to the parent; shared-worktree children
+      // skip duplicate cleanup there.
       if (
         thread.lineage.relationshipToParent === "subagent" &&
         thread.lineage.parentThreadId !== null
@@ -626,10 +635,10 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return cleanUpSettledThread(event.threadId).pipe(Effect.andThen(worker.enqueue(undefined)));
+        return cleanUpSettledThread(event.threadId).pipe(Effect.andThen(enqueueFullSweep()));
       case "thread.archived":
       case "thread.deleted":
-        return worker.enqueue(undefined);
+        return enqueueFullSweep();
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
@@ -659,7 +668,7 @@ export const make = Effect.gen(function* () {
     let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
       Effect.gen(function* () {
-        yield* worker.enqueue(undefined);
+        yield* enqueueFullSweep();
         yield* worker.drain;
       }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
     );
@@ -670,7 +679,7 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }
         lastSettlementSettings = key;
-        return worker.enqueue(undefined);
+        return enqueueFullSweep();
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));

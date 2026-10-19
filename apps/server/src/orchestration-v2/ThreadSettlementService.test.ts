@@ -611,6 +611,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const summaryRecovery = yield* Ref.make<ReadonlyArray<boolean | undefined>>([]);
   const invalidatedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
+  const observedEvents = yield* Queue.unbounded<EventId>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
   const scriptRuns =
     yield* Queue.unbounded<ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput>();
@@ -701,7 +702,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       },
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
-      streamDomainEvents: Stream.fromPubSub(domainEvents),
+      streamDomainEvents: Stream.fromPubSub(domainEvents).pipe(
+        Stream.tap((event) => Queue.offer(observedEvents, event.id)),
+      ),
       dispatch,
     }),
     Layer.mock(TerminalManager.TerminalManager)({
@@ -747,6 +750,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     invalidatedCwds,
     closedIdle,
     scriptRuns,
+    observedEvents,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
     updateSettings,
     publishMerge: PubSub.publish(mergedPullRequests, {
@@ -1101,6 +1105,141 @@ describe("ThreadSettlementServiceV2 worker", () => {
                 snapshotAt: child.updatedAt,
               }),
             ]);
+            expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
+            expect(yield* Ref.get(fixture.summaryCalls)).toEqual([]);
+          }).pipe(Effect.provide(fixture.layer));
+        }).pipe(Effect.provide(ProjectionStore.layerMemory)),
+      ),
+  );
+
+  it.effect(
+    "coalesces bulk cleanup wakes and still drains children discovered during a sweep",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const sweepStarted = yield* Deferred.make<void>();
+          const releaseSweep = yield* Deferred.make<void>();
+          const childSettled = yield* Deferred.make<void>();
+          const parent = appThread("bulk-parent", null);
+          const child = {
+            ...appThread("bulk-child", null),
+            lineage: {
+              parentThreadId: parent.id,
+              rootThreadId: parent.id,
+              relationshipToParent: "subagent" as const,
+            },
+          };
+          const marker = appThread("bulk-marker", "settled");
+          const parents = [
+            parent,
+            ...Array.from({ length: 233 }, (_, i) => appThread(`bulk-parent-${i}`, null)),
+          ];
+          for (const thread of [...parents, child, marker]) {
+            yield* store.apply({
+              type: "thread.created",
+              id: EventId.make(`created:${thread.id}`),
+              threadId: thread.id,
+              occurredAt: thread.createdAt,
+              payload: thread,
+            });
+          }
+          let blockNextSweep = false;
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([]),
+            settings: {
+              ...DEFAULT_SERVER_SETTINGS,
+              sidebarAutoSettleAfterDays: null,
+              sidebarAutoSettleOnMerge: false,
+            },
+            projections: {
+              ...store,
+              getSettlementCandidates: (threadId) =>
+                Effect.gen(function* () {
+                  const candidates = yield* store.getSettlementCandidates(threadId);
+                  if (blockNextSweep) {
+                    blockNextSweep = false;
+                    yield* Deferred.succeed(sweepStarted, undefined);
+                    yield* Deferred.await(releaseSweep);
+                  }
+                  return candidates;
+                }),
+            },
+            onDispatch: (command): Effect.Effect<void> =>
+              Effect.gen(function* () {
+                const thread = yield* store.getThread(command.threadId);
+                const event = settledEvent({
+                  ...thread,
+                  settledOverride: "settled",
+                  settledAt: DateTime.makeUnsafe(NOW),
+                });
+                yield* store.apply(event);
+                yield* fixture.publishEvent(event);
+                yield* Deferred.succeed(childSettled, undefined);
+              }).pipe(Effect.orDie),
+          });
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+            yield* Ref.set(fixture.candidateReads, []);
+            blockNextSweep = true;
+            yield* fixture.publishEvent(settledEvent(marker));
+            yield* Deferred.await(sweepStarted);
+
+            for (const [i, thread] of parents.entries()) {
+              const type = (["thread.settled", "thread.archived", "thread.deleted"] as const)[
+                i % 3
+              ]!;
+              const event: OrchestrationV2DomainEvent = {
+                type,
+                id: EventId.make(`bulk:${thread.id}`),
+                threadId: thread.id,
+                occurredAt: DateTime.makeUnsafe(NOW),
+                payload: {
+                  ...thread,
+                  ...(type === "thread.settled"
+                    ? { settledOverride: "settled" as const, settledAt: DateTime.makeUnsafe(NOW) }
+                    : type === "thread.archived"
+                      ? { archivedAt: DateTime.makeUnsafe(NOW) }
+                      : { deletedAt: DateTime.makeUnsafe(NOW) }),
+                },
+              };
+              yield* store.apply(event);
+              yield* fixture.publishEvent(event);
+            }
+            const markDelivery = (id: string) =>
+              fixture
+                .publishEvent({
+                  type: "thread.created",
+                  id: EventId.make(id),
+                  threadId: marker.id,
+                  occurredAt: marker.createdAt,
+                  payload: marker,
+                })
+                .pipe(
+                  // The next event is observed only after the previous handler has finished enqueueing.
+                  Effect.andThen(
+                    Queue.take(fixture.observedEvents).pipe(
+                      Effect.repeat({ until: (seen) => seen === id }),
+                    ),
+                  ),
+                );
+            yield* markDelivery("bulk-delivered");
+            yield* Deferred.succeed(releaseSweep, undefined);
+            yield* Deferred.await(childSettled);
+            yield* markDelivery("child-delivered");
+            yield* service.drain;
+
+            expect(yield* Ref.get(fixture.candidateReads)).toEqual([
+              undefined,
+              undefined,
+              undefined,
+            ]);
+            expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
+              child.id,
+            ]);
+            expect((yield* store.getThread(child.id)).settledOverride).toBe("settled");
             expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
             expect(yield* Ref.get(fixture.summaryCalls)).toEqual([]);
           }).pipe(Effect.provide(fixture.layer));
