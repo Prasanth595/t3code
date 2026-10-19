@@ -194,19 +194,6 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
-/**
- * An approval the child's records still show pending for a delegated task's own
- * run, without its command or input. The record can outlive the provider's
- * request, so it is a reason to look in the child thread, not proof of one.
- */
-export const OrchestratorMcpPendingApproval = Schema.Struct({
-  requestId: RuntimeRequestId,
-  kind: ProviderRequestKind,
-  /** The task's run the request was recorded on. */
-  runId: RunId,
-});
-export type OrchestratorMcpPendingApproval = typeof OrchestratorMcpPendingApproval.Type;
-
 export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   taskId: NodeId,
   childThreadId: ThreadId,
@@ -227,9 +214,11 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description:
       "Blocking question ends mode=wait. Pass threadId=childThreadId to t3_pending_request_list, t3_pending_request_read (with requestId) and t3_pending_request_respond, or ask the user; the task's completion still wakes this thread.",
   }),
-  pendingApproval: Schema.NullOr(OrchestratorMcpPendingApproval).annotate({
+  pendingApproval: Schema.NullOr(
+    Schema.Struct({ requestId: RuntimeRequestId, kind: ProviderRequestKind, runId: RunId }),
+  ).annotate({
     description:
-      "An approval the child's records still show pending for this task's own unfinished run ends mode=wait; the task keeps running and its completion still wakes this thread. This thread cannot approve or deny it, and the pending request tools answer questions only. The record can outlive the provider's request, so ask whoever holds approval for the child to open requestId in childThreadId and check the full request there before deciding. Null when no such approval is recorded.",
+      "Identity of the oldest pending live approval for this task's own unfinished work, or null. Ends mode=wait without cancelling the child; completion still wakes this thread. This grants no approval authority. Read the fresh full request in childThreadId before responding: the record can outlive its provider callback. Decisions remain with the child's existing approval holder; pending request tools answer questions only.",
   }),
   waitTimedOut: Schema.Boolean.annotate({
     description:

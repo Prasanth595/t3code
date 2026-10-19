@@ -263,19 +263,11 @@ the timeout expires. A wait timeout does not cancel the child; the result sets
 question also ends the wait with `hasPendingQuestion: true` and `waitTimedOut: false`.
 If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_list`,
 `t3_pending_request_read` (with `requestId`) and `t3_pending_request_respond`, or ask
-the user; the task's completion still wakes this thread.
-
-An approval that the child's records still show pending and live for one of the task's
-own unfinished runs also ends the wait, with `waitTimedOut: false` and `pendingApproval`
-naming the request's `requestId`, `kind`, and `runId`. It carries no command or input.
-The parent cannot decide it, and the pending request tools answer questions only. The
-record can outlive the provider's request, so `pendingApproval` is a reason to look, not
-proof that the provider still waits. The parent asks whoever holds approval for the child
-to open that request in `childThreadId` and check the full request there before deciding.
-The task keeps running and its completion still wakes the parent. An approval from another task, a
-follow-up run, or a finished run does not count, nor does one that is resolved, expired,
-cancelled, or no longer resumable. A stopped, disposed, or terminal task reports none.
-Async questions do not end the wait.
+the user; the task's completion still wakes this thread. A pending live approval for the
+task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
+it grants no approval authority. Read the fresh full request in the child thread before
+responding, since the durable record can outlive its provider callback. Async questions
+do not end the wait.
 
 ```ts
 type DelegateTaskResult = {
@@ -295,11 +287,6 @@ type DelegateTaskResult = {
   latestTerminalSummary: string | null;
   latestTerminalResultContextTransferId: string | null;
   hasPendingQuestion: boolean;
-  pendingApproval: {
-    requestId: string;
-    kind: string; // a provider approval kind, never user_input or auth_refresh
-    runId: string;
-  } | null;
   waitTimedOut: boolean;
 };
 ```
@@ -313,8 +300,7 @@ and an available result. The task remains nonterminal until its known work
 finishes. Its published `summary` and result transfer then remain stable across
 later follow-ups. `hasPendingChildRuns` reports later queued or executing turns;
 `latestTerminal*` exposes later executed, non-monitor results without replacing
-the published task result. `pendingApproval` reports the same blocking approval
-that ends a wait.
+the published task result.
 
 ### `task_cancel`
 
@@ -483,8 +469,7 @@ async question, still working. If the question is answered or dismissed before
 the notification starts a turn, that queued turn is cancelled. Approvals are not
 routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
-through that wait instead. That wait also ends on a pending approval, so the
-parent can ask whoever holds approval for the child to check and decide it.
+through that wait instead.
 If the provider cuts that wait short, a still-pending live question wakes the
 parent when its launching run completes, fails, or waits for post-turn work.
 Stopping or interrupting the parent prevents this catch-up.
@@ -561,8 +546,6 @@ Coverage includes:
 - parent and child lineage projections;
 - spawn and result context transfers;
 - async status polling;
-- waits ended by a blocking question or a pending approval, and normal completion
-  and delivery after the approval is decided;
 - cancellation;
 - batch ordinary-thread creation;
 - thread listing and timeline reads, including another project's threads;
