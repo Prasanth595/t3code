@@ -23,6 +23,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { dispatchFailure } from "../mcp/threadAccess.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
@@ -45,18 +46,21 @@ const forkCases = (["codex", "claudeAgent"] as const).flatMap((driverName) => {
     { runEffectWorker: false },
   );
 
-  return (["failed", "interrupted", "cancelled"] as const).map((status) => ({
-    driver,
-    status,
-    instanceId,
-    modelSelection,
-    layer,
-  }));
+  return (["failed", "interrupted", "cancelled", "completed"] as const).flatMap((status) =>
+    (status === "completed" ? [false, true] : [false]).map((missingSession) => ({
+      driver,
+      status,
+      missingSession,
+      instanceId,
+      modelSelection,
+      layer,
+    })),
+  );
 });
 
 it.effect.each(forkCases)(
-  "bounds $driver context when continuing a fork of a $status run",
-  ({ driver, status, instanceId, modelSelection, layer }) =>
+  "forks $driver $status runs safely (missing session: $missingSession)",
+  ({ driver, status, missingSession, instanceId, modelSelection, layer }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -97,7 +101,9 @@ it.effect.each(forkCases)(
               providerSessionId: null,
               appThreadId: sourceThreadId,
               ownerNodeId: null,
-              nativeThreadRef: { driver, nativeId: "native-source", strength: "strong" },
+              nativeThreadRef: missingSession
+                ? null
+                : { driver, nativeId: "native-source", strength: "strong" },
               nativeConversationHeadRef: null,
               status: "idle",
               firstRunOrdinal: 1,
@@ -216,15 +222,32 @@ it.effect.each(forkCases)(
           ],
         });
       }
-      yield* orchestrator.dispatch({
-        type: "thread.fork",
-        commandId: CommandId.make("fork-source"),
-        sourceThreadId,
-        targetThreadId,
-        sourcePoint: { type: "run", runId: sourceRunId },
-        createdBy: "user",
-        creationSource: "web",
-      });
+      const forkResult = yield* Effect.result(
+        orchestrator.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("fork-source"),
+          sourceThreadId,
+          targetThreadId,
+          sourcePoint: { type: "run", runId: sourceRunId },
+          createdBy: "user",
+          creationSource: "web",
+        }),
+      );
+      if (status === "completed" && (driver === "claudeAgent" || missingSession)) {
+        assert.equal(forkResult._tag, "Failure");
+        if (forkResult._tag !== "Failure") return;
+        assert.include(
+          dispatchFailure(forkResult.failure).message,
+          missingSession
+            ? "native provider session has not been resolved"
+            : "no native message cursor",
+        );
+        const missing = yield* Effect.result(orchestrator.getThreadProjection(targetThreadId));
+        assert.equal(missing._tag, "Failure");
+        return;
+      }
+      if (forkResult._tag === "Failure") return yield* forkResult.failure;
+      if (status === "completed") return;
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("continue-fork"),

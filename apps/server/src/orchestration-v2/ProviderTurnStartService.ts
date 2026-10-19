@@ -1,5 +1,6 @@
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { forkSourceTurns } from "./forkNativeSource.ts";
 import {
   CommandId,
   latestProviderTurnForAttempt,
@@ -622,8 +623,17 @@ export const layer: Layer.Layer<
           }
           return yield* loadFromProvider(
             session.forkThread({
-              sourceProviderThread,
-              sourceProviderTurns: sourceProjection.providerTurns,
+              sourceProviderThread: {
+                ...sourceProviderThread,
+                nativeThreadRef:
+                  nativeForkTransfer.sourcePoint.providerThreadRef ??
+                  sourceProviderThread.nativeThreadRef,
+              },
+              sourceProviderTurns: forkSourceTurns(
+                sourceProjection.providerTurns,
+                sourceProviderTurn,
+                nativeForkTransfer.sourcePoint,
+              ),
               targetThreadId: projection.thread.id,
               modelSelection: run.modelSelection,
               runtimePolicy: resolvedRuntimePolicy,
