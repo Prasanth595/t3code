@@ -789,7 +789,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
             ...reply,
             id: ThreadId.make("background-reply"),
             latestRunId: RunId.make("background-reply-run"),
-            latestUserAuthoredRunCompletedAt: null,
+            latestUserAuthoredRunCompletedAt: DateTime.subtract(terminalAt, { seconds: 1 }),
           });
           const fixture = yield* makeHarness({
             snapshot: makeSnapshot([reply, background]),
