@@ -262,8 +262,8 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
               : ["-L", `127.0.0.1:${daemonPort}:127.0.0.1:${remote.daemonPort}`]),
             config.target,
             // The server holds the only write end of this stdin, so when it exits for any
-            // reason (including SIGKILL) the remote `cat` sees EOF and ssh exits once its
-            // forwarded connections close, instead of being orphaned.
+            // reason the remote `cat` sees EOF and ssh exits once its forwarded connections
+            // close, instead of being orphaned.
             "sh",
             "-c",
             quoteRemoteArg("exec cat >/dev/null"),
