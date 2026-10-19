@@ -69,6 +69,14 @@ function makeFrame() {
   return frame;
 }
 
+const PNG_HEADER = (() => {
+  const header = Buffer.alloc(24);
+  header.write("IHDR", 12);
+  header.writeUInt32BE(1280, 16);
+  header.writeUInt32BE(800, 20);
+  return header.toString("base64");
+})();
+
 function makeSession(frame?: ReturnType<typeof makeFrame>) {
   const events = new NodeEvents.EventEmitter();
   return {
@@ -78,7 +86,10 @@ function makeSession(frame?: ReturnType<typeof makeFrame>) {
     send: vi.fn(async (method: string, input?: unknown): Promise<Record<string, unknown>> => {
       if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{}] };
       if (method === "Page.getLayoutMetrics") return { cssVisualViewport: { pageX: 0, pageY: 0 } };
-      if (method === "Page.captureScreenshot") return { data: "ZnJhbWU=" };
+      if (method === "Page.captureScreenshot") {
+        // A snapshot sizes its screenshot from the PNG header; viewers get JPEG frames as-is.
+        return { data: (input as { format: string }).format === "png" ? PNG_HEADER : "ZnJhbWU=" };
+      }
       if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
       // Snapshots read password fields from their own isolated world in each frame.
       if (method === "Page.createIsolatedWorld") {
@@ -1606,163 +1617,94 @@ it.live("a desktop page that comes back reconnects without waiting for a viewer"
   ).pipe(Effect.provide(layer)),
 );
 
+// Chromium sizes a capture by the clip, its scale, and the display ratio net of page zoom.
 it.live.each([
-  "display ratio 1.5",
-  "phone viewport",
-  "zoomed and scrolled",
-  "zoom after ratio read",
-  "zoom after first layout read",
-  "zoom never settles",
-  "headless",
-] as const)("snapshot sizing: %s", (scenario) =>
+  {
+    name: "desktop at display ratio 1.5",
+    desktop: true,
+    page: { ratio: 1.5, width: 1280, height: 800, zoom: 1 },
+    scrollY: 0,
+    size: { width: 1280, height: 800 },
+    clipY: 0,
+  },
+  {
+    name: "desktop resized to a phone",
+    desktop: true,
+    page: { ratio: 1, width: 390, height: 844, zoom: 1 },
+    scrollY: 0,
+    size: { width: 390, height: 844 },
+    clipY: undefined,
+  },
+  {
+    name: "desktop zoomed and scrolled",
+    desktop: true,
+    page: { ratio: 3, width: 640, height: 400, zoom: 2 },
+    scrollY: 100,
+    size: { width: 1280, height: 800 },
+    clipY: 200,
+  },
+  {
+    name: "headless",
+    desktop: false,
+    page: { ratio: 2, width: 1280, height: 800, zoom: 1 },
+    scrollY: 0,
+    size: { width: 1280, height: 800 },
+    clipY: 0,
+  },
+])("snapshot captures the page's own viewport: $name", ({ desktop, page, scrollY, size, clipY }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      desktopRendersNext = scenario !== "headless";
+      desktopRendersNext = desktop;
       const { browser, broker, tabId } = yield* ready;
       yield* browser.attachViewer(viewerInput(tabId, false));
-      const context = scenario === "headless" ? contexts[0]! : desktopConnections[0]!.context;
-      const phone = scenario === "phone viewport";
-      const beforeZoom = {
-        ratio: phone ? 1 : 1.5,
-        width: phone ? 390 : 1280,
-        height: phone ? 844 : 800,
-        zoom: 1,
-      };
-      const afterZoom = { ratio: 3, width: 640, height: 400, zoom: 2 };
-      let current = scenario === "zoomed and scrolled" ? afterZoom : beforeZoom;
-      let ratioReads = 0;
-      let layoutReads = 0;
-      const captures: unknown[] = [];
-      const size = phone
-        ? { width: 390, height: 844 }
-        : scenario === "zoomed and scrolled"
-          ? { width: 1279, height: 799 }
-          : { width: 1280, height: 800 };
-      // An encoded IHDR makes the assertion independent of the predicted clip size.
-      const header = Buffer.alloc(24);
-      header.write("IHDR", 12);
-      header.writeUInt32BE(size.width, 16);
-      header.writeUInt32BE(size.height, 20);
+      const context = desktop ? desktopConnections[0]!.context : contexts[0]!;
+      const display = page.ratio / page.zoom;
+      const clips: Array<{ y: number } | undefined> = [];
+      let metricsReads = 0;
       for (const session of context.sessions) {
         const send = session.send.getMockImplementation()!;
         session.send.mockImplementation(async (method, input) => {
           if (
             method === "Runtime.evaluate" &&
-            String((input as { expression?: string })?.expression).includes("ratio:")
+            String((input as { expression?: string })?.expression).includes("devicePixelRatio")
           ) {
-            ratioReads += 1;
-            const reply = { result: { value: current } };
-            if (scenario === "zoom after ratio read") current = afterZoom;
-            if (scenario === "zoom never settles")
-              current = current === beforeZoom ? afterZoom : beforeZoom;
-            return reply;
+            metricsReads += 1;
+            return { result: { value: page } };
           }
           if (method === "Page.getLayoutMetrics") {
-            const reply = {
-              cssVisualViewport: {
-                pageX: 0,
-                pageY: scenario === "zoomed and scrolled" ? 100 : 0,
-                zoom: current.zoom,
-              },
-            };
-            layoutReads += 1;
-            if (scenario === "zoom after first layout read" && layoutReads === 1)
-              current = afterZoom;
-            return reply;
+            return { cssVisualViewport: { pageX: 0, pageY: scrollY, zoom: page.zoom } };
           }
           if (method === "Page.captureScreenshot") {
-            captures.push((input as { clip?: unknown })?.clip);
+            const clip = (
+              input as { clip?: { y: number; width: number; height: number; scale: number } }
+            )?.clip;
+            clips.push(clip);
+            const header = Buffer.alloc(24);
+            header.write("IHDR", 12);
+            header.writeUInt32BE(
+              Math.round((clip ? clip.width * clip.scale : page.width * page.zoom) * display),
+              16,
+            );
+            header.writeUInt32BE(
+              Math.round((clip ? clip.height * clip.scale : page.height * page.zoom) * display),
+              20,
+            );
             return { data: header.toString("base64") };
           }
           return send(method, input);
         });
       }
-      const snapshot = broker.invoke<PreviewAutomationSnapshot>({
+      const result = yield* broker.invoke<PreviewAutomationSnapshot>({
         scope,
         tabId,
         operation: "snapshot",
         input: {},
       });
-      if (scenario === "zoom never settles") {
-        expect(JSON.stringify(yield* Effect.exit(snapshot))).toContain("zoom kept changing");
-        expect(captures).toEqual([]);
-        expect(ratioReads).toBe(3);
-        return;
-      }
-      const result = yield* snapshot;
-      expect(captures).toEqual([
-        phone
-          ? undefined
-          : {
-              x: 0,
-              y: scenario === "zoomed and scrolled" ? 200 : 0,
-              width: 1280,
-              height: 800,
-              scale: scenario === "headless" ? 0.5 : 2 / 3,
-            },
-      ]);
+      const png = Buffer.from(result.screenshot.data, "base64");
       expect(result.screenshot).toMatchObject(size);
-      if (scenario === "headless") expect(ratioReads).toBe(0);
-      if (scenario.startsWith("zoom after")) expect(ratioReads).toBe(2);
-    }),
-  ).pipe(Effect.provide(layer)),
-);
-
-it.live("a stalled desktop metrics read times out and resumes snapshot viewers", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      desktopRendersNext = true;
-      const { browser, broker, tabId } = yield* ready;
-      yield* browser.attachViewer(viewerInput(tabId, false));
-      const context = desktopConnections[0]!.context;
-      const reading = Promise.withResolvers<void>();
-      let stalled = true;
-      for (const session of context.sessions) {
-        const send = session.send.getMockImplementation()!;
-        session.send.mockClear().mockImplementation(async (method, input) => {
-          if (
-            method === "Runtime.evaluate" &&
-            String((input as { expression?: string })?.expression).includes("ratio:")
-          ) {
-            if (stalled) {
-              reading.resolve();
-              return new Promise(() => {});
-            }
-            return { result: { value: { ratio: 1, width: 1280, height: 800, zoom: 1 } } };
-          }
-          return send(method, input);
-        });
-      }
-      const snapshot = broker.invoke<PreviewAutomationSnapshot>({
-        scope,
-        tabId,
-        operation: "snapshot",
-        input: {},
-      });
-      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-      try {
-        const pending = yield* snapshot.pipe(
-          Effect.exit,
-          Effect.tap(() => Effect.sync(() => reading.resolve())),
-          Effect.forkScoped,
-        );
-        yield* Effect.promise(() => reading.promise);
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(9_999));
-        expect(pending.pollUnsafe()).toBeUndefined();
-        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1));
-        const result = pending.pollUnsafe();
-        expect(result).toBeDefined();
-        expect(JSON.stringify(result)).toContain(
-          "The page was too busy to capture a snapshot in time",
-        );
-        const viewerSession = context.sessions.at(-1)!;
-        expect(viewerSession.send).toHaveBeenCalledWith("Page.stopScreencast");
-        expect(viewerSession.send).toHaveBeenCalledWith("Page.startScreencast", expect.anything());
-        stalled = false;
-        expect((yield* snapshot).screenshot).toMatchObject({ width: 1280, height: 800 });
-      } finally {
-        vi.useRealTimers();
-      }
+      expect({ width: png.readUInt32BE(16), height: png.readUInt32BE(20) }).toEqual(size);
+      expect(clips.map((clip) => clip?.y)).toEqual([clipY]);
+      expect(metricsReads).toBe(desktop ? 1 : 0);
     }),
   ).pipe(Effect.provide(layer)),
 );

@@ -385,7 +385,7 @@ it("reads real snapshot metrics after page script reassigns the globals", async 
     expect(await page.evaluate("[devicePixelRatio, innerWidth, innerHeight]")).toEqual([
       -1.5, 99999, 1e7,
     ]);
-    expect(await ServerBrowserPage.readPageMetrics?.(cdp)).toEqual({
+    expect(await ServerBrowserPage.readPageMetrics(cdp)).toEqual({
       ratio: 1.5,
       width: 1280,
       height: 800,

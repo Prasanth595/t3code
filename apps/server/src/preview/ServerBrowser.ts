@@ -1486,20 +1486,6 @@ const make = Effect.gen(function* () {
     return started;
   };
 
-  // Desktop pages report CSS sizes and a ratio that includes zoom. Captures use display pixels,
-  // so read the page's applied zoom rather than the server's possibly pending value.
-  const snapshotRendering = async (tab: ServerTab) => {
-    if (!tab.desktop) return { renderScale: RENDER_SCALE };
-    const page = await ServerBrowserPage.readPageMetrics(tab.cdp);
-    return {
-      renderScale: page.ratio / page.zoom,
-      viewport: {
-        width: Math.round(page.width * page.zoom),
-        height: Math.round(page.height * page.zoom),
-      },
-    };
-  };
-
   // Scaled captures repaint every screencast; pause them to avoid leaking that frame.
   const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
     withCaptureLock(tab, async () => {
@@ -1908,11 +1894,10 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, async () =>
+        return withScreencastsPaused(tab, () =>
           ServerBrowserPage.snapshot({
             ...tab,
-            renderScale: RENDER_SCALE,
-            ...(tab.desktop ? { rendering: () => snapshotRendering(tab) } : {}),
+            renderScale: tab.desktop ? "display" : RENDER_SCALE,
           }),
         );
       }
