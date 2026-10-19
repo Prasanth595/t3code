@@ -306,20 +306,17 @@ export function ShimmeringWorkContent(props: {
   }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
 
   // One timing covers the sweep and the pause, so the native driver can loop it.
-  // Memoized so re-renders don't rebuild the native animation nodes.
-  const { sweepTranslateX, counterSweepTranslateX } = useMemo(() => {
-    const inputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
-    return {
-      sweepTranslateX: progress.interpolate({
-        inputRange,
-        outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
-      }),
-      counterSweepTranslateX: progress.interpolate({
-        inputRange,
-        outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
-      }),
-    };
-  }, [contentWidth, progress]);
+  // The React Compiler memoizes these, so re-renders don't rebuild the native
+  // animation nodes.
+  const inputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
+  const sweepTranslateX = progress.interpolate({
+    inputRange,
+    outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
+  });
+  const counterSweepTranslateX = progress.interpolate({
+    inputRange,
+    outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
+  });
 
   return (
     <View
