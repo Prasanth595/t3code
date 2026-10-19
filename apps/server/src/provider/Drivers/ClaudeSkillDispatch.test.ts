@@ -4,18 +4,8 @@ import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDi
 
 const skillPath = (name: string) => `/home/me/.claude/skills/${name}/SKILL.md`;
 
-const INTERROGATE_NOTE = `[The user invoked this skill. Follow the instructions at: ${skillPath("interrogate")}]`;
-
-const skillMap = (names: Iterable<string>, userInvocationOnly: ReadonlyArray<string> = []) =>
-  new Map<string, ClaudeSkillTarget>(
-    [...names].map((name): [string, ClaudeSkillTarget] => [
-      name,
-      {
-        path: skillPath(name),
-        ...(userInvocationOnly.includes(name) ? { userInvocationOnly: true } : {}),
-      },
-    ]),
-  );
+const skillMap = (names: Iterable<string>) =>
+  new Map<string, ClaudeSkillTarget>([...names].map((name) => [name, { path: skillPath(name) }]));
 
 const SKILLS = skillMap(["2spec", "implement", "review", "re-release-version"]);
 
@@ -94,44 +84,20 @@ describe("planClaudeSkillDispatch", () => {
     }
   });
 
-  describe("earlier skills the model may not start itself", () => {
-    const skills = skillMap(
-      ["interrogate", "poteto-mode", "review"],
-      ["interrogate", "poteto-mode"],
-    );
-
-    it("tells the model the user invoked an earlier user-only skill and where it lives", () => {
-      expect(planClaudeSkillDispatch("$interrogate and $poteto-mode pleas", skills)).toEqual({
-        leadingText: `/interrogate ${INTERROGATE_NOTE} and`,
-        commandText: "/poteto-mode pleas",
-        skillName: "poteto-mode",
-      });
-    });
-
-    it("leaves an earlier skill the model may start as a bare slash name", () => {
-      expect(planClaudeSkillDispatch("$review then $interrogate", skills)).toEqual({
-        leadingText: "/review then",
-        commandText: "/interrogate",
-        skillName: "interrogate",
-      });
-    });
-
-    it("does not annotate the dispatched skill when it is named twice", () => {
-      expect(planClaudeSkillDispatch("$interrogate again $interrogate", skills)).toEqual({
-        leadingText: "/interrogate again",
-        commandText: "/interrogate",
-        skillName: "interrogate",
-      });
-    });
-
-    it("annotates a repeated earlier user-only skill only once", () => {
-      expect(
-        planClaudeSkillDispatch("$interrogate then $interrogate then $review", skills),
-      ).toEqual({
-        leadingText: `/interrogate ${INTERROGATE_NOTE} then /interrogate then`,
-        commandText: "/review",
-        skillName: "review",
-      });
+  it("bounds notes for repeated user-only skills and leaves the native dispatch unannotated", () => {
+    const skills = new Map([
+      ["interrogate", { path: skillPath("interrogate"), userInvocationOnly: true }],
+      ["implement", { path: skillPath("implement"), userInvocationOnly: true }],
+    ]);
+    expect(
+      planClaudeSkillDispatch(
+        "$interrogate then $interrogate then $implement and $implement the fixes",
+        skills,
+      ),
+    ).toEqual({
+      leadingText: `/interrogate [The user invoked this skill. Follow the instructions at: ${skillPath("interrogate")}] then /interrogate then /implement and`,
+      commandText: "/implement the fixes",
+      skillName: "implement",
     });
   });
 });

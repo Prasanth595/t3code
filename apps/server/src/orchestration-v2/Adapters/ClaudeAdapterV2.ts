@@ -3456,17 +3456,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       adapterOptions.environment,
     ).pipe(
       Effect.map(
-        (skills): ReadonlyMap<string, ClaudeSkillTarget> =>
+        (skills) =>
           new Map(
             skills
               .filter((skill) => skill.enabled && skill.userInvocable !== false)
-              .map((skill): [string, ClaudeSkillTarget] => [
-                skill.name,
-                {
-                  path: skill.path,
-                  ...(skill.userInvocationOnly === true ? { userInvocationOnly: true } : {}),
-                },
-              ]),
+              .map((skill) => [skill.name, skill]),
           ),
       ),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
