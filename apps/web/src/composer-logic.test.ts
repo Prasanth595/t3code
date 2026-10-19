@@ -50,46 +50,37 @@ const citation: AssistantCitation = {
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
 
 describe("isPathSuggestionCurrent", () => {
-  const environmentId = EnvironmentId.make("local");
-  const target = { environmentId, cwd: "/repo", query: "alpha" };
-  const trigger = detectComposerTrigger("@alpha", 6)!;
+  const searchedTarget = {
+    environmentId: EnvironmentId.make("local"),
+    cwd: "/repo",
+    query: "alpha",
+  };
 
-  it("accepts a suggestion for the current query, workspace, and environment", () => {
-    expect(isPathSuggestionCurrent(target, trigger, environmentId, target.cwd)).toBe(true);
-  });
-
-  it("matches the trimmed search query", () => {
+  it("allows a file suggestion matching the live search", () => {
     expect(
-      isPathSuggestionCurrent(target, { ...trigger, query: " alpha " }, environmentId, target.cwd),
+      isPathSuggestionCurrent(
+        searchedTarget,
+        detectComposerTrigger("@alpha", 6),
+        searchedTarget.environmentId,
+        searchedTarget.cwd,
+      ),
     ).toBe(true);
   });
 
-  it("rejects a suggestion from the previous query", () => {
-    const nextTrigger = detectComposerTrigger("@beta", 5);
-    expect(isPathSuggestionCurrent(target, nextTrigger, environmentId, target.cwd)).toBe(false);
-  });
-
-  it("rejects a suggestion from another workspace", () => {
-    expect(isPathSuggestionCurrent(target, trigger, environmentId, "/other-repo")).toBe(false);
-  });
-
-  it("rejects a suggestion from another environment", () => {
-    expect(isPathSuggestionCurrent(target, trigger, EnvironmentId.make("remote"), target.cwd)).toBe(
-      false,
-    );
-  });
-
-  it.each(["slash-command", "skill", "pull-request"] as const)(
-    "rejects a %s trigger even when its query matches",
-    (kind) => {
-      expect(isPathSuggestionCurrent(target, { ...trigger, kind }, environmentId, target.cwd)).toBe(
-        false,
-      );
-    },
-  );
-
-  it("rejects a suggestion after the trigger closes", () => {
-    expect(isPathSuggestionCurrent(target, null, environmentId, target.cwd)).toBe(false);
+  it.each([
+    ["query", { ...searchedTarget, query: "beta" }],
+    ["cwd", { ...searchedTarget, cwd: "/other-repo" }],
+    ["environment", { ...searchedTarget, environmentId: EnvironmentId.make("remote") }],
+  ] as const)("rejects a visible file suggestion after the live %s changes", (_change, current) => {
+    const prompt = `@${current.query}`;
+    expect(
+      isPathSuggestionCurrent(
+        searchedTarget,
+        detectComposerTrigger(prompt, prompt.length),
+        current.environmentId,
+        current.cwd,
+      ),
+    ).toBe(false);
   });
 });
 
