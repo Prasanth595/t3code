@@ -1898,7 +1898,12 @@ it.layer(
       }),
     );
 
-    const updateScenarios = ["healthy", "sibling defects", "selected defect"] as const;
+    const updateScenarios = [
+      "healthy",
+      "unauthenticated",
+      "sibling defects",
+      "selected defect",
+    ] as const;
     it.effect.each(updateScenarios)("refreshes account caches after update (%s)", (scenario) =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("example");
@@ -1920,12 +1925,18 @@ it.layer(
           const provider = {
             instanceId,
             driver: driverKind,
-            status: "ready",
+            status: scenario === "unauthenticated" ? "error" : "ready",
             enabled,
             installed: true,
-            auth: { status: "authenticated", label: config.home },
+            auth: {
+              status:
+                scenario === "unauthenticated" || scenario === "selected defect"
+                  ? "unauthenticated"
+                  : "authenticated",
+              label: config.home,
+            },
             checkedAt: "2026-06-10T00:00:00.000Z",
-            version: scenario === "selected defect" && id === "personal" ? null : "1.0.0",
+            version: scenario === "selected defect" && id === "personal" ? "2.0.0" : "1.0.0",
             models: [],
             slashCommands: [],
             skills: [],
@@ -2079,7 +2090,9 @@ it.layer(
           const before = yield* registry.getProviders;
           if (scenario === "selected defect") {
             const selected = before.find((p) => p.instanceId === "personal");
-            assert.strictEqual(selected?.version, null);
+            assert.strictEqual(selected?.version, "2.0.0");
+            assert.strictEqual(selected?.status, "ready");
+            assert.strictEqual(selected?.auth.status, "unauthenticated");
             assert.strictEqual(selected?.versionAdvisory, undefined);
           }
           const result = yield* runner.updateProvider({
@@ -2112,6 +2125,11 @@ it.layer(
               scenario === "selected defect" && id === "personal" ? [] : [`${id}-model`],
             );
             assert.strictEqual(provider?.auth.label, `/${id}`);
+            if (scenario === "unauthenticated") {
+              assert.strictEqual(provider?.status, "error");
+              assert.strictEqual(provider?.auth.status, "unauthenticated");
+              assert.strictEqual(provider?.version, "2.0.0");
+            }
           }
           for (const id of scenario === "sibling defects"
             ? ["broken-maintenance", "broken-discovery"]

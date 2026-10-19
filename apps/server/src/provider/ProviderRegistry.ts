@@ -64,6 +64,7 @@ export class ProviderRegistry extends Context.Service<
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /** Only refreshed instances can verify an update; the published list still includes every row. */
     readonly refreshAfterUpdate: (
       provider: ProviderDriverKind,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
@@ -742,7 +743,14 @@ export const layer = Layer.effect(
           ),
         { concurrency: "unbounded", discard: true },
       );
-      return yield* Ref.get(providersRef);
+      const refreshedInstanceIds = new Set(
+        instances
+          .filter((instance) => !failedInstances.has(instance.instanceId))
+          .map((instance) => instance.instanceId),
+      );
+      return (yield* Ref.get(providersRef)).filter((candidate) =>
+        refreshedInstanceIds.has(candidate.instanceId),
+      );
     });
 
     const getProviderMaintenanceCapabilitiesForInstance = Effect.fn(
