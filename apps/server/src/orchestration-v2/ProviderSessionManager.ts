@@ -1894,6 +1894,17 @@ export const layerWithOptions = (
           if (current?.runtime !== entry.runtime) {
             return;
           }
+          if (event.providerSession.status === "error") {
+            yield* Ref.update(sessions, (sessions) => {
+              const key = sessionKey(entry.runtime.providerSessionId);
+              const latest = sessions.get(key);
+              if (latest?.runtime !== entry.runtime) return sessions;
+              return new Map(sessions).set(key, {
+                ...latest,
+                loadedProviderThreadKeyByThread: new Map(),
+              });
+            });
+          }
           yield* writeProviderSessionEvents({
             runtime: entry.runtime,
             threadIds: current.attachedThreadIds,

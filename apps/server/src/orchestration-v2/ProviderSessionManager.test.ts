@@ -4447,6 +4447,81 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 resumes an idle failed runtime again while keeping healthy runtimes cached",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const openCachedRuntime = Effect.fnUntraced(function* (threadId: ThreadId) {
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const resume = runtime.resumeThread({
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId,
+              providerSessionId,
+              now,
+              nativeThreadId: String(threadId),
+            }),
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* resume;
+          yield* resume;
+          return { runtime, resume };
+        });
+        const failed = yield* openCachedRuntime(ThreadId.make("idle-failed-runtime"));
+        const healthy = yield* openCachedRuntime(ThreadId.make("idle-healthy-runtime"));
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+
+        const subscription = yield* failed.runtime.subscribeEvents!;
+        const queue = (yield* Ref.get(state)).eventQueues.get(
+          String(failed.runtime.providerSessionId),
+        );
+        assert.isDefined(queue);
+        const errorEvent = {
+          type: "provider_session.updated",
+          driver: CODEX_DRIVER,
+          providerSession: {
+            ...failed.runtime.providerSession,
+            status: "error",
+            lastError: "Host disconnected between turns",
+          },
+        } satisfies ProviderAdapter.ProviderAdapterV2Event;
+        yield* Queue.offer(queue!, errorEvent);
+        // The manager persists session updates before publishing them to subscribers.
+        assert.deepEqual(yield* subscription.events.pipe(Stream.runHead), Option.some(errorEvent));
+
+        yield* healthy.resume;
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+        yield* failed.resume;
+        assert.equal((yield* Ref.get(state)).resumeCount, 3);
+        yield* failed.resume;
+        assert.equal((yield* Ref.get(state)).resumeCount, 3);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 re-attaching a thread waits for its in-flight unload, then reloads it",
   () =>
     Effect.gen(function* () {

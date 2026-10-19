@@ -1037,6 +1037,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const failHost = Effect.fnUntraced(function* (cause: unknown) {
         if (closed || broken) return;
+        hostEpoch++;
         // Registration can replace the host while failure events are consumed.
         const failed = host;
         const turn = active;
