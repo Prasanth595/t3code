@@ -125,6 +125,13 @@ describe("resolveNewTaskBranchLabel", () => {
         workspaceMode: "worktree",
       }),
     ).toBe("From origin/main");
+    expect(
+      resolveNewTaskBranchLabel({
+        branchName: "origin/master",
+        startFromOrigin: true,
+        workspaceMode: "worktree",
+      }),
+    ).toBe("From origin/master");
   });
 
   it("prompts when no branch is available", () => {
