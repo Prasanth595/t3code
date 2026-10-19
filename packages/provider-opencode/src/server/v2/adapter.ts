@@ -3609,6 +3609,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
           const files = yield* promptFiles(steerInput.message.attachments);
+          if (state.active !== turn || turn.interrupted) {
+            yield* lock.withPermit(
+              Effect.gen(function* () {
+                turn.steers.delete(inboxID);
+                // Stop may have stranded this steer, but it never reached OpenCode.
+                state.strandedSteers.delete(inboxID);
+                if (state.active === turn) yield* endIfSettled(state, turn);
+              }),
+            );
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: `OpenCode turn ${steerInput.providerTurnId} is not active`,
+            });
+          }
           yield* client.session
             .prompt({
               sessionID: Session.ID.make(sessionId),

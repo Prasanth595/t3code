@@ -7,6 +7,7 @@ import {
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
@@ -285,9 +286,11 @@ export const openCode2ReplayRuntime = (
     readonly borrowers?: { current: number };
     readonly replayGate?: ProviderReplayGate;
     readonly attachmentsDir?: string;
+    readonly fileSystem?: FileSystem.FileSystem;
   },
 ) =>
   Effect.gen(function* () {
+    const fileSystem = options?.fileSystem ?? (yield* FileSystem.FileSystem);
     const adapter = yield* makeReplayAdapter(
       {
         provider: OPENCODE_PROVIDER,
@@ -297,7 +300,7 @@ export const openCode2ReplayRuntime = (
         entries,
       },
       options,
-    );
+    ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
     return yield* adapter.openSession({
       threadId: ThreadId.make("thread:opencode2-adapter"),
       providerSessionId: ProviderSessionId.make("provider-session:opencode2-adapter"),
