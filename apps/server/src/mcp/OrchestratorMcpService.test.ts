@@ -4,6 +4,7 @@ import {
   CommandId,
   EnvironmentId,
   NodeId,
+  OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
   ScheduledTaskId,
@@ -19,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 
 import {
   DispatchModeLimit,
@@ -42,6 +44,8 @@ import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+
+const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -2329,6 +2333,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     } as unknown as OrchestrationV2ThreadProjection),
               ),
           }),
+          ServerSettings.layerTest(),
           providerRegistryLayer([]),
           adapterRegistryLayer([]),
           Layer.mock(ProjectService.ProjectService)({}),
@@ -2344,12 +2349,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             assert.deepEqual(result.options, selection.options);
             hasRun = false;
           }
-        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),
   );
 
   it.effect(
-    "preserves inherited fast service when overriding effort and allows clearing options",
+    "inherits delegated options, merges overrides, and resets on explicit clearing or a new target",
     () =>
       Effect.gen(function* () {
         const peerId = ProviderInstanceId.make("codex-subscription-2");
@@ -2362,22 +2367,32 @@ describe("OrchestratorMcpService provider resolution", () => {
             { id: "serviceTier", value: "priority" },
           ],
         } as const;
+        const override = [{ id: "reasoningEffort", value: "max" }] as const;
         const cases = [
           {
             name: "partial override",
-            target: { options: [{ id: "reasoningEffort", value: "max" }] },
-            expected: {
-              ...inherited,
-              options: [
-                { id: "reasoningEffort", value: "max" },
-                { id: "serviceTier", value: "priority" },
-              ],
-            },
+            target: { options: override },
+            expected: { ...inherited, options: [...override, inherited.options[1]] },
           },
           {
-            name: "clear overrides",
+            name: "clear with array",
             target: { options: [] },
-            expected: { instanceId: codexInstanceId, model: "gpt-5.4", options: [] },
+            expected: { ...inherited, options: [] },
+          },
+          {
+            name: "clear with object",
+            target: { options: {} },
+            expected: { ...inherited, options: [] },
+          },
+          {
+            name: "change model",
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
+            name: "change provider with override",
+            target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
+            expected: { instanceId: peerId, model: inherited.model, options: override },
           },
         ] as const;
         for (const testCase of cases) {
@@ -2385,55 +2400,50 @@ describe("OrchestratorMcpService provider resolution", () => {
           const task = {
             id: taskId,
             threadId: parentThreadId,
-            runId: parentRunId,
-            parentNodeId,
             origin: "app_owned",
-            createdBy: "agent",
-            driver,
-            providerInstanceId: peerId,
             childThreadId,
-            model: "gpt-5.4",
+            providerInstanceId: testCase.expected.instanceId,
+            model: testCase.expected.model,
             status: "running",
             result: null,
           };
-          const providers = [
-            {
-              ...providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
-              displayName: "First subscription",
-            },
-            {
-              ...providerSnapshot({ instanceId: peerId, driver, model: "gpt-5.4" }),
-              displayName: "Second subscription",
-            },
-          ];
           const dependencies = Layer.mergeAll(
             NodeServices.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
+              hasReceipt: () => Effect.succeed(false),
+              assertProviderInstanceEnabled: () => Effect.void,
               getThreadRecords: (threadId) =>
                 Effect.succeed(
                   threadId === parentThreadId
                     ? parentProjection(commands.length > 0 ? [task] : [], inherited)
-                    : {
-                        ...childProjection,
-                        thread: { ...childProjection.thread, modelSelection: inherited },
-                      },
+                    : childProjection,
                 ),
               dispatch: (command) =>
                 Effect.sync(() => {
                   commands.push(command);
                   return {
                     sequence: 1,
-                    storedEvents: [
-                      {
-                        sequence: 1,
-                        commandId: null,
-                        event: { type: "subagent.updated", payload: task },
-                      },
-                    ],
+                    storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
                   } as never;
                 }),
             }),
-            providerRegistryLayer(providers),
+            ServerSettings.layerTest(),
+            providerRegistryLayer([
+              {
+                ...providerSnapshot({
+                  instanceId: codexInstanceId,
+                  driver,
+                  model: inherited.model,
+                }),
+                models: [inherited.model, "other-model"].map((model) => ({
+                  slug: model,
+                  name: model,
+                  isCustom: false,
+                  capabilities: null,
+                })),
+              },
+              providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+            ]),
             adapterRegistryLayer([codexInstanceId, peerId]),
             Layer.mock(ProjectService.ProjectService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
@@ -2441,19 +2451,20 @@ describe("OrchestratorMcpService provider resolution", () => {
           );
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-            const delegation = service.delegateTask(scope, {
+            const capabilities = yield* service.capabilities(scope);
+            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            yield* service.delegateTask(scope, {
               task: "Review the change.",
-              target: testCase.target,
+              target: yield* decodeTarget(testCase.target),
               mode: "async",
               clientRequestId: testCase.name,
             });
-            yield* delegation;
             assert.deepEqual(
               (commands[0] as { modelSelection: unknown }).modelSelection,
               testCase.expected,
               testCase.name,
             );
-          }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
         }
       }),
   );

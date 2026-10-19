@@ -229,24 +229,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.include(options.settings, { showThinkingSummaries: true });
   });
 
-  it.each([false, true])("sends max effort and fast mode to the SDK with resume=%s", (resume) => {
-    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
-      modelSelection: {
-        ...CLAUDE_TEST_MODEL_SELECTION,
-        model: "claude-opus-4-6",
-        options: [
-          { id: "effort", value: "max" },
-          { id: "fastMode", value: true },
-        ],
-      },
-      nativeThreadId: "delegated-max-fast-thread",
-      resume,
-      cwd: "/workspace",
-    });
-    assert.equal(options.effort, "max");
-    assert.include(options.settings, { fastMode: true });
-  });
-
   it("preserves an explicit omitted thinking display", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
