@@ -5,19 +5,23 @@ import * as NodeChildProcess from "node:child_process";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import {
   buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
   buildWslRuntimeProbeScript,
   DesktopWslDistroListError,
+  DesktopWslEnvironment,
   formatMissingToolsReason,
+  layer as desktopWslEnvironmentLayer,
   parseNodePath,
   parseNodeVersion,
   parseResolvedPath,
@@ -155,6 +159,104 @@ describe("probeWslDistros", () => {
       expect(error).toBeInstanceOf(DesktopWslDistroListError);
       expect(error.message).toContain("timed out");
     }).pipe(Effect.provide(layer));
+  });
+});
+
+// Stands in for wsl.exe against a stopped distro: the process exits with
+// `exitCode` once `exitAfter` passes on the test clock, or never. `released`
+// records the operation's scope closing, which is what kills wsl.exe for real.
+const makeColdDistroWsl = (options: {
+  readonly exitCode: number;
+  readonly exitAfter?: Duration.Duration;
+}) => {
+  const child = { exited: false, released: false };
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          child.released = true;
+        }),
+      );
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode:
+          options.exitAfter === undefined
+            ? Effect.never
+            : Effect.sleep(options.exitAfter).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(options.exitCode)),
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    child.exited = true;
+                  }),
+                ),
+              ),
+        isRunning: Effect.sync(() => !child.exited),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  const layer = Layer.merge(
+    TestClock.layer(),
+    desktopWslEnvironmentLayer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          // Off Windows the layer reads only the platform from the environment.
+          Layer.succeed(
+            DesktopEnvironment.DesktopEnvironment,
+            DesktopEnvironment.DesktopEnvironment.of({
+              platform: "linux",
+            } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          ),
+          FileSystem.layerNoop({}),
+        ),
+      ),
+    ),
+  );
+  return { child, layer };
+};
+
+// The first wsl.exe call after a distro stops waits for it to boot, which can
+// pass 10 seconds (#14348).
+describe("preWarm against a stopped distro", () => {
+  it.effect("waits for a boot that takes longer than 10 seconds", () => {
+    const wsl = makeColdDistroWsl({ exitCode: 0, exitAfter: Duration.seconds(12) });
+    return Effect.gen(function* () {
+      const fiber = yield* (yield* DesktopWslEnvironment).preWarm("Ubuntu").pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(12));
+      yield* Fiber.join(fiber);
+      expect(wsl.child.exited).toBe(true);
+    }).pipe(Effect.provide(wsl.layer));
+  });
+
+  it.effect("releases wsl.exe at 30 seconds", () => {
+    const wsl = makeColdDistroWsl({ exitCode: 0 });
+    return Effect.gen(function* () {
+      const fiber = yield* (yield* DesktopWslEnvironment).preWarm("Ubuntu").pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(29));
+      expect(wsl.child.released).toBe(false);
+      yield* TestClock.adjust(Duration.seconds(1));
+      yield* Fiber.join(fiber);
+      expect(wsl.child.released).toBe(true);
+    }).pipe(Effect.provide(wsl.layer));
+  });
+
+  it.effect("returns a non-zero exit without waiting for the deadline", () => {
+    // The clock never moves, so this only finishes if nothing waits on it.
+    const wsl = makeColdDistroWsl({ exitCode: 1, exitAfter: Duration.zero });
+    return Effect.gen(function* () {
+      yield* (yield* DesktopWslEnvironment).preWarm("Ubuntu");
+      expect(wsl.child.released).toBe(true);
+    }).pipe(Effect.provide(wsl.layer));
   });
 });
 
