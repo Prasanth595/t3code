@@ -1,5 +1,5 @@
 diff --git a/keyboard.d.ts b/keyboard.d.ts
-index 367945c..0ac7bf8 100644
+index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8c92d39b3 100644
 --- a/keyboard.d.ts
 +++ b/keyboard.d.ts
 @@ -279,7 +279,7 @@ type KeyboardChatComposerInsetListRef = {
@@ -23,7 +23,7 @@ index 367945c..0ac7bf8 100644
  } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
  
 diff --git a/keyboard.js b/keyboard.js
-index 6645bcb..321c4c3 100644
+index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d51720a73fb83 100644
 --- a/keyboard.js
 +++ b/keyboard.js
 @@ -33,19 +33,22 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
@@ -119,7 +119,7 @@ index 6645bcb..321c4c3 100644
        renderScrollComponent: memoList,
        ...rest
 diff --git a/keyboard.mjs b/keyboard.mjs
-index 87b38b9..111eb24 100644
+index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85cf4f361ee 100644
 --- a/keyboard.mjs
 +++ b/keyboard.mjs
 @@ -1,7 +1,7 @@
@@ -224,7 +224,7 @@ index 87b38b9..111eb24 100644
        renderScrollComponent: memoList,
        ...rest
 diff --git a/react-native.d.ts b/react-native.d.ts
-index ce1fe00..3ccf6f1 100644
+index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6aba6636e5 100644
 --- a/react-native.d.ts
 +++ b/react-native.d.ts
 @@ -293,6 +293,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -241,7 +241,7 @@ index ce1fe00..3ccf6f1 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a30..5ac6bbe 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..2911ae31c3d855f6affd3265ccaf1b0b41866391 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -695,7 +695,18 @@ index b3c5a30..5ac6bbe 100644
        onLayout,
        onScroll: onScroll2,
        ref: refScrollView,
-@@ -6751,7 +6962,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6280,6 +6491,10 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      const availableOtherAxisSize = otherAxisSize - crossAxisPadding;
++      if (!state.needsOtherAxisSize && (peek$(ctx, "otherAxisSize") || 0) > availableOtherAxisSize) {
++        set$(ctx, "otherAxisSize", availableOtherAxisSize);
++      }
+     }
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
+@@ -6751,7 +6966,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        endBuffered: state.endBuffered,
        getAverageItemSizes: () => getAverageItemSizes(state),
        indexByKey: (key) => state.indexByKey.get(key),
@@ -704,7 +715,7 @@ index b3c5a30..5ac6bbe 100644
        isAtStart: peek$(ctx, "isAtStart"),
        isEndReached: state.isEndReached,
        isNearEnd: peek$(ctx, "isNearEnd"),
-@@ -7075,6 +7286,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7075,6 +7290,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance = 250,
      contentInsetEndAdjustment,
@@ -712,7 +723,7 @@ index b3c5a30..5ac6bbe 100644
      estimatedItemSize = 100,
      estimatedListSize,
      extraData,
-@@ -7132,10 +7344,12 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7132,10 +7348,12 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const animatedPropsInternal = props.animatedPropsInternal;
    const anchoredEndSpaceOwner = (_a3 = props.anchoredEndSpaceOwnerInternal) != null ? _a3 : "list";
    const positionComponentInternal = props.positionComponentInternal;
@@ -725,7 +736,7 @@ index b3c5a30..5ac6bbe 100644
      stickyPositionComponentInternal: _stickyPositionComponentInternal,
      ...restProps
    } = rest;
-@@ -7200,7 +7414,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7200,7 +7418,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const combinedRef = useCombinedRef(refScroller, refScrollView);
    const keyExtractor = keyExtractorProp != null ? keyExtractorProp : ((_item, index) => index.toString());
    const stickyHeaderIndices = stickyHeaderIndicesProp;
@@ -734,7 +745,7 @@ index b3c5a30..5ac6bbe 100644
    const previousContentInsetEndAdjustmentRef = React2.useRef(contentInsetEndAdjustmentResolved);
    const alwaysRenderIndices = React2.useMemo(() => {
      const indices = getAlwaysRenderIndices(alwaysRender, dataProp, keyExtractor, anchoredEndSpace == null ? void 0 : anchoredEndSpace.anchorIndex);
-@@ -7341,6 +7555,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7341,6 +7559,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      contentContainerAlignItems: contentContainerStyle.alignItems,
      contentInset,
      contentInsetEndAdjustment: contentInsetEndAdjustmentResolved,
@@ -742,7 +753,7 @@ index b3c5a30..5ac6bbe 100644
      data: dataProp,
      dataKey,
      dataVersion,
-@@ -7372,6 +7587,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7372,6 +7591,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      renderItem,
      rtl,
      snapToIndices,
@@ -750,7 +761,7 @@ index b3c5a30..5ac6bbe 100644
      stickyHeaderIndicesArr: stickyHeaderIndices != null ? stickyHeaderIndices : [],
      stickyHeaderIndicesSet: React2.useMemo(() => new Set(stickyHeaderIndices != null ? stickyHeaderIndices : []), [stickyHeaderIndices == null ? void 0 : stickyHeaderIndices.join(",")]),
      stickyPositionComponentInternal,
-@@ -7423,6 +7639,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7423,6 +7643,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        return void 0;
      }
      const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
@@ -764,7 +775,7 @@ index b3c5a30..5ac6bbe 100644
      return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
    }, [usesBootstrapInitialScroll]);
    React2.useLayoutEffect(() => {
-@@ -7547,6 +7770,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7547,6 +7774,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      [
        dataKey,
        dataVersion,
@@ -772,7 +783,7 @@ index b3c5a30..5ac6bbe 100644
        memoizedLastItemKeys.join(","),
        numColumnsProp,
        nextScrollAxisGap,
-@@ -7643,6 +7867,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7643,6 +7871,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      () => ({
        getRenderedItem: (key) => getRenderedItem(ctx, key),
        onMomentumScrollEnd: (event) => {
@@ -780,7 +791,7 @@ index b3c5a30..5ac6bbe 100644
          checkFinishedScrollFallback(ctx);
          if (state.props.onMomentumScrollEnd) {
            state.props.onMomentumScrollEnd(event);
-@@ -7651,6 +7876,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7651,6 +7880,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        onScroll: (event) => onScroll(ctx, event),
        onScrollBeginDrag: (event) => {
          var _a4, _b2;
@@ -789,7 +800,7 @@ index b3c5a30..5ac6bbe 100644
          prepareReachedEdgeForNextUserScroll(ctx);
          (_b2 = (_a4 = state.props).onScrollBeginDrag) == null ? void 0 : _b2.call(_a4, event);
        },
-@@ -7676,11 +7903,18 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7676,11 +7907,18 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        ListFooterComponent,
        ListFooterComponentStyle,
        ListHeaderComponent,
@@ -809,7 +820,7 @@ index b3c5a30..5ac6bbe 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cd..93aac74 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..9472a1994e33b701c4921ffc74921da0adf89097 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1263,7 +1274,18 @@ index 40e87cd..93aac74 100644
        onLayout,
        onScroll: onScroll2,
        ref: refScrollView,
-@@ -6730,7 +6941,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
+@@ -6259,6 +6470,10 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      const availableOtherAxisSize = otherAxisSize - crossAxisPadding;
++      if (!state.needsOtherAxisSize && (peek$(ctx, "otherAxisSize") || 0) > availableOtherAxisSize) {
++        set$(ctx, "otherAxisSize", availableOtherAxisSize);
++      }
+     }
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
+@@ -6730,7 +6945,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        endBuffered: state.endBuffered,
        getAverageItemSizes: () => getAverageItemSizes(state),
        indexByKey: (key) => state.indexByKey.get(key),
@@ -1272,7 +1294,7 @@ index 40e87cd..93aac74 100644
        isAtStart: peek$(ctx, "isAtStart"),
        isEndReached: state.isEndReached,
        isNearEnd: peek$(ctx, "isNearEnd"),
-@@ -7054,6 +7265,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7054,6 +7269,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      dataVersion,
      drawDistance = 250,
      contentInsetEndAdjustment,
@@ -1280,7 +1302,7 @@ index 40e87cd..93aac74 100644
      estimatedItemSize = 100,
      estimatedListSize,
      extraData,
-@@ -7111,10 +7323,12 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7111,10 +7327,12 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const animatedPropsInternal = props.animatedPropsInternal;
    const anchoredEndSpaceOwner = (_a3 = props.anchoredEndSpaceOwnerInternal) != null ? _a3 : "list";
    const positionComponentInternal = props.positionComponentInternal;
@@ -1293,7 +1315,7 @@ index 40e87cd..93aac74 100644
      stickyPositionComponentInternal: _stickyPositionComponentInternal,
      ...restProps
    } = rest;
-@@ -7179,7 +7393,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7179,7 +7397,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
    const combinedRef = useCombinedRef(refScroller, refScrollView);
    const keyExtractor = keyExtractorProp != null ? keyExtractorProp : ((_item, index) => index.toString());
    const stickyHeaderIndices = stickyHeaderIndicesProp;
@@ -1302,7 +1324,7 @@ index 40e87cd..93aac74 100644
    const previousContentInsetEndAdjustmentRef = useRef(contentInsetEndAdjustmentResolved);
    const alwaysRenderIndices = useMemo(() => {
      const indices = getAlwaysRenderIndices(alwaysRender, dataProp, keyExtractor, anchoredEndSpace == null ? void 0 : anchoredEndSpace.anchorIndex);
-@@ -7320,6 +7534,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7320,6 +7538,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      contentContainerAlignItems: contentContainerStyle.alignItems,
      contentInset,
      contentInsetEndAdjustment: contentInsetEndAdjustmentResolved,
@@ -1310,7 +1332,7 @@ index 40e87cd..93aac74 100644
      data: dataProp,
      dataKey,
      dataVersion,
-@@ -7351,6 +7566,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7351,6 +7570,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      renderItem,
      rtl,
      snapToIndices,
@@ -1318,7 +1340,7 @@ index 40e87cd..93aac74 100644
      stickyHeaderIndicesArr: stickyHeaderIndices != null ? stickyHeaderIndices : [],
      stickyHeaderIndicesSet: useMemo(() => new Set(stickyHeaderIndices != null ? stickyHeaderIndices : []), [stickyHeaderIndices == null ? void 0 : stickyHeaderIndices.join(",")]),
      stickyPositionComponentInternal,
-@@ -7402,6 +7618,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7402,6 +7622,13 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        return void 0;
      }
      const resolvedOffset = (_a4 = initialScroll.contentOffset) != null ? _a4 : resolveInitialScrollOffset(ctx, initialScroll);
@@ -1332,7 +1354,7 @@ index 40e87cd..93aac74 100644
      return usesBootstrapInitialScroll && ((_b2 = state.initialScrollSession) == null ? void 0 : _b2.kind) === "bootstrap" && Platform.OS === "web" ? void 0 : resolvedOffset;
    }, [usesBootstrapInitialScroll]);
    useLayoutEffect(() => {
-@@ -7526,6 +7749,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7526,6 +7753,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      [
        dataKey,
        dataVersion,
@@ -1340,7 +1362,7 @@ index 40e87cd..93aac74 100644
        memoizedLastItemKeys.join(","),
        numColumnsProp,
        nextScrollAxisGap,
-@@ -7622,6 +7846,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7622,6 +7850,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
      () => ({
        getRenderedItem: (key) => getRenderedItem(ctx, key),
        onMomentumScrollEnd: (event) => {
@@ -1348,7 +1370,7 @@ index 40e87cd..93aac74 100644
          checkFinishedScrollFallback(ctx);
          if (state.props.onMomentumScrollEnd) {
            state.props.onMomentumScrollEnd(event);
-@@ -7630,6 +7855,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7630,6 +7859,8 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        onScroll: (event) => onScroll(ctx, event),
        onScrollBeginDrag: (event) => {
          var _a4, _b2;
@@ -1357,7 +1379,7 @@ index 40e87cd..93aac74 100644
          prepareReachedEdgeForNextUserScroll(ctx);
          (_b2 = (_a4 = state.props).onScrollBeginDrag) == null ? void 0 : _b2.call(_a4, event);
        },
-@@ -7655,11 +7882,18 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+@@ -7655,11 +7886,18 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
        ListFooterComponent,
        ListFooterComponentStyle,
        ListHeaderComponent,
@@ -1377,7 +1399,7 @@ index 40e87cd..93aac74 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/react-native.web.js b/react-native.web.js
-index 914d2da..8b88b09 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..499dab9b600f7f0660fd7f256b4701309bf33d03 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
 @@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1411,8 +1433,19 @@ index 914d2da..8b88b09 100644
        }
      }
    }
+@@ -6944,6 +6956,10 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      const availableOtherAxisSize = otherAxisSize - crossAxisPadding;
++      if (!state.needsOtherAxisSize && (peek$(ctx, "otherAxisSize") || 0) > availableOtherAxisSize) {
++        set$(ctx, "otherAxisSize", availableOtherAxisSize);
++      }
+     }
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 95465f2..d7cbe1c 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..f3673f0d58c04e705127cb0b051b9506196338e5 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
 @@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1446,8 +1479,19 @@ index 95465f2..d7cbe1c 100644
        }
      }
    }
+@@ -6923,6 +6935,10 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      const availableOtherAxisSize = otherAxisSize - crossAxisPadding;
++      if (!state.needsOtherAxisSize && (peek$(ctx, "otherAxisSize") || 0) > availableOtherAxisSize) {
++        set$(ctx, "otherAxisSize", availableOtherAxisSize);
++      }
+     }
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/react.js b/react.js
-index 914d2da..0c2917d 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..b3c09e42a8408a2b4eb196dbaade4930dce88449 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1514,8 +1558,19 @@ index 914d2da..0c2917d 100644
              void contentNode.offsetHeight;
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
+@@ -6944,6 +6963,10 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      const availableOtherAxisSize = otherAxisSize - crossAxisPadding;
++      if (!state.needsOtherAxisSize && (peek$(ctx, "otherAxisSize") || 0) > availableOtherAxisSize) {
++        set$(ctx, "otherAxisSize", availableOtherAxisSize);
++      }
+     }
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/react.mjs b/react.mjs
-index 95465f2..b73bfdf 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..c6d682093c9f568fe90e97bc4ed8ad5629dd09d2 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1582,8 +1637,19 @@ index 95465f2..b73bfdf 100644
              void contentNode.offsetHeight;
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
+@@ -6923,6 +6942,10 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      const availableOtherAxisSize = otherAxisSize - crossAxisPadding;
++      if (!state.needsOtherAxisSize && (peek$(ctx, "otherAxisSize") || 0) > availableOtherAxisSize) {
++        set$(ctx, "otherAxisSize", availableOtherAxisSize);
++      }
+     }
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/reanimated.d.ts b/reanimated.d.ts
-index e504332..2ce6383 100644
+index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
 +++ b/reanimated.d.ts
 @@ -294,6 +294,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -1600,7 +1666,7 @@ index e504332..2ce6383 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/reanimated.js b/reanimated.js
-index f1265fa..fc03be2 100644
+index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7868d0cec 100644
 --- a/reanimated.js
 +++ b/reanimated.js
 @@ -115,8 +115,10 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
@@ -1763,7 +1829,7 @@ index f1265fa..fc03be2 100644
          renderScrollComponent: renderReanimatedScrollComponent,
          ...IsNewArchitecture ? { stickyPositionComponentInternal } : {}
 diff --git a/reanimated.mjs b/reanimated.mjs
-index 29a00d5..6ab9292 100644
+index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..6ab929250c8924e2d9919ee09a4f774238fbb90a 100644
 --- a/reanimated.mjs
 +++ b/reanimated.mjs
 @@ -1,7 +1,7 @@
