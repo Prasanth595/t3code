@@ -6578,6 +6578,67 @@ describe("subagent lifecycle", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "applies the latest parent lifecycle after a superseded nested cascade commits late",
+    () =>
+      Effect.gen(function* () {
+        const f = yield* fixture;
+        const runPendingCascade = Effect.fnUntraced(function* (commandId: string) {
+          const effect = Option.getOrThrow(
+            yield* f.outbox.get(`effect:${commandId}:subagent-threads.cascade`),
+          );
+          assert.equal(effect.status, "pending");
+          if (effect.request.type !== "subagent-threads.cascade")
+            throw new Error("Expected cascade");
+          yield* f.threads.cascadeSubagentLifecycle({
+            commandId: effect.commandId,
+            threadId: effect.threadId,
+            operation: effect.request.operation,
+            sourceSequence: effect.request.sourceSequence,
+            previousLifecycleCommandId: effect.request.previousLifecycleCommandId,
+          });
+        });
+
+        yield* f.command("archive");
+        yield* runPendingCascade("archive:parent");
+        assert.isTrue(yield* f.archived(app));
+        assert.isFalse(yield* f.archived(grandchild));
+        yield* f.command("unarchive");
+        yield* runPendingCascade("archive:parent:subagent:app");
+        assert.isTrue(yield* f.archived(grandchild), "older archive commits after parent restore");
+        yield* f.worker.drain();
+        for (const id of [parent, app, native, grandchild]) {
+          assert.isFalse(yield* f.archived(id), `${id} restored after delayed nested archive`);
+        }
+
+        yield* f.threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-again:parent"),
+          threadId: parent,
+        });
+        yield* f.worker.drain();
+        yield* f.threads.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("unarchive-again:parent"),
+          threadId: parent,
+        });
+        yield* runPendingCascade("unarchive-again:parent");
+        assert.isFalse(yield* f.archived(app));
+        assert.isTrue(yield* f.archived(grandchild));
+        yield* f.threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-final:parent"),
+          threadId: parent,
+        });
+        yield* runPendingCascade("unarchive-again:parent:subagent:app");
+        assert.isFalse(yield* f.archived(grandchild), "older restore commits after parent archive");
+        yield* f.worker.drain();
+        for (const id of [parent, app, native, grandchild]) {
+          assert.isTrue(yield* f.archived(id), `${id} archived after delayed nested restore`);
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps a child's newer restore when the parent's archive has not dispatched yet", () =>
     Effect.gen(function* () {
       const f = yield* fixture;

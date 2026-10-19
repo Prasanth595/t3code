@@ -33,7 +33,8 @@ import { forkParked } from "../serverActivation.ts";
 import { DispatchModeLimit } from "./DispatchModeLimit.ts";
 
 export const SubagentLifecycle = Context.Reference<
-  { readonly sourceSequence: number; readonly archiveCommandId: CommandId | null } | undefined
+  | { readonly sourceSequence: number; readonly previousLifecycleCommandId: CommandId | null }
+  | undefined
 >("t3/orchestration-v2/SubagentLifecycle", { defaultValue: () => undefined });
 
 export const OrchestrationEffectRequestV2 = Schema.Union([
@@ -115,7 +116,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("subagent-threads.cascade"),
     operation: Schema.Literals(["archive", "unarchive", "delete"]),
     sourceSequence: Schema.optional(NonNegativeInt),
-    archiveCommandId: Schema.optional(Schema.NullOr(CommandId)),
+    previousLifecycleCommandId: Schema.optional(Schema.NullOr(CommandId)),
     limit: Schema.optional(
       Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
     ),
@@ -201,7 +202,7 @@ export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycle
   commandId: CommandId,
   threadId: ThreadId,
   operation: "archive" | "unarchive" | "delete",
-  archiveCommandId: CommandId | null = null,
+  previousLifecycleCommandId: CommandId | null = null,
 ) {
   const limit = yield* DispatchModeLimit;
   const cascade = yield* SubagentLifecycle;
@@ -213,12 +214,8 @@ export const subagentLifecycleEffect = Effect.fn("EffectOutbox.subagentLifecycle
       type: "subagent-threads.cascade",
       operation,
       sourceSequence: cascade?.sourceSequence,
-      archiveCommandId:
-        operation === "archive"
-          ? commandId
-          : cascade === undefined
-            ? archiveCommandId
-            : cascade.archiveCommandId,
+      previousLifecycleCommandId:
+        cascade === undefined ? previousLifecycleCommandId : cascade.previousLifecycleCommandId,
       limit:
         limit === undefined
           ? undefined

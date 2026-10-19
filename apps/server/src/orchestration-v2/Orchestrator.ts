@@ -3364,11 +3364,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.commandId,
           command.threadId,
           command.type === "thread.archive" ? "archive" : "unarchive",
-          command.type === "thread.unarchive"
-            ? ((yield* commandReceipts
-                .getLatestLifecycle(command.threadId)
-                .pipe(mapDispatchError(command)))?.commandId ?? null)
-            : command.commandId,
+          (yield* commandReceipts
+            .getLatestLifecycle(command.threadId)
+            .pipe(mapDispatchError(command)))?.commandId ?? null,
         );
         yield* Ref.update(effects, (existing) => [...existing, cascade]);
       }
@@ -11404,12 +11402,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const thread = yield* projectionStore
         .getThread(command.threadId)
         .pipe(mapDispatchError(command));
+      // A superseded cascade can commit after this parent choice; its exact
+      // predecessor ID distinguishes that work from a newer independent choice.
       if (
         thread.deletedAt !== null ||
-        (lifecycle !== null && lifecycle.resultSequence > cascade.sourceSequence) ||
         (command.type === "thread.archive"
-          ? thread.archivedAt !== null
-          : thread.archivedAt === null || lifecycle?.commandId !== cascade.archiveCommandId)
+          ? thread.archivedAt !== null ||
+            (lifecycle !== null &&
+              lifecycle.resultSequence > cascade.sourceSequence &&
+              lifecycle.commandId !== cascade.previousLifecycleCommandId)
+          : thread.archivedAt === null ||
+            lifecycle?.commandId !== cascade.previousLifecycleCommandId)
       ) {
         const sequence = yield* eventSink
           .latestSequence({ threadId: command.threadId })
