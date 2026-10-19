@@ -3499,74 +3499,117 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("backs off default-branch failures without delaying upstream refreshes", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
-        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(remote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "origin", remote]);
-        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
-        yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
-        yield* git(cwd, ["checkout", "-b", "feature/backoff"]);
-        yield* git(cwd, ["push", "-u", "origin", "feature/backoff"]);
-        yield* git(updater, ["clone", "--branch", "feature/backoff", remote, "."]);
-        yield* git(updater, ["config", "user.email", "test@test.com"]);
-        yield* git(updater, ["config", "user.name", "Test"]);
-        yield* git(updater, ["commit", "--allow-empty", "-m", "first remote update"]);
-        yield* git(updater, ["push"]);
+    it.effect.each(["exit", "timeout"] as const)(
+      "backs off default-branch %s failures without delaying upstream refreshes",
+      (failureMode) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+          yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
+          yield* git(cwd, ["checkout", "-b", "feature/backoff"]);
+          yield* git(cwd, ["push", "-u", "origin", "feature/backoff"]);
+          yield* git(updater, ["clone", "--branch", "feature/backoff", remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          yield* git(updater, ["commit", "--allow-empty", "-m", "first remote update"]);
+          yield* git(updater, ["push"]);
 
-        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-        let defaultAttempts = 0;
-        let failDefault = true;
-        const spawner = ChildProcessSpawner.make((command) =>
-          Effect.gen(function* () {
-            if (
-              ChildProcess.isStandardCommand(command) &&
-              command.args.includes("fetch") &&
-              command.args.at(-1)?.startsWith(`+refs/heads/${initialBranch}:`)
-            ) {
-              defaultAttempts += 1;
-              if (failDefault) {
-                return ChildProcessSpawner.makeHandle({
-                  ...makeSuccessfulHandle(""),
-                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
-                });
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let defaultAttempts = 0;
+          let failDefault = true;
+          const stalledAttempts = yield* Queue.unbounded<void>();
+          const requiredFetches = yield* Queue.unbounded<Deferred.Deferred<void>>();
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (
+                failureMode === "timeout" &&
+                ChildProcess.isStandardCommand(command) &&
+                command.args.includes("fetch") &&
+                command.args.at(-1)?.startsWith("+refs/heads/feature/backoff:")
+              ) {
+                const release = yield* Deferred.make<void>();
+                yield* Queue.offer(requiredFetches, release);
+                yield* Deferred.await(release);
               }
+              if (
+                ChildProcess.isStandardCommand(command) &&
+                command.args.includes("fetch") &&
+                command.args.at(-1)?.startsWith(`+refs/heads/${initialBranch}:`)
+              ) {
+                defaultAttempts += 1;
+                if (failDefault) {
+                  if (failureMode === "timeout") {
+                    yield* Queue.offer(stalledAttempts, undefined);
+                    return yield* Effect.never;
+                  }
+                  return ChildProcessSpawner.makeHandle({
+                    ...makeSuccessfulHandle(""),
+                    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                  });
+                }
+              }
+              return yield* delegate.spawn(command);
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const readStatus = Effect.fnUntraced(function* () {
+            const refresh = yield* driver
+              .statusDetailsRemote(cwd)
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            const required = yield* Effect.race(
+              Queue.take(requiredFetches),
+              Fiber.await(refresh).pipe(Effect.as(null)),
+            );
+            if (required !== null) {
+              yield* TestClock.adjust("3 seconds");
+              yield* Deferred.succeed(required, undefined);
             }
-            return yield* delegate.spawn(command);
-          }),
-        );
-        const driver = yield* makeGitVcsDriverCore().pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provide(layerServerConfig),
-        );
-        assert.equal((yield* driver.statusDetailsRemote(cwd)).behindCount, 1);
-        assert.equal(defaultAttempts, 1);
+            const stalled = yield* Effect.race(
+              Queue.take(stalledAttempts).pipe(Effect.as(true)),
+              Fiber.await(refresh).pipe(Effect.as(false)),
+            );
+            if (stalled) yield* TestClock.adjust("2 seconds");
+            return yield* Fiber.join(refresh);
+          });
+          assert.equal((yield* readStatus()).behindCount, 1);
+          assert.equal(defaultAttempts, 1);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          assert.deepStrictEqual(
+            yield* fs.readDirectory(path.join(cwd, ".git", "objects", "t3-status-fetch")),
+            [],
+          );
 
-        yield* git(updater, ["commit", "--allow-empty", "-m", "second remote update"]);
-        yield* git(updater, ["push"]);
-        yield* TestClock.adjust("16 seconds");
-        assert.equal((yield* driver.statusDetailsRemote(cwd)).behindCount, 2);
-        assert.equal(defaultAttempts, 1);
-        for (const expectedAttempts of [2, 2, 2, 2]) {
+          yield* git(updater, ["commit", "--allow-empty", "-m", "second remote update"]);
+          yield* git(updater, ["push"]);
           yield* TestClock.adjust("16 seconds");
-          yield* driver.statusDetailsRemote(cwd);
-          assert.equal(defaultAttempts, expectedAttempts);
-        }
+          assert.equal((yield* readStatus()).behindCount, 2);
+          assert.equal(defaultAttempts, 1);
+          for (const expectedAttempts of [2, 2, 2, 2]) {
+            yield* TestClock.adjust("16 seconds");
+            yield* readStatus();
+            assert.equal(defaultAttempts, expectedAttempts);
+          }
 
-        failDefault = false;
-        yield* TestClock.adjust("16 seconds");
-        yield* driver.statusDetailsRemote(cwd);
-        assert.equal(defaultAttempts, 3);
-        failDefault = true;
-        for (const expectedAttempts of [4, 4, 5]) {
+          failDefault = false;
           yield* TestClock.adjust("16 seconds");
-          yield* driver.statusDetailsRemote(cwd);
-          assert.equal(defaultAttempts, expectedAttempts);
-        }
-      }),
+          yield* readStatus();
+          assert.equal(defaultAttempts, 3);
+          failDefault = true;
+          for (const expectedAttempts of [4, 4, 5]) {
+            yield* TestClock.adjust("16 seconds");
+            yield* readStatus();
+            assert.equal(defaultAttempts, expectedAttempts);
+          }
+        }),
     );
 
     it.effect.each(["gitdir", "onbranch", "global gitdir"] as const)(

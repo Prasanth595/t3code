@@ -1308,8 +1308,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     defaultBranchName: string | null,
   ): Effect.Effect<void, GitCommandError> =>
     Effect.gen(function* () {
+      const deadlineMs =
+        DateTime.toEpochMillis(yield* DateTime.now) +
+        Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT);
       const fetchCwd =
         path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+      const timeoutError = new GitCommandError({
+        operation: "GitVcsDriver.fetchRemoteForStatus",
+        command: "git",
+        cwd: fetchCwd,
+        detail: "Git status refresh timed out.",
+      });
+      const withinDeadline = Effect.fnUntraced(function* <A>(
+        effect: Effect.Effect<A, GitCommandError>,
+      ) {
+        const remainingMs = deadlineMs - DateTime.toEpochMillis(yield* DateTime.now);
+        if (remainingMs <= 0) return yield* timeoutError;
+        return yield* effect.pipe(
+          Effect.timeoutOption(remainingMs),
+          Effect.flatMap((result) => Effect.fromOption(result, () => timeoutError)),
+        );
+      });
       const objectDirectory = path.join(gitCommonDir, "objects");
       const isolatedFetchRoot = path.join(objectDirectory, GIT_STATUS_FETCH_OBJECT_DIRECTORY);
 
@@ -1345,7 +1364,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ),
       );
 
-      yield* cleanupStaleIsolatedFetches;
       const operationId = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
           (cause) =>
@@ -1357,6 +1375,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               cause,
             }),
         ),
+        withinDeadline,
       );
       activeStatusFetchOperationIds.add(operationId);
       const temporaryRoot = path.join(isolatedFetchRoot, operationId);
@@ -1391,6 +1410,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
 
       yield* Effect.gen(function* () {
+        yield* cleanupStaleIsolatedFetches;
         const objectFormat = yield* executeGit(
           "GitVcsDriver.fetchRemoteForStatus.objectFormat",
           fetchCwd,
@@ -1669,66 +1689,64 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           });
         });
 
-        const [upstreamFetchTarget, ...optionalFetchTargets] = fetchTargets;
-        if (!upstreamFetchTarget) return;
+        return fetchAndPromoteTarget;
+      }).pipe(
+        withinDeadline,
+        Effect.flatMap((fetchAndPromoteTarget) =>
+          Effect.gen(function* () {
+            const [upstreamFetchTarget, ...optionalFetchTargets] = fetchTargets;
+            if (!upstreamFetchTarget) return;
 
-        yield* fetchAndPromoteTarget(upstreamFetchTarget);
-        yield* Effect.forEach(
-          optionalFetchTargets,
-          (fetchTarget) =>
-            Effect.gen(function* () {
-              // A healthy upstream must not reset the retry budget for a slow default branch.
-              const key = [gitCommonDir, remoteName, fetchTarget.remoteRef].join("\0");
-              const previousFailure = optionalStatusFetchFailures.get(key);
-              const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-              if (previousFailure !== undefined && nowMs < previousFailure.retryAtMs) return;
-              yield* fetchAndPromoteTarget(fetchTarget).pipe(
-                Effect.tap(() => Effect.sync(() => optionalStatusFetchFailures.delete(key))),
-                Effect.catch((cause) =>
-                  Effect.gen(function* () {
-                    const failures = (optionalStatusFetchFailures.get(key)?.failures ?? 0) + 1;
-                    const failedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
-                    optionalStatusFetchFailures.delete(key);
-                    optionalStatusFetchFailures.set(key, {
-                      failures,
-                      retryAtMs:
-                        failedAtMs +
-                        Duration.toMillis(statusUpstreamRefreshFailureCooldown(failures)),
-                    });
-                    if (optionalStatusFetchFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
-                      const oldestKey = optionalStatusFetchFailures.keys().next().value;
-                      if (oldestKey !== undefined) optionalStatusFetchFailures.delete(oldestKey);
-                    }
-                    yield* Effect.logWarning(
-                      "Failed to refresh the default branch during Git status fetch.",
-                      {
-                        cause,
-                        remoteName,
-                        defaultBranchName,
-                      },
-                    );
-                  }),
-                ),
-              );
-            }),
-          { concurrency: 1, discard: true },
-        );
-      }).pipe(Effect.ensuring(cleanupIsolatedFetch));
-    }).pipe(
-      Effect.timeoutOption(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      Effect.flatMap((result) =>
-        Effect.fromOption(
-          result,
-          () =>
-            new GitCommandError({
-              operation: "GitVcsDriver.fetchRemoteForStatus",
-              command: "git",
-              cwd: gitCommonDir,
-              detail: "Git status refresh timed out.",
-            }),
+            yield* fetchAndPromoteTarget(upstreamFetchTarget).pipe(withinDeadline);
+            yield* Effect.forEach(
+              optionalFetchTargets,
+              (fetchTarget) =>
+                Effect.gen(function* () {
+                  // A healthy upstream must not reset the retry budget for a slow default branch.
+                  const key = [gitCommonDir, remoteName, fetchTarget.remoteRef].join("\0");
+                  const previousFailure = optionalStatusFetchFailures.get(key);
+                  const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+                  if (previousFailure !== undefined && nowMs < previousFailure.retryAtMs) return;
+                  yield* fetchAndPromoteTarget(fetchTarget).pipe(
+                    withinDeadline,
+                    Effect.tap(() => Effect.sync(() => optionalStatusFetchFailures.delete(key))),
+                    Effect.catch((cause) =>
+                      Effect.gen(function* () {
+                        const failures = (optionalStatusFetchFailures.get(key)?.failures ?? 0) + 1;
+                        const failedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+                        optionalStatusFetchFailures.delete(key);
+                        optionalStatusFetchFailures.set(key, {
+                          failures,
+                          retryAtMs:
+                            failedAtMs +
+                            Duration.toMillis(statusUpstreamRefreshFailureCooldown(failures)),
+                        });
+                        if (
+                          optionalStatusFetchFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY
+                        ) {
+                          const oldestKey = optionalStatusFetchFailures.keys().next().value;
+                          if (oldestKey !== undefined)
+                            optionalStatusFetchFailures.delete(oldestKey);
+                        }
+                        yield* Effect.logWarning(
+                          "Failed to refresh the default branch during Git status fetch.",
+                          {
+                            cause,
+                            remoteName,
+                            defaultBranchName,
+                          },
+                        );
+                      }),
+                    ),
+                  );
+                }),
+              { concurrency: 1, discard: true },
+            );
+          }),
         ),
-      ),
-    );
+        Effect.ensuring(cleanupIsolatedFetch),
+      );
+    });
 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
