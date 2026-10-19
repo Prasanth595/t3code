@@ -26,6 +26,24 @@ const messageId = MessageId.make("message-1");
 const dialog = () => document.querySelector('[role="alertdialog"]');
 
 describe("RevertConfirmHost", () => {
+  it("requires a ready baseline before offering first-message file restore", async () => {
+    await act(() =>
+      root.render(
+        <AppAtomRegistryProvider>
+          <RevertConfirmHost threadKey="env:non-git" onConfirm={vi.fn()} />
+        </AppAtomRegistryProvider>,
+      ),
+    );
+    await act(() => openRevertConfirm("env:non-git", { turnCount: 0, messageId }));
+    const buttons = [...dialog()!.querySelectorAll("button")];
+    const restore = buttons.find((button) => button.textContent === "Revert files too")!;
+    const keep = buttons.find((button) => button.textContent === "Revert and keep changes")!;
+    expect(restore.disabled).toBe(true);
+    await act(() => restore.click());
+    expect(dialog()).not.toBeNull();
+    expect(keep.disabled).toBe(false);
+  });
+
   it("shows only its thread's request, confirms it once, and drops it when the thread changes", async () => {
     const onConfirm = vi.fn();
     const host = (threadKey: string) => (
