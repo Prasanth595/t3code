@@ -4816,52 +4816,53 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ];
   }
 
-  const makeTaskToolHarness = Effect.gen(function* () {
-    // Claude's on-disk task store; tests seed it to stand in for a list Claude
-    // kept from an earlier server process.
-    const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
-      prefix: "t3-claude-tasks-",
+  const makeTaskToolHarnessWithOptions = (environment: NodeJS.ProcessEnv = {}) =>
+    Effect.gen(function* () {
+      const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+        prefix: "t3-claude-tasks-",
+      });
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: { CLAUDE_CONFIG_DIR: configDir, ...environment },
+      });
+      let sequence = 600;
+      let turn = 0;
+      const nextUuid = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
+      const startTurn = Effect.fnUntraced(function* () {
+        turn++;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`attempt-claude-task-tools-${turn}`),
+            providerTurnOrdinal: turn,
+            text: "Update the task list.",
+            attachments: [],
+          }),
+        );
+      });
+      const call = Effect.fnUntraced(function* (
+        tool: TaskToolCall,
+        options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
+      ) {
+        for (const frame of taskToolFrames(tool, nextUuid, options)) {
+          yield* harness.offerAndWait(frame);
+        }
+      });
+      const finishTurn = Effect.fnUntraced(function* () {
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: nextUuid(), result: "Task list updated." }),
+        );
+        return yield* Queue.take(harness.terminalReceipts);
+      });
+      const plans = () =>
+        harness.events.flatMap((event) =>
+          event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
+        );
+      return { configDir, startTurn, call, finishTurn, plans };
     });
-    const harness = yield* makeWakeHarnessWithOptions({
-      environment: { CLAUDE_CONFIG_DIR: configDir },
-    });
-    let sequence = 600;
-    let turn = 0;
-    const nextUuid = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
-    const startTurn = Effect.fnUntraced(function* () {
-      turn++;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make(`attempt-claude-task-tools-${turn}`),
-          providerTurnOrdinal: turn,
-          text: "Update the task list.",
-          attachments: [],
-        }),
-      );
-    });
-    const call = Effect.fnUntraced(function* (
-      tool: TaskToolCall,
-      options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
-    ) {
-      for (const frame of taskToolFrames(tool, nextUuid, options)) {
-        yield* harness.offerAndWait(frame);
-      }
-    });
-    const finishTurn = Effect.fnUntraced(function* () {
-      yield* harness.offerAndWait(
-        makeResultFrame({ uuid: nextUuid(), result: "Task list updated." }),
-      );
-      yield* Queue.take(harness.terminalReceipts);
-    });
-    const plans = () =>
-      harness.events.flatMap((event) =>
-        event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
-      );
-    return { configDir, startTurn, call, finishTurn, plans };
-  });
+
+  const makeTaskToolHarness = makeTaskToolHarnessWithOptions();
 
   const createTask = (id: string, subject: string): TaskToolCall => ({
     name: "TaskCreate",
@@ -5022,86 +5023,86 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("starts from the task list Claude kept for the session before a restart", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const harness = yield* makeTaskToolHarness;
-      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
-      yield* fileSystem.makeDirectory(tasksDir, { recursive: true });
-      const task = (id: string, subject: string, status: string, metadata?: object) =>
-        fileSystem.writeFileString(
-          `${tasksDir}/${id}.json`,
-          JSON.stringify({
-            id,
-            subject,
-            description: "",
-            status,
-            blocks: [],
-            blockedBy: [],
-            metadata,
-          }),
+  it.effect.each([
+    {
+      tool: updateTask({ taskId: "2", status: "completed" }),
+      listId: undefined,
+      directory: WAKE_NATIVE_SESSION,
+      status: "completed",
+    },
+    {
+      tool: createTask("2", "Implement"),
+      listId: " list/ID ",
+      // Claude Code 2.1.303 sanitizes the raw override, including its surrounding spaces.
+      directory: "-list-ID-",
+      status: "pending",
+    },
+  ] as const)(
+    "recovers persisted tasks on the first $tool.name after restart",
+    ({ tool, listId, directory, status }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const harness = yield* makeTaskToolHarnessWithOptions({ CLAUDE_CODE_TASK_LIST_ID: listId });
+        const tasksDir = `${harness.configDir}/tasks/${directory}`;
+        yield* fs.makeDirectory(tasksDir, { recursive: true });
+        // The native tool has already written its result before emitting the SDK frame.
+        for (const task of [
+          { id: "1", subject: "Inspect", status: "completed" },
+          { id: "2", subject: "Implement", status },
+          { id: "3", subject: "Internal", status: "pending", metadata: { _internal: true } },
+        ]) {
+          yield* fs.writeFileString(
+            `${tasksDir}/${task.id}.json`,
+            JSON.stringify({ description: "", blocks: [], blockedBy: [], ...task }),
+          );
+        }
+        yield* fs.writeFileString(`${tasksDir}/4.json`, "{");
+        yield* fs.makeDirectory(`${tasksDir}/5.json`);
+
+        yield* harness.startTurn();
+        yield* harness.call(tool);
+        assert.equal((yield* harness.finishTurn()).status, "completed");
+        assert.deepEqual(
+          harness.plans().map((plan) => plan.steps),
+          [
+            [
+              { id: "task-1", text: "Inspect", status: "completed" },
+              { id: "task-2", text: "Implement", status },
+            ],
+          ],
         );
-      yield* task("10", "Ship", "pending");
-      yield* task("1", "Inspect", "completed");
-      // Claude already wrote the TaskUpdate below before T3 sees its result.
-      yield* task("2", "Implement", "completed");
-      yield* task("3", "Internal", "pending", { _internal: true });
-      yield* fileSystem.writeFileString(`${tasksDir}/4.json`, "{");
-      yield* fileSystem.writeFileString(`${tasksDir}/.highwatermark`, "10");
-      yield* fileSystem.writeFileString(`${tasksDir}/.lock`, "");
-
-      yield* harness.startTurn();
-      yield* harness.call(updateTask({ taskId: "2", status: "completed" }));
-      yield* harness.call(createTask("11", "Verify"));
-      yield* harness.finishTurn();
-
-      assert.deepEqual(
-        harness.plans().map((plan) => plan.steps),
-        [
-          [
-            { id: "task-1", text: "Inspect", status: "completed" },
-            { id: "task-2", text: "Implement", status: "completed" },
-            { id: "task-10", text: "Ship", status: "pending" },
-          ],
-          [
-            { id: "task-1", text: "Inspect", status: "completed" },
-            { id: "task-2", text: "Implement", status: "completed" },
-            { id: "task-10", text: "Ship", status: "pending" },
-            { id: "task-11", text: "Verify", status: "pending" },
-          ],
-        ],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    ),
   );
 
-  it.effect("clears the list when a restart's first task tool deletes the last stored task", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const harness = yield* makeTaskToolHarness;
-      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
-      // Claude already removed the task file before T3 sees the result.
-      yield* fileSystem.makeDirectory(tasksDir, { recursive: true });
-      yield* fileSystem.writeFileString(`${tasksDir}/.highwatermark`, "1");
+  it.effect(
+    "publishes an empty task list when the first TaskUpdate after restart deletes the last task",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const harness = yield* makeTaskToolHarness;
+        const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
+        // Claude has removed the task file before emitting the SDK frame.
+        yield* fs.makeDirectory(tasksDir, { recursive: true });
+        yield* fs.writeFileString(`${tasksDir}/.highwatermark`, "1");
 
-      yield* harness.startTurn();
-      yield* harness.call(updateTask({ taskId: "1", status: "deleted" }));
-      yield* harness.finishTurn();
-
-      assert.deepEqual(
-        harness.plans().map((plan) => plan.steps),
-        [[]],
-      );
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        yield* harness.startTurn();
+        yield* harness.call(updateTask({ taskId: "1", status: "deleted" }));
+        assert.equal((yield* harness.finishTurn()).status, "completed");
+        assert.deepEqual(
+          harness.plans().map((plan) => plan.steps),
+          [[]],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    ),
   );
 
   it.effect.each(["success false", "error result", "unknown id"] as const)(
