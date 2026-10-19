@@ -3787,6 +3787,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
+  const permissionModeStatusFrame = (uuid: string, outcome?: "success") =>
+    claudeSdkFrame({
+      type: "system",
+      subtype: "status",
+      status: null,
+      permissionMode: "acceptEdits",
+      ...(outcome === undefined ? {} : { compact_result: outcome }),
+      uuid,
+      session_id: WAKE_NATIVE_SESSION,
+    });
   const compactBoundaryFrame = (uuid: string) =>
     claudeSdkFrame({
       type: "system",
@@ -3870,6 +3880,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         compactionStatusFrame("c1", "compacting"),
         compactBoundaryFrame("c2"),
         compactionStatusFrame("c3", null, "success"),
+      ],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "a permission mode change during compaction keeps one running item",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        permissionModeStatusFrame("c2"),
+        compactionStatusFrame("c3", "compacting"),
+        compactionStatusFrame("c4", null, "success"),
+        compactBoundaryFrame("c5"),
+      ],
+      expected: [completedWithTokens],
+    },
+    {
+      name: "an outcome on a permission mode status settles the compaction",
+      frames: [
+        compactionStatusFrame("c1", "compacting"),
+        permissionModeStatusFrame("c2", "success"),
+        compactBoundaryFrame("c3"),
       ],
       expected: [completedWithTokens],
     },

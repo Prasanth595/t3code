@@ -45,6 +45,7 @@ import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thr
 import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
+  contextCompactionStatusLabel,
   liveThoughtLine,
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
@@ -2921,7 +2922,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
           ? null
           : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
       return {
-        label: "Context compacted",
+        label: contextCompactionStatusLabel(item),
         detail: item.summary ?? tokenSummary,
         tone: item.status === "failed" ? "danger" : "muted",
         icon: MinusIcon,

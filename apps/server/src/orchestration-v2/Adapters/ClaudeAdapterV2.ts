@@ -7153,10 +7153,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               operation.outcome = message.compact_result;
               operation.error = message.compact_error;
               yield* settleClaudeCompaction(context, operation, yield* DateTime.now);
-            } else if (message.status === null && context.activeCompaction !== null) {
+            } else if (
+              message.status === null &&
+              message.permissionMode === undefined &&
+              context.activeCompaction !== null
+            ) {
               // A PreCompact hook can skip the compaction, which clears the
               // status without an outcome. Frames that still arrive for it
-              // update the same item.
+              // update the same item. A permission mode change also sends a
+              // cleared status, so it leaves the compaction running.
               yield* settleClaudeCompaction(context, context.activeCompaction, yield* DateTime.now);
             }
           }

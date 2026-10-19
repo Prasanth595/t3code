@@ -17,6 +17,7 @@ import {
   type HandoffTimelineRun,
 } from "@t3tools/client-runtime/handoff";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import { contextCompactionStatusLabel } from "@t3tools/client-runtime/work-log/presentation";
 import {
   ProviderDriverKind,
   type OrchestrationV2Notification,
@@ -112,14 +113,7 @@ export function V2LifecycleRow(props: {
       item.beforeTokenCount === undefined && item.afterTokenCount === undefined
         ? null
         : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
-    const label =
-      item.status === "failed"
-        ? "Context compaction failed"
-        : item.status === "cancelled" || item.status === "interrupted"
-          ? "Context compaction stopped"
-          : item.status === "pending" || item.status === "running" || item.status === "waiting"
-            ? "Compacting context"
-            : "Context compacted";
+    const label = contextCompactionStatusLabel(item);
     const detail = (
       <>
         {item.summary ?? tokenDetail}

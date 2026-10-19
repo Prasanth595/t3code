@@ -6,6 +6,8 @@ import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 
 import {
   commandDetailRepeatsCommand,
+  contextCompactionLabel,
+  contextCompactionTokenCounts,
   extractCommandOutputText,
   liveThoughtLine,
   resolveViewedImageAsset,
@@ -204,6 +206,25 @@ describe("workEntryIndicatesToolFailure", () => {
         detail: "File not found in conversation",
       }),
     ).toBe(false);
+  });
+});
+
+describe("contextCompactionLabel", () => {
+  it.each([
+    ["pending", "Compacting context"],
+    ["running", "Compacting context"],
+    ["completed", "Context compacted 899K → 19K tokens"],
+    ["failed", "Context compaction failed"],
+    ["cancelled", "Context compaction stopped"],
+    ["interrupted", "Context compaction stopped"],
+  ] as const)("labels a compaction with status %s", (status, label) => {
+    const item = { status, beforeTokenCount: 899_000, afterTokenCount: 19_000 };
+    expect(contextCompactionLabel(item)).toBe(label);
+    expect(contextCompactionTokenCounts(item) !== null).toBe(status === "completed");
+  });
+
+  it("labels a completed compaction without token counts", () => {
+    expect(contextCompactionLabel({ status: "completed" })).toBe("Context compacted");
   });
 });
 

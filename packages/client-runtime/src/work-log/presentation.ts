@@ -56,8 +56,9 @@ type CompactionLabelItem = Pick<
 export function contextCompactionTokenCounts(
   item: CompactionLabelItem,
 ): { readonly before: string; readonly after: string } | null {
+  // Only a completed compaction reduced the context.
   if (
-    item.status === "running" ||
+    item.status !== "completed" ||
     item.beforeTokenCount === undefined ||
     item.afterTokenCount === undefined
   ) {
@@ -66,12 +67,25 @@ export function contextCompactionTokenCounts(
   return { before: formatTokens(item.beforeTokenCount), after: formatTokens(item.afterTokenCount) };
 }
 
+export function contextCompactionStatusLabel(item: Pick<CompactionLabelItem, "status">): string {
+  switch (item.status) {
+    case "completed":
+      return "Context compacted";
+    case "failed":
+      return "Context compaction failed";
+    case "cancelled":
+    case "interrupted":
+      return "Context compaction stopped";
+    default:
+      return "Compacting context";
+  }
+}
+
 export function contextCompactionLabel(item: CompactionLabelItem): string {
-  if (item.status === "running") return "Compacting context";
   const tokens = contextCompactionTokenCounts(item);
   return tokens
     ? `Context compacted ${tokens.before} → ${tokens.after} tokens`
-    : "Context compacted";
+    : contextCompactionStatusLabel(item);
 }
 
 export interface WorkLogPresentationEntry {
