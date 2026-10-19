@@ -539,7 +539,7 @@ const INVENTORY_TIMEOUT = "5 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 const FORK_WAIT = 60_000;
 const FORK_POLL = "1 second";
-export const OPENCODE_2_FORK_SOURCE_RUNNING =
+const OPENCODE_2_FORK_SOURCE_RUNNING =
   "The thread you forked from is still running. Send your message again when it finishes.";
 /** Answers that mean the server refused a prompt; any other failure may have been accepted. */
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -587,6 +587,7 @@ const boundaryAfter = (
   providerThreadId: OrchestrationV2ProviderThread["id"],
   kept: OrchestrationV2ProviderTurn | undefined,
   prompts: ReadonlySet<string>,
+  history?: ReadonlyArray<{ readonly id: string }>,
 ) => {
   const later = turns
     .filter(
@@ -604,9 +605,12 @@ const boundaryAfter = (
       }),
     );
   }
+  const candidates = new Set(later.map(promptOf));
   return Effect.succeed(
-    later.map(promptOf).find((messageId) => messageId !== undefined && prompts.has(messageId)) ??
-      null,
+    history === undefined
+      ? ([...candidates].find((messageId) => messageId !== undefined && prompts.has(messageId)) ??
+          null)
+      : (history.findLast((item) => prompts.has(item.id) && candidates.has(item.id))?.id ?? null),
   );
 };
 
@@ -2874,7 +2878,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     /** Newest first. The list takes one type, so it reads all. */
     const historyOf = (sessionId: string) =>
       OpenCode2Client.paginate(
-        { sessionID: Session.ID.make(sessionId), limit: 100 },
+        { sessionID: Session.ID.make(sessionId), order: "desc" as const, limit: 100 },
         client.message.list,
       ).pipe(Stream.runCollect);
 
@@ -3889,6 +3893,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             driver,
             providerThreadId: source.id,
             cause: OPENCODE_2_FORK_SOURCE_RUNNING,
+            retryable: false,
           });
           const deadline = (yield* Clock.currentTimeMillis) + FORK_WAIT;
           return yield* Effect.gen(function* () {
@@ -3913,16 +3918,23 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   ...(loaded?.active === undefined ? [] : [loaded.active.providerTurn]),
                 ].map((turn) => [turn.id, turn] as const),
               );
-              // An execution OpenCode started on its own has no turn yet; its
-              // continuation's would cut before its first report.
-              const before =
+              const recorded =
                 selected === undefined
                   ? null
-                  : ((yield* boundaryAfter([...turns.values()], source.id, selected, cuts)) ??
-                    loaded?.wakes.find(
-                      (wake) => wake.first !== undefined && laterCuts.has(wake.first),
-                    )?.first ??
-                    null);
+                  : yield* boundaryAfter(
+                      [...turns.values()],
+                      source.id,
+                      selected,
+                      selectedAt < 0 ? cuts : laterCuts,
+                      history,
+                    );
+              // Unrecorded wakes cut before their first report, just like continuations.
+              const before =
+                history.findLast(
+                  (item) =>
+                    laterCuts.has(item.id) &&
+                    (item.id === recorded || loaded?.wakes.some((wake) => wake.first === item.id)),
+                )?.id ?? recorded;
               // A busy source needs an immutable prefix before the exclusive cut.
               if (working && (before === null || !endedBefore(history, before))) return undefined;
               return before;

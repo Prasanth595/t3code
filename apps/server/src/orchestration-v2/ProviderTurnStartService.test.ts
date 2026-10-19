@@ -1032,14 +1032,12 @@ effectIt.effect.each([undefined, false])(
       };
       const advice =
         "The thread you forked from is still running. Send your message again when it finishes.";
-      const failure = Object.assign(
-        new ProviderAdapter.ProviderAdapterForkThreadError({
-          driver: sourceProviderThread.driver,
-          providerThreadId: sourceProviderThread.id,
-          cause: advice,
-        }),
-        retryable === undefined ? {} : { retryable },
-      );
+      const failure = new ProviderAdapter.ProviderAdapterForkThreadError({
+        driver: sourceProviderThread.driver,
+        providerThreadId: sourceProviderThread.id,
+        cause: advice,
+        ...(retryable === undefined ? {} : { retryable }),
+      });
       const forkThread = vi.fn(() => Effect.fail(failure));
       harness.open.mockImplementation(() =>
         Effect.succeed({ driver: sourceProviderThread.driver, forkThread } as never),

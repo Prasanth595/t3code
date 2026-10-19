@@ -271,6 +271,7 @@ export class ProviderAdapterForkThreadError extends Schema.TaggedError<ProviderA
   {
     driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
+    retryable: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
