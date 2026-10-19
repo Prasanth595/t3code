@@ -676,35 +676,26 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
 
-  it.effect("does not publish a window streamed after a failed probe as the full list", () =>
+  it.effect("keeps sparse usage unavailable after probe failure until a full probe recovers", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const refreshCount = yield* Ref.make(0);
         const failedLimits = {
           checkedAt: "2026-04-10T00:00:01.000Z",
           windows: [],
-          unavailable: { reason: "probeFailed" },
+          unavailable: { reason: "probeFailed", message: "Usage probe timed out." },
         } as const;
-        const probedLimits = {
-          checkedAt: "2026-04-10T00:00:03.000Z",
-          windows: [
-            { id: "five_hour", kind: "session", label: "Session", usedPercent: 10 },
-            { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 25 },
-          ],
-        } as const;
+        const probeSnapshot = yield* Ref.make<ServerProvider>({
+          ...refreshedSnapshot,
+          usageLimits: failedLimits,
+        });
         const provider = yield* makeManagedServerProvider<TestSettings>({
           resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
           initialSnapshot: () => Effect.succeed(initialSnapshot),
-          checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
-            Effect.map((count) => ({
-              ...refreshedSnapshot,
-              usageLimits: count < 3 ? failedLimits : probedLimits,
-            })),
-          ),
-          refreshInterval: "1 hour",
+          checkProvider: Ref.get(probeSnapshot),
+          refreshOnInterval: false,
         });
         yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
 
@@ -718,15 +709,28 @@ describe("makeManagedServerProvider", () => {
           checkedAt: "2026-04-10T00:00:02.000Z",
           windows: [weekly],
         });
-        assert.deepStrictEqual((yield* provider.getSnapshot).usageLimits, {
+        const partial = yield* provider.getSnapshot;
+        assert.deepStrictEqual(partial.usageLimits, {
           checkedAt: "2026-04-10T00:00:02.000Z",
           windows: [weekly],
-          unavailable: { reason: "probeFailed" },
+          unavailable: failedLimits.unavailable,
         });
-
-        // A second failed probe has no last good list to keep.
+        yield* provider.applyUsageLimits({
+          checkedAt: "2026-04-10T00:00:03.000Z",
+          windows: [{ ...weekly }],
+        });
+        assert.strictEqual(yield* provider.getSnapshot, partial);
         assert.deepStrictEqual((yield* provider.refresh).usageLimits, failedLimits);
-        assert.deepStrictEqual((yield* provider.refresh).usageLimits, probedLimits);
+
+        const completeLimits = {
+          checkedAt: "2026-04-10T00:00:04.000Z",
+          windows: [
+            { id: "five_hour", kind: "session", label: "Session", usedPercent: 10 },
+            { ...weekly, usedPercent: 25 },
+          ],
+        } as const;
+        yield* Ref.set(probeSnapshot, { ...refreshedSnapshot, usageLimits: completeLimits });
+        assert.deepStrictEqual((yield* provider.refresh).usageLimits, completeLimits);
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
