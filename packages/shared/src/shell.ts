@@ -231,7 +231,7 @@ export function buildEnvironmentCaptureCommand(
         const value =
           `if $env.${name}? == null { '' } else if ` +
           `$env.ENV_CONVERSIONS?.${name}?.to_string? != null { ` +
-          `do $env.ENV_CONVERSIONS.${name}.to_string $env.${name} ` +
+          `$env.${name} | do $env.ENV_CONVERSIONS.${name}.to_string $env.${name} ` +
           `} else { ${defaultValue} }`;
         return [
           `print '${envCaptureStart(name)}'`,
