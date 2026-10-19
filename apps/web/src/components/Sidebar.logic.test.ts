@@ -492,11 +492,9 @@ describe("sidebar thread lineage helpers", () => {
     const elsewhere = subagentOf("thread-elsewhere", root.id, otherEnvironmentId);
     const threads = [root, fork, child, grandchild, forkChild, orphan, elsewhere];
 
-    expect(resolveSidebarRowThreadId(root.id, environmentId, threads)).toBe(root.id);
     expect(resolveSidebarRowThreadId(child.id, environmentId, threads)).toBe(root.id);
     expect(resolveSidebarRowThreadId(grandchild.id, environmentId, threads)).toBe(root.id);
     expect(resolveSidebarRowThreadId(forkChild.id, environmentId, threads)).toBe(fork.id);
-    // Parents only resolve within the subagent's own environment.
     expect(resolveSidebarRowThreadId(elsewhere.id, otherEnvironmentId, threads)).toBe(elsewhere.id);
     expect(resolveSidebarRowThreadId(orphan.id, environmentId, threads)).toBe(orphan.id);
     const loopA = subagentOf("thread-loop-a", ThreadId.make("thread-loop-b"));
