@@ -5,25 +5,25 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   PullRequestActionInput,
   PullRequestCapabilities,
+  PullRequestDetail,
   PullRequestFilesViewedResult,
   PullRequestListInput,
   PullRequestListResult,
-  PullRequestProviderSummary,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
-  PullRequestViewerPermissions,
+  PullRequestSubmitReviewInput,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
 
-const decodeListResult = Schema.decodeUnknownSync(PullRequestListResult);
+const decodeListResult = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestListResult));
+const decodeDetail = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestDetail));
 const decodeListInput = Schema.decodeUnknownSync(PullRequestListInput);
 const decodeReviewerRequest = Schema.decodeUnknownSync(PullRequestReviewerRequestInput);
-const decodeAction = Schema.decodeUnknownSync(PullRequestActionInput);
+const decodeAction = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestActionInput));
+const decodeReview = Schema.decodeUnknownSync(Schema.toCodecJson(PullRequestSubmitReviewInput));
 const decodeSetFilesViewed = Schema.decodeUnknownSync(PullRequestSetFilesViewedInput);
 const decodeFilesViewed = Schema.decodeUnknownSync(PullRequestFilesViewedResult);
-const decodeViewerPermissions = Schema.decodeUnknownSync(PullRequestViewerPermissions);
-const decodeProviderSummary = Schema.decodeUnknownSync(PullRequestProviderSummary);
 
 const LIST_RESULT: PullRequestListResult = {
   viewers: { "github.com": "bilal", "gitlab.com": "bilal.hassan" },
@@ -104,6 +104,18 @@ describe("PullRequestListResult", () => {
     const decoded = Schema.decodeSync(codec)(Schema.encodeUnknownSync(codec)(LIST_RESULT));
 
     expect(decoded).toStrictEqual(LIST_RESULT);
+  });
+
+  it("loads a newer server's list response, dropping unknown provider actions in order", () => {
+    const decoded = decodeListResult({
+      ...LIST_RESULT,
+      providers: [{ ...LIST_RESULT.providers[0], actions: ["close", "archive", "merge"] }],
+    });
+
+    expect(decoded).toEqual({
+      ...LIST_RESULT,
+      providers: [{ ...LIST_RESULT.providers[0], actions: ["close", "merge"] }],
+    });
   });
 
   it("keys a viewer by host, so two hosts of one kind stay separate accounts", () => {
@@ -279,44 +291,61 @@ describe("PullRequestCapabilities", () => {
     expect(decodeCapabilities({ ...base, deleteBranch: true }).deleteBranch).toBe(true);
   });
 
-  it("drops actions and verdicts from a newer server instead of failing", () => {
-    const decoded = decodeCapabilities({
+  it("loads a newer server's detail response, dropping unknown options in order", () => {
+    const options = {
+      actions: ["close", "archive", "merge"],
+      verdicts: ["request-changes", "block", "approve"],
+      updateMethods: ["rebase", "fast-forward", "merge"],
+    };
+    const detail = {
+      ...LIST_RESULT.entries[0],
+      workspaceRoot: "/workspace/t3code",
+      body: "",
+      changedFiles: 1,
+      mergedAt: null,
+      closedAt: null,
+      reviewers: [],
+      checks: [],
+      mergeCapabilities: { merge: true, squash: true, rebase: true },
+      capabilities: {
+        ...base,
+        actions: options.actions,
+        mergeMethods: ["squash", "fast-forward", "merge"],
+        updateMethods: options.updateMethods,
+        review: { ...base.review, verdicts: options.verdicts },
+      },
+      viewerPermissions: { ...options, comment: true, resolve: true, requestReviewers: true },
+    };
+    const decoded = decodeDetail(detail);
+
+    expect(decoded.capabilities).toEqual({
       ...base,
-      actions: ["merge", "archive", "close"],
-      mergeMethods: ["squash", "fast-forward"],
-      updateMethods: ["rebase", "fast-forward"],
-      review: { ...base.review, verdicts: ["approve", "block"] },
+      actions: ["close", "merge"],
+      mergeMethods: ["squash", "merge"],
+      updateMethods: ["rebase", "merge"],
+      review: { ...base.review, verdicts: ["request-changes", "approve"] },
     });
-
-    expect(decoded.actions).toEqual(["merge", "close"]);
-    expect(decoded.mergeMethods).toEqual(["squash"]);
-    expect(decoded.updateMethods).toEqual(["rebase"]);
-    expect(decoded.review.verdicts).toEqual(["approve"]);
-  });
-
-  it("drops unknown values from viewer permissions and provider summaries", () => {
-    const permissions = decodeViewerPermissions({
-      actions: ["merge", "archive"],
+    expect(decoded.viewerPermissions).toEqual({
+      actions: ["close", "merge"],
+      verdicts: ["request-changes", "approve"],
+      updateMethods: ["rebase", "merge"],
       comment: true,
       resolve: true,
-      verdicts: ["approve", "block"],
       requestReviewers: true,
-      updateMethods: ["rebase", "fast-forward"],
     });
-    expect(permissions.actions).toEqual(["merge"]);
-    expect(permissions.verdicts).toEqual(["approve"]);
-    expect(permissions.updateMethods).toEqual(["rebase"]);
+    expect(decoded.title).toBe(detail.title);
+  });
+});
 
-    const provider = decodeProviderSummary({
-      host: "github.com",
-      kind: "github",
-      searchesOnHost: true,
-      actions: ["merge", "archive"],
-      projectCount: 1,
-      configured: true,
-      detail: null,
-    });
-    expect(provider.actions).toEqual(["merge"]);
+describe("pull request mutation requests", () => {
+  it("still rejects unknown actions, merge methods, and review verdicts on the wire", () => {
+    const ref = { projectId: "project-1", repository: "acme/web", number: 7 };
+
+    expect(() => decodeAction({ ...ref, action: "archive" })).toThrow();
+    expect(() => decodeAction({ ...ref, action: "merge", mergeMethod: "fast-forward" })).toThrow();
+    const review = { ...ref, body: "", comments: [], verdict: "approve" };
+    expect(decodeReview(review).verdict).toBe("approve");
+    expect(() => decodeReview({ ...review, verdict: "block" })).toThrow();
   });
 });
 
