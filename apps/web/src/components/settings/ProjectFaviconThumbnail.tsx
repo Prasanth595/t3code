@@ -1,13 +1,19 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 
-// Each preview issues an asset URL over the socket, so wait until the row is on screen.
-function useInView<T extends Element>() {
-  const ref = useRef<T>(null);
-  // Without IntersectionObserver, load eagerly rather than never.
+export function ProjectFaviconThumbnail(props: {
+  readonly cwd: string;
+  readonly environmentId: EnvironmentId;
+  readonly fallback: ReactNode;
+  readonly path: string;
+}) {
+  const ref = useRef<HTMLSpanElement>(null);
   const [inView, setInView] = useState(() => typeof IntersectionObserver === "undefined");
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  // Asset URLs require a server request, so defer acquisition until the row is visible.
   useEffect(() => {
     const element = ref.current;
     if (inView || !element) return;
@@ -17,23 +23,11 @@ function useInView<T extends Element>() {
     observer.observe(element);
     return () => observer.disconnect();
   }, [inView]);
-  return [ref, inView] as const;
-}
 
-export function ProjectFaviconThumbnail(props: {
-  readonly cwd: string;
-  readonly environmentId: EnvironmentId;
-  readonly fallback: ReactNode;
-  readonly path: string;
-}) {
-  const [ref, inView] = useInView<HTMLSpanElement>();
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
-  const resource = useMemo(
-    () =>
-      inView ? ({ _tag: "draft-workspace-file", cwd: props.cwd, path: props.path } as const) : null,
-    [inView, props.cwd, props.path],
+  const state = useAssetUrlState(
+    props.environmentId,
+    inView ? { _tag: "draft-workspace-file", cwd: props.cwd, path: props.path } : null,
   );
-  const state = useAssetUrlState(props.environmentId, resource);
   const url = state._tag === "Success" ? state.url : null;
 
   return (
