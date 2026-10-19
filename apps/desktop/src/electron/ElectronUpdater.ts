@@ -89,8 +89,9 @@ const updaterEvents = () =>
     removeListener: (eventName: string, listener: UpdaterListener) => void;
   };
 
-// Errors that quitAndInstall captured and reports itself.
-const installErrors = new WeakSet<object>();
+// Errors emitted by the quitAndInstall call in progress. That call fails with
+// them, so the global error listeners skip them for as long as it runs.
+let installErrors: ReadonlyArray<unknown> | undefined;
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
@@ -157,30 +158,30 @@ export const make = ElectronUpdater.of({
           new ElectronUpdaterQuitAndInstallError({ channel, isSilent, isForceRunAfter, cause }),
         );
       // electron-updater reports most install failures by emitting `error`
-      // synchronously and returning instead of throwing. Capture those as this
-      // call's failure so the caller can report it before returning.
-      const reported: Array<unknown> = [];
-      const captureInstallError = (error: unknown) => {
-        reported.push(error);
-        if (error instanceof Object) installErrors.add(error);
+      // synchronously and returning instead of throwing. The capture runs ahead
+      // of the global listeners in that emit so they can skip the error.
+      const emitted: Array<unknown> = [];
+      const capture = (error: unknown) => {
+        emitted.push(error);
       };
-      updaterEvents().prependListener("error", captureInstallError);
+      installErrors = emitted;
+      updaterEvents().prependListener("error", capture);
       try {
         autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
       } catch (cause) {
         return fail(cause);
       } finally {
-        updaterEvents().removeListener("error", captureInstallError);
+        updaterEvents().removeListener("error", capture);
+        installErrors = undefined;
       }
-      return reported.length > 0 ? fail(reported[0]) : Effect.void;
+      return emitted.length > 0 ? fail(emitted[0]) : Effect.void;
     }),
   on: (eventName, listener) => {
     const untypedListener = listener as unknown as UpdaterListener;
-    // quitAndInstall already reports the errors it captured.
     const filteredListener =
       eventName === "error"
         ? (error: unknown, ...rest: Array<unknown>) => {
-            if (error instanceof Object && installErrors.has(error)) return;
+            if (installErrors?.includes(error)) return;
             untypedListener(error, ...rest);
           }
         : untypedListener;
