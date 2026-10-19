@@ -1075,6 +1075,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       });
     });
 
+    const updateRetry = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      { attempt, error }: Pick<EventOf<"session.retry.scheduled">["data"], "attempt" | "error">,
+      delayMs: number,
+    ) {
+      turn.retry = {
+        retry: {
+          // OpenCode counts the first request as attempt 1, so its first retry is attempt 2.
+          attempt: Math.max(1, attempt - 1),
+          maxAttempts: null,
+          retryDelayMs: Math.max(0, Math.trunc(delayMs)),
+        },
+        failure: makeProviderFailure({
+          message: error.message,
+          code: error.type,
+          class: "provider_error",
+          retryable: true,
+        }),
+        startedAt: turn.retry?.startedAt ?? (yield* DateTime.now),
+      };
+      yield* emitRetry(state, turn, "running");
+    });
+
     const emitProviderTurn = (
       state: ThreadState,
       turn: ActiveTurn,
@@ -2117,25 +2141,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           turn.usage.reasoning += tokens.reasoning;
           return;
         }
-        case "session.retry.scheduled": {
-          const { attempt, at, error } = event.data;
-          turn.retry = {
-            retry: {
-              // OpenCode counts the first request as attempt 1, so its first retry is attempt 2.
-              attempt: Math.max(1, attempt - 1),
-              maxAttempts: null,
-              retryDelayMs: Math.max(0, Math.trunc(at - event.created)),
-            },
-            failure: makeProviderFailure({
-              message: error.message,
-              code: error.type,
-              class: "provider_error",
-              retryable: true,
-            }),
-            startedAt: turn.retry?.startedAt ?? (yield* DateTime.now),
-          };
-          return yield* emitRetry(state, turn, "running");
-        }
+        case "session.retry.scheduled":
+          return yield* updateRetry(state, turn, event.data, event.data.at - event.created);
         case "session.execution.started":
           turn.heldEnd = undefined;
           return;
@@ -2498,6 +2505,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (!found) return undefined;
       const recent = before !== undefined && before !== null ? read.slice(0, -1) : read;
       const idle = recent.find((message) => message.type === "idle");
+      const assistant = recent.find((message) => message.type === "assistant");
+      if (assistant?.retry !== undefined) {
+        // Snapshots omit when the retry was scheduled, so only its remaining delay is known.
+        yield* updateRetry(
+          state,
+          turn,
+          assistant.retry,
+          DateTime.toEpochMillis(assistant.retry.at) - DateTime.toEpochMillis(yield* DateTime.now),
+        );
+      } else if (
+        turn.retry !== undefined &&
+        assistant !== undefined &&
+        assistant.error === undefined &&
+        (assistant.content.length > 0 || assistant.time.streamed !== undefined)
+      ) {
+        yield* emitRetry(state, turn, "completed");
+        turn.retry = undefined;
+      }
       for (const message of recent.toReversed()) {
         if (message.type !== "assistant" || state.active !== turn) continue;
         const ordinals = { text: 0, reasoning: 0 };

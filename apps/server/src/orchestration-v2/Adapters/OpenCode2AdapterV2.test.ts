@@ -2835,7 +2835,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
-  const reconnected = (active: Record<string, unknown>, ended?: "succeeded") => [
+  const reconnected = (
+    active: Record<string, unknown>,
+    ended?: "succeeded",
+    assistant: Record<string, unknown> = {},
+  ) => [
     { type: "runtime_exit", status: "success" } as const,
     out("event.subscribe"),
     out("session.active"),
@@ -2870,6 +2874,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             },
           ],
           finish: "stop",
+          ...assistant,
         },
         {
           id: "msg_0eb735d41001NJee1EvVePJAK5",
@@ -3512,6 +3517,72 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
       );
       assert.deepInclude(seen.at(-1), { type: "turn.terminal", status: ended, failure: null });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    { name: "restores retry pending at reconnect", pending: true },
+    { name: "settles retry recovered during drop", pending: false },
+  ])("$name", ({ pending }) =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["finish"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          event("session.execution.started", { sessionID: SESSION }),
+          ...(pending ? [] : [retryScheduled(2, 2_000)]),
+          ...reconnected({ [SESSION]: { type: "running" } }, undefined, {
+            id: ASSISTANT,
+            finish: undefined,
+            content: pending ? [] : [{ type: "text", text: "Recovered during the drop." }],
+            ...(pending ? { retry: { attempt: 2, at: 2_001, error: rateLimited } } : {}),
+          }),
+          ...openRequests([shellAsk.data]),
+          event("session.execution.succeeded", { sessionID: SESSION }, "finish"),
+        ],
+        { supervised: true, replayGate: gate },
+      );
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread, bigPickle, "approval-required"));
+      yield* Effect.promise(() => gate.waitForReached("finish"));
+      gate.release("finish");
+      const collected = yield* Fiber.join(events);
+      // Reconciled requests follow backfill, before the terminal can settle the retry row.
+      const reconciled = collected.findIndex((event) => event.type === "runtime_request.updated");
+      assert.isAtLeast(reconciled, 0);
+      const seen = collected.slice(0, reconciled);
+      const rows = errorRows(seen);
+      assert.deepEqual(
+        rows.map(({ status, title }) => ({ status, title })),
+        pending
+          ? [{ status: "running", title: "Provider retry" }]
+          : [
+              { status: "running", title: "Provider retry" },
+              { status: "completed", title: "Provider recovered" },
+            ],
+      );
+      for (const row of rows) {
+        assert.deepEqual(row.failure, retrying);
+        assert.deepInclude(row.retry, { attempt: 1, maxAttempts: null });
+        assert.equal(row.id, rows[0]!.id);
+        assert.equal(row.ordinal, rows[0]!.ordinal);
+        assert.deepEqual(row.startedAt, rows[0]!.startedAt);
+      }
+      if (!pending) {
+        assert.isTrue(
+          seen.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text === "Recovered during the drop.",
+          ),
+        );
+      }
     }).pipe(Effect.scoped),
   );
 
