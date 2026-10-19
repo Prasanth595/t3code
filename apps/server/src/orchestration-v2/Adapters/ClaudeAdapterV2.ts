@@ -1213,18 +1213,16 @@ export function makeClaudeQueryOptions(input: {
     "permission-mode": launchArgPermissionMode,
     "dangerously-skip-permissions": launchArgSkipPermissions,
     "append-system-prompt": launchArgAppendSystemPrompt,
-    "append-system-prompt-file": launchArgAppendSystemPromptFile,
+    "append-system-prompt-file": _launchArgAppendSystemPromptFile,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
   // Claude Code overwrites its CLI append text with the SDK's initialize
   // appendSystemPrompt, so launch-argument text has to travel in that value.
-  // The CLI puts file text before inline text.
+  // The CLI puts file text before inline text and trims one trailing newline.
   const launchAppendSystemPrompt = [
-    launchArgAppendSystemPromptFile === undefined
-      ? undefined
-      : input.appendSystemPromptFileText?.replace(/\r?\n$/, ""),
+    input.appendSystemPromptFileText?.replace(/\r?\n$/, ""),
     launchArgAppendSystemPrompt,
-  ].filter((text) => typeof text === "string" && text.length > 0);
+  ].filter((text): text is string => typeof text === "string" && text.length > 0);
   const requestThinkingSummaries =
     compiledSelection.settings.alwaysThinkingEnabled !== false &&
     extraArgs["thinking-display"] !== "omitted";
