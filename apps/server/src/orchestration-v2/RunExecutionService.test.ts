@@ -53,6 +53,7 @@ import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const driver = ProviderDriverKind.make("codex");
 
@@ -3972,8 +3973,16 @@ it.effect.each(["known", "late", "absent", "stop-error"] as const)(
         yield* Deferred.succeed(releaseStop, undefined);
       }
       // Exercise discovery/stop deadlines while the provider is silent or cancellation is pending.
-      yield* TestClock.adjust("1 minute");
+      yield* TestClock.adjust(scenario === "known" ? "15 seconds" : "1 minute");
       const pendingNotices = yield* Ref.get(notices);
+      if (scenario === "known") {
+        assert.deepEqual(
+          pendingNotices,
+          [],
+          "slow cancellation must finish before reporting failure",
+        );
+        assert.isFalse(yield* Ref.get(stopped));
+      }
       for (const notice of pendingNotices) {
         assert.notMatch(
           notice.message,
@@ -3981,13 +3990,13 @@ it.effect.each(["known", "late", "absent", "stop-error"] as const)(
         );
       }
       yield* Deferred.succeed(releaseStop, undefined);
-      if (scenario === "absent") {
+      if (scenario === "absent" || scenario === "late") {
         assert.isTrue(
           yield* Deferred.isDone(finished),
-          "missing turn discovery must have a bounded fallback",
+          "missing turn discovery and unconfirmed cancellation must have bounded fallbacks",
         );
       }
-      const { written, observed } = yield* Fiber.join(capture);
+      const { written, observed, finalEvents } = yield* Fiber.join(capture);
       assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
       const error = written.find((item) => item.type === "error");
       assert.match(error?.failure.message ?? "", /(?:save|persist|record).*?(?:progress|events)/i);
@@ -4008,7 +4017,18 @@ it.effect.each(["known", "late", "absent", "stop-error"] as const)(
           );
         }
       }
-      if (scenario === "stop-error" || scenario === "absent") {
+      if (scenario === "known") {
+        assert.isTrue(
+          yield* Ref.get(stopped),
+          "allow adapter cleanup beyond its internal 10s wait",
+        );
+        assert.match(error?.failure.message ?? "", /stopped the agent/i);
+        assert.isTrue(
+          finalEvents.some(
+            (event) => event.type === "provider-thread.updated" && event.payload.status === "idle",
+          ),
+        );
+      } else {
         assert.match(
           error?.failure.message ?? "",
           /(?:could not|cannot|unable|not confirmed|may still).*?(?:stop|running|agent)/i,
@@ -4134,8 +4154,102 @@ it.effect("does not cancel a newer attempt after publication failure loses owner
   }),
 );
 
+it.effect("keeps Stop and replacement work behind an in-flight recovery cancellation", () =>
+  Effect.gen(function* () {
+    const key = "publication-failure:replacement-during-cancel";
+    const ids = backgroundScenarioIds(key);
+    const replacementAttemptId = RunAttemptId.make(`${ids.attemptId}:replacement`);
+    const replacementTurnId = ProviderTurnId.make(`${ids.rootProviderTurnId}:replacement`);
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+    const stopStarted = yield* Deferred.make<void>();
+    const releaseStop = yield* Deferred.make<void>();
+    const current = yield* Ref.make({ attemptId: ids.attemptId, status: "running" });
+    const provider = yield* Ref.make({
+      turnId: ids.rootProviderTurnId,
+      running: true,
+      backgroundRunning: true,
+    });
+    const order = yield* Ref.make<string[]>([]);
+    const isOriginalRunning = Ref.get(current).pipe(
+      Effect.map((run) => run.attemptId === ids.attemptId && run.status === "running"),
+    );
+    const capture = yield* captureRootRunTermination({
+      key,
+      threadCommands,
+      shouldStartProviderTurn: () => isOriginalRunning,
+      shouldFinalizeRun: () => isOriginalRunning,
+      terminalWriteIsCurrent: () => isOriginalRunning,
+      events: () =>
+        Stream.make(backgroundTurnItemEvent(ids, "command_execution", "running", 1)).pipe(
+          Stream.concat(Stream.never),
+        ),
+      ingestNormalized: (input) =>
+        Effect.fail(
+          new ProviderEventIngestor.ProviderEventPublishError({
+            providerSessionId: input.providerSessionId,
+            eventCount: 1,
+            cause: "database is locked",
+          }),
+        ),
+      interruptTurn: (input) =>
+        Effect.gen(function* () {
+          assert.equal(input.providerTurnId, ids.rootProviderTurnId);
+          yield* Ref.update(order, (events) => [...events, "recovery:cancel-started"]);
+          yield* Deferred.succeed(stopStarted, undefined);
+          yield* Deferred.await(releaseStop);
+          // OpenCode stops thread background work before matching the requested foreground turn.
+          yield* Ref.update(provider, (state) => ({
+            ...state,
+            backgroundRunning: input.requestRuntimeRestart ? false : state.backgroundRunning,
+            running: state.turnId === input.providerTurnId ? false : state.running,
+          }));
+          yield* Ref.update(order, (events) => [...events, "recovery:cancel-finished"]);
+        }),
+    }).pipe(Effect.forkChild);
+
+    yield* Deferred.await(stopStarted);
+    // Dispatch and queue advancement both use this executor in Orchestrator.
+    const replacement = yield* threadCommands
+      .withLock(
+        ids.threadId,
+        Effect.gen(function* () {
+          yield* Ref.set(current, { attemptId: ids.attemptId, status: "interrupted" });
+          yield* Ref.update(order, (events) => [...events, "stop:committed"]);
+          yield* Ref.set(current, { attemptId: replacementAttemptId, status: "running" });
+          yield* Ref.set(provider, {
+            turnId: replacementTurnId,
+            running: true,
+            backgroundRunning: true,
+          });
+          yield* Ref.update(order, (events) => [...events, "replacement:started"]);
+        }),
+      )
+      .pipe(Effect.forkChild({ startImmediately: true }));
+
+    yield* Deferred.succeed(releaseStop, undefined);
+    yield* Fiber.join(capture);
+    yield* Fiber.join(replacement);
+    assert.deepEqual(yield* Ref.get(provider), {
+      turnId: replacementTurnId,
+      running: true,
+      backgroundRunning: true,
+    });
+    assert.deepEqual(yield* Ref.get(current), {
+      attemptId: replacementAttemptId,
+      status: "running",
+    });
+    assert.deepEqual(yield* Ref.get(order), [
+      "recovery:cancel-started",
+      "recovery:cancel-finished",
+      "stop:committed",
+      "replacement:started",
+    ]);
+  }).pipe(Effect.provide(ThreadCommandExecutor.layer)),
+);
+
 function captureRootRunTermination(input: {
   readonly key: string;
+  readonly threadCommands?: ThreadCommandExecutor.ThreadCommandExecutor["Service"];
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly attemptProviderTurnId?: ProviderTurnId | null;
@@ -4199,6 +4313,9 @@ function captureRootRunTermination(input: {
           }),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
+          input.threadCommands === undefined
+            ? ThreadCommandExecutor.layer
+            : Layer.succeed(ThreadCommandExecutor.ThreadCommandExecutor, input.threadCommands),
           Layer.mock(EventSink.EventSinkV2)({
             write: (payload) =>
               Effect.gen(function* () {
