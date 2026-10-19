@@ -136,6 +136,8 @@ export class PluginCatalog extends Context.Service<
   PluginCatalog,
   {
     readonly list: Effect.Effect<PluginCatalogSnapshot>;
+    /** Completes after enabled installations have their startup registration generations. */
+    readonly ready: Effect.Effect<void>;
     /** Changes whenever `list` could show different installation records, so a reader can cache what it derives from them. */
     readonly revision: Effect.Effect<number>;
     /** One snapshot now, then a fresh one after every catalogue or plugin state change. */
@@ -883,6 +885,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   return PluginCatalog.of({
     list,
+    ready: Deferred.await(restored),
     revision: Effect.sync(() => revision),
     subscribe: Stream.unwrap(
       // Subscribe before the first snapshot so a change in between is not lost.

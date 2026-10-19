@@ -178,7 +178,8 @@ export const make = Effect.gen(function* () {
     return tools;
   });
 
-  const grants = current.pipe(
+  const grants = catalog.ready.pipe(
+    Effect.andThen(current),
     Effect.map(({ byId }) =>
       [...byId.values()].map(({ installation: { installationId, generation } }) => ({
         installationId,
