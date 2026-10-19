@@ -1309,11 +1309,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         expect(native.update).toMatchObject({ lockKey: "nativePackageTool-native" });
 
         // A wrapper that picks its own version runs an install `mise upgrade` never touches.
-        for (const tool of ['"native-package-tool@1.9.0"', '"$TOOL"']) {
-          NodeFS.writeFileSync(
-            wrapperPath,
-            `#!/bin/sh\nexec mise x ${tool} -- "native-package-tool" "$@"\n`,
-          );
+        for (const script of [
+          'exec mise x "native-package-tool@1.9.0" -- "native-package-tool" "$@"',
+          'exec mise x "$TOOL" -- "native-package-tool" "$@"',
+          'export MISE_NATIVE_PACKAGE_TOOL_VERSION=1.9.0\nexec mise x native-package-tool -- native-package-tool "$@"',
+        ]) {
+          NodeFS.writeFileSync(wrapperPath, `#!/bin/sh\n${script}\n`);
           const asked: Array<ReadonlyArray<string>> = [];
           const pinned = yield* resolve.pipe(
             Effect.provideService(
