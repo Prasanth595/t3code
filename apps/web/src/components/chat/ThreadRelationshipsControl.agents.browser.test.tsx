@@ -901,12 +901,11 @@ it("shows readable models and only differing workspace details in agent tooltips
       { id: "high", label: "High" },
     ],
   };
-  for (const [descriptors, options, expected] of [
-    [[reasoningEffort], [{ id: "reasoningEffort", value: "high" }], " · high"],
-    [[reasoningEffort], [], " · medium"],
-    [[reasoningEffort], undefined, " · medium"],
-    [[{ ...reasoningEffort, currentValue: "low" }], undefined, " · low"],
-    [[], undefined, ""],
+  for (const [origin, currentValue, options, expected] of [
+    ["app_owned", "low", [{ id: "reasoningEffort", value: "high" }], " · high"],
+    ["app_owned", undefined, undefined, " · medium"],
+    ["app_owned", "low", undefined, " · low"],
+    ["provider_native", "low", undefined, ""],
   ] as const) {
     state.configs.set("test", {
       providers: [
@@ -914,44 +913,29 @@ it("shows readable models and only differing workspace details in agent tooltips
           instanceId: "codex",
           driver: "codex",
           models: [
-            { slug: "gpt-5.4", name: "My GPT", capabilities: { optionDescriptors: descriptors } },
+            {
+              slug: "gpt-5.4",
+              name: "My GPT",
+              capabilities: { optionDescriptors: [{ ...reasoningEffort, currentValue }] },
+            },
           ],
         },
       ],
     });
-    child.modelSelection.options = options;
-    await rerender();
-    expect(text()).toContain(`My GPT${expected}`);
-    if (!expected) expect(text()).not.toContain("My GPT ·");
+    state.projection = {
+      ...projection,
+      subagents: [
+        {
+          ...projection.subagents[0],
+          origin,
+          modelSelection: { instanceId: "codex", model: "gpt-5.4", options },
+        },
+      ],
+    };
+    await update();
+    expect.soft(text()).toContain(`My GPT${expected}`);
+    if (!expected) expect.soft(text()).not.toContain("My GPT ·");
   }
-  state.configs.set("test", {
-    providers: [
-      {
-        instanceId: "codex",
-        driver: "codex",
-        models: [
-          {
-            slug: "gpt-5.4",
-            name: "My GPT",
-            capabilities: { optionDescriptors: [reasoningEffort] },
-          },
-        ],
-      },
-    ],
-  });
-  state.projection = {
-    ...projection,
-    subagents: [
-      {
-        ...projection.subagents[0],
-        origin: "provider_native",
-        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
-      },
-    ],
-  };
-  await update();
-  expect(text()).toContain("My GPT");
-  expect(text()).not.toContain("My GPT ·");
   state.projection = projection;
   await update();
   const serviceTier: ProviderOptionDescriptor = {

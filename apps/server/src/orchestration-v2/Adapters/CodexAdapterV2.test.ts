@@ -489,7 +489,7 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("adds default-mode developer instructions when the T3 MCP server is attached", () =>
+  it.effect("adds T3 MCP instructions without overriding the model default effort", () =>
     Effect.gen(function* () {
       const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-orchestration-instructions",
@@ -507,6 +507,8 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
 
       assert.equal(params.collaborationMode?.mode, "default");
+      assert.isUndefined(params.effort);
+      assert.oneOf(params.collaborationMode?.settings.reasoning_effort, [undefined, null]);
       assert.include(
         params.additionalContext?.t3_code_orchestration_01?.value ?? "",
         "Use `delegate_task`",
