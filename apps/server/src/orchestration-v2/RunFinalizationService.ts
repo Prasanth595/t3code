@@ -57,7 +57,7 @@ export class RunFinalizationService extends Context.Service<
      * Captures the run's checkpoint, refreshes its workspace, then records
      * `run.finalized`. At-least-once: every step is safe to repeat, and a run
      * that already recorded its finalization is left as recorded. Every
-     * failure that is not an interruption names the step that failed.
+     * failure outside the best-effort display refresh names the step that failed.
      */
     readonly finalize: (input: {
       readonly threadId: ThreadId;
@@ -114,7 +114,16 @@ const make = Effect.gen(function* () {
       const projection = yield* projections.getCheckpointContext(input.threadId);
       const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
       if (cwd !== undefined) {
-        yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId });
+        // A display refresh failure must not retry an already durable checkpoint.
+        yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
+          Effect.catchTags({
+            RunFinalizationRefreshError: (cause) =>
+              Effect.logWarning("Failed to refresh workspace after checkpoint capture", {
+                ...input,
+                cause,
+              }),
+          }),
+        );
       }
     }).pipe(Effect.catchCause(failStep("refresh-workspace")));
     yield* Effect.gen(function* () {

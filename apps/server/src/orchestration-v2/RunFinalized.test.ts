@@ -591,7 +591,7 @@ it.effect.each(["waiting", "interrupted"] as const)(
     }).pipe(Effect.provide(makeLayer(failCapture))),
 );
 
-it.effect("a refresh that gives up after the checkpoint commit records the failure", () =>
+it.effect("a failed display refresh finalizes the durable checkpoint across restart", () =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
     yield* seedThread;
@@ -600,16 +600,16 @@ it.effect("a refresh that gives up after the checkpoint commit records the failu
     yield* TestClock.adjust(firstRetryDelay);
     yield* drainWorker;
 
-    assert.deepEqual(yield* captureStatus, Option.some("failed"));
+    assert.deepEqual(yield* captureStatus, Option.some("succeeded"));
     assert.equal(yield* runStatus, "completed");
-    const failure = [
+    const finalized = [
       {
-        type: "run.finalization-failed" as const,
-        payload: { runId, operation: "refresh-workspace" as const },
+        type: "run.finalized" as const,
+        payload: { runId, outcome: "completed" as const, checkpointId },
       },
     ];
-    assert.deepEqual(yield* finalizationRecords, failure);
-    // Neither a restart nor a later write of the completed run finalizes it.
+    assert.deepEqual(yield* finalizationRecords, finalized);
+    // Neither a restart nor a later write duplicates the recorded finalization.
     yield* restartServer;
     const now = yield* DateTime.now;
     yield* eventSink.write({
@@ -617,11 +617,11 @@ it.effect("a refresh that gives up after the checkpoint commit records the failu
         runEvent("run.updated", makeRun(now, "completed", { checkpointId, completedAt: now }), now),
       ],
     });
-    assert.deepEqual(yield* finalizationRecords, failure);
+    assert.deepEqual(yield* finalizationRecords, finalized);
   }).pipe(Effect.provide(makeLayer(commitCapture("completed"), failRefresh))),
 );
 
-it.effect("a refresh that fails once and then succeeds records only run.finalized", () => {
+it.effect("a failed display refresh is not retried after run.finalized", () => {
   let refreshes = 0;
   return Effect.gen(function* () {
     yield* seedThread;
@@ -629,7 +629,7 @@ it.effect("a refresh that fails once and then succeeds records only run.finalize
     yield* drainWorker;
     yield* TestClock.adjust(firstRetryDelay);
     yield* drainWorker;
-    assert.equal(refreshes, 2);
+    assert.equal(refreshes, 1);
     assert.deepEqual(yield* finalizationRecords, [
       { type: "run.finalized", payload: { runId, outcome: "completed", checkpointId } },
     ]);
