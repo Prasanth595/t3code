@@ -23,6 +23,7 @@ import {
   scopedDisplaySettings,
   scopedSettingsAreMixed,
   scopedSettingsSource,
+  scopedSettingsUnsupportedTargets,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
@@ -334,46 +335,133 @@ describe("scoped settings writes", () => {
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
-    it("reports a nested key dropped beside one that saved", async () => {
+    it("learns a dropped project key without disabling its environment setting", async () => {
       const patch = { defaultAutoPull: true, enableAgentBrowserAccess: false };
-      const persistServer = vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
-        _tag: "Success" as const,
-        value: {
-          ...DEFAULT_SERVER_SETTINGS,
-          projectSettingsOverrides:
-            environmentId === laptop.environmentId
-              ? { [laptopProjectId]: patch }
-              : { [projectId]: { defaultAutoPull: true } },
+      const before = [
+        environment("Laptop", { settings: { enableAgentBrowserAccess: false } }),
+        environment("Server", { settings: { enableAgentBrowserAccess: true } }),
+      ];
+      const saved = before.map((environment) => ({
+        ...environment,
+        serverConfig: {
+          ...environment.serverConfig!,
+          settings: {
+            ...environment.serverConfig!.settings,
+            projectSettingsOverrides:
+              environment.environmentId === laptop.environmentId
+                ? { [laptopProjectId]: patch }
+                : { [projectId]: { defaultAutoPull: true } },
+          },
         },
       }));
-      const result = await persistScopedSettingsPatch(
-        planScopedSettingsPatch(project, environments, patch),
-        persistServer,
-        vi.fn(),
-      );
-      expect(
-        result.failedEnvironments.map(({ label, droppedKeys }) => ({ label, droppedKeys })),
-      ).toEqual([{ label: server.label, droppedKeys: ["enableAgentBrowserAccess"] }]);
-      const retry = planScopedSettingsPatch(
-        project,
-        [
-          laptop,
-          {
-            ...server,
+      const previousDropped = appAtomRegistry.get(droppedSettingKeysAtom);
+      try {
+        for (const advertised of [
+          undefined,
+          ["defaultAutoPull", "enableAgentBrowserAccess", "projectSettingsOverrides"],
+        ]) {
+          appAtomRegistry.set(droppedSettingKeysAtom, new Map());
+          const withSupport = (environment: (typeof before)[number]) => ({
+            ...environment,
             unsupportedSettingKeys: resolveUnsupportedSettingKeys(
-              undefined,
-              new Set(result.failedEnvironments[0]!.droppedKeys),
+              advertised,
+              droppedSettingKeysFor(
+                appAtomRegistry.get(droppedSettingKeysAtom),
+                environment.environmentId,
+                "old",
+              ),
             ),
-          },
-        ],
-        patch,
-      );
-      expect(
-        retry.serverWrites.find(({ environmentId }) => environmentId === server.environmentId)
-          ?.patch,
-      ).toEqual({
-        projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
-      });
+          });
+          const result = await persistScopedSettingsPatch(
+            planScopedSettingsPatch(project, before.map(withSupport), patch),
+            async ({ environmentId }) => ({
+              _tag: "Success",
+              value: saved.find((environment) => environment.environmentId === environmentId)!
+                .serverConfig.settings,
+            }),
+            vi.fn(),
+          );
+          expect(result.savedEnvironments.map(({ label }) => label)).toEqual([laptop.label]);
+          expect(
+            result.failedEnvironments.map(({ label, droppedKeys }) => ({ label, droppedKeys })),
+          ).toEqual([{ label: server.label, droppedKeys: ["enableAgentBrowserAccess"] }]);
+          for (const failure of result.failedEnvironments) {
+            recordDroppedSettingKeys(failure.environmentId, "old", failure.droppedKeys);
+          }
+          const learned = saved.map(withSupport);
+          const metadata = advertised ? "advertised support" : "legacy support";
+
+          for (const scope of [project, checkout]) {
+            const retry = planScopedSettingsPatch(scope, learned, patch);
+            expect
+              .soft(
+                retry.serverWrites.find(
+                  ({ environmentId }) => environmentId === server.environmentId,
+                )?.patch,
+                `${metadata}: ${scope.kind} retry skips only the dropped override`,
+              )
+              .toEqual({
+                projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+              });
+          }
+          const projectTargets = resolveScopedSettingsTargets(project, learned);
+          expect
+            .soft(
+              scopedSettingsAreMixed(projectTargets, ["enableAgentBrowserAccess"]),
+              `${metadata}: unsupported override does not make the project row mixed`,
+            )
+            .toBe(false);
+          expect
+            .soft(
+              scopedDisplaySettings(projectTargets[0]!, projectTargets).enableAgentBrowserAccess,
+              `${metadata}: project display uses the supported laptop override`,
+            )
+            .toBe(false);
+
+          for (const scope of [named, all]) {
+            const selected = selectScopedSettingsEnvironments(scope, learned, server.environmentId);
+            const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments);
+            const representative = targets.find(
+              ({ environmentId }) => environmentId === server.environmentId,
+            )!;
+            expect
+              .soft(
+                scopedSettingsUnsupportedTargets(targets, ["enableAgentBrowserAccess"]).map(
+                  ({ label }) => label,
+                ),
+                `${metadata}: ${scope.kind} keeps the top-level setting supported`,
+              )
+              .toEqual([]);
+            expect
+              .soft(
+                scopedDisplaySettings(representative, targets).enableAgentBrowserAccess,
+                `${metadata}: ${scope.kind} displays the server's true top-level value`,
+              )
+              .toBe(true);
+            expect
+              .soft(
+                scopedSettingsAreMixed(targets, ["enableAgentBrowserAccess"]),
+                `${metadata}: ${scope.kind} compares genuine top-level values`,
+              )
+              .toBe(scope.kind === "all");
+            expect
+              .soft(
+                planScopedSettingsPatch(scope, learned, {
+                  enableAgentBrowserAccess: false,
+                }).serverWrites.map(({ environmentId, patch }) => ({ environmentId, patch })),
+                `${metadata}: ${scope.kind} can still write the top-level setting`,
+              )
+              .toEqual(
+                selected.connectedEnvironments.map(({ environmentId }) => ({
+                  environmentId,
+                  patch: { enableAgentBrowserAccess: false },
+                })),
+              );
+          }
+        }
+      } finally {
+        appAtomRegistry.set(droppedSettingKeysAtom, previousDropped);
+      }
     });
 
     it("accepts a write that matches what the environment already had", async () => {
