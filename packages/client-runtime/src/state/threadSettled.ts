@@ -170,8 +170,17 @@ export function threadWokeAt(
     ) {
       return latestRun.completedAt;
     }
+    // A failure from before the snooze did not cause this wake (an approval
+    // or user input did), so its time would read as a wake the user already saw.
+    const failedAt = failureEdgeAt(shell);
+    if (
+      failedAt != null &&
+      (shell.snoozedAt == null || Date.parse(failedAt) > Date.parse(shell.snoozedAt))
+    ) {
+      return failedAt;
+    }
     const runtime = shell.runtime ?? shell.session ?? null;
-    return failureEdgeAt(shell) ?? runtime?.updatedAt ?? shell.snoozedAt ?? null;
+    return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
 }

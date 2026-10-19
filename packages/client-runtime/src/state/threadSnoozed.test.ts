@@ -140,6 +140,16 @@ describe("effectiveSnoozed", () => {
     expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T10:00:00.000Z");
   });
 
+  it("dates an approval wake after the snooze, not at an earlier failure", () => {
+    const shell: ThreadSnoozeShell = {
+      ...makeShell({ snoozedUntil: FUTURE_WAKE, pending: "approval" }),
+      runtime: { status: "failed", updatedAt: "2026-04-10T11:00:00.000Z" },
+      latestRun: { status: "failed", completedAt: "2026-04-08T13:00:00.000Z" },
+    };
+    expect(effectiveSnoozed(shell, { now: NOW })).toBe(false);
+    expect(threadWokeAt(shell, { now: NOW })).toBe("2026-04-10T11:00:00.000Z");
+  });
+
   it("stays snoozed while the session keeps working — snooze never pauses the agent", () => {
     expect(
       effectiveSnoozed(makeShell({ snoozedUntil: FUTURE_WAKE, sessionStatus: "running" }), {
