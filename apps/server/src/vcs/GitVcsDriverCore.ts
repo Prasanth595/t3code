@@ -3835,8 +3835,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const trackedRemote = yield* readConfigValue(input.cwd, `branch.${input.refName}.remote`);
     if (trackedRemote !== null && remoteNames.includes(trackedRemote)) {
       const merge = yield* readConfigValue(input.cwd, `branch.${input.refName}.merge`);
-      if (merge?.startsWith("refs/heads/") && merge.length > "refs/heads/".length) {
-        return { remoteName: trackedRemote, branchName: merge.slice("refs/heads/".length) };
+      if (merge === `refs/heads/${input.refName}`) {
+        return { remoteName: trackedRemote, branchName: input.refName };
       }
     }
 
