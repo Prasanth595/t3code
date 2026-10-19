@@ -611,10 +611,6 @@ function delegatedTaskTerminalStatus(
   }
 }
 
-/**
- * The next queued run that may start. Held runs wait for the user; the only
- * runs queued unheld beside them are provider wakes that skipped the hold.
- */
 function nextQueuedRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
 ): OrchestrationV2Run | undefined {
@@ -5144,11 +5140,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const queueIsHeld = projection.runs.some(
           (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
         );
-        // A provider wake adopts a turn the provider already started, such as Claude's
-        // background-task wake. It doesn't inherit a hold left by a restart or a provider
-        // failure. Holding it doesn't stop that turn. It only leaves the turn with no T3 run,
-        // so its T3 tool calls fail. A wake that arrives after Stop reached the active run
-        // still waits, since Stop starts nothing.
+        // Buffered wakes need a T3 run for output the CLI already started producing.
+        // Stop still holds wakes that arrive before the active run settles.
         const wakeSkipsHold =
           activeRun !== undefined &&
           queueIsHeld &&
