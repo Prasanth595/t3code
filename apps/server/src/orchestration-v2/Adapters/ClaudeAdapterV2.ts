@@ -236,11 +236,17 @@ export function claudeProviderTurnTokenUsage(
   modelSelection: ModelSelection,
   updatedAt: string,
   autoCompactWindow = "",
+  requestedAt?: DateTime.Utc,
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
   const outputTokens = usage.output_tokens;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
   const maxTokens = claudeContextWindow(modelSelection);
+  // The cache lifetime starts with the request, not when its response ends.
+  const promptCacheExpiresAt =
+    promptCacheTtlMs === undefined || requestedAt === undefined
+      ? undefined
+      : DateTime.formatIso(DateTime.add(requestedAt, { milliseconds: promptCacheTtlMs }));
   return {
     usedTokens: inputTokens + outputTokens,
     maxTokens,
@@ -250,6 +256,7 @@ export function claudeProviderTurnTokenUsage(
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
     ...claudeAutoCompactThreshold(autoCompactWindow, maxTokens),
+    ...(promptCacheExpiresAt === undefined ? {} : { promptCacheExpiresAt }),
     updatedAt,
   };
 }
@@ -3186,7 +3193,12 @@ interface ActiveClaudeTurnContext {
   // assistant snapshots repeat message_start usage, which some proxies send
   // as zeros, so they only fill in input the stream has not reported. A
   // compaction makes the usage stale (null) without forgetting the request.
-  streamUsage: { readonly messageId: string; usage: ClaudeMessageUsage | null } | null;
+  // `requestedAt` is when the request's usage was first seen; its prompt cache lifetime starts then.
+  streamUsage: {
+    readonly messageId: string;
+    requestedAt?: DateTime.Utc;
+    usage: ClaudeMessageUsage | null;
+  } | null;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
   // A successful status can precede the boundary that supplies its token counts.
   compaction: Extract<OrchestrationV2TurnItem, { type: "compaction" }> | null;
@@ -3970,11 +3982,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           usage: ClaudeMessageUsage,
         ) {
           const now = yield* DateTime.now;
+          if (context.streamUsage !== null) context.streamUsage.requestedAt ??= now;
           const tokenUsage = claudeProviderTurnTokenUsage(
             usage,
             context.input.modelSelection,
             DateTime.formatIso(now),
             adapterOptions.settings.autoCompactWindow,
+            context.streamUsage?.requestedAt,
           );
           if (tokenUsage.inputTokens <= 0) return;
           yield* emitProviderEvent({

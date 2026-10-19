@@ -25,9 +25,9 @@ export type IdleCompactionRecords = Pick<
 
 /**
  * When an idle Claude thread should compact, or null when it should not. The
- * window ends when the prompt cache Claude reported for its last turn expires
- * (1h on subscriptions, 5m on API keys); compacting after that pays a full
- * uncached read.
+ * window ends when the prompt cache of Claude's last request expires (1h on
+ * subscriptions, 5m on API keys); compacting after that pays a full uncached
+ * read.
  */
 export function idleCompactionWindow(
   {
@@ -56,7 +56,6 @@ export function idleCompactionWindow(
     null,
   );
   if (latestRun?.status !== "completed" || latestRun.completedAt === null) return null;
-  const completedMs = DateTime.toEpochMillis(latestRun.completedAt);
   const message = messages.find((candidate) => candidate.id === latestRun.userMessageId);
   // Never compact a compaction, so one idle spell compacts at most once.
   if (message === undefined || message.text.trim().toLowerCase() === "/compact") return null;
@@ -82,18 +81,23 @@ export function idleCompactionWindow(
   const providerThread = providerThreads.find(
     (candidate) => candidate.id === thread.activeProviderThreadId,
   );
-  if (providerThread?.driver !== "claudeAgent" || providerThread.id !== latestRun.providerThreadId)
+  // The thread's current selection receives the /compact, so it must still be this Claude session.
+  if (
+    providerThread?.driver !== "claudeAgent" ||
+    providerThread.id !== latestRun.providerThreadId ||
+    providerThread.providerInstanceId !== thread.providerInstanceId ||
+    latestRun.providerInstanceId !== thread.providerInstanceId
+  )
     return null;
   const usages = providerTurns
     .filter((turn) => turn.providerThreadId === providerThread.id && turn.tokenUsage !== undefined)
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
   if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
-  // A turn served fully from cache creates no cache entry and reports no TTL;
-  // the last one reported still holds for this session.
-  const ttlMs = usages.find((usage) => usage.promptCacheTtlMs !== undefined)?.promptCacheTtlMs;
-  if (ttlMs === undefined) return null;
-  const endMs = completedMs + ttlMs;
-  if (nowMs >= endMs) return null;
+  // A request served fully from cache creates no cache entry and reports no
+  // TTL, but it still refreshes the cache. Treat it as unknown and skip.
+  const expiresAt = usages[0]?.promptCacheExpiresAt;
+  const endMs = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
+  if (!Number.isFinite(endMs) || nowMs >= endMs) return null;
   return { runId: latestRun.id, startMs: endMs - LEAD_MS, endMs };
 }

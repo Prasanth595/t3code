@@ -38,7 +38,7 @@ const providerThreadId = ProviderThreadId.make("provider-thread");
 const modelSelection = { instanceId, model: "claude-opus-5-5" };
 
 function records(
-  usage: { readonly usedTokens?: number; readonly promptCacheTtlMs?: number } = {},
+  usage: { readonly usedTokens?: number; readonly cacheExpiresInMs?: number } = {},
 ): { -readonly [Key in keyof IdleCompactionRecords]: IdleCompactionRecords[Key] } {
   const messageId = MessageId.make("message-1");
   const nodeId = NodeId.make("root-node");
@@ -134,9 +134,9 @@ function records(
         completedAt: at(),
         tokenUsage: {
           usedTokens: usage.usedTokens ?? 250_000,
-          ...(usage.promptCacheTtlMs === undefined
+          ...(usage.cacheExpiresInMs === undefined
             ? {}
-            : { promptCacheTtlMs: usage.promptCacheTtlMs }),
+            : { promptCacheExpiresAt: DateTime.formatIso(at(usage.cacheExpiresInMs)) }),
           updatedAt: DateTime.formatIso(at()),
         },
       },
@@ -148,32 +148,34 @@ function records(
 }
 
 describe("idleCompactionWindow", () => {
-  it("ends when the cache Claude reported expires", () => {
-    expect(idleCompactionWindow(records({ promptCacheTtlMs: 60 * MINUTE_MS }), NOW_MS)).toEqual({
+  it("starts two minutes before the cache Claude reported expires", () => {
+    expect(idleCompactionWindow(records({ cacheExpiresInMs: 60 * MINUTE_MS }), NOW_MS)).toEqual({
       runId,
       startMs: NOW_MS + 58 * MINUTE_MS,
       endMs: NOW_MS + 60 * MINUTE_MS,
     });
-    const apiKey = records({ promptCacheTtlMs: 5 * MINUTE_MS });
-    expect(idleCompactionWindow(apiKey, NOW_MS)).toMatchObject({
-      startMs: NOW_MS + 3 * MINUTE_MS,
-    });
-    expect(idleCompactionWindow(apiKey, NOW_MS + 5 * MINUTE_MS)).toBeNull();
+    // A 5m cache whose last request started 3 minutes before the run ended.
+    const late = records({ cacheExpiresInMs: 2 * MINUTE_MS });
+    expect(idleCompactionWindow(late, NOW_MS)).toMatchObject({ startMs: NOW_MS });
+    expect(idleCompactionWindow(late, NOW_MS + 2 * MINUTE_MS)).toBeNull();
   });
 
-  it("skips small contexts, unknown TTLs, other providers, and compactions", () => {
-    const ttl = { promptCacheTtlMs: 60 * MINUTE_MS };
-    expect(idleCompactionWindow(records({ ...ttl, usedTokens: 199_999 }), NOW_MS)).toBeNull();
+  it("skips small contexts, unknown expiry, other providers, switched threads, and compactions", () => {
+    const cache = { cacheExpiresInMs: 60 * MINUTE_MS };
+    expect(idleCompactionWindow(records({ ...cache, usedTokens: 199_999 }), NOW_MS)).toBeNull();
     expect(idleCompactionWindow(records(), NOW_MS)).toBeNull();
-    const codex = records(ttl);
+    const codex = records(cache);
     codex.providerThreads = [
       { ...codex.providerThreads[0]!, driver: ProviderDriverKind.make("codex") },
     ];
     expect(idleCompactionWindow(codex, NOW_MS)).toBeNull();
-    const compacted = records(ttl);
+    const switched = records(cache);
+    switched.thread = { ...switched.thread, providerInstanceId: ProviderInstanceId.make("codex") };
+    expect(idleCompactionWindow(switched, NOW_MS)).toBeNull();
+    const compacted = records(cache);
     compacted.messages = [{ ...compacted.messages[0]!, text: "/compact" }];
     expect(idleCompactionWindow(compacted, NOW_MS)).toBeNull();
-    const archived = records(ttl);
+    const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
   });
@@ -217,7 +219,7 @@ const seed = Effect.fn("seedIdleThread")(function* (value: IdleCompactionRecords
 it.effect("sends /compact as T3 Code once the cache is about to expire", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(NOW_MS);
-    const value = records({ promptCacheTtlMs: 5 * MINUTE_MS });
+    const value = records({ cacheExpiresInMs: 5 * MINUTE_MS });
     yield* seed(value);
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
     const commands = yield* Queue.unbounded<OrchestrationV2ServerCommand>();
