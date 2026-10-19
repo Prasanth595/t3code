@@ -74,6 +74,7 @@ it("requires a new merge click after passing checks become pending and pass agai
       number={1}
       status={null}
       project={null}
+      url="https://github.com/pingdotgg/t3code/pull/1"
       label="Test PR"
       openAriaLabel="Open PR"
       onOpen={vi.fn()}
@@ -122,6 +123,7 @@ it.each<[PullRequestCheck["status"], PullRequestCheck["status"], string]>([
         number={1}
         status={null}
         project={null}
+        url="https://github.com/pingdotgg/t3code/pull/1"
         label="Test PR"
         openAriaLabel="Open PR"
         onOpen={vi.fn()}

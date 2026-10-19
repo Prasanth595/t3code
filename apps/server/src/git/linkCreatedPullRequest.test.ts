@@ -113,24 +113,20 @@ describe("createdPullRequestKey", () => {
     });
   });
 
-  it("falls back to the project's host and repository for an unreadable URL", () => {
-    expect(
-      createdPullRequestKey(
-        prResult({ status: "opened_existing", number: 3, url: "https://ghe.internal/x/3" }),
-        project,
-      ),
-    ).toEqual({
-      host: "github.acme.test",
-      repository: "platform/api",
-      number: 3,
-      url: "https://ghe.internal/x/3",
-    });
-    expect(
-      createdPullRequestKey(
-        prResult({ status: "created", number: 3, url: "https://ghe.internal/x/3" }),
-        undefined,
-      ),
-    ).toBeNull();
+  it("retains unrecognized HTTP(S) URLs using the project repository fallback", () => {
+    for (const url of ["http://ghe.internal/x/3", "https://ghe.internal/x/3"]) {
+      expect(
+        createdPullRequestKey(prResult({ status: "opened_existing", number: 3, url }), project),
+      ).toEqual({
+        host: "github.acme.test",
+        repository: "platform/api",
+        number: 3,
+        url,
+      });
+      expect(
+        createdPullRequestKey(prResult({ status: "created", number: 3, url }), undefined),
+      ).toBeNull();
+    }
   });
 
   it("yields nothing when no pull request came out of the action", () => {
@@ -148,6 +144,23 @@ describe("createdPullRequestKey", () => {
 });
 
 describe("linkCreatedPullRequest", () => {
+  it.effect("never dispatches links for malformed or non-HTTP(S) provider URLs", () =>
+    Effect.gen(function* () {
+      const { commands, dispatch } = yield* recordingDispatch();
+      const dependencies = layerDependenciesFor(dispatch);
+      for (const url of ["javascript:alert(1)", "file:///tmp/pr.html", "https://", "/x/42"]) {
+        for (const status of ["created", "opened_existing"] as const) {
+          yield* linkCreatedPullRequest({
+            threadId: THREAD_ID,
+            result: prResult({ status, number: 42, url }),
+            commandId,
+          }).pipe(Effect.provide(dependencies));
+        }
+      }
+      expect(yield* Ref.get(commands)).toEqual([]);
+    }),
+  );
+
   it.effect("links a created pull request to the thread with source created", () =>
     Effect.gen(function* () {
       const { commands, dispatch } = yield* recordingDispatch();
