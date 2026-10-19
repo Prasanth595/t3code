@@ -1,5 +1,7 @@
 import type {
   ModelSelection,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ScheduledTaskUpdateInput,
   ServerConfig,
   ProjectId,
   RuntimeMode,
@@ -8,7 +10,7 @@ import type {
   ScheduledTaskWebhookSignature,
 } from "@t3tools/contracts";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, MIN_SCHEDULED_TASK_INTERVAL_MS } from "@t3tools/contracts";
 import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   resolveProjectSettings,
@@ -219,4 +221,81 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         : true,
     runtimeMode: task.runtimeMode,
   };
+}
+
+function workspaceStrategyFromDraft(
+  draft: ScheduledTaskDraft,
+): OrchestrationV2ThreadLaunchWorkspaceStrategy {
+  if (draft.workspace === "root") return { type: "root" };
+  if (draft.workspace === "existing_worktree") {
+    return { type: "existing_worktree", worktreePath: draft.checkoutPath.trim() };
+  }
+  return {
+    type: "worktree",
+    baseRef: draft.baseRef.trim() || "main",
+    startFromOrigin: draft.startFromOrigin,
+  };
+}
+
+export function buildScheduledTaskUpdateInput(
+  draft: ScheduledTaskDraft,
+  liveTask: ScheduledTask,
+): ScheduledTaskUpdateInput | null {
+  if (draft.task === null) return null;
+  const baseline = editDraft(draft.task);
+  const patch: { -readonly [K in keyof ScheduledTaskUpdateInput]?: ScheduledTaskUpdateInput[K] } =
+    {};
+  const title = draft.title.trim();
+  const prompt = draft.prompt.trim();
+  if (title !== baseline.title.trim()) patch.title = title;
+  if (prompt !== baseline.prompt.trim()) patch.prompt = prompt;
+  if (draft.enabled !== baseline.enabled) patch.enabled = draft.enabled;
+  if (draft.runtimeMode !== baseline.runtimeMode) patch.runtimeMode = draft.runtimeMode;
+  if (
+    draft.modelSelection !== null &&
+    JSON.stringify(draft.modelSelection) !== JSON.stringify(baseline.modelSelection)
+  )
+    patch.modelSelection = draft.modelSelection;
+  const schedule = scheduleFromDraft(draft.schedule);
+  const scheduleChanged =
+    JSON.stringify(schedule) !== JSON.stringify(scheduleFromDraft(baseline.schedule));
+  if (scheduleChanged && schedule !== null) {
+    // Mobile cannot edit signing credentials; preserve the current web/desktop choice.
+    patch.schedule =
+      schedule.type === "webhook" && liveTask.schedule.type === "webhook"
+        ? { ...schedule, signature: liveTask.schedule.signature }
+        : schedule;
+  } else if (
+    !scheduleChanged &&
+    liveTask.schedule.type === "interval" &&
+    liveTask.schedule.everyMs < MIN_SCHEDULED_TASK_INTERVAL_MS
+  ) {
+    patch.schedule = { ...liveTask.schedule, everyMs: MIN_SCHEDULED_TASK_INTERVAL_MS };
+  }
+  const workspace = workspaceStrategyFromDraft(draft);
+  const openingWorkspace = workspaceStrategyFromDraft(baseline);
+  if (workspace.type !== openingWorkspace.type) patch.workspaceStrategy = workspace;
+  else if (workspace.type === liveTask.workspaceStrategy.type) {
+    if (workspace.type === "worktree" && openingWorkspace.type === "worktree") {
+      const sparse = {
+        ...(workspace.baseRef !== openingWorkspace.baseRef ? { baseRef: workspace.baseRef } : {}),
+        ...(workspace.startFromOrigin !== openingWorkspace.startFromOrigin
+          ? { startFromOrigin: workspace.startFromOrigin }
+          : {}),
+      };
+      if (Object.keys(sparse).length > 0) patch.workspaceStrategyPatch = sparse;
+    } else if (
+      workspace.type === "existing_worktree" &&
+      openingWorkspace.type === "existing_worktree" &&
+      workspace.worktreePath !== openingWorkspace.worktreePath
+    ) {
+      patch.workspaceStrategyPatch = { worktreePath: workspace.worktreePath };
+    }
+  }
+  if (draft.projectId !== null && draft.projectId !== baseline.projectId) {
+    patch.nextProjectId = draft.projectId;
+    if (draft.projectId !== liveTask.projectId && liveTask.threadId !== null) patch.threadId = null;
+  }
+  if (Object.keys(patch).length === 0) return null;
+  return { ...patch, id: liveTask.id, projectId: liveTask.projectId };
 }

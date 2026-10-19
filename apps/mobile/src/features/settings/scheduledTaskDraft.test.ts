@@ -1,14 +1,19 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  scheduledTaskLegacyUpsert,
   DEFAULT_SERVER_SETTINGS,
   type ServerConfig,
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
   ScheduledTaskId,
+  ScheduledTaskUpsertInput,
+  ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import {
+  buildScheduledTaskUpdateInput,
   scheduledTaskDefaultModel,
   createDraft,
   editDraft,
@@ -351,4 +356,130 @@ describe("scheduled task model defaults", () => {
       ),
     ).toBeNull();
   });
+});
+
+const encodeUpsertInput = Schema.encodeSync(ScheduledTaskUpsertInput);
+const decodeUpsertInput = Schema.decodeUnknownSync(ScheduledTaskUpsertInput);
+
+describe("scheduled task partial edits", () => {
+  it.each([
+    { opening: { type: "interval", everyMs: 30_000 }, everyMs: 30_000 },
+    { opening: { type: "interval", everyMs: 30_000 }, everyMs: 120_000 },
+    { opening: { type: "interval", everyMs: 120_000 }, everyMs: 30_000 },
+    { opening: { type: "webhook", signature: null }, everyMs: 30_000 },
+  ] as const)(
+    "a stale rename preserves live fields and normalizes only a live sub-minute interval ($opening -> $everyMs ms)",
+    ({ opening, everyMs }) => {
+      const opened = editDraft({
+        ...legacyTask,
+        schedule: opening,
+      });
+      const live: ScheduledTask = {
+        ...legacyTask,
+        schedule: { type: "interval", everyMs },
+        prompt: "Changed elsewhere",
+        enabled: false,
+        projectId: ProjectId.make("moved"),
+        threadId: ThreadId.make("rebound"),
+        modelSelection: { instanceId: ProviderInstanceId.make("concurrent"), model: "live-model" },
+      };
+      const schedule =
+        everyMs < 60_000 ? { type: "interval" as const, everyMs: 60_000 } : undefined;
+      expect(
+        buildScheduledTaskUpdateInput(
+          { ...opened, schedule: { ...opened.schedule, mode: "interval", intervalMinutes: "3" } },
+          live,
+        )?.schedule,
+      ).toEqual({ type: "interval", everyMs: 180_000 });
+      const patch = buildScheduledTaskUpdateInput({ ...opened, title: "Renamed" }, live)!;
+      const fallback = scheduledTaskLegacyUpsert(live, patch);
+      expect(decodeUpsertInput(encodeUpsertInput(fallback))).toEqual(fallback);
+      if (schedule === undefined) expect(buildScheduledTaskUpdateInput(opened, live)).toBeNull();
+      expect(patch).toEqual({
+        id: live.id,
+        projectId: live.projectId,
+        title: "Renamed",
+        ...(schedule ? { schedule } : {}),
+      });
+      expect(fallback).toEqual({
+        id: live.id,
+        requireExisting: true,
+        title: "Renamed",
+        prompt: live.prompt,
+        enabled: live.enabled,
+        schedule: schedule ?? live.schedule,
+        projectId: live.projectId,
+        threadId: live.threadId,
+        workspaceStrategy: live.workspaceStrategy,
+        modelSelection: live.modelSelection,
+        runtimeMode: live.runtimeMode,
+        interactionMode: live.interactionMode,
+        creationSource: live.creationSource,
+      });
+    },
+  );
+
+  it("a base-ref edit sends no untouched workspace controls or hidden branch", () => {
+    const task: ScheduledTask = {
+      ...legacyTask,
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: "main",
+        startFromOrigin: true,
+        branch: "keep",
+      },
+    };
+    const opened = editDraft(task);
+    const live: ScheduledTask = {
+      ...task,
+      workspaceStrategy: {
+        type: "worktree",
+        baseRef: "main",
+        startFromOrigin: false,
+        branch: "new-branch",
+      },
+    };
+    const edited = { ...opened, baseRef: "develop" };
+    expect(buildScheduledTaskUpdateInput(edited, live)).toEqual({
+      id: live.id,
+      projectId: live.projectId,
+      workspaceStrategyPatch: { baseRef: "develop" },
+    });
+    expect(
+      buildScheduledTaskUpdateInput(edited, { ...live, workspaceStrategy: { type: "root" } }),
+    ).toBeNull();
+  });
+
+  it("a project move detaches only a binding outside the destination", () => {
+    const task: ScheduledTask = { ...legacyTask, threadId: ThreadId.make("bound") };
+    const opened = editDraft(task);
+    const destination = ProjectId.make("destination");
+    const edited = { ...opened, projectId: destination };
+    expect(buildScheduledTaskUpdateInput(edited, task)).toEqual({
+      id: task.id,
+      projectId: task.projectId,
+      nextProjectId: destination,
+      threadId: null,
+    });
+    const rebound: ScheduledTask = {
+      ...task,
+      projectId: destination,
+      threadId: ThreadId.make("new-binding"),
+    };
+    expect(buildScheduledTaskUpdateInput(edited, rebound)).toEqual({
+      id: task.id,
+      projectId: destination,
+      nextProjectId: destination,
+    });
+  });
+});
+
+it("a mobile runtime-mode edit is included without reverting concurrent fields", () => {
+  const opened = editDraft(legacyTask);
+  expect(
+    buildScheduledTaskUpdateInput(
+      { ...opened, runtimeMode: "auto" },
+      { ...legacyTask, title: "Changed elsewhere", enabled: false },
+    ),
+  ).toEqual({ id: legacyTask.id, projectId: legacyTask.projectId, runtimeMode: "auto" });
 });
