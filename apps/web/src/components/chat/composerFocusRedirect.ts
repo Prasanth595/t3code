@@ -13,6 +13,7 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   "button",
   "a[href]",
   "summary",
+  '[role="application"]',
   '[role="button"]',
   '[role="checkbox"]',
   '[role="menuitem"]',
@@ -20,7 +21,6 @@ const TYPE_TO_FOCUS_INTERACTIVE_SELECTOR = [
   '[role="radio"]',
   '[role="switch"]',
   '[role="tab"]',
-  '[role="application"]',
 ].join(",");
 // Popups match only while open or closing: some stay mounted when closed,
 // such as the chat header actions menu.
