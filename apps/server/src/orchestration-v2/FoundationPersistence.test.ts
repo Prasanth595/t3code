@@ -3609,18 +3609,30 @@ it.effect.each(["events", "receipts"] as const)(
           )
           .pipe(NodeSqliteClient.readOnly, Effect.forkChild);
         yield* Deferred.await(readerHeld);
+        const discoveryStarted = yield* Deferred.make<Tracer.Span>();
+        const observeDiscovery: Statement.Transformer = (statement, _sql, _fiber, span) => {
+          const [query] = statement.compile();
+          const pageQuery =
+            kind === "events" ? /^\s*SELECT\s+event\.sequence/ : /^\s*SELECT\s+receipt\.rowid/;
+          return pageQuery.test(query)
+            ? Deferred.succeed(discoveryStarted, span).pipe(Effect.as(statement))
+            : Effect.succeed(statement);
+        };
         const compacted = yield* Deferred.make<void>();
         const compaction = yield* maintenance.compactEventStore.pipe(
+          Effect.provideService(Statement.CurrentTransformer, observeDiscovery),
+          Effect.provideService(Statement.SpanPropagationEnabled, true),
           Effect.tap(() => Deferred.succeed(compacted, undefined)),
-          Effect.forkChild({ startImmediately: true }),
+          Effect.forkChild,
         );
+        const discoverySpan = yield* Deferred.await(discoveryStarted);
         yield* sql`INSERT INTO concurrent_writes VALUES ('committed')`;
-        yield* TestClock.adjust(0);
         assert.isFalse(yield* Deferred.isDone(compacted));
         assert.deepEqual(yield* sql`SELECT value FROM concurrent_writes`, [{ value: "committed" }]);
         yield* Deferred.succeed(releaseReader, undefined);
         yield* Fiber.join(reader);
         const result = yield* Fiber.join(compaction);
+        assert.equal(discoverySpan.attributes.get("db.connection"), "reader");
         assert.equal(result.deletedEventCount, kind === "events" ? 1 : 0);
         assert.equal(result.deletedReceiptCount, kind === "receipts" ? 1 : 0);
         const retained =
