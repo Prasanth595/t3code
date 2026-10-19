@@ -164,11 +164,13 @@ async function copyDatabaseFile(
   if (signal === undefined) {
     await NodeFSP.copyFile(source, destination);
   } else {
+    const mode = (await NodeFSP.stat(source)).mode & 0o7777;
     await NodeStreamPromises.pipeline(
       NodeFS.createReadStream(source),
-      NodeFS.createWriteStream(destination),
+      NodeFS.createWriteStream(destination, { mode }),
       { signal },
     );
+    await NodeFSP.chmod(destination, mode);
   }
 }
 
