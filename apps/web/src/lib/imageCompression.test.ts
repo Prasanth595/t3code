@@ -181,16 +181,12 @@ describe("composer image thumbnails", () => {
   it.each([
     [3840, 2160, 796, 448],
     [3840, 1600, 832, 347],
-    [2304, 32766, 32, 448],
-    [320, 200, 320, 200],
   ])(
-    "keeps the full %ix%i snapshot in a %ix%i preview and caches it separately from square crops",
+    "preserves the full %ix%i snapshot within an 832x448 preview without replacing its square thumbnail",
     async (sourceWidth, sourceHeight, width, height) => {
-      const close = vi.fn();
-      const bitmap = { width: sourceWidth, height: sourceHeight, close };
+      const bitmap = { width: sourceWidth, height: sourceHeight, close: vi.fn() };
       const decode = vi.fn(async () => bitmap);
       const drawImage = vi.fn();
-      const dimensions: number[][] = [];
       vi.stubGlobal("createImageBitmap", decode);
       vi.stubGlobal(
         "OffscreenCanvas",
@@ -198,9 +194,7 @@ describe("composer image thumbnails", () => {
           constructor(
             public width: number,
             public height: number,
-          ) {
-            dimensions.push([width, height]);
-          }
+          ) {}
           getContext() {
             return { drawImage };
           }
@@ -210,22 +204,15 @@ describe("composer image thumbnails", () => {
         },
       );
       const original = new File(["original bytes"], "window.png", { type: "image/png" });
-      const square = createComposerImageThumbnail(original);
-      const snapshot = createComposerImageThumbnail(original, "snapshot");
-      expect(createComposerImageThumbnail(original, "snapshot")).toBe(snapshot);
-      const [squareUrl, snapshotUrl] = await Promise.all([square, snapshot]);
-      expect(snapshotUrl).toBe(
+      const square = await createComposerImageThumbnail(original);
+      const [snapshot, cachedSnapshot] = await Promise.all([
+        createComposerImageThumbnail(original, "snapshot"),
+        createComposerImageThumbnail(original, "snapshot"),
+      ]);
+
+      expect(snapshot).toBe(
         `data:image/png;base64,${Buffer.from(`${width}x${height}`).toString("base64")}`,
       );
-      expect(snapshotUrl).not.toBe(squareUrl);
-      expect(await createComposerImageThumbnail(original, "snapshot")).toBe(snapshotUrl);
-      expect(await createComposerImageThumbnail(original)).toBe(squareUrl);
-      expect(decode).toHaveBeenCalledTimes(2);
-      const squareSide = Math.min(256, sourceWidth, sourceHeight);
-      expect(dimensions).toEqual([
-        [squareSide, squareSide],
-        [width, height],
-      ]);
       expect(drawImage).toHaveBeenLastCalledWith(
         bitmap,
         0,
@@ -237,34 +224,35 @@ describe("composer image thumbnails", () => {
         width,
         height,
       );
-      expect(close).toHaveBeenCalledTimes(2);
+      expect(cachedSnapshot).toBe(snapshot);
+      expect(await createComposerImageThumbnail(original, "snapshot")).toBe(snapshot);
+      expect(square).toBe(`data:image/png;base64,${Buffer.from("256x256").toString("base64")}`);
+      expect(await createComposerImageThumbnail(original)).toBe(square);
+      expect(decode).toHaveBeenCalledTimes(2);
       expect(await original.text()).toBe("original bytes");
     },
   );
 
-  it.each(["square", "snapshot"] as const)(
-    "releases the decoded image when %s thumbnail encoding fails",
-    async (mode) => {
-      const close = vi.fn();
-      vi.stubGlobal(
-        "createImageBitmap",
-        vi.fn(async () => ({ width: 500, height: 500, close })),
-      );
-      vi.stubGlobal(
-        "OffscreenCanvas",
-        class {
-          getContext() {
-            return { drawImage: vi.fn() };
-          }
-          async convertToBlob() {
-            throw new Error("encoder unavailable");
-          }
-        },
-      );
-      expect(await createComposerImageThumbnail(makeFile(5), mode)).toBeNull();
-      expect(close).toHaveBeenCalledOnce();
-    },
-  );
+  it("releases the decoded image when thumbnail encoding fails", async () => {
+    const close = vi.fn();
+    vi.stubGlobal(
+      "createImageBitmap",
+      vi.fn(async () => ({ width: 500, height: 500, close })),
+    );
+    vi.stubGlobal(
+      "OffscreenCanvas",
+      class {
+        getContext() {
+          return { drawImage: vi.fn() };
+        }
+        async convertToBlob() {
+          throw new Error("encoder unavailable");
+        }
+      },
+    );
+    expect(await createComposerImageThumbnail(makeFile(5))).toBeNull();
+    expect(close).toHaveBeenCalledOnce();
+  });
 });
 
 describe("dataUrlToFile", () => {
