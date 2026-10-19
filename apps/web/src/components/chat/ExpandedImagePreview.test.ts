@@ -48,8 +48,10 @@ describe("resolveMarkdownMediaPreview", () => {
     });
   });
 
-  it("opens public Bitbucket media links when an older server rejects signing", async () => {
-    const source = "https://bitbucket.org/acme/web/downloads/demo.mp4?download=1#t=2";
+  it.each([
+    "https://bitbucket.org/acme/web/downloads/demo.mp4?download=1#t=2",
+    "https://raw.githubusercontent.com/acme/web/main/demo.mp4#t=2",
+  ])("keeps public PR media links usable without signing: %s", async (source) => {
     const unsupported = new Error("Unsupported asset resource: bitbucket-media");
     const createAssetUrl = vi.fn().mockRejectedValue(unsupported);
     const preview = await resolveMarkdownMediaPreview({

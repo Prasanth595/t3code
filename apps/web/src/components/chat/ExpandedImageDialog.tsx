@@ -91,18 +91,17 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     imageCount > 0 ? (((preview.index + imageOffset) % imageCount) + imageCount) % imageCount : 0;
   const item = preview.images[index];
   const asset = item?.actionsSource?.asset;
-  const imageAsset =
-    item?.type !== "video" &&
-    (asset?.resource._tag === "github-media" || asset?.resource._tag === "bitbucket-media")
+  const mediaAsset =
+    asset?.resource._tag === "github-media" || asset?.resource._tag === "bitbucket-media"
       ? asset
       : undefined;
-  const imageAssetUrl = useAssetUrlState(
-    imageAsset?.environmentId ?? null,
-    imageAsset?.resource ?? null,
+  const mediaAssetUrl = useAssetUrlState(
+    mediaAsset?.environmentId ?? null,
+    mediaAsset?.resource ?? null,
   );
   const imageSrc =
-    imageAsset && imageAssetUrl._tag === "Success"
-      ? imageAssetUrl.url + (item?.srcFragment ?? "")
+    mediaAsset && mediaAssetUrl._tag === "Success"
+      ? mediaAssetUrl.url + (item?.srcFragment ?? "")
       : (item?.src ?? null);
   const originalSource: MediaActionSource = item?.actionsSource ?? {
     kind: item?.type === "video" ? "video" : "image",
@@ -111,7 +110,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   };
   const { asset: sourceAsset, ...directSource } = originalSource;
   const source =
-    sourceAsset?.resource._tag === "bitbucket-media" && imageAssetUrl._tag === "Failure"
+    sourceAsset?.resource._tag === "bitbucket-media" && mediaAssetUrl._tag === "Failure"
       ? { ...directSource, src: imageSrc }
       : originalSource;
   const openFile = source.onOpenFile;

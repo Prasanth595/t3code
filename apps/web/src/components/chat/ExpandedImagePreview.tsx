@@ -9,7 +9,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
-import { pullRequestMediaResource } from "@t3tools/shared/pullRequestMedia";
+import { bitbucketMediaFetchUrl } from "@t3tools/shared/bitbucketMedia";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
@@ -68,10 +68,12 @@ export async function resolveMarkdownMediaPreview(input: {
 
   let src: string;
   let asset: MediaActionSource["asset"];
-  const pullRequestResource =
-    input.pullRequestMedia && input.cwd !== undefined && media.access === "direct"
-      ? pullRequestMediaResource(resolveProtocolRelativeMediaUrl(media.uri), input.cwd)
+  const bitbucketUrl =
+    input.pullRequestMedia && media.access === "direct"
+      ? bitbucketMediaFetchUrl(resolveProtocolRelativeMediaUrl(media.uri))
       : null;
+  const pullRequestResource =
+    bitbucketUrl === null ? null : { _tag: "bitbucket-media" as const, url: bitbucketUrl };
   if (media.access === "direct" && pullRequestResource === null) {
     src = resolveProtocolRelativeMediaUrl(media.uri);
   } else {

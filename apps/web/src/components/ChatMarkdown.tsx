@@ -2371,7 +2371,7 @@ function useChatMarkdownState({
               resolveProtocolRelativeMediaUrl(item.originalUrl ?? item.src ?? ""),
               cwd,
             );
-            return resource === null
+            return resource?._tag !== "bitbucket-media"
               ? item
               : {
                   ...item,
@@ -3252,7 +3252,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           framed={false}
           fallbackSrc={
             mediaResource._tag === "bitbucket-media"
-              ? resolveProtocolRelativeMediaUrl(directUri)
+              ? resolveProtocolRelativeMediaUrl(directUri).replace(/#.*$/u, "")
               : mediaResource.url
           }
           onImageExpand={imageExpand}
