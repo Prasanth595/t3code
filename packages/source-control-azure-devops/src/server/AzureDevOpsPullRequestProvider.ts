@@ -26,12 +26,13 @@ import {
   type ProviderDiffSlice,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
-import type {
-  AzureDevOpsChangeEntry,
-  AzureDevOpsItemContent,
-  AzureDevOpsIteration,
-  AzureDevOpsPullRequest,
-  AzureDevOpsRepositoryLocation,
+import {
+  toPullRequestChecks,
+  type AzureDevOpsChangeEntry,
+  type AzureDevOpsItemContent,
+  type AzureDevOpsIteration,
+  type AzureDevOpsPullRequest,
+  type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import { definition } from "../client/definition.ts";
 
@@ -157,6 +158,25 @@ export const make = Effect.gen(function* () {
         detail: error.detail,
         cause: error,
       });
+
+  /**
+   * The statuses posted on a pull request. They only name and link what its policies already
+   * report, so a failed read leaves the policy checks as they are rather than losing them.
+   */
+  const listStatuses = (input: {
+    readonly cwd: string;
+    readonly location: AzureDevOpsRepositoryLocation | null;
+    readonly number: number;
+  }) =>
+    input.location === null
+      ? Effect.succeed([])
+      : cli
+          .listPullRequestStatuses({
+            cwd: input.cwd,
+            location: input.location,
+            number: input.number,
+          })
+          .pipe(Effect.orElseSucceed(() => []));
 
   /** Refuses what the capabilities already say this host cannot do. */
   const unsupported = (operation: string) =>
@@ -345,16 +365,37 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
+    getChangeRequestChecks: (input) =>
+      Effect.gen(function* () {
+        // Policies need only the number, so they read while the pull request is still loading.
+        const [{ pullRequest, statuses }, evaluations] = yield* Effect.all(
+          [
+            cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+              Effect.flatMap((pullRequest) =>
+                listStatuses({
+                  cwd: input.cwd,
+                  location: pullRequest.location,
+                  number: input.number,
+                }).pipe(Effect.map((statuses) => ({ pullRequest, statuses }))),
+              ),
+            ),
+            cli.listPolicyEvaluations({ cwd: input.cwd, number: input.number }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        return { state: pullRequest.state, checks: toPullRequestChecks(evaluations, statuses) };
+      }).pipe(Effect.mapError(fail("getChangeRequestChecks"))),
+
     getChangeRequest: (input) =>
       Effect.gen(function* () {
         const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
         const location = pullRequest.location;
         // The file count is two reads past the pull request itself, and it is the only thing
         // riding on them, so a failure leaves it unknown rather than losing the whole detail.
-        const changedFiles =
+        const countChangedFiles =
           location === null
-            ? 0
-            : yield* cli.listIterations({ cwd: input.cwd, location, number: input.number }).pipe(
+            ? Effect.succeed(0)
+            : cli.listIterations({ cwd: input.cwd, location, number: input.number }).pipe(
                 Effect.flatMap((iterations) =>
                   listLatestChanges({
                     cwd: input.cwd,
@@ -366,6 +407,21 @@ export const make = Effect.gen(function* () {
                 Effect.map((listed) => listed.changes.length),
                 Effect.orElseSucceed(() => 0),
               );
+        // Checks are refreshed on their own path too, so a failed read here shows none for now
+        // rather than losing the detail.
+        const readChecks = Effect.all(
+          [
+            cli.listPolicyEvaluations({ cwd: input.cwd, number: input.number }),
+            listStatuses({ cwd: input.cwd, location, number: input.number }),
+          ],
+          { concurrency: "unbounded" },
+        ).pipe(
+          Effect.map(([evaluations, statuses]) => toPullRequestChecks(evaluations, statuses)),
+          Effect.orElseSucceed(() => []),
+        );
+        const [changedFiles, checks] = yield* Effect.all([countChangedFiles, readChecks], {
+          concurrency: "unbounded",
+        });
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
           body: pullRequest.body,
@@ -373,7 +429,7 @@ export const make = Effect.gen(function* () {
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           reviewers: pullRequest.reviewers,
-          checks: [],
+          checks,
           mergeCapabilities: { merge: true, squash: true, rebase: false },
           viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
           autoMergeEnabled: pullRequest.autoMergeEnabled,

@@ -16,14 +16,18 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodePolicyEvaluationsJson,
   decodePullRequestJson,
   decodePullRequestListJson,
+  decodePullRequestStatusesJson,
   decodeThreadsJson,
   decodeViewerJson,
   type AzureDevOpsChangeEntry,
   type AzureDevOpsItemContent,
   type AzureDevOpsIteration,
+  type AzureDevOpsPolicyEvaluation,
   type AzureDevOpsPullRequest,
+  type AzureDevOpsPullRequestStatus,
   type AzureDevOpsRepositoryLocation,
 } from "./azureDevOpsPullRequestJson.ts";
 import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
@@ -139,6 +143,9 @@ const ITEM_CONTENT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
  * as answering with nonsense.
  */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
+/** The status fields the Checks list reads, in the `{ value }` page shape statuses arrive in. */
+const PULL_REQUEST_STATUS_FIELDS =
+  "{value:value[].{id:id,state:state,description:description,targetUrl:targetUrl,context:context}}";
 
 /** Azure's own ceiling for one page of an iteration's changes. */
 const CHANGE_ENTRIES_PER_PAGE = 2000;
@@ -191,6 +198,22 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
+
+    /** Branch policy evaluations, which need only the number, so they can read alongside it. */
+    readonly listPolicyEvaluations: (input: {
+      readonly cwd: string;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<AzureDevOpsPolicyEvaluation>, AzureDevOpsPullRequestCliError>;
+
+    /** Statuses external services posted, which Azure's Checks list shows beside policies. */
+    readonly listPullRequestStatuses: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    }) => Effect.Effect<
+      ReadonlyArray<AzureDevOpsPullRequestStatus>,
+      AzureDevOpsPullRequestCliError
+    >;
 
     /** Threads are not reachable through `az repos pr`, so they come from the REST API. */
     readonly listThreads: (input: {
@@ -374,6 +397,8 @@ export const make = Effect.gen(function* () {
     readonly routeParameters: ReadonlyArray<string>;
     readonly queryParameters?: ReadonlyArray<string>;
     readonly maxOutputBytes?: number;
+    /** A JMESPath projection `az` applies before printing, to keep large responses small. */
+    readonly jmesQuery?: string;
     readonly decode: (raw: string) => Result.Result<A, unknown>;
   }): Effect.Effect<A, AzureDevOpsPullRequestCliError> =>
     executeJson({
@@ -394,6 +419,7 @@ export const make = Effect.gen(function* () {
         ...(input.queryParameters === undefined
           ? []
           : ["--query-parameters", ...input.queryParameters]),
+        ...(input.jmesQuery === undefined ? [] : ["--query", input.jmesQuery]),
       ],
     }).pipe(
       Effect.flatMap((result) => {
@@ -631,6 +657,39 @@ export const make = Effect.gen(function* () {
           },
         ),
       ),
+
+    listPolicyEvaluations: (input) =>
+      executeJson({
+        cwd: input.cwd,
+        args: ["repos", "pr", "policy", "list", ...detectArgs, "--id", String(input.number)],
+      }).pipe(
+        Effect.flatMap((result) => {
+          const decoded = decodePolicyEvaluationsJson(result.stdout.trim());
+          return Result.isSuccess(decoded)
+            ? Effect.succeed(decoded.success)
+            : Effect.fail(
+                new AzureDevOpsPullRequestReadError({
+                  command: "az",
+                  cwd: input.cwd,
+                  operation: "listPolicyEvaluations",
+                  cause: decoded.failure,
+                }),
+              );
+        }),
+      ),
+
+    listPullRequestStatuses: (input) =>
+      invoke({
+        cwd: input.cwd,
+        operation: "listPullRequestStatuses",
+        resource: "pullRequestStatuses",
+        routeParameters: pullRequestRoute(input),
+        maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
+        // Each status carries its creator's profile and links, several times the fields read
+        // here, which costs `az` seconds to print on a busy pull request.
+        jmesQuery: PULL_REQUEST_STATUS_FIELDS,
+        decode: decodePullRequestStatusesJson,
+      }),
 
     listThreads: (input) =>
       invoke({
