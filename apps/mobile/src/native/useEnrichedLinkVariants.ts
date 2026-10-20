@@ -5,38 +5,65 @@ import type {
   MarkdownDocumentAsset,
   MarkdownStyle,
 } from "react-native-enriched-markdown";
+import type { ComposerContextRecord } from "@t3tools/contracts";
+import { contextChipColors, contextChipPresentation } from "../lib/composerChipPresentation";
+import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
+import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
 import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
-import type { SelectableMarkdownTextProps } from "./SelectableMarkdownText.types";
+import type {
+  MarkdownLinkCustomization,
+  SelectableMarkdownTextProps,
+} from "./SelectableMarkdownText.types";
 import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
   enrichedSkillReference,
+  type EnrichedChipIcon,
 } from "../lib/enrichedLinkPresentation";
+
+function chipIconSource(icon: EnrichedChipIcon) {
+  return icon.kind === "chip"
+    ? CONTEXT_CHIP_ICON_SOURCES[icon.name]
+    : markdownFileIconSource(icon.name);
+}
+
+export function enrichedContextLinkCustomization(
+  href: string,
+  records?: ReadonlyArray<ComposerContextRecord>,
+): MarkdownLinkCustomization | undefined {
+  const context = enrichedContextLinkPresentation(href, records);
+  if (!context) return undefined;
+  return {
+    label: context.label,
+    icon: chipIconSource(context.icon),
+    chip: { accent: context.accent, tintsIcon: context.icon.kind === "chip" },
+  };
+}
 
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
-) {
+): MarkdownLinkCustomization | undefined {
   const custom = props.linkCustomization?.(url);
   if (custom) return custom;
-  const context = enrichedContextLinkPresentation(url);
-  if (context) return { color: context.color, icon: markdownFileIconSource(context.icon) };
+  const context = enrichedContextLinkCustomization(url);
+  if (context) return context;
   const skill = enrichedSkillReference(url, props.skills);
   if (skill)
     return {
-      color: props.textStyle.skillTextColor,
       label: enrichedSkillDisplayName(skill),
-      icon: markdownFileIconSource("mcp"),
+      icon: CONTEXT_CHIP_ICON_SOURCES.skill,
+      chip: { accent: contextChipPresentation("skill").accent, tintsIcon: true },
     };
   const link = resolveMarkdownLinkPresentation(url);
   if (link.kind === "file")
     return {
-      color: props.textStyle.fileTextColor,
       label: link.label,
       icon: markdownFileIconSource(link.icon),
+      chip: { accent: contextChipPresentation("mention").accent, tintsIcon: false },
     };
   const icon = link.kind === "external" ? resolveMarkdownLinkIcon(link.host) : null;
   return icon
@@ -54,7 +81,7 @@ export function useEnrichedLinkVariants(
 ) {
   const { linkCustomization, skills, textStyle } = props;
   const links = useMemo(() => {
-    const byUrl = new Map<string, NonNullable<ReturnType<typeof presentation>>>();
+    const byUrl = new Map<string, MarkdownLinkCustomization>();
     for (const asset of assets) {
       if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
       const value = presentation(asset.url, { linkCustomization, skills, textStyle });
@@ -62,30 +89,46 @@ export function useEnrichedLinkVariants(
     }
     return byUrl;
   }, [assets, linkCustomization, skills, textStyle]);
+  const chips = useMemo(
+    () =>
+      new Map(
+        [...links].map(([url, link]) => [
+          url,
+          link.chip
+            ? contextChipColors(link.chip.accent ?? textStyle.color, {
+                foreground: textStyle.color,
+                border: textStyle.contextChipBorderColor ?? textStyle.dividerColor,
+              })
+            : null,
+        ]),
+      ),
+    [links, textStyle],
+  );
   const linkVariants = useMemo<MarkdownStyle["linkVariants"]>(
     () =>
       Object.fromEntries(
         [...links].map(([url, link]) => {
-          const color = link.color ?? textStyle.fileTextColor;
+          const colors = chips.get(url);
+          const composerChipEm = textStyle.fontSize * 0.86 * 0.5;
           return [
             enrichedLinkVariantPattern(url),
             {
               pill: {
-                borderColor: "transparent",
-                borderWidth: 0,
-                borderRadius: 6,
-                paddingHorizontal: 5,
-                paddingVertical: 2,
+                borderColor: colors?.border ?? "transparent",
+                borderWidth: colors ? 1 : 0,
+                borderRadius: colors ? composerChipEm : 6,
+                paddingHorizontal: colors ? composerChipEm : 5,
+                paddingVertical: colors ? 0 : 2,
               },
-              fontFamily: textStyle.fontFamily,
-              color,
+              fontFamily: colors ? FONT_FAMILIES.medium : textStyle.fontFamily,
+              color: colors?.foreground ?? link.color ?? textStyle.fileTextColor,
               underline: false,
-              backgroundColor: "transparent",
+              backgroundColor: colors?.background ?? "transparent",
             },
           ];
         }),
       ),
-    [links, textStyle],
+    [chips, links, textStyle],
   );
   const linkPillContent = useMemo<Record<string, LinkPillContent>>(
     () =>
@@ -95,11 +138,11 @@ export function useEnrichedLinkVariants(
           {
             label: link.label,
             iconUri: link.icon ? Image.resolveAssetSource(link.icon)?.uri : undefined,
-            iconTintColor: link.iconTintColor,
+            iconTintColor: link.chip?.tintsIcon ? chips.get(url)?.foreground : link.iconTintColor,
           },
         ]),
       ),
-    [links],
+    [chips, links],
   );
   return { linkVariants, linkPillContent };
 }

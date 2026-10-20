@@ -3,7 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
-import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentation";
+import { enrichedContextLinkCustomization } from "../../native/useEnrichedLinkVariants";
 import { ThreadContextDivider } from "./thread-context-divider";
 import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -164,7 +164,6 @@ import {
   resolveNativeMarkdownTypography,
 } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { markdownFileIconSource } from "../../lib/markdownFileIcons";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { markdownLinkIconSource } from "../../lib/markdownLinkIcons";
 import {
@@ -851,18 +850,19 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownCodeText = theme["--color-md-code-text"];
   const markdownInlineCodeText = theme["--color-foreground-secondary"];
   const markdownHrColor = theme["--color-md-hr"];
-  // Native chip drawing parses opaque hex only, and this role is translucent.
-  const contextChipBorderColor = flattenThemeColor(
+  const userContextChipBorderColor = flattenThemeColor(
     theme["--color-border"],
     theme["--color-user-bubble"],
+  );
+  const assistantContextChipBorderColor = flattenThemeColor(
+    theme["--color-border"],
+    theme["--color-thread-canvas"],
   );
   const markdownUserBodyColor = theme["--color-user-bubble-foreground"];
   const markdownUserCodeBg = theme["--color-md-user-code-bg"];
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
   const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const inlineSkillForeground = theme["--color-inline-skill-foreground"];
-  const userBubbleSkillForeground = theme["--color-user-bubble-skill-foreground"];
   const regularFontFamily = FONT_FAMILIES.regular;
   const boldFontFamily = FONT_FAMILIES.bold;
 
@@ -879,10 +879,9 @@ function useMarkdownStyles(): MarkdownStyleSets {
           codeBackgroundColor: markdownUserCodeBg,
           codeBlockBackgroundColor: markdownUserFenceBg,
           fileTextColor: markdownUserBodyColor,
-          skillTextColor: userBubbleSkillForeground,
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
-          contextChipBorderColor,
+          contextChipBorderColor: userContextChipBorderColor,
           fontSize: nativeMarkdownTypography.fontSize,
           lineHeight: nativeMarkdownTypography.lineHeight,
           headingFontSizes: nativeMarkdownTypography.headingFontSizes,
@@ -902,10 +901,9 @@ function useMarkdownStyles(): MarkdownStyleSets {
           codeBackgroundColor: markdownCodeBg,
           codeBlockBackgroundColor: markdownCodeBg,
           fileTextColor: markdownCodeText,
-          skillTextColor: inlineSkillForeground,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
-          contextChipBorderColor,
+          contextChipBorderColor: assistantContextChipBorderColor,
           fontSize: nativeMarkdownTypography.fontSize,
           lineHeight: nativeMarkdownTypography.lineHeight,
           headingFontSizes: nativeMarkdownTypography.headingFontSizes,
@@ -916,9 +914,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
       },
     };
   }, [
+    assistantContextChipBorderColor,
     boldFontFamily,
-    contextChipBorderColor,
-    inlineSkillForeground,
     markdownBlockquoteBorder,
     markdownBodyColor,
     markdownCodeBg,
@@ -934,7 +931,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
     markdownUserInlineCodeText,
     nativeMarkdownTypography,
     regularFontFamily,
-    userBubbleSkillForeground,
+    userContextChipBorderColor,
   ]);
 }
 
@@ -1561,12 +1558,9 @@ function UserMessageContent(props: UserMessageContentProps) {
                 });
             }
           },
-          linkCustomization: (href) => {
-            const presentation = enrichedContextLinkPresentation(href, props.context?.records);
-            return presentation
-              ? { color: presentation.color, icon: markdownFileIconSource(presentation.icon) }
-              : props.linkHandlers.linkCustomization?.(href);
-          },
+          linkCustomization: (href) =>
+            enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+            props.linkHandlers.linkCustomization?.(href),
         }}
       />
       {selected ? (
