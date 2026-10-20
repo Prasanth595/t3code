@@ -49,6 +49,7 @@ const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
+const emitGrokBackgroundTaskPoll = process.env.T3_ACP_GROK_BACKGROUND_TASK_COMPLETION === "poll";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
@@ -1685,13 +1686,15 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (emitGrokBackgroundTaskStarted) {
-        const toolCallId = "call-fb9d0000-0000-0000-0000-000000000026";
+      if (emitGrokBackgroundTaskStarted || emitGrokBackgroundTaskPoll) {
+        const toolCallId = !emitGrokBackgroundTaskPoll
+          ? "call-fb9d0000-0000-0000-0000-000000000026"
+          : "call-fb9d0000-0000-0000-0000-000000000026-29";
         const command = "sleep 40; echo done-a";
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
           update: {
-            sessionUpdate: "tool_call",
+            sessionUpdate: !emitGrokBackgroundTaskPoll ? "tool_call" : "tool_call_update",
             toolCallId,
             title: "run_terminal_command",
             kind: "execute",
@@ -1714,6 +1717,46 @@ const program = Effect.gen(function* () {
             },
           },
         });
+        if (emitGrokBackgroundTaskPoll) {
+          writeJsonRpcNotification("session/update", {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "call-background-poll",
+              title: "get_command_or_subagent_output",
+              kind: "other",
+              status: "completed",
+              rawOutput: {
+                type: "TaskOutput",
+                Result: {
+                  task_id: toolCallId,
+                  command,
+                  status: "completed",
+                  exit_code: 0,
+                  output: "done-a",
+                },
+              },
+            },
+          });
+
+          yield* agent.client.sessionUpdate({
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "The background command finished." },
+            },
+          });
+          writeJsonRpcNotification("_x.ai/session/update", {
+            sessionId: requestedSessionId,
+            update: {
+              sessionUpdate: "turn_completed",
+              prompt_id: promptIdFromRequestMeta(request),
+              stop_reason: "end_turn",
+            },
+          });
+          // Neither the prompt RPC nor the process ends, matching the Grok incident.
+          return yield* Effect.never;
+        }
         writeJsonRpcNotification("_x.ai/session/prompt_complete", {
           sessionId: requestedSessionId,
           promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",

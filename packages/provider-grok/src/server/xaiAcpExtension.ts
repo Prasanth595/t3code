@@ -272,8 +272,8 @@ export function isXAiMonitorTool(toolCall: AcpToolCallState): boolean {
  * A shell command Grok runs in the background (asked for, or moved there after
  * its auto-background timeout) acknowledges with
  * `{ type: "BackgroundTaskStarted", task_id }` and completes its tool call
- * while the process still runs. Like a monitor, it ends only with
- * `x.ai/task_completed` for that task id.
+ * while the process still runs. It ends with a task completion notification
+ * or completed TaskOutput for that task id.
  */
 export function xAiBackgroundShellTaskId(toolCall: AcpToolCallState): string | undefined {
   const rawOutput = unknownRecord(toolCall.data.rawOutput);
@@ -333,7 +333,9 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
   const appendOutput = resultFromGetOutputTool(toolCall, text) ?? "";
   // Prefer the completed identity from the result/header over the request list
   // (one call can poll multiple task_ids).
-  const resultTaskId = resultTaskIdFromGetOutputTool(toolCall, text);
+  // Command task ids can be `call-<uuid>-<index>`; subagent ids stay UUID-only.
+  const resultTaskId =
+    structuredTaskIdFromGetOutputTool(toolCall) ?? resultTaskIdFromGetOutputTool(toolCall, text);
   if (resultTaskId !== undefined) {
     return [{ taskId: resultTaskId, status, appendOutput }];
   }
@@ -742,17 +744,22 @@ function taskIdsFromGetOutputTool(
   return [...new Set(ids)];
 }
 
+function structuredTaskIdFromGetOutputTool(toolCall: AcpToolCallState): string | undefined {
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
+  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
+  return (
+    nonEmptyString(result?.task_id) ??
+    nonEmptyString(result?.taskId) ??
+    nonEmptyString(rawOutput?.task_id) ??
+    nonEmptyString(rawOutput?.taskId)
+  );
+}
+
 function resultTaskIdFromGetOutputTool(
   toolCall: AcpToolCallState,
   output: string | undefined,
 ): string | undefined {
-  const rawOutput = unknownRecord(toolCall.data.rawOutput);
-  const result = unknownRecord(rawOutput?.Result) ?? unknownRecord(rawOutput?.result);
-  const structured =
-    nonEmptyString(result?.task_id) ??
-    nonEmptyString(result?.taskId) ??
-    nonEmptyString(rawOutput?.task_id) ??
-    nonEmptyString(rawOutput?.taskId);
+  const structured = structuredTaskIdFromGetOutputTool(toolCall);
   if (structured !== undefined && new RegExp(`^${XAI_UUID_RE}$`, "i").test(structured)) {
     return structured;
   }
