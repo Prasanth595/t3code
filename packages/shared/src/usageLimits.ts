@@ -322,6 +322,7 @@ export function collectLimitNotices(presentations: LimitPresentations): readonly
         notices.push(`${label(environmentLabel, source.label)}: No accounts reported.`);
       }
       for (const account of source.accounts) {
+        if (account.usageLimits.unavailable?.reason === "unsupported") continue;
         const notice = limitsNotice(account.usageLimits);
         if (notice)
           notices.push(

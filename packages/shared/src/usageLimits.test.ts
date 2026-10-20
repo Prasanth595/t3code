@@ -189,6 +189,15 @@ describe("pools", () => {
         driver: claude,
         usageLimits: { checkedAt, windows: [], unavailable: failed },
       },
+      {
+        id: "unsupported.json",
+        driver: claude,
+        usageLimits: {
+          checkedAt,
+          windows: [],
+          unavailable: { reason: "unsupported", message: "Hidden account" },
+        },
+      },
     ];
     const input = new Map([
       [
