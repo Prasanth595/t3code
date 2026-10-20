@@ -2317,6 +2317,36 @@ describe("pending user input answers", () => {
     );
   });
 
+  it("leaves an unanswered optional question out instead of blocking the reply", () => {
+    const other = {
+      id: "runtime__other",
+      header: "Other (type your own)",
+      question: "Which runtime should be used?",
+      options: [],
+      multiSelect: false,
+      required: false,
+    };
+    const drafts = { runtime: { selectedOptionValues: ["Go"] } };
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, other], drafts)).toEqual({
+      runtime: "Go",
+    });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, other], {
+        ...drafts,
+        runtime__other: { customAnswer: "Another runtime" },
+      }),
+    ).toEqual({ runtime: "Go", runtime__other: "Another runtime" });
+    expect(buildPendingUserInputAnswers([{ ...other, required: true }], {})).toBeNull();
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, other], {
+        ...drafts,
+        runtime__other: { attachmentCount: 1, attachmentsBlocked: true },
+      }),
+    ).toBeNull();
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, other], {})).toBeNull();
+  });
+
   it("replaces single-select options and toggles multi-select options", () => {
     expect(
       togglePendingUserInputOptionSelection(

@@ -5678,6 +5678,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               const requestedSchema = unknownRecord(params.requestedSchema);
               const properties = unknownRecord(requestedSchema?.properties) ?? {};
+              // Form schemas make a field optional unless `required` lists it, including when the list is absent.
+              const requiredFields = new Set(
+                Array.isArray(requestedSchema?.required)
+                  ? requestedSchema.required.filter(
+                      (field): field is string => typeof field === "string",
+                    )
+                  : [],
+              );
               const elicitationScopeId =
                 "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
               const questions = Object.entries(properties).map(
@@ -5700,6 +5708,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     header: nonEmptyText(record?.title, `Question ${index + 1}`),
                     question: nonEmptyText(record?.description, params.message),
                     options,
+                    ...(requiredFields.has(id) ? {} : { required: false }),
                   };
                 },
               );

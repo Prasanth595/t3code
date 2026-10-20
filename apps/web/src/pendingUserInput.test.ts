@@ -372,6 +372,44 @@ describe("pending user input question progress", () => {
     });
   });
 
+  it("lets an unanswered optional question advance and leaves it out of the answers", () => {
+    const other = {
+      id: "scope__other",
+      header: "Other (type your own)",
+      question: "Which scope should this use?",
+      options: [],
+      multiSelect: false,
+      required: false,
+    };
+    const drafts = { scope: { selectedOptionValues: ["Orchestration-first"] } };
+
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, other], drafts)).toEqual({
+      scope: "Orchestration-first",
+    });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, other], {
+        ...drafts,
+        scope__other: { customAnswer: "Another scope" },
+      }),
+    ).toEqual({ scope: "Orchestration-first", scope__other: "Another scope" });
+    expect(buildPendingUserInputAnswers([singleSelectQuestion, other], {})).toBeNull();
+    expect(buildPendingUserInputAnswers([{ ...other, required: true }], {})).toBeNull();
+    expect(
+      findFirstUnansweredPendingUserInputQuestionIndex([other, singleSelectQuestion], {}),
+    ).toBe(1);
+    expect(derivePendingUserInputProgress([singleSelectQuestion, other], drafts, 1)).toMatchObject({
+      resolvedAnswer: null,
+      canAdvance: true,
+      isComplete: true,
+    });
+    expect(
+      buildPendingUserInputAnswers([singleSelectQuestion, other], {
+        ...drafts,
+        scope__other: { attachmentCount: 1, attachmentsBlocked: true },
+      }),
+    ).toBeNull();
+  });
+
   it("requires an option when custom answers are disabled", () => {
     const drafts = { result: { customAnswer: "Use another result" } };
 
