@@ -150,6 +150,7 @@ export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp):
     if (node.type === "inlineCode") {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
+      const escaped = node.value.replace(/[\\[\]&]/g, "\\$&");
       if (
         start !== undefined &&
         end !== undefined &&
@@ -159,7 +160,7 @@ export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp):
         edits.push({
           start,
           end,
-          content: `[${node.value.replace(/[[\]\\]/g, "\\$&")}](<${node.value}>)`,
+          content: `[${escaped}](<${escaped}>)`,
         });
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
       node.children.forEach(visit);
