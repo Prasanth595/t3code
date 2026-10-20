@@ -4815,12 +4815,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } as const;
         });
 
-        const requestUserInputWithAdmission = (
-          generation: number,
-          request: Effect.Effect<AcpAdapterV2UserInputRequest>,
-          transportRequestId: string,
-        ) =>
-          Effect.gen(function* () {
+        const requestUserInputWithAdmission = Effect.fn(
+          "AcpAdapterV2.requestUserInputWithAdmission",
+        )(
+          function* (
+            generation: number,
+            request: Effect.Effect<AcpAdapterV2UserInputRequest>,
+            transportRequestId: string,
+          ) {
             if (!(yield* awaitRequestTurn(generation))) {
               return { answers: null, acknowledgeNativeResponse: Effect.void };
             }
@@ -4866,15 +4868,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 );
               }),
             );
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new EffectAcpErrors.AcpTransportError({
-                  detail: "Failed to handle ACP user input request",
-                  cause,
-                }),
-            ),
-          );
+          },
+          Effect.mapError(
+            (cause) =>
+              new EffectAcpErrors.AcpTransportError({
+                detail: "Failed to handle ACP user input request",
+                cause,
+              }),
+          ),
+        );
 
         const cancelPendingRuntimeRequests = Effect.fnUntraced(function* () {
           const waiting = turnAttached;
