@@ -154,6 +154,7 @@ async function renderFileFor(threadRef: ScopedThreadRef) {
     <PanelHostContext value={host}>
       <Suspense fallback={null}>
         <RegisteredSidePanel
+          openInShortcutEnabled
           id="files"
           onNavigateFolder={() => undefined}
           folderTrail={undefined}
