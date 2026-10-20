@@ -4041,23 +4041,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             allowNonZeroExit: true,
             ...(watchSshApproval && {
               progress: {
-                onStderrLine: (line: string) =>
-                  Effect.gen(function* () {
-                    if (!/^debug\d:/.test(line)) {
-                      diagnostics += (line + "\n").slice(
-                        0,
-                        DEFAULT_MAX_OUTPUT_BYTES - diagnostics.length,
-                      );
-                    }
-                    const now = yield* Clock.currentTimeMillis;
-                    yield* Ref.update(approvalDeadline, (deadline) =>
-                      line.startsWith(SSH_SIGN_REQUEST_LINE_PREFIX)
-                        ? now + SSH_KEY_APPROVAL_WAIT_MS
-                        : SSH_SIGNING_LINE.test(line)
-                          ? deadline
-                          : Infinity,
+                onStderrLine: Effect.fn("GitVcsDriver.fetchRemote.observeSshApproval")(function* (
+                  line: string,
+                ) {
+                  if (!/^debug\d:/.test(line)) {
+                    diagnostics += (line + "\n").slice(
+                      0,
+                      DEFAULT_MAX_OUTPUT_BYTES - diagnostics.length,
                     );
-                  }),
+                  }
+                  const now = yield* Clock.currentTimeMillis;
+                  yield* Ref.update(approvalDeadline, (deadline) =>
+                    line.startsWith(SSH_SIGN_REQUEST_LINE_PREFIX)
+                      ? now + SSH_KEY_APPROVAL_WAIT_MS
+                      : SSH_SIGNING_LINE.test(line)
+                        ? deadline
+                        : Infinity,
+                  );
+                }),
               },
             }),
           },
