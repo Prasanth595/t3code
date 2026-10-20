@@ -37,13 +37,7 @@ import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { isPullRequestTestFile } from "./pullRequestFileFilters";
-import {
-  StackActions,
-  useFocusEffect,
-  useNavigation,
-  useRoute,
-  type StaticScreenProps,
-} from "@react-navigation/native";
+import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { RegistryContext, useAtomRefresh } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
@@ -105,8 +99,7 @@ import {
   PullRequestDiffStats,
   PullRequestReadStatus,
 } from "./PullRequestPresentation";
-import { PullRequestFilesSheet } from "./PullRequestFilesSheet";
-import { usePullRequestFilesSection } from "./PullRequestFilesSection";
+import { usePullRequestFilesSection } from "./PullRequestFiles";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
 import {
@@ -746,21 +739,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
         />
       </View>
     </PullRequestMarkdownRepository>
-  );
-}
-
-export function PullRequestFilesRouteScreen({ route }: StaticScreenProps<PullRequestDiffParams>) {
-  const navigation = useNavigation();
-  const fileSelectionId = useRoute().key;
-  return (
-    <PullRequestFilesSheet
-      params={route.params}
-      onSelectFile={(path) =>
-        navigation.dispatch(
-          StackActions.popTo("PullRequestFile", { ...route.params, path, fileSelectionId }),
-        )
-      }
-    />
   );
 }
 
