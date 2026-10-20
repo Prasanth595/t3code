@@ -150,6 +150,16 @@ export class ServerSecretStore extends Context.Service<
   }
 >()("t3/auth/ServerSecretStore") {}
 
+// Signal 0 checks ownership without delivering a signal. Unknown errors retain the temporary.
+const isWriterAlive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
+};
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -173,15 +183,21 @@ export const make = Effect.gen(function* () {
   const removeTemporaryFiles = Effect.fnUntraced(function* (name?: string) {
     for (const file of yield* fileSystem.readDirectory(serverConfig.secretsDir)) {
       const match =
-        /^(.*\.bin)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.exec(
+        /^(.*\.bin)\.(?:(\d+)\.)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.exec(
           file,
         );
-      if (match !== null && (name === undefined || match[1] === `${name}.bin`))
+      if (
+        match !== null &&
+        (name === undefined || match[1] === `${name}.bin`) &&
+        (match[2] === undefined || !isWriterAlive(Number(match[2])))
+      ) {
         yield* fileSystem.remove(path.join(serverConfig.secretsDir, file), { force: true });
+      }
     }
   });
 
-  // A crash may leave a replacement's temporary bytes beside a still-valid final secret.
+  // New temporaries name their writer so another process cannot sweep an active replacement.
+  // UUID-only files predate writer ownership and remain eligible for crash recovery.
   yield* removeTemporaryFiles().pipe(
     Effect.mapError(
       (cause) => new SecretStoreRemoveError({ resource: "temporary secret files", cause }),
@@ -215,26 +231,17 @@ export const make = Effect.gen(function* () {
           }),
       ),
       Effect.flatMap((uuid) => {
-        const tempPath = `${secretPath}.${uuid}.tmp`;
+        const tempPath = `${secretPath}.${process.pid}.${uuid}.tmp`;
         return Effect.gen(function* () {
           yield* fileSystem.writeFile(tempPath, value);
           yield* fileSystem.chmod(tempPath, 0o600);
           yield* fileSystem.rename(tempPath, secretPath);
           yield* fileSystem.chmod(secretPath, 0o600);
         }).pipe(
-          Effect.catch((cause) =>
-            fileSystem.remove(tempPath).pipe(
-              Effect.ignore,
-              Effect.flatMap(() =>
-                Effect.fail(
-                  new SecretStorePersistError({
-                    resource: `secret ${name}`,
-                    cause,
-                  }),
-                ),
-              ),
-            ),
+          Effect.mapError(
+            (cause) => new SecretStorePersistError({ resource: `secret ${name}`, cause }),
           ),
+          Effect.ensuring(fileSystem.remove(tempPath, { force: true }).pipe(Effect.ignore)),
         );
       }),
       Effect.withSpan("ServerSecretStore.set"),
