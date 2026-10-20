@@ -1,16 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  isSelectionRectVisible,
-  observeSelectionActions,
-  resolveSelectionActionPosition,
-} from "./selectionActions";
+import { observeSelectionActions, resolveSelectionActionPosition } from "./selectionActions";
 
 function event(type: string, values: Record<string, unknown> = {}) {
   return Object.assign(new Event(type, { cancelable: true }), values);
 }
 
-function createSelectionSurface({ interactiveActions = false, restoreAfterScroll = false } = {}) {
+function createSelectionSurface({ interactiveActions = false, reposition = false } = {}) {
   const frames = new Map<number, FrameRequestCallback>();
   let frameId = 0;
   const view = Object.assign(new EventTarget(), {
@@ -37,6 +33,7 @@ function createSelectionSurface({ interactiveActions = false, restoreAfterScroll
   });
   const onSelection = vi.fn();
   const onDismiss = vi.fn();
+  const onReposition = vi.fn();
   const field = new EventTarget();
   const actionElement = Object.assign(new EventTarget(), {
     contains: (target: unknown) => target === actionElement || target === field,
@@ -46,7 +43,7 @@ function createSelectionSurface({ interactiveActions = false, restoreAfterScroll
     ...(interactiveActions
       ? { getActionElement: () => actionElement as unknown as HTMLElement }
       : {}),
-    restoreAfterScroll,
+    ...(reposition ? { onReposition } : {}),
     onSelection,
     onDismiss,
   });
@@ -108,6 +105,7 @@ function createSelectionSurface({ interactiveActions = false, restoreAfterScroll
     onSelection,
     onDismiss,
     down,
+    onReposition,
     focus,
     key,
     up,
@@ -122,6 +120,56 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("selection action gestures", () => {
+  it.each(["timer", "frame"])("preserves a pending selection %s when scrolling starts", (stage) => {
+    const surface = createSelectionSurface({ reposition: true });
+    surface.down();
+    surface.up();
+    if (stage === "frame") vi.advanceTimersByTime(0);
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush();
+    expect(surface.onSelection).toHaveBeenCalledExactlyOnceWith(null);
+
+    surface.key("ArrowRight");
+    surface.change();
+    if (stage === "frame") vi.advanceTimersByTime(0);
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush();
+    expect(surface.onSelection).toHaveBeenCalledTimes(2);
+    expect(surface.onSelection).toHaveBeenLastCalledWith(null);
+  });
+
+  it("keeps actions while scrolling and resizing without recapturing the selected quote", () => {
+    const surface = createSelectionSurface({ reposition: true, interactiveActions: true });
+    surface.down();
+    surface.up();
+    surface.flush();
+    surface.onDismiss.mockClear();
+    surface.element.dispatchEvent(event("scroll"));
+    surface.focus(surface.actionElement);
+    surface.view.dispatchEvent(event("resize"));
+    expect(surface.onReposition).toHaveBeenCalledTimes(2);
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+    expect(surface.onDismiss).not.toHaveBeenCalled();
+
+    surface.key("Escape");
+    surface.element.dispatchEvent(event("scroll"));
+    surface.view.dispatchEvent(event("focus"));
+    expect(surface.onReposition).toHaveBeenCalledTimes(2);
+  });
+  it("dismisses on window blur even when actions can reposition", () => {
+    const surface = createSelectionSurface({ reposition: true });
+    surface.down();
+    surface.up();
+    surface.flush();
+    surface.onDismiss.mockClear();
+    surface.view.dispatchEvent(event("blur"));
+    surface.element.dispatchEvent(event("scroll"));
+    surface.flush();
+    expect(surface.onDismiss).toHaveBeenCalledWith("cancel");
+    expect(surface.onReposition).not.toHaveBeenCalled();
+    expect(surface.onSelection).toHaveBeenCalledOnce();
+  });
+
   it("stays hidden through selection changes while dragging and uses the release point", () => {
     const surface = createSelectionSurface();
     surface.down();
@@ -299,42 +347,8 @@ describe("selection action gestures", () => {
     expect(surface.onSelection).toHaveBeenCalledOnce();
   });
 
-  it("restores after scrolling settles with a fresh anchor, without interrupting a held drag", () => {
-    const surface = createSelectionSurface({ restoreAfterScroll: true });
-    surface.down();
-    surface.element.dispatchEvent(event("scroll"));
-    surface.change();
-    surface.flush(1000);
-    expect(surface.onSelection).not.toHaveBeenCalled();
-    surface.up({ x: 420, y: 310 });
-    surface.flush();
-    expect(surface.onSelection.mock.calls).toEqual([[{ x: 420, y: 310 }]]);
-
-    surface.onDismiss.mockClear();
-    surface.element.dispatchEvent(event("scroll"));
-    expect(surface.onDismiss).toHaveBeenCalledWith("cancel");
-    surface.flush(100);
-    surface.element.dispatchEvent(event("scroll"));
-    surface.change();
-    surface.flush(100);
-    expect(surface.onSelection).toHaveBeenCalledOnce();
-    surface.flush(50);
-    expect(surface.onSelection.mock.calls).toEqual([[{ x: 420, y: 310 }], [null]]);
-    surface.flush(1000);
-    expect(surface.onSelection).toHaveBeenCalledTimes(2);
-
-    surface.down();
-    surface.up();
-    vi.advanceTimersByTime(0);
-    surface.element.dispatchEvent(event("scroll"));
-    surface.flush(149);
-    expect(surface.onSelection).toHaveBeenCalledTimes(2);
-    surface.flush(1);
-    expect(surface.onSelection.mock.calls).toEqual([[{ x: 420, y: 310 }], [null], [null]]);
-  });
-
-  it("keeps Escape during scroll settling dismissed through later scrolling", () => {
-    const surface = createSelectionSurface({ restoreAfterScroll: true });
+  it("keeps Escape dismissed through later scrolling", () => {
+    const surface = createSelectionSurface({ reposition: true });
     surface.down();
     surface.up();
     surface.flush();
@@ -452,30 +466,6 @@ describe("interactive selection actions", () => {
     surface.up({ x: 520, y: 320 });
     surface.flush();
     expect(surface.onSelection).toHaveBeenCalledWith({ x: 520, y: 320 });
-  });
-});
-
-describe("selection visibility", () => {
-  const rect = (left: number, top: number, right: number, bottom: number) => ({
-    left,
-    top,
-    right,
-    bottom,
-    width: right - left,
-  });
-  const timeline = rect(0, 0, 800, 600);
-  const codeBlock = rect(100, 200, 400, 260);
-
-  it("only shows text overlapping both the timeline and its nested scroller", () => {
-    expect(isSelectionRectVisible(rect(150, 210, 220, 226), [timeline, codeBlock])).toBe(true);
-    expect(isSelectionRectVisible(rect(420, 210, 480, 226), [timeline, codeBlock])).toBe(false);
-    expect(isSelectionRectVisible(rect(380, 210, 460, 226), [timeline, codeBlock])).toBe(true);
-    expect(
-      isSelectionRectVisible(rect(150, -40, 220, -24), [timeline, rect(100, -50, 400, 260)]),
-    ).toBe(false);
-    expect(
-      isSelectionRectVisible(rect(-200, 210, 220, 226), [timeline, rect(-200, 200, -20, 260)]),
-    ).toBe(false);
   });
 });
 

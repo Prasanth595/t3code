@@ -1,7 +1,6 @@
 export type SelectionActionPoint = { x: number; y: number };
 
 export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
-const SELECTION_SCROLL_SETTLE_MS = 150;
 
 export function resolveSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
@@ -26,19 +25,6 @@ export function resolveSelectionActionPosition(options: {
   };
 }
 
-type SelectionRect = { left: number; top: number; right: number; bottom: number };
-
-export function isSelectionRectVisible(rect: SelectionRect, clips: readonly SelectionRect[]) {
-  let { left, top, right, bottom } = rect;
-  for (const clip of clips) {
-    left = Math.max(left, clip.left);
-    top = Math.max(top, clip.top);
-    right = Math.min(right, clip.right);
-    bottom = Math.min(bottom, clip.bottom);
-  }
-  return right > left && bottom > top;
-}
-
 /**
  * Interactive popovers pass getActionElement to keep editing their fields from replacing the
  * captured source selection.
@@ -46,13 +32,13 @@ export function isSelectionRectVisible(rect: SelectionRect, clips: readonly Sele
 export function observeSelectionActions({
   element,
   getActionElement,
-  restoreAfterScroll = false,
+  onReposition,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
-  restoreAfterScroll?: boolean;
+  onReposition?: () => void;
   onSelection: (pointer: SelectionActionPoint | null) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
 }) {
@@ -147,18 +133,32 @@ export function observeSelectionActions({
     }
   };
   const onFocusIn = (event: FocusEvent) => {
-    if (isActionTarget(event.target)) cancel();
-    else if (!pointerDown && getActionElement?.()) dismiss();
+    if (isActionTarget(event.target)) {
+      if (onReposition) cancelPending();
+      else cancel();
+    } else if (!pointerDown && getActionElement?.()) dismiss();
+  };
+  const reposition = () => {
+    if (!onReposition || dismissed || !restorable || pointerDown) return false;
+    onReposition();
+    return true;
   };
   const onScroll = () => {
+    // Keep a selection read queued by release or keyboard selection alive during scrolling.
+    if (reposition()) {
+      pointer = null;
+      return;
+    }
     cancelPending();
     // Autoscroll during a drag must not cancel that gesture's eventual release.
     if (!pointerDown) {
       pointer = null;
-      if (restoreAfterScroll && !dismissed && restorable) schedule(SELECTION_SCROLL_SETTLE_MS);
-      else dismissed = true;
+      dismissed = true;
     }
     onDismiss("cancel");
+  };
+  const onResize = () => {
+    if (!reposition()) dismiss();
   };
 
   document.addEventListener("pointerdown", onPointerDown, true);
@@ -171,7 +171,7 @@ export function observeSelectionActions({
   element.addEventListener("contextmenu", onContextMenu, true);
   element.addEventListener("scroll", onScroll, true);
   view.addEventListener("blur", dismiss);
-  view.addEventListener("resize", dismiss);
+  view.addEventListener("resize", onResize);
 
   return {
     get pending() {
@@ -198,7 +198,7 @@ export function observeSelectionActions({
       element.removeEventListener("contextmenu", onContextMenu, true);
       element.removeEventListener("scroll", onScroll, true);
       view.removeEventListener("blur", dismiss);
-      view.removeEventListener("resize", dismiss);
+      view.removeEventListener("resize", onResize);
     },
   };
 }

@@ -1014,6 +1014,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
+  const [citationBoundary, setCitationBoundary] = useState<HTMLDivElement | null>(null);
   const chatWidth = useClientSettings((settings) => settings.chatWidth);
   const {
     target: readyCitationRequest,
@@ -1506,9 +1507,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
           className="relative h-full min-h-0"
           data-assistant-citation-viewport="true"
         >
+          <div
+            ref={setCitationBoundary}
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 top-0"
+            style={{ bottom: canvas?.composerHeight ?? 0 }}
+            data-assistant-citation-boundary="true"
+          />
           {onCiteAssistantText && citationThreadRef ? (
             <AssistantSelectionToolbar
               viewport={timelineViewportElement}
+              boundary={citationBoundary}
               threadRef={citationThreadRef}
               onCite={onCiteAssistantText}
             />

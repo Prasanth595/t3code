@@ -261,7 +261,9 @@ describe("captureAssistantTextSelection", () => {
         prefix: "Earlier answer. ",
       }),
     );
-    expect(capture(source, nativeSelection([quote, 0], [timestampText, 1]))).toBeNull();
+    expect(capture(source, nativeSelection([quote, 0], [timestampText, 1]))?.selector.text).toBe(
+      quote.data,
+    );
   });
 
   it("captures a triple-clicked response that ends before a tool row and the next response", () => {
@@ -293,18 +295,16 @@ describe("captureAssistantTextSelection", () => {
     expect(captured?.selector).toEqual(selector(quote.data));
   });
 
-  it.each([false, true])(
-    "rejects actual overlap with another response, backwards=%s",
-    (backwards) => {
-      const first = textNode("Repeated quote.");
-      const second = textNode(first.data);
-      const viewport = new SelectionNode("MAIN").append(
-        assistantSource(first),
-        assistantSource(second),
-      );
-      expect(capture(viewport, nativeSelection([first, 0], [second, 1], backwards))).toBeNull();
-    },
-  );
+  it.each([false, true])("clips overlap to the originating response, backwards=%s", (backwards) => {
+    const first = textNode("Repeated quote.");
+    const second = textNode(first.data);
+    const viewport = new SelectionNode("MAIN").append(
+      assistantSource(first),
+      assistantSource(second),
+    );
+    const captured = capture(viewport, nativeSelection([first, 0], [second, 1], backwards));
+    expect(captured?.selector.text).toBe(backwards ? "R" : first.data);
+  });
 
   it("accepts a control endpoint only when none of its text is selected", () => {
     const quote = textNode("A paragraph.");

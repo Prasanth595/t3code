@@ -14,6 +14,7 @@ export type AssistantCitationSourceAnchor = {
   source: HTMLElement;
   range: Range;
   viewport: HTMLElement;
+  boundary?: HTMLElement | undefined;
 };
 
 export function findAssistantCitationSourceAnchor(
@@ -220,11 +221,19 @@ export function captureAssistantTextSelection(
 ): { source: HTMLElement; selector: AssistantTextSelector; range: Range } | null {
   if (selection === null || selection.isCollapsed || selection.rangeCount !== 1) return null;
   const range = selection.getRangeAt(0).cloneRange();
-  const first = selectedTextBoundary(range, range.commonAncestorContainer, false);
-  const last = selectedTextBoundary(range, range.commonAncestorContainer, true);
-  if (first === null || last === null) return null;
-  const source = first.parentElement?.closest<HTMLElement>("[data-assistant-citation-source]");
+  const backward =
+    selection.anchorNode === range.endContainer && selection.anchorOffset === range.endOffset;
+  const origin = selectedTextBoundary(range, range.commonAncestorContainer, backward);
+  const source = origin?.parentElement?.closest<HTMLElement>("[data-assistant-citation-source]");
   if (!source || !viewport.contains(source)) return null;
+
+  // A drag can leave the response and enter the header or another message.
+  // Keep the citation tied to the response where that drag began.
+  if (!source.contains(range.startContainer)) range.setStart(source, 0);
+  if (!source.contains(range.endContainer)) range.setEnd(source, source.childNodes.length);
+  const first = selectedTextBoundary(range, source, false);
+  const last = selectedTextBoundary(range, source, true);
+  if (first === null || last === null) return null;
 
   // Paragraph selection can end at the next block's offset 0 or a parent
   // boundary. Validate the text actually selected, not that empty endpoint.

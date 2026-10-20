@@ -8,6 +8,7 @@ import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -31,6 +32,7 @@ import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCom
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { observeResize } from "~/lib/observeResize";
+import { assistantCitationAnchorRect } from "~/lib/assistantCitationPosition";
 
 export function AssistantCitationChip({
   citation,
@@ -59,6 +61,18 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
+  const boundary = activeSourceAnchor?.boundary;
+  const [boundaryRect, setBoundaryRect] = useState<
+    { element: HTMLElement; rect: Pick<DOMRect, "x" | "y" | "width" | "height"> } | undefined
+  >();
+  useLayoutEffect(() => {
+    if (!commentOpen || !boundary) return;
+    return observeResize(boundary, () => {
+      // Base UI compares rect values; resizing the same boundary element does not reposition it.
+      const { x, y, width, height } = boundary.getBoundingClientRect();
+      setBoundaryRect({ element: boundary, rect: { x, y, width, height } });
+    });
+  }, [commentOpen, boundary]);
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
   }, [commentOpen]);
@@ -92,10 +106,7 @@ export function AssistantCitationChip({
   const popupAnchor = activeSourceAnchor
     ? {
         contextElement: activeSourceAnchor.source,
-        getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
-        },
+        getBoundingClientRect: () => assistantCitationAnchorRect(activeSourceAnchor),
       }
     : undefined;
   const label = assistantCitationLabel(citation);
@@ -176,6 +187,14 @@ export function AssistantCitationChip({
               side={activeSourceAnchor ? "bottom" : "top"}
               align="end"
               anchor={popupAnchor}
+              sticky={Boolean(popupAnchor)}
+              collisionBoundary={
+                popupAnchor
+                  ? boundaryRect?.element === boundary
+                    ? boundaryRect?.rect
+                    : boundary
+                  : undefined
+              }
               initialFocus={() => {
                 commentInputRef.current?.focus({ preventScroll: true });
                 return false;
