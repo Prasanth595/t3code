@@ -479,7 +479,7 @@ const make = Effect.gen(function* () {
     {
       readonly page: Page;
       readonly openerTabId: string;
-      readonly handoffSessionId: string | null;
+      handoffSessionId: string | null;
     }
   >();
   const closedSessions = new Set<string>();
@@ -727,7 +727,6 @@ const make = Effect.gen(function* () {
 
   const createTab = async (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
     const adopted = adoptedPages.get(tabKey(snapshot.threadId, snapshot.tabId));
-    adoptedPages.delete(tabKey(snapshot.threadId, snapshot.tabId));
     const desktop =
       adopted === undefined && (await desktopRenders(snapshot))
         ? await connectDesktop(snapshot)
@@ -897,6 +896,8 @@ const make = Effect.gen(function* () {
     }
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
+    // The opener's controller may have released during setup.
+    tab.handoffSessionId = adopted?.handoffSessionId ?? null;
     tabs.set(key, tab);
     reportLiveTabs();
     // Existing desktop and popup PDFs can start loading before interception attaches.
@@ -1254,6 +1255,7 @@ const make = Effect.gen(function* () {
       .finally(() => {
         pendingTabs.delete(key);
         closedPendingTabs.delete(key);
+        adoptedPages.delete(key);
       });
     pendingTabs.set(key, opening);
     return opening;
@@ -2433,6 +2435,14 @@ const make = Effect.gen(function* () {
                       candidate.handoffSessionId === viewer.sessionId
                     ) {
                       candidate.handoffSessionId = null;
+                    }
+                  }
+                  for (const pending of adoptedPages.values()) {
+                    if (
+                      pending.openerTabId === tab.tabId &&
+                      pending.handoffSessionId === viewer.sessionId
+                    ) {
+                      pending.handoffSessionId = null;
                     }
                   }
                 }

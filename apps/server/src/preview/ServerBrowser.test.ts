@@ -1531,6 +1531,36 @@ it.live(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("releasing the opener while its popup is still starting lets the agent keep it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const sessionId = "opener-session";
+      const opener = yield* browser.attachViewer(viewerInput(tabId, true, sessionId));
+      yield* opener.input({ type: "takeControl" });
+      yield* Queue.clear(opener.output);
+      const popup = makeContext();
+      const settingUp = Promise.withResolvers<void>();
+      const setUp = Promise.withResolvers<void>();
+      popup.page.setViewportSize.mockImplementationOnce(() => {
+        settingUp.resolve();
+        return setUp.promise;
+      });
+      const waitingForPopup = yield* nextPopup(opener.output).pipe(Effect.forkScoped);
+      contexts[0]!.page.emit("popup", popup.page);
+      const shown = yield* Fiber.join(waitingForPopup);
+      yield* Effect.promise(() => settingUp.promise);
+
+      yield* opener.input({ type: "releaseControl" });
+      setUp.resolve();
+      const popupViewer = yield* browser.attachViewer(viewerInput(shown.tabId, true, sessionId));
+      let control = yield* Queue.take(popupViewer.output);
+      while (control._tag !== "control") control = yield* Queue.take(popupViewer.output);
+      expect(control).toMatchObject({ controller: "agent" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a controlled agent popup opens when its agent is at the tab limit", () =>
   Effect.scoped(
     Effect.gen(function* () {
