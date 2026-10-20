@@ -1,6 +1,16 @@
-import { assert, it } from "@effect/vitest";
+import { assert, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  type ModelSelection,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+  ScheduledTaskId,
+  type ScheduledTaskUpsertInput,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -8,6 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
@@ -25,6 +36,19 @@ import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import * as McpToolAccess from "../mcp/McpToolAccess.ts";
+import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
+import * as ProjectHandlers from "../mcp/toolkits/project/handlers.ts";
+import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "../secrets/SecretRequests.ts";
+import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 
 const layerWorkspacePaths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
   normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot.replace(/\/$/, "")),
@@ -56,13 +80,14 @@ const layerTestFor = (
     | ProjectFaviconResolver.ProjectFaviconResolver
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
+  settings = ServerSettings.layerTest(),
 ) =>
   RuntimeLayer.layerProjectService.pipe(
     Layer.provideMerge(ProjectEnrichmentService.layer),
     Layer.provideMerge(layerWorkspacePaths),
     Layer.provideMerge(projectMetadataLayer),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(settings),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "project-service-test-" })),
     Layer.provide(NodeServices.layer),
   );
@@ -628,6 +653,185 @@ it.effect("keeps project snapshots available when optional metadata enrichment f
       assert.isNull(snapshot.projects[0]?.repositoryIdentity ?? null);
       assert.isNull(snapshot.projects[0]?.faviconPath ?? null);
     }).pipe(Effect.provide(layerTestFor(layerFailingMetadata)));
+  }),
+);
+
+const makeExternalMcp = Effect.gen(function* () {
+  const projects = yield* ProjectService.ProjectService;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const projectId = ProjectId.make("project:mcp-default");
+  yield* projects.create({
+    commandId: CommandId.make("command:mcp-default:create"),
+    projectId,
+    title: "MCP defaults",
+    workspaceRoot: "/work/mcp-default",
+  });
+  const scope: McpInvocationContext.McpInvocationScope = {
+    environmentId: EnvironmentId.make("environment:mcp-default"),
+    requestNamespace: "client:mcp-default",
+    thread: undefined,
+    client: { sessionId: "mcp-default", label: "External client", access: "auto-accept-edits" },
+    capabilities: new Set(["orchestration"]),
+    issuedAt: 0,
+  };
+  const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+  const scheduled: Array<ScheduledTaskUpsertInput> = [];
+  const dependencies = Layer.mergeAll(
+    NodeServices.layer,
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    ServerConfig.layerTest(process.cwd(), { prefix: "project-mcp-default-" }).pipe(
+      Layer.provide(NodeServices.layer),
+    ),
+    Layer.succeed(ProjectService.ProjectService, projects),
+    Layer.succeed(ServerSettings.ServerSettingsService, settings),
+    Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
+    Layer.mock(ThreadManagement.ThreadManagementService)({}),
+    Layer.mock(ThreadLaunch.ThreadLaunchService)({
+      launch: (input) =>
+        Effect.sync(() => {
+          launched.push(input);
+          return {
+            threadId: input.threadId,
+            projection: { thread: { ...input, id: input.threadId }, runs: [] },
+            resumed: false,
+          } as unknown as ThreadLaunch.ThreadLaunchResult;
+        }),
+    }),
+    Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+      upsert: (input) =>
+        Effect.sync(() => {
+          scheduled.push(input);
+          return {
+            task: {
+              ...input,
+              id: ScheduledTaskId.make("task:mcp-default"),
+              threadId: input.threadId ?? null,
+              schedule: { type: "interval" as const, everyMs: 60_000 },
+              createdBy: "agent" as const,
+              creationSource: "mcp" as const,
+              createdAt: "2026-10-01T00:00:00.000Z",
+              updatedAt: "2026-10-01T00:00:00.000Z",
+              nextRunAt: null,
+              lastRunAt: null,
+              lastRunStatus: "never" as const,
+              lastRunError: null,
+              runCount: 0,
+            },
+          };
+        }),
+    }),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+    Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+    Layer.mock(SecretRequests.SecretRequests)({}),
+    Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+  );
+  const toolkit = yield* ProjectToolkit.pipe(
+    Effect.provide(
+      McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+    ),
+  );
+  const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+    Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))),
+  );
+  return {
+    projectId,
+    launched,
+    scheduled,
+    launch: (modelSelection?: ModelSelection) =>
+      toolkit
+        .handle("t3_thread_launch", {
+          title: "Check project",
+          projectId,
+          ...(modelSelection === undefined ? {} : { modelSelection }),
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies)),
+    schedule: () =>
+      mcp.scheduleTask(scope, {
+        projectId,
+        prompt: "Check project",
+        schedule: { type: "interval", everyMs: 60_000 },
+      }),
+  };
+});
+
+it.effect("external MCP launches and schedules inherit the effective project default", () =>
+  Effect.gen(function* () {
+    const projects = yield* ProjectService.ProjectService;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const mcp = yield* makeExternalMcp;
+    const environmentModel = {
+      instanceId: ProviderInstanceId.make("codex"),
+      model: "environment-model",
+    };
+    const projectModel = { ...environmentModel, model: "project-model" };
+    yield* settings.updateSettings({ defaultModelSelection: environmentModel });
+    assert.isNull(Option.getOrThrow(yield* projects.getById(mcp.projectId)).defaultModelSelection);
+
+    const launch = yield* mcp.launch();
+    expect(launch.at(-1)?.result).toMatchObject({ modelSelection: environmentModel });
+    assert.equal((yield* Effect.exit(mcp.schedule()))._tag, "Success");
+    yield* settings.updateSettings({
+      projectSettingsOverrides: { [mcp.projectId]: { defaultModelSelection: projectModel } },
+    });
+    yield* mcp.launch();
+    assert.equal((yield* Effect.exit(mcp.schedule()))._tag, "Success");
+    assert.deepEqual(
+      mcp.launched.map((input) => input.modelSelection),
+      [environmentModel, projectModel],
+    );
+    assert.deepEqual(
+      mcp.scheduled.map((input) => input.modelSelection),
+      [environmentModel, projectModel],
+    );
+    assert.deepEqual(
+      mcp.launched.map((input) => input.runtimeMode),
+      ["auto-accept-edits", "auto-accept-edits"],
+    );
+    assert.deepEqual(
+      mcp.scheduled.map((input) => input.runtimeMode),
+      ["auto-accept-edits", "auto-accept-edits"],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("external MCP bounds settings failures and explicit launches skip the failing read", () =>
+  Effect.gen(function* () {
+    const reads = yield* Ref.make(0);
+    const failingSettings = Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Ref.update(reads, (count) => count + 1).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ServerSettingsError({
+              operation: "read-file",
+              settingsPath: "/private/settings.json",
+              cause: new Error("private settings contents"),
+            }),
+          ),
+        ),
+      ),
+    });
+    yield* Effect.gen(function* () {
+      const mcp = yield* makeExternalMcp;
+      const launch = yield* mcp.launch();
+      expect(launch.at(-1)?.result).toMatchObject({
+        code: "orchestration_error",
+        message: "The operation could not be completed.",
+      });
+      const schedule = yield* mcp.schedule().pipe(Effect.flip);
+      assert.equal(schedule.code, "orchestration_error");
+      assert.equal(schedule.message, "Unable to read server settings.");
+      assert.equal(mcp.launched.length, 0);
+      assert.equal(mcp.scheduled.length, 0);
+      assert.equal(yield* Ref.get(reads), 2);
+
+      const explicitModel = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "explicit-model",
+      };
+      const explicit = yield* mcp.launch(explicitModel);
+      expect(explicit.at(-1)?.result).toMatchObject({ modelSelection: explicitModel });
+      assert.equal(yield* Ref.get(reads), 2);
+    }).pipe(Effect.provide(layerTestFor(layerMetadata, failingSettings)));
   }),
 );
 
