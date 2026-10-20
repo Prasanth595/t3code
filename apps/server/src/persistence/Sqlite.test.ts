@@ -9,6 +9,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import { readOnly } from "@t3tools/shared/nodeSqliteClient";
 
 import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
@@ -139,3 +140,28 @@ it.effect("enables checkpoint_fullfsync in the shared persistence setup", () =>
     assert.equal(rows[0]?.checkpoint_fullfsync, 1);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("configures the page cache and mapped reads on both file connections", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-sqlite-cache-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`CREATE TABLE cache_probe(id INTEGER PRIMARY KEY)`;
+    yield* sql`INSERT INTO cache_probe VALUES (1)`;
+    const probe = Effect.gen(function* () {
+      const cache = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
+      const mmap = yield* sql<{ readonly mmap_size: number }>`PRAGMA mmap_size`;
+      const data = yield* sql<{ readonly id: number }>`SELECT id FROM cache_probe`;
+      assert.equal(cache[0]?.cache_size, -256 * 1024);
+      // SQLite may clamp the request to its platform-specific compile-time limit.
+      assert.isAbove(mmap[0]?.mmap_size ?? 0, 0);
+      assert.isAtMost(mmap[0]?.mmap_size ?? 0, 2 * 1024 * 1024 * 1024);
+      assert.deepEqual(data, [{ id: 1 }]);
+    });
+    yield* probe;
+    yield* probe.pipe(readOnly);
+  }).pipe(
+    Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
