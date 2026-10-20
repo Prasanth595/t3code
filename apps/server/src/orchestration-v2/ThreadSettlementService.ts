@@ -180,6 +180,7 @@ export function isSnoozed(
     | "snoozedUntil"
     | "snoozedAt"
     | "snoozeQuiet"
+    | "latestRunRequestedAt"
     | "latestRunCompletedAt"
     | "status"
     | "pendingRuntimeRequest"
@@ -190,6 +191,7 @@ export function isSnoozed(
   if (snoozedUntilMs === null || snoozedUntilMs <= nowMs) return false;
   if (thread.pendingRuntimeRequest !== null) return false;
   const snoozedAtMs = toMillis(thread.snoozedAt);
+  const requestedAtMs = toMillis(thread.latestRunRequestedAt);
   const completedAtMs = toMillis(thread.latestRunCompletedAt);
   const wokeOnError =
     thread.status === "failed" &&
@@ -198,6 +200,8 @@ export function isSnoozed(
     thread.snoozeQuiet !== true &&
     thread.status === "completed" &&
     snoozedAtMs !== null &&
+    requestedAtMs !== null &&
+    requestedAtMs > snoozedAtMs &&
     completedAtMs !== null &&
     completedAtMs > snoozedAtMs;
   return !wokeOnError && !wokeOnCompletion;
