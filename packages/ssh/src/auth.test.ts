@@ -1,7 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -82,6 +84,86 @@ describe("ssh auth", () => {
       yield* fs.remove(runtimeDirectoryOf(otherUser), { recursive: true });
     }).pipe(
       Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
+    ),
+  );
+
+  it.effect("writes the default askpass helper once when interactive commands overlap", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const runtimeDirectories: Array<string> = [];
+      yield* Effect.addFinalizer(() =>
+        Effect.forEach(runtimeDirectories, (directory) =>
+          fs.remove(directory, { recursive: true }).pipe(Effect.ignore),
+        ),
+      );
+
+      // The first helper write of each round waits for the test, so the second command starts
+      // while the first is still setting up and must not touch the shared files until it is done.
+      let gate: { arrived: Deferred.Deferred<void>; release: Deferred.Deferred<void> } | undefined;
+      let fileCalls = 0;
+      let helperWrites = 0;
+      const counted = <A, E>(effect: Effect.Effect<A, E>) =>
+        Effect.suspend(() => {
+          fileCalls += 1;
+          return effect;
+        });
+      const trackedFs: FileSystem.FileSystem = {
+        ...fs,
+        makeTempDirectory: (options) =>
+          counted(fs.makeTempDirectory(options)).pipe(
+            Effect.tap((directory) => Effect.sync(() => runtimeDirectories.push(directory))),
+          ),
+        stat: (path) => counted(fs.stat(path)),
+        exists: (path) => counted(fs.exists(path)),
+        writeFileString: (path, data, options) =>
+          counted(
+            Effect.gen(function* () {
+              helperWrites += 1;
+              const held = gate;
+              gate = undefined;
+              if (held) {
+                yield* Deferred.succeed(held.arrived, undefined);
+                yield* Deferred.await(held.release);
+              }
+              yield* fs.writeFileString(path, data, options);
+            }),
+          ),
+      };
+      const askpassPath = buildSshChildEnvironment({
+        interactiveAuth: true,
+        authSecret: "pw",
+      }).pipe(
+        Effect.map((env) => env.SSH_ASKPASS ?? ""),
+        Effect.provideService(FileSystem.FileSystem, trackedFs),
+      );
+      const twoOverlappingCommands = Effect.gen(function* () {
+        const held = {
+          arrived: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        gate = held;
+        const first = yield* Effect.forkChild(askpassPath);
+        yield* Deferred.await(held.arrived);
+        const callsBefore = fileCalls;
+        const second = yield* askpassPath.pipe(Effect.forkChild({ startImmediately: true }));
+        assert.equal(fileCalls, callsBefore, "second command touched the files mid-setup");
+        yield* Deferred.succeed(held.release, undefined);
+        return [yield* Fiber.join(first), yield* Fiber.join(second)] as const;
+      });
+
+      const [first, second] = yield* twoOverlappingCommands;
+      assert.equal(second, first);
+      assert.equal(runtimeDirectories.length, 1);
+      assert.equal(helperWrites, 1);
+
+      yield* fs.remove(first);
+      assert.deepStrictEqual(yield* twoOverlappingCommands, [first, first]);
+      assert.equal(runtimeDirectories.length, 1);
+      assert.equal(helperWrites, 2);
+      assert.include(yield* fs.readFileString(first), 'printf "%s\\n" "$T3_SSH_AUTH_SECRET"');
+    }).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
+      Effect.scoped,
     ),
   );
 
