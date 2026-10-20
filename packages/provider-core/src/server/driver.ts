@@ -46,6 +46,8 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
+  /** Only a runtime that pins every request to the account used for its quota probe may set this. */
+  readonly delegatedLaunchAccountBinding?: "pinned";
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,

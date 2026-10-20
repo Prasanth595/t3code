@@ -3741,13 +3741,21 @@ it.effect(
       assert.isTrue((yield* sink.commitCommand(receipt)).committed);
       let probes = 0;
       let providerStarts = 0;
+      let pinned = true;
+      let healthy = false;
+      let fresh = false;
+      let email = "test@example.com";
       const instance = {
         instanceId: providerInstanceId,
         driverKind: providerDriver,
+        get delegatedLaunchAccountBinding() {
+          return pinned ? "pinned" : undefined;
+        },
         enabled: true,
         snapshot: {
-          refresh: Effect.sync(() => {
+          refresh: Effect.gen(function* () {
             probes++;
+            const checkedAt = DateTime.formatIso(fresh ? yield* DateTime.now : now);
             return {
               instanceId: providerInstanceId,
               driver: providerDriver,
@@ -3755,12 +3763,17 @@ it.effect(
               installed: true,
               version: null,
               status: "ready" as const,
-              auth: { status: "authenticated" as const, email: "test@example.com" },
-              checkedAt: DateTime.formatIso(now),
+              auth: { status: "authenticated" as const, email },
+              checkedAt,
               usageLimits: {
-                checkedAt: DateTime.formatIso(now),
+                checkedAt,
                 windows: [
-                  { id: "primary", kind: "session" as const, label: "Session", usedPercent: 100 },
+                  {
+                    id: "primary",
+                    kind: "session" as const,
+                    label: "Session",
+                    usedPercent: healthy ? 0 : 100,
+                  },
                   { id: "secondary", kind: "weekly" as const, label: "Weekly", usedPercent: 0 },
                 ],
               },
@@ -3810,6 +3823,41 @@ it.effect(
         assert.isFalse((yield* sink.commitCommand(receipt)).committed);
         assert.equal(probes, 1);
         assert.equal(providerStarts, 0);
+        // Recreate admission against durable projections. An unpinned pool may
+        // not spend even a healthy direct-account snapshot.
+        pinned = false;
+        healthy = true;
+        yield* Effect.gen(function* () {
+          const restarted = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+          const denied = yield* restarted.prepare(threadId, runId, 0).pipe(Effect.flip);
+          assert.isTrue(isWaitingForCapacity(denied));
+        }).pipe(Effect.provide(Layer.fresh(admissionLayer)));
+        assert.equal(probes, 1);
+        pinned = true;
+        yield* TestClock.adjust("61 seconds");
+        const stale = yield* admission.prepare(threadId, runId, 0).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(stale));
+        assert.equal(
+          (yield* store.getTurnStartContext(threadId, runId)).runs[0]?.capacityWait?.reason,
+          "unverified",
+        );
+        fresh = true;
+        email = "replacement@example.com";
+        yield* Effect.gen(function* () {
+          const restarted = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+          assert.isTrue(yield* restarted.prepare(threadId, runId, 0));
+        }).pipe(Effect.provide(Layer.fresh(admissionLayer)));
+        const admitted = (yield* store.getTurnStartContext(threadId, runId)).runs[0]!;
+        assert.isUndefined(admitted.capacityWait);
+        assert.include(
+          admitted.delegatedLaunch!.admittedDomains,
+          "codex:account:replacement@example.com",
+        );
+        assert.isFalse((yield* sink.commitCommand(receipt)).committed);
+        healthy = false;
+        const switched = yield* admission.prepare(threadId, runId, 0).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(switched));
+        assert.equal(providerStarts, 0);
         const nextGeneration = {
           ...waiting,
           delegatedLaunch: {
@@ -3830,7 +3878,7 @@ it.effect(
           ],
         });
         assert.isFalse(yield* admission.prepare(threadId, runId, 0));
-        assert.equal(probes, 1);
+        assert.equal(probes, 4);
         yield* sink.write({
           events: [
             {
@@ -3885,7 +3933,188 @@ it.effect(
           ],
         });
         assert.isFalse(yield* admission.prepare(threadId, runId, 0));
-        assert.equal(probes, 1);
+        assert.equal(probes, 4);
       }).pipe(Effect.provide(admissionLayer));
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
+);
+
+it.effect("reopens a capacity waiting database and replays exactly one start after recovery", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "capacity-restart-" });
+    const database = SqlitePersistence.layerFromPath(path.join(directory, "state.sqlite"));
+    const stores = Layer.mergeAll(
+      EventStore.layer,
+      ProjectionStore.layer,
+      CommandReceiptStore.layer,
+      EffectOutbox.layer,
+    ).pipe(Layer.provideMerge(database));
+    const services = Layer.mergeAll(
+      stores,
+      EventSink.layer.pipe(Layer.provide(stores)),
+      IdAllocator.layer,
+      ServerSettings.layerTest(),
+      Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+        runRecoveryOnce: Effect.succeed(false),
+      }),
+    );
+    const disk = Layer.mergeAll(
+      services,
+      ProviderRuntimeRecovery.layer.pipe(Layer.provide(services)),
+    );
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:capacity-persistence");
+    const runId = RunId.make("run:capacity-persistence");
+    const attemptId = RunAttemptId.make("attempt:capacity-persistence");
+    const providerThreadId = ProviderThreadId.make("provider-thread:capacity-persistence");
+    const commandId = CommandId.make("client-request:capacity-persistence");
+    const thread = makeThread(threadId, now);
+    const run: OrchestrationV2Run = {
+      id: runId,
+      threadId,
+      ordinal: 1,
+      providerInstanceId,
+      modelSelection,
+      providerThreadId,
+      userMessageId: MessageId.make("message:capacity-persistence"),
+      rootNodeId: null,
+      activeAttemptId: attemptId,
+      status: "starting",
+      requestedAt: now,
+      startedAt: null,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+      delegatedTaskId: NodeId.make("task:capacity-persistence"),
+      capacityWait: {
+        reason: "exhausted",
+        checkedAt: DateTime.formatIso(now),
+        retryAt: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+      },
+    };
+    const receipt = {
+      commandId,
+      commandType: "delegated_task.request",
+      acceptedAt: now,
+      threadId,
+      events: [
+        threadCreatedEvent({ id: "event:capacity:thread", thread, now }),
+        {
+          id: EventId.make("event:capacity:run"),
+          type: "run.created" as const,
+          threadId,
+          occurredAt: now,
+          payload: run,
+        },
+        {
+          id: EventId.make("event:capacity:attempt"),
+          type: "run-attempt.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: attemptId,
+            runId,
+            attemptOrdinal: 1,
+            rootNodeId: NodeId.make("node:capacity"),
+            providerInstanceId,
+            providerThreadId,
+            providerTurnId: null,
+            reason: "initial" as const,
+            status: "pending" as const,
+            startedAt: null,
+            completedAt: null,
+          },
+        },
+        {
+          id: EventId.make("event:capacity:provider-thread"),
+          type: "provider-thread.updated" as const,
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: providerThreadId,
+            driver: providerDriver,
+            providerInstanceId,
+            providerSessionId: ProviderSessionId.make("session:capacity"),
+            appThreadId: threadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "not_loaded" as const,
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+      ],
+      effects: [],
+    };
+
+    const effectId = "effect:capacity-restart";
+    yield* Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      assert.isTrue((yield* sink.commitCommand(receipt)).committed);
+      yield* outbox.enqueue([
+        { id: effectId, commandId, threadId, request: { type: "provider-turn.start", runId } },
+      ]);
+      assert.isTrue(
+        Option.isSome(
+          yield* outbox.claimNext({ workerId: "old-process", leaseDurationMs: 120_000 }),
+        ),
+      );
+      assert.isTrue(
+        yield* outbox.retry({
+          effectId,
+          workerId: "old-process",
+          error: "waiting_for_capacity",
+          delayMs: 60_000,
+        }),
+      );
+    }).pipe(Effect.provide(Layer.fresh(disk)), Effect.scoped);
+    // All SQLite connections and in-memory service state above are now closed.
+    yield* Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      assert.equal(
+        (yield* store.getTurnStartContext(threadId, runId)).runs[0]?.capacityWait?.reason,
+        "exhausted",
+      );
+      assert.equal(
+        (yield* (yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService).reconcile(
+          "startup",
+        )).terminalizedRuns,
+        0,
+      );
+      assert.equal((yield* outbox.reconcileAfterProcessLoss).cancelled, 0);
+      assert.isFalse((yield* sink.commitCommand(receipt)).committed);
+      assert.isTrue(
+        Option.isNone(
+          yield* outbox.claimNext({ workerId: "new-process", leaseDurationMs: 120_000 }),
+        ),
+      );
+      yield* TestClock.adjust("60 seconds");
+      const claims = yield* Effect.all(
+        ["new-process", "parallel-worker"].map((workerId) =>
+          outbox.claimNext({ workerId, leaseDurationMs: 120_000 }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      const claimed = claims.flatMap((claim) => (Option.isSome(claim) ? [claim.value] : []));
+      assert.lengthOf(claimed, 1);
+      assert.equal(claimed[0]!.id, effectId);
+      assert.deepEqual(claimed[0]!.request, { type: "provider-turn.start", runId });
+      assert.isTrue(yield* outbox.succeed({ effectId, workerId: claimed[0]!.leaseOwner! }));
+      assert.isTrue(
+        Option.isNone(
+          yield* outbox.claimNext({ workerId: "replay-worker", leaseDurationMs: 120_000 }),
+        ),
+      );
+      assert.equal((yield* store.getTurnStartContext(threadId, runId)).runs[0]?.status, "starting");
+    }).pipe(Effect.provide(Layer.fresh(disk)), Effect.scoped);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

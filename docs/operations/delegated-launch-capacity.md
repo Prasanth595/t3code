@@ -14,26 +14,45 @@ enablement and the original runtime mode still apply. Supported model options
 are retained; an explicit fallback's options take precedence. No route purchases
 capacity or adds credentials.
 
-The [example settings fragment](examples/delegated-launch-routes.json) expresses
+The [ready-to-apply settings fragment](examples/delegated-launch-routes.json) expresses
 Sol → Opus → Astra, Opus → Astra, Copilot Claude → matching native Claude,
 native Sonnet/Haiku → Sol, and Kimi/Gemini → Sol. Codex tries the same exact
-model on the alternate account first. Sol is always `gpt-6.1-sol`. Replace the
-example instance IDs and model slugs with your configured catalog IDs; duplicate
-or extend the exact-model entries for other configured versions. This file is
-an example and is never loaded automatically.
+model on another configured provider first. Sol is always `gpt-6.1-sol`. The
+fragment covers the enabled `codex`, `claudeAgent`, `copilot_native_scale`,
+`kimi_api` and `antigravity` catalog, including Claude 5.5, both global Kimi
+slugs and all three Gemini 3.8 Flash variants. Apply only its
+`delegatedLaunchRoutes` field through server settings. It is never loaded
+automatically and does not enable providers or change credentials.
 
-The example's `codex-alt` must be a separately authenticated subscription.
 Account identity, credential fingerprints and credential-store bindings are
 used to skip aliases of a blocked domain, including Sol → Astra on the same
 Codex account. Different instance IDs alone do not establish different accounts.
 A race-blocked domain is reconsidered after one minute with another fresh probe.
+Model-specific exhausted windows block that model's quota across aliases;
+unverified evidence does not establish an account-wide exhausted bucket.
 
-Local Codex, native Claude, Cursor, Grok and local OpenCode Go/Kimi collectors
+Native Claude, Cursor, Grok and local OpenCode Go/Kimi collectors
 provide usage evidence. Unknown model-specific quotas (including Codex Spark)
 wait rather than treating unrelated bars as proof of capacity. Kimi uses the
-read-only `GET /coding/v1/usages` endpoint on `api.kimi.com` and the local
-OpenCode credential overlay. External OpenCode servers are unsupported because
+read-only `GET /coding/v1/usages` endpoint on `api.kimi.com` for
+`kimi-for-coding/*`, and on `api.kimi.ai` for `kimi-code-plan-global/*`.
+The global host is the models.dev provider's canonical API; Kimi CLI's usage
+reader appends `/usages` to the selected platform API. The collector requires
+the matching inline OpenCode auth entry or an explicit inline provider API-key
+option. It never substitutes the regional account's key.
+OAuth, noncanonical API overrides, credentials loaded only inside an opaque
+launcher, and unpinned OpenCode 2 database selection remain unsupported.
+External OpenCode servers are unsupported because
 local credentials cannot establish the runtime's account.
+
+The current Codex driver cannot pin its runtime requests to the account reported
+by its app-server probe. A custom responses provider or launcher can route to
+an external pool while reporting healthy local-account bars. Codex delegated
+launches therefore remain unverified until a driver implements the explicit
+`delegatedLaunchAccountBinding: "pinned"` contract. No current Codex driver
+claims that contract. The configured `codex-t3` pool and the `opencode-t3`
+launcher that loads a Kimi secret only inside the child process consequently
+use healthy fallbacks or wait; this fragment alone cannot admit those routes.
 
 ACP does not expose quota or pin a pooled account. Copilot's ACP integration
 therefore reports unsupported; neither a GitHub login nor another account's

@@ -1325,20 +1325,23 @@ export const layer: Layer.Layer<
     return ProviderTurnStartServiceV2.of({
       start: Effect.fn("ProviderTurnStartService.start")(
         function* (input) {
-          if (
-            !(yield* launchAdmission.prepare(
-              input.threadId,
-              input.runId,
-              input.launchGeneration ?? 0,
-            ))
-          )
-            return;
-          // Storage cleanup removes worktrees under the same lease. Only startup
-          // holds it; the provider turn runs after it is released.
+          // A lease may queue for minutes. Probe after acquiring it so queued
+          // launches cannot spend evidence checked before that wait.
+          const admittedStart = Effect.gen(function* () {
+            if (
+              !(yield* launchAdmission.prepare(
+                input.threadId,
+                input.runId,
+                input.launchGeneration ?? 0,
+              ))
+            )
+              return;
+            return yield* start(input);
+          });
           const { thread } = yield* projectionStore.getThreadRecords(input.threadId, []);
           const providerTurn = yield* thread.worktreePath === null
-            ? start(input)
-            : withWorkspaceLease(path.resolve(thread.worktreePath), start(input));
+            ? admittedStart
+            : withWorkspaceLease(path.resolve(thread.worktreePath), admittedStart);
           if (providerTurn !== undefined) yield* providerTurn;
         },
         (effect, input) =>

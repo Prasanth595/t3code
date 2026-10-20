@@ -191,12 +191,30 @@ const KimiUsageResponse = Schema.Struct({
   }),
 });
 
+const KimiConfig = Schema.Struct({
+  provider: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({
+        options: Schema.optionalKey(
+          Schema.Struct({
+            apiKey: Schema.optionalKey(Schema.String),
+            baseURL: Schema.optionalKey(Schema.String),
+          }),
+        ),
+      }),
+    ),
+  ),
+});
+const decodeKimiConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(KimiConfig));
+
 const decodeKimiAuthFile = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ "kimi-for-coding": Schema.optionalKey(Schema.Unknown) })),
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
 
 /** Uses the same local OpenCode auth overlay; remote servers cannot bind to it. */
 export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (input: {
+  readonly providerId?: "kimi-for-coding" | "kimi-code-plan-global";
   readonly enabled: boolean;
   readonly serverUrl: string;
   readonly environment: NodeJS.ProcessEnv;
@@ -223,18 +241,28 @@ export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (i
             error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
         }),
       ));
+    const providerId = input.providerId ?? "kimi-for-coding";
+    const baseURL =
+      providerId === "kimi-code-plan-global"
+        ? "https://api.kimi.ai/coding/v1"
+        : "https://api.kimi.com/coding/v1";
+    const config = yield* decodeKimiConfig(env.OPENCODE_CONFIG_CONTENT || "{}");
+    const options = config.provider?.[providerId]?.options;
+    if (options?.baseURL && options.baseURL.replace(/\/+$/, "") !== baseURL) return unsupported;
     const auth = yield* decodeKimiAuthFile(text);
-    const apiAuth = decodeApiAuth(auth["kimi-for-coding"]);
-    if (auth["kimi-for-coding"] !== undefined && Option.isNone(apiAuth)) return unsupported;
-    const key = (Option.isSome(apiAuth) ? apiAuth.value.key : env.KIMI_API_KEY)?.trim();
+    const apiAuth = decodeApiAuth(auth[providerId]);
+    if (auth[providerId] !== undefined && Option.isNone(apiAuth)) return unsupported;
+    // Inline auth is the runtime override. Without it OpenCode 2 can select a
+    // database credential that this collector cannot bind to the request.
+    if (!env.OPENCODE_AUTH_CONTENT && !options?.apiKey) return unsupported;
+    const key = (
+      options?.apiKey ?? (Option.isSome(apiAuth) ? apiAuth.value.key : undefined)
+    )?.trim();
+    if (key?.includes("{env:") || key?.includes("{file:")) return unsupported;
     if (!key) return unsupported;
     const client = yield* HttpClient.HttpClient;
     const body = yield* client
-      .execute(
-        HttpClientRequest.get("https://api.kimi.com/coding/v1/usages").pipe(
-          HttpClientRequest.bearerToken(key),
-        ),
-      )
+      .execute(HttpClientRequest.get(`${baseURL}/usages`).pipe(HttpClientRequest.bearerToken(key)))
       .pipe(
         Effect.flatMap(HttpClientResponse.filterStatusOk),
         Effect.flatMap(HttpClientResponse.schemaBodyJson(KimiUsageResponse)),

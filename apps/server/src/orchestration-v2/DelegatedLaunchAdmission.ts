@@ -99,12 +99,18 @@ export function assessCapacity(
   // Only these adapters bind their local read-only probe to the same configured
   // runtime as openSession. A proxy/pool needs its own binding contract first.
   if (driver === "codex" && model.toLowerCase().includes("spark")) return "unverified";
+  if (
+    driver === "claudeAgent" &&
+    !["opus", "sonnet", "haiku"].some((family) => model.toLowerCase().includes(family))
+  )
+    return "unverified";
   const required =
     driver === "codex"
       ? ["primary", "secondary"]
       : driver === "claudeAgent"
         ? ["five_hour", "seven_day"]
-        : driver === "opencode" && model.startsWith("kimi-for-coding/")
+        : driver === "opencode" &&
+            (model.startsWith("kimi-for-coding/") || model.startsWith("kimi-code-plan-global/"))
           ? ["limit_5h", "limit_month_total", "limit_month_code"]
           : driver === "opencode" && model.startsWith("opencode-go/")
             ? ["go_rolling", "go_weekly", "go_monthly"]
@@ -166,18 +172,34 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
         // Different API keys do not prove different subscription accounts.
         ...(provider.driver === "opencode"
           ? [
-              `opencode:subscription:${candidate.model.startsWith("kimi-for-coding/") ? "kimi" : "go"}`,
+              `opencode:subscription:${candidate.model.startsWith("kimi-for-coding/") || candidate.model.startsWith("kimi-code-plan-global/") ? "kimi" : "go"}`,
             ]
           : []),
         ...(binding ? [`binding:${binding}`] : []),
       ];
       // Missing identity is never evidence of a second independently healthy account.
       if (!email && !fingerprint) continue;
-      if (identities.some((key) => blocked.has(key))) {
-        for (const key of identities) blocked.add(key);
+      const scopedWindowIds =
+        provider.driver === "claudeAgent"
+          ? ["opus", "sonnet", "haiku"]
+              .filter((family) => candidate.model.toLowerCase().includes(family))
+              .map((family) => `seven_day_${family}`)
+          : provider.driver === "cursor"
+            ? [candidate.model === "auto" ? "autoPercentUsed" : "apiPercentUsed"]
+            : [];
+      const scopedIdentities = (windowId: string) =>
+        identities.map((key) => `${key}:quota:${windowId}`);
+      const blockedScope = scopedWindowIds.find((id) =>
+        scopedIdentities(id).some((key) => blocked.has(key)),
+      );
+      const blockedAccount = identities.some((key) => blocked.has(key));
+      if (blockedAccount || blockedScope) {
+        for (const key of blockedAccount ? identities : scopedIdentities(blockedScope!))
+          blocked.add(key);
         exhausted = true;
         continue;
       }
+      if (!provider.models.some((m) => m.slug === candidate.model)) continue;
       const now = DateTime.toEpochMillis(yield* DateTime.now);
       const assessment = assessCapacity(
         provider.usageLimits,
@@ -200,11 +222,32 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
         return {
           status: "ready",
           selection: { ...candidate, ...(options ? { options } : {}) },
-          domains: identities,
+          // A first-request refusal without a reported scope only proves this
+          // model bucket failed. Other models still need their own fresh probe.
+          domains: scopedWindowIds.length ? scopedWindowIds.flatMap(scopedIdentities) : identities,
         } as const;
       }
-      for (const key of identities) blocked.add(key);
-      exhausted ||= assessment === "exhausted";
+      if (assessment === "exhausted") {
+        const exhaustedWindows = provider.usageLimits!.windows.filter(
+          (window) => window.usedPercent >= 100,
+        );
+        // A model-specific window does not exhaust the account's other models.
+        // Unknown evidence never establishes an exhausted quota domain.
+        const shared = exhaustedWindows.some((window) =>
+          provider.driver === "claudeAgent"
+            ? !/^seven_day_(opus|sonnet|haiku)/.test(window.id)
+            : provider.driver === "cursor"
+              ? window.id === "totalPercentUsed"
+              : true,
+        );
+        const domains = shared
+          ? identities
+          : scopedWindowIds.flatMap((id) =>
+              exhaustedWindows.some((window) => window.id === id) ? scopedIdentities(id) : [],
+            );
+        for (const key of domains) blocked.add(key);
+        exhausted = true;
+      }
     }
     return {
       status: "waiting",
@@ -274,6 +317,14 @@ export const layer = Layer.effect(
                 context.projectId,
                 candidate.instanceId,
               ))
+          )
+            return undefined;
+          // A Codex app-server can report a local account while its responses
+          // provider routes through an unpinned external pool. No current instance
+          // contract pins the eventual request to the probed account. Fail closed.
+          if (
+            instance.driverKind === "codex" &&
+            instance.delegatedLaunchAccountBinding !== "pinned"
           )
             return undefined;
           const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);

@@ -20,6 +20,80 @@ const input = {
   },
 };
 
+it.effect("binds the global Kimi route to its own inline credential and canonical host", () =>
+  Effect.gen(function* () {
+    for (const model of ["k3", "kimi-for-coding-highspeed"]) {
+      const limits = yield* readKimiUsageLimits({
+        ...input,
+        providerId: "kimi-code-plan-global",
+        environment: {
+          KIMI_API_KEY: "wrong-environment-key",
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            enabled_providers: ["kimi-code-plan-global"],
+            model: `kimi-code-plan-global/${model}`,
+          }),
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            "kimi-for-coding": { type: "api", key: "wrong-regional-key" },
+            "kimi-code-plan-global": { type: "api", key: "global-test-key" },
+          }),
+        },
+      }).pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            assert.equal(request.url, "https://api.kimi.ai/coding/v1/usages");
+            assert.equal(request.headers.authorization, "Bearer global-test-key");
+            return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ usages })));
+          }),
+        ),
+        Effect.provide(NodeServices.layer),
+      );
+      assert.isUndefined(limits.unavailable);
+      assert.lengthOf(limits.windows, 3);
+    }
+  }),
+);
+
+it.effect(
+  "does not substitute regional credentials, an opaque wrapper, OAuth, or a custom endpoint for global Kimi",
+  () =>
+    Effect.gen(function* () {
+      for (const environment of [
+        input.environment,
+        { OPENCODE_AUTH_CONTENT: "{}" },
+        { KIMI_API_KEY: "database-may-override-this-key" },
+        {
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            "kimi-code-plan-global": { type: "oauth", access: "not-an-api-key" },
+          }),
+        },
+        {
+          ...input.environment,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            provider: {
+              "kimi-code-plan-global": {
+                options: { baseURL: "https://example.com/coding/v1", apiKey: "never-send" },
+              },
+            },
+          }),
+        },
+      ]) {
+        const limits = yield* readKimiUsageLimits({
+          ...input,
+          providerId: "kimi-code-plan-global",
+          environment,
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("must not probe another credential or endpoint")),
+          ),
+          Effect.provide(NodeServices.layer),
+        );
+        assert.equal(limits.unavailable?.reason, "unsupported");
+      }
+    }),
+);
+
 it.effect(
   "reads Kimi subscription usage without a generation request and fingerprints the runtime credential",
   () =>

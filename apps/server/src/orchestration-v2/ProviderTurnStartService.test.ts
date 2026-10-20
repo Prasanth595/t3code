@@ -1,3 +1,4 @@
+import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
 import * as AdmissionTestkit from "./ProviderTurnStartService.testkit.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
@@ -291,6 +292,7 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly admissionPrepare?: DelegatedLaunchAdmission.DelegatedLaunchAdmission["Service"]["prepare"];
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -631,6 +633,11 @@ function makeLocalCommandHarness(input: {
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
+        input.admissionPrepare
+          ? Layer.mock(DelegatedLaunchAdmission.DelegatedLaunchAdmission)({
+              prepare: input.admissionPrepare,
+            })
+          : Layer.empty,
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),
@@ -797,6 +804,53 @@ effectIt.effect("reads only thread state before taking the startup lease", () =>
     expect(harness.getTurnStartContext).toHaveBeenCalledOnce();
     expect(harness.projection().runs.at(-1)?.status).toBe("completed");
   }),
+);
+
+effectIt.effect(
+  "does not probe before the workspace queue drains and denies capacity lost while queued",
+  () =>
+    Effect.gen(function* () {
+      const worktreePath = "/tmp/provider-start-capacity-queue";
+      const release = yield* Deferred.make<void>();
+      const readEntered = yield* Deferred.make<void>();
+      let healthy = true;
+      let probes = 0;
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        worktreePath,
+        admissionPrepare: () =>
+          Effect.suspend(() => {
+            probes++;
+            return healthy
+              ? Effect.succeed(true)
+              : Effect.fail(
+                  new DelegatedLaunchAdmission.WaitingForDelegatedCapacity({
+                    retryAt: "2026-10-21T10:00:00Z",
+                  }),
+                );
+          }),
+      });
+      harness.getThreadRecords.mockImplementationOnce(() =>
+        Deferred.succeed(readEntered, undefined).pipe(Effect.as(harness.projection())),
+      );
+      const holder = yield* withWorkspaceLease(worktreePath, Deferred.await(release)).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      const startup = yield* harness.start.pipe(
+        Effect.flip,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(readEntered);
+      expect(probes).toBe(0);
+      healthy = false;
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(holder);
+      const error = yield* Fiber.join(startup);
+      expect(DelegatedLaunchAdmission.capacityWaitCause(error)).toBeDefined();
+      expect(probes).toBe(1);
+      expect(harness.open).not.toHaveBeenCalled();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+    }),
 );
 
 effectIt.effect("reads current startup state after waiting for the workspace lease", () =>

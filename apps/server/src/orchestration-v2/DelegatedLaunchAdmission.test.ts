@@ -19,6 +19,92 @@ import {
 
 const now = "2026-10-20T10:00:00.000Z";
 const nowMs = Date.parse(now);
+
+it.effect(
+  "keeps unknown models and exhausted model windows from poisoning healthy models on the same account",
+  () =>
+    Effect.gen(function* () {
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
+      const candidates = [
+        selection("native", "unknown"),
+        selection("native", "claude-sonnet-5-5"),
+        selection("alias", "claude-opus-5-5"),
+      ];
+      for (const sharedExhausted of [false, true]) {
+        const result = yield* selectLaunchCandidate({
+          candidates,
+          probe: (target) =>
+            Effect.succeed({
+              provider: {
+                ...provider(target, "same@example.com", {
+                  checkedAt: timestamp,
+                  windows: [
+                    {
+                      id: "five_hour",
+                      kind: "session",
+                      label: "Session",
+                      usedPercent: sharedExhausted ? 100 : 0,
+                    },
+                    { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 0 },
+                    { id: "seven_day_sonnet", kind: "weekly", label: "Sonnet", usedPercent: 100 },
+                  ],
+                }),
+                driver: ProviderDriverKind.make("claudeAgent"),
+              },
+              probeStartedAt: Date.parse(timestamp),
+            }),
+        });
+        assert.equal(result.status, sharedExhausted ? "waiting" : "ready");
+        if (result.status === "ready") assert.equal(result.selection.model, "claude-opus-5-5");
+      }
+    }),
+);
+
+it.effect("an unverified supported model does not block fresh evidence for another model", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const result = yield* selectLaunchCandidate({
+      candidates: [selection("native", "gpt-spark"), selection("native")],
+      probe: (target) =>
+        Effect.succeed({
+          provider: provider(target, "same@example.com", limits(0, timestamp)),
+          probeStartedAt: Date.parse(timestamp),
+        }),
+    });
+    assert.equal(result.status, "ready");
+    if (result.status === "ready") assert.equal(result.selection.model, "gpt-6.1-sol");
+  }),
+);
+
+it.effect("admits actual global Kimi slugs only with their own complete usage evidence", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    for (const slug of ["k3", "kimi-for-coding-highspeed"]) {
+      const target = selection("kimi_api", `kimi-code-plan-global/${slug}`);
+      const result = yield* selectLaunchCandidate({
+        candidates: [target],
+        probe: () =>
+          Effect.succeed({
+            provider: {
+              ...provider(target, undefined, {
+                checkedAt: timestamp,
+                credentialFingerprint: "global-credential",
+                windows: ["limit_5h", "limit_month_total", "limit_month_code"].map((id) => ({
+                  id,
+                  kind: "session" as const,
+                  label: id,
+                  usedPercent: 0,
+                })),
+              }),
+              driver: ProviderDriverKind.make("opencode"),
+            },
+            probeStartedAt: Date.parse(timestamp),
+          }),
+      });
+      assert.equal(result.status, "ready");
+    }
+  }),
+);
 function limits(usedPercent = 0, checkedAt = now): ServerProviderUsageLimits {
   return {
     checkedAt,

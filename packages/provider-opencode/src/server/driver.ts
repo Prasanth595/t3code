@@ -351,6 +351,12 @@ export const OpenCodeDriver: ProviderDriver<
           runtimeProbe.refresh,
           loadOpenCode2Models,
         ),
+        kimiGlobalUsageLimits: readKimiUsageLimits({
+          providerId: "kimi-code-plan-global",
+          enabled: effectiveConfig.enabled,
+          serverUrl: effectiveConfig.serverUrl,
+          environment: processEnv,
+        }),
         kimiUsageLimits: readKimiUsageLimits({
           enabled: effectiveConfig.enabled,
           serverUrl: effectiveConfig.serverUrl,
@@ -364,12 +370,16 @@ export const OpenCodeDriver: ProviderDriver<
       },
       { concurrency: "unbounded" },
     ).pipe(
-      Effect.map(({ provider, usageLimits, kimiUsageLimits }) => ({
+      Effect.map(({ provider, usageLimits, kimiUsageLimits, kimiGlobalUsageLimits }) => ({
         ...provider,
         usageLimits,
         usageLimitsByModel: Object.fromEntries(
           provider.models.flatMap((model) =>
-            model.slug.startsWith("kimi-for-coding/") ? [[model.slug, kimiUsageLimits]] : [],
+            model.slug.startsWith("kimi-for-coding/")
+              ? [[model.slug, kimiUsageLimits]]
+              : model.slug.startsWith("kimi-code-plan-global/")
+                ? [[model.slug, kimiGlobalUsageLimits]]
+                : [],
           ),
         ),
       })),
