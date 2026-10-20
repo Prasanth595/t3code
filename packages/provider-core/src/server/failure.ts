@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 
 import * as IdAllocator from "./IdAllocator.ts";
+import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
 import * as Schema from "effect/Schema";
 
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
@@ -30,6 +31,32 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
+const PROVIDER_FAILURE_CATEGORIES: Partial<
+  Record<string, { readonly summary: string; readonly guidance: string }>
+> = {
+  ProviderAdapterTurnStartError: {
+    summary: "The provider could not start this turn",
+    guidance: "Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  },
+  ProviderAdapterEventStreamError: {
+    summary: "The provider event stream closed unexpectedly",
+    guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
+  },
+  ProviderAdapterOpenSessionError: {
+    summary: "The provider session could not be opened",
+    guidance: "Check that the provider is installed and signed in, then retry the turn.",
+  },
+  ProviderAdapterResumeThreadError: {
+    summary: "The provider conversation could not be resumed",
+    guidance: "Retry the turn; if it keeps failing, check the provider and server logs.",
+  },
+};
+
+const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
+  previous_turn_active: "the previous turn is still running",
+  attachment_unreadable: "an attachment could not be read",
+};
+
 /**
  * Walks a cause chain for curated text without reading arbitrary provider
  * defect text. `known` is the message of a domain error T3 raised itself;
@@ -40,7 +67,14 @@ function curatedCauseMessages(cause: unknown): {
   readonly category: string | undefined;
 } {
   const seen = new Set<unknown>();
-  let category: string | undefined;
+  let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
+  let reason: string | undefined;
+  const categoryMessage = () => {
+    if (category === undefined) return undefined;
+    return reason
+      ? `${category.summary}: ${reason}. ${category.guidance}`
+      : `${category.summary}. ${category.guidance}`;
+  };
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -49,42 +83,42 @@ function curatedCauseMessages(cause: unknown): {
         continue;
       }
       if (typeof cause !== "object") break;
-      switch ((cause as Record<string, unknown>)._tag) {
+      const tag = (cause as Record<string, unknown>)._tag;
+      switch (tag) {
         case "ContextHandoffBudgetError":
-          return { known: new ContextHandoffBudgetError().message, category };
+          return { known: new ContextHandoffBudgetError().message, category: categoryMessage() };
         case "AcpModelSelectionError":
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
         case "CursorModelUnavailableError":
-          return { known: stringField(cause, "message"), category };
+          return { known: stringField(cause, "message"), category: categoryMessage() };
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:
               "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
-            category,
+            category: categoryMessage(),
           };
-        case "ProviderAdapterTurnStartError":
-          category =
-            "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
+        case "ProviderAdapterProtocolError": {
+          const typedReason = (cause as Record<string, unknown>).reason;
+          if (
+            category !== undefined &&
+            typeof typedReason === "string" &&
+            Object.hasOwn(PROVIDER_FAILURE_REASONS, typedReason)
+          ) {
+            reason ??= PROVIDER_FAILURE_REASONS[typedReason as ProviderAdapterFailureReason];
+          }
           break;
-        case "ProviderAdapterEventStreamError":
-          category =
-            "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
-          break;
-        case "ProviderAdapterOpenSessionError":
-          category =
-            "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.";
-          break;
-        case "ProviderAdapterResumeThreadError":
-          category =
-            "The provider conversation could not be resumed. Retry the turn; if it keeps failing, check the provider and server logs.";
-          break;
+        }
+      }
+      if (typeof tag === "string" && Object.hasOwn(PROVIDER_FAILURE_CATEGORIES, tag)) {
+        category = PROVIDER_FAILURE_CATEGORIES[tag];
+        reason = undefined;
       }
       cause = (cause as Record<string, unknown>).cause;
     } catch {
       break;
     }
   }
-  return { known: undefined, category };
+  return { known: undefined, category: categoryMessage() };
 }
 
 /**
