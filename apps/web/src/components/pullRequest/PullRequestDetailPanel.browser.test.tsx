@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
+import { PanelHostContext } from "../../panels/panelHost";
 import { RightPanelSurfaceContent } from "../chat/RightPanelSurfaceContent";
 
 import "~/index.css";
@@ -576,48 +577,58 @@ it("restores the selected PR tab when switching threads and remounting the right
     const selected = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
     return act(async () => {
       root.render(
-        <RightPanelSurfaceContent
-          surface={selected}
-          activeSurfaceId={selected?.id ?? null}
-          threadRef={ref}
-          environmentId={ref.environmentId}
-          visible
-          composerDraftTarget={ref}
-          keybindings={[]}
-          configuredPreviewUrls={[]}
-          workspaceMutationId={null}
-          getShortcutContext={shortcutContext}
-          onSendAnnotation={() => {}}
-          onCloseSurface={() => {}}
-          terminal={{
-            launchContext: null,
-            focusRequestId: 0,
-            keybindings: [],
-            onAddTerminalContext: () => {},
-            onSplitTerminal: () => {},
-            onSplitTerminalVertical: () => {},
-            onNewTerminal: () => {},
-            onActiveTerminalChange: () => {},
-            onCloseTerminal: () => {},
+        <PanelHostContext
+          value={{
+            threadRef: ref,
+            visible: true,
+            composerDraftTarget: ref,
+            workspaceMutationId: null,
+            sendAnnotation: () => {},
           }}
-          pullRequest={{
-            capabilityKnown: true,
-            supported: true,
-            projectId: detail.projectId,
-            pullRequests: [],
-            linkedPullRequest: null,
-            branchPullRequest: null,
-            onBack: undefined,
-          }}
-          files={{
-            projectName: null,
-            workspaceRoot: undefined,
-            availableEditors: [],
-            pendingSurfaceIds: new Set(),
-            onOpenFile: () => {},
-            onPendingChange: () => {},
-          }}
-        />,
+        >
+          <RightPanelSurfaceContent
+            surface={selected}
+            activeSurfaceId={selected?.id ?? null}
+            threadRef={ref}
+            environmentId={ref.environmentId}
+            visible
+            composerDraftTarget={ref}
+            keybindings={[]}
+            configuredPreviewUrls={[]}
+            workspaceMutationId={null}
+            getShortcutContext={shortcutContext}
+            onSendAnnotation={() => {}}
+            onCloseSurface={() => {}}
+            terminal={{
+              launchContext: null,
+              focusRequestId: 0,
+              keybindings: [],
+              onAddTerminalContext: () => {},
+              onSplitTerminal: () => {},
+              onSplitTerminalVertical: () => {},
+              onNewTerminal: () => {},
+              onActiveTerminalChange: () => {},
+              onCloseTerminal: () => {},
+            }}
+            pullRequest={{
+              capabilityKnown: true,
+              supported: true,
+              projectId: detail.projectId,
+              pullRequests: [],
+              linkedPullRequest: null,
+              branchPullRequest: null,
+              onBack: undefined,
+            }}
+            files={{
+              projectName: null,
+              workspaceRoot: undefined,
+              availableEditors: [],
+              pendingSurfaceIds: new Set(),
+              onOpenFile: () => {},
+              onPendingChange: () => {},
+            }}
+          />
+        </PanelHostContext>,
       );
     });
   };
