@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import {
   EnvironmentId,
   PluginActionId,
@@ -76,6 +75,7 @@ function Composer(props: {
   report: (menu: Menu, draft: string) => void;
 }) {
   const [draft, setDraft] = useState(props.initialDraft);
+  editDraft = setDraft;
   const menu = useComposerCommandMenu({
     draftMessage: draft,
     ownerKey: "draft-1",
@@ -98,6 +98,7 @@ function Composer(props: {
 }
 
 let root: Root;
+let editDraft: (draft: string) => void = () => {};
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -219,6 +220,36 @@ describe("picking a plugin action from the slash menu", () => {
     expect(fixture.runPluginAction).not.toHaveBeenCalled();
     expect(latest.draft).toBe(draft);
   });
+
+  it.each(["different-token", "shifted-token", "removed-action"])(
+    "refuses a retained handler after %s",
+    async (change) => {
+      const draft = "ship it\n/depl";
+      await openMenu(draft, draft.length, threadId);
+      const stale = offered("/deploy");
+      const staleMenu = latest.menu!;
+      const changed =
+        change === "different-token"
+          ? "ship it\n/nope"
+          : change === "shifted-token"
+            ? "prefix " + draft
+            : draft;
+      if (change === "removed-action") fixture.actions = [];
+      await act(async () => {
+        editDraft(changed);
+        root.render(
+          createElement(Composer, { initialDraft: draft, currentThreadId: threadId, report }),
+        );
+      });
+      await act(async () =>
+        latest.menu!.onSelectionChange({ start: changed.length, end: changed.length }),
+      );
+      await act(async () => staleMenu.onSelect(stale));
+      expect(latest.draft).toBe(changed);
+      expect(fixture.onChangeDraftMessage).not.toHaveBeenCalled();
+      expect(fixture.runPluginAction).not.toHaveBeenCalled();
+    },
+  );
 
   it("removes the command when it is picked, before the action settles, and runs it once", async () => {
     let finish: (ran: boolean) => void = () => {};

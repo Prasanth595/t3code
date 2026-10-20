@@ -4,7 +4,7 @@ import type { EnvironmentId, ExecutionEnvironmentCapabilities } from "@t3tools/c
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { pluginEnvironment } from "../../state/plugins";
 import { PluginSettingsValues } from "./PluginSettingsValues";
 

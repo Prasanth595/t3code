@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { pluginSettingsEnvironment } from "../../state/plugins";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { describePluginSettingValue } from "./PluginSettingsValues.logic";
