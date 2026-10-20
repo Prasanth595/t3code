@@ -3,6 +3,7 @@ import * as NodeEvents from "node:events";
 import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -1644,7 +1645,7 @@ it.live.each([false, true])(
           },
           saveAs: (path: string) => NodeFSP.copyFile(original, path),
           suggestedFilename: () => "report.csv",
-          url: () => "blob:http://localhost:5173/1",
+          url: () => 'data:text/csv;charset="a,b",a b\'c',
         });
         let offered = yield* Queue.take(viewer.output);
         while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
@@ -1658,6 +1659,9 @@ it.live.each([false, true])(
         });
         expect(Option.isSome(file) && file.value.fileName).toBe("report.csv");
         expect(yield* fs.readFileString(Option.getOrThrow(file).path)).toBe("a,b");
+        if ((yield* HostProcess.Platform) !== "win32") {
+          expect((yield* fs.stat(Option.getOrThrow(file).path)).mode & 0o777).toBe(0o600);
+        }
         const status = yield* broker.invoke<PreviewAutomationStatus>({
           scope,
           tabId,
@@ -1665,7 +1669,11 @@ it.live.each([false, true])(
           input: {},
         });
         expect(status.downloads).toEqual([
-          expect.objectContaining({ fileName: "report.csv", sizeBytes: 3 }),
+          expect.objectContaining({
+            fileName: "report.csv",
+            sizeBytes: 3,
+            url: "data:text/csv,…",
+          }),
         ]);
         expect(
           Option.isNone(
