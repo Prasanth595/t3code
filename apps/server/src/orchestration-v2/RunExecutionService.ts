@@ -1001,7 +1001,7 @@ export const layer: Layer.Layer<
         const rootRunFinalized = yield* Ref.make(false);
         const providerThreadOwnerLost = yield* Ref.make(false);
         const activeChildProviderTurns = yield* Ref.make<ReadonlySet<ProviderTurnId>>(new Set());
-        const activeChildSubagents = yield* Ref.make<ReadonlySet<NodeId>>(new Set());
+        const activeChildSubagents = yield* Ref.make<ReadonlyMap<NodeId, ThreadId>>(new Map());
         const activeBackgroundTurnItems = yield* Ref.make<
           ReadonlySet<OrchestrationV2TurnItem["id"]>
         >(new Set(inheritedBackgroundTurnItemsById.keys()));
@@ -1077,11 +1077,11 @@ export const layer: Layer.Layer<
               routing.ownedThreadIds.has(event.subagent.threadId);
             if (belongsToRootRun || belongsToOwnedChildThread) {
               yield* Ref.update(activeChildSubagents, (current) => {
-                const next = new Set(current);
+                const next = new Map(current);
                 if (isSettledSubagentStatus(event.subagent.status)) {
                   next.delete(event.subagent.id);
                 } else {
-                  next.add(event.subagent.id);
+                  next.set(event.subagent.id, event.subagent.threadId);
                 }
                 return next;
               });
@@ -1290,7 +1290,13 @@ export const layer: Layer.Layer<
                 });
                 yield* Ref.update(
                   activeChildSubagents,
-                  (current) => new Set([...current].filter((id) => !detached.subagentIds.has(id))),
+                  (current) =>
+                    new Map(
+                      [...current].filter(
+                        ([id, threadId]) =>
+                          !detached.subagentIds.has(id) && threadId !== moved.childThreadId,
+                      ),
+                    ),
                 );
                 yield* Ref.update(
                   activeChildProviderTurns,

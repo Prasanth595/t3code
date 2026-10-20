@@ -1875,61 +1875,63 @@ it.effect("keeps ingesting a child thread's late background item completion", ()
   }),
 );
 
-it.effect("releases a settled run when its live child transfers to another run", () =>
-  Effect.gen(function* () {
-    const consumed = yield* Deferred.make<void>();
-    const result = yield* Effect.raceFirst(
-      runBackgroundItemScenario(
-        "child-transfer-release",
-        (ids) => {
-          const running = subagentEvent(ids, "running");
-          if (running.type !== "subagent.updated") throw new Error("Missing subagent");
-          const linked = {
-            ...running,
-            subagent: {
-              ...running.subagent,
-              origin: "provider_native" as const,
-              childThreadId: ids.childThreadId,
-              providerThreadId: null,
-            },
-          };
-          return [
-            childThreadCreatedEvent(ids),
-            linked,
-            {
-              ...linked,
+it.effect.each([null, "run:nested-sdk"] as const)(
+  "releases a settled run when its live child transfers to another run (%s)",
+  (nestedRunId) =>
+    Effect.gen(function* () {
+      const consumed = yield* Deferred.make<void>();
+      const result = yield* Effect.raceFirst(
+        runBackgroundItemScenario(
+          "child-transfer-release",
+          (ids) => {
+            const running = subagentEvent(ids, "running");
+            if (running.type !== "subagent.updated") throw new Error("Missing subagent");
+            const linked = {
+              ...running,
               subagent: {
-                ...linked.subagent,
-                id: NodeId.make("node:child-transfer-release:nested"),
-                threadId: ids.childThreadId,
-                runId: null,
-                childThreadId: null,
+                ...running.subagent,
+                origin: "provider_native" as const,
+                childThreadId: ids.childThreadId,
+                providerThreadId: null,
               },
-            },
-            childBackgroundTurnItemEvent(ids, "running", 1),
-            rootTerminalEvent(ids, "completed"),
-            { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
-          ];
-        },
-        {
-          keepEventStreamOpen: true,
-          onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
-        },
-      ).pipe(Effect.map(Option.some)),
-      Deferred.await(consumed).pipe(Effect.as(Option.none())),
-    );
-    assert.isTrue(
-      Option.isSome(result),
-      "the transferred child must release its prior subscription",
-    );
-    if (Option.isSome(result))
-      assert.deepEqual(result.value, [
-        "subagent:running",
-        "subagent:running",
-        "turn_item:running",
-        "root-finalized",
-      ]);
-  }),
+            };
+            return [
+              childThreadCreatedEvent(ids),
+              linked,
+              {
+                ...linked,
+                subagent: {
+                  ...linked.subagent,
+                  id: NodeId.make("node:child-transfer-release:nested"),
+                  threadId: ids.childThreadId,
+                  runId: nestedRunId === null ? null : RunId.make(nestedRunId),
+                  childThreadId: null,
+                },
+              },
+              childBackgroundTurnItemEvent(ids, "running", 1),
+              rootTerminalEvent(ids, "completed"),
+              { ...linked, subagent: { ...linked.subagent, runId: RunId.make("run:replacement") } },
+            ];
+          },
+          {
+            keepEventStreamOpen: true,
+            onEventsConsumed: Deferred.succeed(consumed, undefined).pipe(Effect.asVoid),
+          },
+        ).pipe(Effect.map(Option.some)),
+        Deferred.await(consumed).pipe(Effect.as(Option.none())),
+      );
+      assert.isTrue(
+        Option.isSome(result),
+        "the transferred child must release its prior subscription",
+      );
+      if (Option.isSome(result))
+        assert.deepEqual(result.value, [
+          "subagent:running",
+          "subagent:running",
+          "turn_item:running",
+          "root-finalized",
+        ]);
+    }),
 );
 
 it.effect("keeps ingesting until the last of several background items terminalizes", () =>
