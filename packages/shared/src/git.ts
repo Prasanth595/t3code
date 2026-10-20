@@ -318,6 +318,33 @@ export function dedupeRemoteBranchesWithLocalMatches(
   });
 }
 
+function remoteRefLocalBranchName(ref: Pick<VcsRef, "name" | "remoteName">): string {
+  const remotePrefix = ref.remoteName ? `${ref.remoteName}/` : null;
+  return remotePrefix && ref.name.startsWith(remotePrefix) && ref.name.length > remotePrefix.length
+    ? ref.name.slice(remotePrefix.length)
+    : deriveLocalBranchNameFromRemoteRef(ref.name);
+}
+
+/**
+ * The existing branch a new worktree should check out instead of forking one:
+ * the base itself, or a remote-only base's local name. Null forks, because the
+ * branch is checked out elsewhere or a local branch already holds the name.
+ * Git stores refs as paths, so a local `feature` or `feature/x/y` blocks `feature/x`.
+ */
+export function resolveWorktreeAttachBranch(
+  baseRefName: string,
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isRemote" | "remoteName" | "worktreePath">>,
+): string | null {
+  const base = refs.find((ref) => ref.name === baseRefName);
+  if (base === undefined) return null;
+  if (!base.isRemote) return base.worktreePath === null ? base.name : null;
+  const localName = remoteRefLocalBranchName(base);
+  if (localName === base.name) return null;
+  const blocks = (name: string) =>
+    name === localName || name.startsWith(`${localName}/`) || localName.startsWith(`${name}/`);
+  return refs.some((ref) => !ref.isRemote && blocks(ref.name)) ? null : localName;
+}
+
 export function detectSourceControlProviderFromGitRemoteUrl(
   remoteUrl: string,
 ): SourceControlProviderInfo | null {

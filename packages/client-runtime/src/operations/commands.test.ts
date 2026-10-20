@@ -20,6 +20,8 @@ import {
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
+  type VcsListRefsInput,
+  type VcsRef,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
@@ -80,8 +82,28 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projectionRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
   readonly advertiseThreadStop?: boolean;
+  readonly refs?: ReadonlyArray<VcsRef>;
 }) {
   const client = {
+    [WS_METHODS.vcsListRefs]: (listInput: VcsListRefsInput) => {
+      const query = (listInput.query ?? "").toLowerCase();
+      const matching = (input.refs ?? []).filter(
+        (ref) =>
+          ref.name.toLowerCase().includes(query) &&
+          (listInput.refKind === undefined ||
+            listInput.refKind === "all" ||
+            ref.isRemote === (listInput.refKind === "remote")),
+      );
+      const start = listInput.cursor ?? 0;
+      const end = start + (listInput.limit ?? matching.length);
+      return Effect.succeed({
+        refs: matching.slice(start, end),
+        isRepo: true,
+        hasPrimaryRemote: true,
+        nextCursor: end < matching.length ? end : null,
+        totalCount: matching.length,
+      });
+    },
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
@@ -400,6 +422,109 @@ describe("V2 environment commands", () => {
           branch: "feature",
           startFromOrigin: true,
         },
+      });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  const vcsRef = (name: string, fields: Partial<VcsRef> = {}): VcsRef => ({
+    name,
+    current: false,
+    isRemote: false,
+    isDefault: false,
+    worktreePath: null,
+    ...fields,
+  });
+  const remoteRef = (name: string, remoteName = "origin") =>
+    vcsRef(name, { isRemote: true, remoteName });
+  // Fills more than one page of the client's ref lookup.
+  const manyRefs = (makeRef: (name: string) => VcsRef, prefix: string) =>
+    Array.from({ length: 250 }, (_, index) => makeRef(`${prefix}-${index}`));
+
+  it.effect.each([
+    {
+      name: "attaches to a local base no worktree has",
+      baseBranch: "feature-x",
+      refs: [vcsRef("feature-x")],
+      branch: "feature-x",
+      startFromOrigin: false,
+    },
+    {
+      name: "continues a remote-only base under its local name",
+      baseBranch: "origin/feature-x",
+      refs: [remoteRef("origin/feature-x")],
+      branch: "feature-x",
+      startFromOrigin: true,
+    },
+    {
+      name: "forks a base that is already checked out",
+      baseBranch: "main",
+      refs: [vcsRef("main", { current: true, worktreePath: "/workspace/project" })],
+      branch: null,
+      startFromOrigin: true,
+    },
+    {
+      name: "forks a remote base whose local copy exists under a slashed remote",
+      baseBranch: "team/upstream/feature-x",
+      refs: [vcsRef("feature-x"), remoteRef("team/upstream/feature-x", "team/upstream")],
+      branch: null,
+      startFromOrigin: true,
+    },
+    {
+      name: "forks a remote base whose local name is a nested branch's parent",
+      baseBranch: "origin/feature/x",
+      refs: [remoteRef("origin/feature/x"), vcsRef("feature/x/y")],
+      branch: null,
+      startFromOrigin: true,
+    },
+    {
+      name: "forks a remote base whose local copy is listed after a full page",
+      baseBranch: "team/upstream/feature-x",
+      refs: [
+        remoteRef("team/upstream/feature-x", "team/upstream"),
+        ...manyRefs(vcsRef, "feature-x"),
+        vcsRef("feature-x"),
+      ],
+      branch: null,
+      startFromOrigin: true,
+    },
+    {
+      name: "finds a base listed after a full page",
+      baseBranch: "origin/feature-x",
+      refs: [...manyRefs(remoteRef, "origin/feature-x"), remoteRef("origin/feature-x")],
+      branch: "feature-x",
+      startFromOrigin: true,
+    },
+  ])("$name", ({ baseBranch, refs, branch, startFromOrigin }) =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches, refs });
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-attach"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-attach"),
+          role: "user",
+          text: "Continue the feature",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          prepareWorktree: {
+            projectCwd: "/workspace/project",
+            baseBranch,
+            branch: "t3/deadbeef",
+            startFromOrigin: true,
+            attachExistingBranch: true,
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]?.workspaceStrategy).toEqual({
+        type: "worktree",
+        baseRef: baseBranch,
+        branch: branch ?? "t3/deadbeef",
+        ...(startFromOrigin ? { startFromOrigin } : {}),
       });
     }).pipe(Effect.provide(layerTestCrypto)),
   );

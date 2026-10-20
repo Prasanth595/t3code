@@ -378,6 +378,7 @@ const make = Effect.gen(function* () {
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
           : null;
+      let attachedExistingBranch = false;
       if (input.workspaceStrategy.type === "worktree") {
         if (runId !== null) {
           yield* threads
@@ -392,7 +393,15 @@ const make = Effect.gen(function* () {
         }
         let startRef = input.workspaceStrategy.baseRef;
         let baseRefName = input.workspaceStrategy.baseRef;
+        // Requesting the local base branch itself checks it out as-is, so there
+        // is no newer base to fetch and no generated name to rename.
+        attachedExistingBranch =
+          branch === baseRefName &&
+          (yield* git
+            .hasCommit({ cwd: project.workspaceRoot, refName: `refs/heads/${baseRefName}` })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))));
         const shouldFetch =
+          !attachedExistingBranch &&
           input.workspaceStrategy.startFromOrigin === true &&
           (yield* git
             .resolveWorktreeBaseRemote({
@@ -415,6 +424,7 @@ const make = Effect.gen(function* () {
         }
         if (shouldFetch) yield* setupTracker.stageStatus(threadId, "fetch", "done");
         if (
+          !attachedExistingBranch &&
           branch !== null &&
           isTemporaryWorktreeBranch(branch) &&
           (yield* git
@@ -432,8 +442,7 @@ const make = Effect.gen(function* () {
             {
               cwd: project.workspaceRoot,
               refName: startRef,
-              newRefName: branch!,
-              baseRefName,
+              ...(attachedExistingBranch ? {} : { newRefName: branch!, baseRefName }),
               path: null,
             },
             {
@@ -472,6 +481,7 @@ const make = Effect.gen(function* () {
 
       if (
         reused === undefined &&
+        !attachedExistingBranch &&
         worktreePath !== null &&
         branch !== null &&
         initialMessage !== undefined &&

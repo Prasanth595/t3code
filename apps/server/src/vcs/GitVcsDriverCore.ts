@@ -3814,7 +3814,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     if (input.newRefName && input.baseRefName) {
       const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
-      if (base) {
+      if (base?.branchName === input.newRefName) {
+        // A local copy of a remote branch continues it rather than branching off
+        // it. Track it explicitly, since `branch.autoSetupMerge=false` skips that.
+        if (input.baseRefName !== base.branchName) {
+          yield* runGit("GitVcsDriver.createWorktree.trackBaseRef", input.cwd, [
+            "branch",
+            "--set-upstream-to",
+            input.baseRefName,
+            "--",
+            input.newRefName,
+          ]);
+        }
+      } else if (base) {
         yield* Effect.gen(function* () {
           yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
             "config",

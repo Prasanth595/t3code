@@ -1708,6 +1708,48 @@ it.effect("keeps an explicit branch name instead of generating one", () =>
   }),
 );
 
+it.effect.each(["feature-x", "t3/abcd1234"])(
+  "checks out the existing local base branch %s as-is",
+  (branch) =>
+    Effect.gen(function* () {
+      const setupStarted = yield* Deferred.make<void>();
+      const fetchWorktreeBaseCommit = vi.fn(() => Effect.succeed(null));
+      const harness = makeHarness({
+        hasCommit: (input) => Effect.succeed(input.refName === `refs/heads/${branch}`),
+        createWorktree: (input) =>
+          Effect.succeed({
+            worktree: { path: "/repo-worktrees/feature", refName: input.refName, headSha: "abc" },
+          } as never),
+        fetchWorktreeBaseCommit,
+        runSetup: () =>
+          Deferred.succeed(setupStarted, undefined).pipe(
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:attach",
+            thread: "thread:launch:attach",
+            message: "Continue the feature",
+            workspace: { type: "worktree", baseRef: branch, branch, startFromOrigin: true },
+          }),
+        );
+        yield* Deferred.await(setupStarted);
+        const worktreeInput = harness.createWorktree.mock.calls[0]?.[0];
+        assert.equal(worktreeInput?.refName, branch);
+        assert.equal(worktreeInput?.newRefName, undefined);
+        assert.equal(worktreeInput?.baseRefName, undefined);
+        assert.equal(fetchWorktreeBaseCommit.mock.calls.length, 0);
+        assert.equal(harness.generateBranchName.mock.calls.length, 0);
+        assert.equal(harness.renameBranch.mock.calls.length, 0);
+        assert.equal((yield* threads.getThreadProjection(launched.threadId)).thread.branch, branch);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+);
+
 it.effect("keeps the temporary branch when branch generation fails", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

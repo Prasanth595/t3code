@@ -26,7 +26,10 @@ import {
   type ThreadId,
   type ThreadEnvMode,
   type UploadChatAttachment,
+  type VcsListRefsResult,
+  type VcsRef,
 } from "@t3tools/contracts";
+import { resolveWorktreeAttachBranch } from "@t3tools/shared/git";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -154,9 +157,46 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly startFromOrigin?: boolean;
+    /** Check out the base branch, or a remote base's local copy, when no worktree has it. */
+    readonly attachExistingBranch?: boolean;
   };
   readonly runSetupScript?: boolean;
 }
+
+const pageRefs = Effect.fn("EnvironmentCommands.pageRefs")(function* (
+  cwd: string,
+  filter: { readonly query: string } | { readonly refKind: "local" },
+  found: (ref: VcsRef) => boolean = () => false,
+) {
+  const refs: VcsRef[] = [];
+  let cursor: number | null = null;
+  do {
+    const page: VcsListRefsResult = yield* request(WS_METHODS.vcsListRefs, {
+      cwd,
+      ...filter,
+      includeMatchingRemoteRefs: true,
+      limit: 200,
+      ...(cursor === null ? {} : { cursor }),
+    });
+    refs.push(...page.refs);
+    if (page.refs.some(found)) break;
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return refs;
+});
+
+// The ref query is a substring match, so the base is found by paging to its exact name.
+// A remote base's local name depends on its remote, which may itself contain a slash.
+const resolveAttachBranch = Effect.fn("EnvironmentCommands.resolveAttachBranch")(
+  function* (cwd: string, baseRef: string) {
+    const isBase = (ref: VcsRef) => ref.name === baseRef;
+    const base = (yield* pageRefs(cwd, { query: baseRef }, isBase)).find(isBase);
+    if (base === undefined) return null;
+    const localBranches = base.isRemote ? yield* pageRefs(cwd, { refKind: "local" }) : [];
+    return resolveWorktreeAttachBranch(baseRef, [base, ...localBranches]);
+  },
+  Effect.orElseSucceed(() => null),
+);
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly manualContinuationOfRunId?: RunId;
@@ -637,13 +677,19 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
     const existingProjection =
       bootstrap === undefined ? yield* getProjection(input.threadId) : null;
     const thread = bootstrap ?? existingProjection!.thread;
+    const attachBranch =
+      prepareWorktree?.attachExistingBranch === true
+        ? yield* resolveAttachBranch(prepareWorktree.projectCwd, prepareWorktree.baseBranch)
+        : null;
+    const worktreeBranch = attachBranch ?? prepareWorktree?.branch;
     const workspaceStrategy =
       prepareWorktree !== undefined
         ? {
             type: "worktree" as const,
             baseRef: prepareWorktree.baseBranch,
-            ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
-            ...(prepareWorktree.startFromOrigin === undefined
+            ...(worktreeBranch === undefined ? {} : { branch: worktreeBranch }),
+            ...(prepareWorktree.startFromOrigin === undefined ||
+            attachBranch === prepareWorktree.baseBranch
               ? {}
               : { startFromOrigin: prepareWorktree.startFromOrigin }),
           }
