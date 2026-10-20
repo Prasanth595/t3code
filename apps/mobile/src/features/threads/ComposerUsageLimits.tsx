@@ -5,7 +5,7 @@ import type {
   UsageLimitsReport,
 } from "@t3tools/contracts";
 import { composerUsageLimitSources } from "@t3tools/shared/usageLimits";
-import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -28,14 +28,15 @@ export function useComposerUsageLimitSources(
 export function ComposerUsageLimits({
   report,
   environmentId,
+  maxHeight,
   onClose,
 }: {
   readonly report: UsageLimitsReport;
   readonly environmentId: EnvironmentId;
+  readonly maxHeight: number;
   readonly onClose: () => void;
 }) {
   const now = Date.parse(report.createdAt);
-  const { height } = useWindowDimensions();
   const close = (
     <Pressable
       accessibilityLabel="Dismiss usage limits"
@@ -49,11 +50,7 @@ export function ComposerUsageLimits({
   );
   return (
     <View className="overflow-hidden rounded-[20px] border-continuous bg-card">
-      <ScrollView
-        bounces={false}
-        showsVerticalScrollIndicator={false}
-        style={{ maxHeight: Math.round(height * 0.4) }}
-      >
+      <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ maxHeight }}>
         {report.accounts.map((account, index) => {
           const resetCreditInput =
             account.resetCreditInput ??
