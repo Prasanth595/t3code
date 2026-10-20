@@ -921,6 +921,7 @@ describe("macOS editor discovery through LaunchServices", () => {
       const binDir = path.join(root, "bin");
       const project = path.join(root, "project");
       const script = path.join(project, "deploy.sh");
+      const source = path.join(project, "main.ts");
       const weztermApp = path.join(root, "WezTerm.app");
       const wezterm = path.join(weztermApp, "Contents/MacOS/wezterm");
       for (const name of ["osascript", "open", "xed"]) {
@@ -928,6 +929,7 @@ describe("macOS editor discovery through LaunchServices", () => {
       }
       // Terminals run a script handed to them, so a file must open its folder.
       yield* writeExecutable(script);
+      yield* fileSystem.writeFileString(source, "export {};\n");
       yield* writeExecutable(wezterm);
 
       const spawned: ChildProcess.StandardCommand[] = [];
@@ -938,6 +940,8 @@ describe("macOS editor discovery through LaunchServices", () => {
             yield* launcher.launchEditor({ editor, cwd });
           }
         }
+        // Warp edits a file that is not executable.
+        yield* launcher.launchEditor({ editor: "warp", cwd: `${source}:3` });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -967,6 +971,7 @@ describe("macOS editor discovery through LaunchServices", () => {
           [wezterm, "start", "--cwd", project],
           ["xed", project],
           ["xed", "--line", "12", script],
+          ["open", "-b", "dev.warp.Warp-Preview", source],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

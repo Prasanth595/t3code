@@ -28,6 +28,8 @@ type EditorDefinition = {
    * not offer these apps.
    */
   readonly foldersOnly?: true;
+  /** Opens files but runs an executable one, so an executable target opens its folder. */
+  readonly runsExecutables?: true;
 };
 
 export const EDITORS = [
@@ -305,7 +307,8 @@ export const EDITORS = [
     commands: null,
     launchStyle: "direct-path",
     macBundleIds: ["dev.warp.Warp-Stable", "dev.warp.Warp-Preview"],
-    foldersOnly: true,
+    // Warp edits files in its own editor, but runs a file with the executable bit.
+    runsExecutables: true,
   },
   {
     id: "github-desktop",

@@ -508,11 +508,16 @@ export class ExternalLauncher extends Context.Service<
   }
 >()("t3/process/externalLauncher") {}
 
-// Terminals run a script they are handed, so folder-only apps get the folder.
-const folderOf = Effect.fn("externalLauncher.folderOf")(function* (target: string) {
+// Terminals run a script they are handed, so folder-only apps get the folder,
+// and apps that only run executable files get the folder of those.
+const folderOf = Effect.fn("externalLauncher.folderOf")(function* (
+  target: string,
+  only: "files" | "executables",
+) {
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(target).pipe(Effect.option);
   if (Option.isNone(info) || info.value.type === "Directory") return target;
+  if (only === "executables" && (info.value.mode & 0o111) === 0) return target;
   const path = yield* Path.Path;
   return path.dirname(target);
 });
@@ -543,7 +548,12 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       onNone: () => input.cwd,
       onSome: ({ path }) => path,
     });
-    const folderTarget = "foldersOnly" in editorDef ? yield* folderOf(targetPath) : undefined;
+    const folderTarget =
+      "foldersOnly" in editorDef
+        ? yield* folderOf(targetPath, "files")
+        : "runsExecutables" in editorDef
+          ? yield* folderOf(targetPath, "executables")
+          : undefined;
     if (install?.kind === "mac-app") {
       return {
         editor: editorDef.id,
