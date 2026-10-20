@@ -1,4 +1,8 @@
-import type { OrchestrationV2ThreadProjection, TurnItemId } from "@t3tools/contracts";
+import type {
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ProjectedTurnItem,
+  TurnItemId,
+} from "@t3tools/contracts";
 
 type Projection = OrchestrationV2ThreadProjection;
 
@@ -109,6 +113,50 @@ export function resolveV2ItemSupport(projection: Projection, itemId: TurnItemId)
     contextHandoff,
     contextTransfer,
   };
+}
+
+export function resolveV2ItemProviderOrigin(
+  support: V2ItemSupport,
+  source: Pick<OrchestrationV2ProjectedTurnItem, "sourceThreadId" | "sourceItemId">,
+) {
+  const { item, providerThread, providerTurn, attempts, run } = support;
+  if (item === null || item.id !== source.sourceItemId || item.threadId !== source.sourceThreadId)
+    return null;
+  if (item.providerTurnId !== null && providerTurn === null) return null;
+  if (
+    providerTurn !== null &&
+    (providerTurn.id !== item.providerTurnId ||
+      providerTurn.providerThreadId !== item.providerThreadId)
+  )
+    return null;
+  if (providerThread !== null) {
+    if (providerThread.id !== item.providerThreadId || providerThread.appThreadId !== item.threadId)
+      return null;
+    const attemptId = providerTurn?.runAttemptId;
+    if (attemptId != null) {
+      const attempt = attempts.find((candidate) => candidate.id === attemptId);
+      if (
+        attempt === undefined ||
+        attempt.runId !== item.runId ||
+        attempt.providerThreadId !== providerThread.id ||
+        attempt.providerInstanceId !== providerThread.providerInstanceId ||
+        (attempt.providerTurnId !== null && attempt.providerTurnId !== item.providerTurnId)
+      )
+        return null;
+      return { providerInstanceId: attempt.providerInstanceId, driver: providerThread.driver };
+    }
+    return { providerInstanceId: providerThread.providerInstanceId, driver: providerThread.driver };
+  }
+  if (item.providerThreadId != null || item.providerTurnId !== null) return null;
+  if (
+    run !== null &&
+    run.id === item.runId &&
+    run.threadId === item.threadId &&
+    run.rootNodeId !== null &&
+    run.rootNodeId === item.nodeId
+  )
+    return { providerInstanceId: run.providerInstanceId, driver: null };
+  return null;
 }
 
 function sameEntities<A>(left: ReadonlyArray<A>, right: ReadonlyArray<A>): boolean {

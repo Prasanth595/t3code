@@ -1,3 +1,7 @@
+import { resolveV2ItemProviderOrigin } from "@t3tools/client-runtime/state/item-support";
+import { PROVIDER_DISPLAY_NAMES, type OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { useV2ItemSupport } from "../../state/v2-item-support";
+import { serverEnvironment } from "../../state/server";
 import { Button } from "../../components/ui/Button";
 import { SubagentStatusDot } from "./SubagentStatusDot";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
@@ -849,6 +853,113 @@ function ReplCodeText({
   );
 }
 
+type FailureRowProps = ComponentProps<typeof ThreadWorkLogRow> & {
+  readonly failureItem: Extract<OrchestrationV2TurnItem, { type: "error" }>;
+  readonly originLabel?: string;
+};
+
+function QuotaFailureRow(props: FailureRowProps) {
+  const projectedItem = props.row.projectedItem;
+  const support = useV2ItemSupport({
+    environmentId: props.environmentId,
+    sourceThreadId: projectedItem.sourceThreadId,
+    sourceItemId: projectedItem.sourceItemId,
+  });
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId));
+  const origin = resolveV2ItemProviderOrigin(support, projectedItem);
+  const provider = origin
+    ? providers?.find((candidate) => candidate.instanceId === origin.providerInstanceId)
+    : undefined;
+  const matchesDriver = origin?.driver == null || provider?.driver === origin.driver;
+  const driver = origin?.driver ?? provider?.driver;
+  const driverLabel = driver ? PROVIDER_DISPLAY_NAMES[driver] : undefined;
+  const instanceLabel = matchesDriver ? provider?.displayName?.trim() : undefined;
+  const originLabel = instanceLabel
+    ? `${driverLabel ?? "Provider"} · Instance: ${instanceLabel}`
+    : driverLabel
+      ? `${driverLabel} · Instance label unavailable`
+      : "Provider origin unavailable";
+  return <FailureRow {...props} originLabel={originLabel} />;
+}
+
+function FailureRow(props: FailureRowProps) {
+  const { row, failureItem, originLabel } = props;
+  const warning = failureItem.failure.class === "usage_limit";
+  const timestamp = new Date(row.createdAt);
+  const resetAt = failureItem.failure.resetAt;
+  const resetTime = resetAt
+    ? new Date(resetAt).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+  const label = warning
+    ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
+    : row.summary;
+  return (
+    <WorkLogPressable
+      accessibilityLabel={
+        warning
+          ? `${label} ${originLabel}. ${failureItem.failure.message}`
+          : `${row.summary}: ${failureItem.failure.message}`
+      }
+      accessibilityHint="Long press to copy."
+      onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
+    >
+      <View className="flex-1 py-1">
+        <View className="flex-row items-center gap-1.5">
+          <WorkLogIconSlot>
+            <WorkLogIcon
+              icon="exclamationmark.circle"
+              color={props.iconSubtleColor}
+              colorClassName={warning ? "accent-warning-foreground" : "accent-danger-foreground"}
+            />
+          </WorkLogIconSlot>
+          <Text
+            className={
+              warning
+                ? "min-w-0 flex-1 font-t3-medium text-sm text-warning-foreground"
+                : "min-w-0 flex-1 font-t3-medium text-sm text-adaptive-rose-600-400"
+            }
+          >
+            {label}
+          </Text>
+          {props.copied ? (
+            <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
+              Copied
+            </Text>
+          ) : null}
+          <Text
+            accessibilityLabel={timestamp.toLocaleString()}
+            className="shrink-0 text-xs text-foreground-subtle"
+          >
+            {timestamp.toLocaleString(undefined, {
+              month: "short",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </Text>
+        </View>
+        {originLabel ? <Text className="ml-7 text-sm text-foreground">{originLabel}</Text> : null}
+        <Text selectable className="ml-7 text-sm text-foreground">
+          {failureItem.failure.message}
+        </Text>
+        {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
+        failureItem.runId !== null ? (
+          <WorkspacePreparationRetryButton
+            environmentId={props.environmentId}
+            threadId={failureItem.threadId}
+            runId={failureItem.runId}
+          />
+        ) : null}
+      </View>
+    </WorkLogPressable>
+  );
+}
+
 const ThreadWorkLogRow = function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
@@ -878,78 +989,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   );
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
-    const warning = failureItem.failure.class === "usage_limit";
-    const timestamp = new Date(row.createdAt);
-    const resetAt = failureItem.failure.resetAt;
-    const resetTime = resetAt
-      ? new Date(resetAt).toLocaleString(undefined, {
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "2-digit",
-        })
-      : null;
-    const label = warning
-      ? `Usage limit reached.${resetTime ? ` Retry after ${resetTime}.` : ""}`
-      : row.summary;
-    return (
-      <WorkLogPressable
-        accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}
-        accessibilityHint="Long press to copy."
-        onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
-      >
-        <View className="flex-1 py-1">
-          <View className="flex-row items-center gap-1.5">
-            <WorkLogIconSlot>
-              <WorkLogIcon
-                icon="exclamationmark.circle"
-                color={props.iconSubtleColor}
-                colorClassName={warning ? "accent-warning-foreground" : "accent-danger-foreground"}
-              />
-            </WorkLogIconSlot>
-            <Text
-              className={
-                warning
-                  ? "min-w-0 flex-1 font-t3-medium text-sm text-warning-foreground"
-                  : "min-w-0 flex-1 font-t3-medium text-sm text-adaptive-rose-600-400"
-              }
-            >
-              {label}
-            </Text>
-            {props.copied ? (
-              <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
-                Copied
-              </Text>
-            ) : null}
-            <Text
-              accessibilityLabel={timestamp.toLocaleString()}
-              className="shrink-0 text-xs text-foreground-subtle"
-            >
-              {timestamp.toLocaleString(undefined, {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </Text>
-          </View>
-          {!warning ? (
-            <Text selectable className="ml-7 text-sm text-foreground">
-              {failureItem.failure.message}
-            </Text>
-          ) : null}
-          {failureItem.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
-          failureItem.runId !== null ? (
-            <WorkspacePreparationRetryButton
-              environmentId={props.environmentId}
-              threadId={failureItem.threadId}
-              runId={failureItem.runId}
-            />
-          ) : null}
-        </View>
-      </WorkLogPressable>
+    return failureItem.failure.class === "usage_limit" ? (
+      <QuotaFailureRow {...props} failureItem={failureItem} />
+    ) : (
+      <FailureRow {...props} failureItem={failureItem} />
     );
   }
+
   const notifiedSubagentThreadId =
     row.projectedItem.item.type === "notification"
       ? notificationChildThreadId(row.projectedItem.item.source)

@@ -1,4 +1,7 @@
 import { useRenderedAppearance } from "../../hooks/useTheme";
+import { resolveV2ItemProviderOrigin } from "@t3tools/client-runtime/state/item-support";
+import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { serverEnvironment } from "../../state/server";
 import type { Root, RootContent } from "mdast";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
@@ -5317,6 +5320,36 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
   );
 });
 
+function QuotaFailureOrigin({
+  projectedItem,
+}: {
+  readonly projectedItem: NonNullable<WorkEntryRowProps["workEntry"]["projectedItem"]>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const support = useV2ItemSupport({
+    environmentId: ctx.activeThreadEnvironmentId,
+    sourceThreadId: projectedItem.sourceThreadId,
+    sourceItemId: projectedItem.sourceItemId,
+  });
+  const providers = useAtomValue(
+    serverEnvironment.providersValueAtom(ctx.activeThreadEnvironmentId),
+  );
+  const origin = resolveV2ItemProviderOrigin(support, projectedItem);
+  const provider = origin
+    ? providers?.find((candidate) => candidate.instanceId === origin.providerInstanceId)
+    : undefined;
+  const matchesDriver = origin?.driver == null || provider?.driver === origin.driver;
+  const driver = origin?.driver ?? provider?.driver;
+  const driverLabel = driver ? PROVIDER_DISPLAY_NAMES[driver] : undefined;
+  const instanceLabel = matchesDriver ? provider?.displayName?.trim() : undefined;
+  const label = instanceLabel
+    ? `${driverLabel ?? "Provider"} · Instance: ${instanceLabel}`
+    : driverLabel
+      ? `${driverLabel} · Instance label unavailable`
+      : "Provider origin unavailable";
+  return <p className="ms-7 whitespace-pre-wrap break-words text-sm text-foreground/80">{label}</p>;
+}
+
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
@@ -5385,11 +5418,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           />
         }
       >
-        {!warning ? (
-          <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
-            {failureItem.failure.message}
-          </p>
+        {warning && workEntry.projectedItem ? (
+          <QuotaFailureOrigin projectedItem={workEntry.projectedItem} />
         ) : null}
+        <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
+          {failureItem.failure.message}
+        </p>
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">
             <Button

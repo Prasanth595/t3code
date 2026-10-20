@@ -10,6 +10,7 @@ const reactTests = [
   "src/features/threads/useThreadHeaderOptions.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
+  "src/features/threads/thread-work-log.test.tsx",
 ];
 
 export default defineConfig({

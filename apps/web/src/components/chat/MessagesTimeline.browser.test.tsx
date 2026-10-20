@@ -1,3 +1,18 @@
+import { formatUpcomingTimestamp } from "../../timestampFormat";
+import * as DateTime from "effect/DateTime";
+import { environmentThreadDetails } from "../../state/threads";
+import {
+  NodeId,
+  ProviderInstanceId,
+  ProviderThreadId,
+  ProviderDriverKind,
+  TurnItemId,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadProjection,
+  type ServerProvider,
+} from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { RegistryProvider } from "@effect/atom-react";
 import {
   ApprovalRequestId,
@@ -164,6 +179,7 @@ afterEach(async () => {
   window.getSelection()?.removeAllRanges();
   document.body.replaceChildren();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 async function renderElement(element: ReactElement) {
@@ -425,6 +441,40 @@ describe("MessagesTimeline work rows", () => {
     await vi.waitFor(() => expect(text()).toContain("Read a T3 thread"));
     expect(text()).not.toContain("mcp__t3-code__t3_thread_read");
   });
+
+  it.each([null, "2026-10-16T20:05:33.000Z"])(
+    "retains quota retry wording and origin with reset %s",
+    async (resetAt) => {
+      vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-10-16T12:00:00Z"));
+      const message = resetAt ? quotaMessage.replace("3:33 PM", "4:05 AM") : quotaMessage;
+      await renderTimeline([
+        work("quota-error", {
+          runId: "run-1",
+          label: "Provider error",
+          tone: "error",
+          itemType: "error",
+          projectedItem: v2Item("error", {
+            id: "quota-error",
+            status: "failed",
+            failure: {
+              class: "usage_limit",
+              message,
+              code: "usageLimitExceeded",
+              retryable: false,
+              resetAt,
+            },
+          }),
+        }),
+      ]);
+      expect(text()).toContain("Usage limit reached.");
+      expect(text()).toContain(message);
+      expect(text()).toContain("Provider origin unavailable");
+      expect(text().includes("Retry after")).toBe(resetAt !== null);
+      if (resetAt)
+        expect(text()).toContain(`Retry after ${formatUpcomingTimestamp(resetAt, "locale")}.`);
+      expect(container.querySelector("b")).toBeNull();
+    },
+  );
 
   it("keeps a provider retry collapsed in the work log", async () => {
     const retryItem = {
@@ -1638,4 +1688,302 @@ describe("compact reasoning math", () => {
       "x^2",
     ]);
   });
+});
+
+const originInstance = ProviderInstanceId.make("opaque-a-123");
+const otherInstance = ProviderInstanceId.make("instance-b");
+const originThread = ThreadId.make("source-origin");
+const originProviderThread = ProviderThreadId.make("provider-thread-a");
+const originNode = NodeId.make("root-a");
+const originRun = RunId.make("run-a");
+const originNow = DateTime.makeUnsafe("2026-10-16T12:00:00Z");
+const quotaMessage =
+  "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or try again at 3:33 PM.";
+function originFixture() {
+  const v2Projection = makeThreadProjectionFixture();
+  const item: OrchestrationV2TurnItem = {
+    id: TurnItemId.make("origin-error"),
+    threadId: originThread,
+    runId: originRun,
+    nodeId: originNode,
+    providerThreadId: originProviderThread,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "failed",
+    title: null,
+    startedAt: originNow,
+    completedAt: originNow,
+    updatedAt: originNow,
+    type: "error",
+    failure: {
+      class: "usage_limit",
+      message: quotaMessage,
+      code: "usageLimitExceeded",
+      retryable: null,
+      resetAt: null,
+    },
+  };
+  const projection: OrchestrationV2ThreadProjection = {
+    ...v2Projection,
+    thread: {
+      ...v2Projection.thread,
+      id: originThread,
+      providerInstanceId: otherInstance,
+      modelSelection: { instanceId: otherInstance, model: "other-model" },
+    },
+    turnItems: [item],
+    runs: [
+      {
+        id: originRun,
+        threadId: originThread,
+        ordinal: 1,
+        providerInstanceId: originInstance,
+        modelSelection: { instanceId: originInstance, model: "original-model" },
+        providerThreadId: originProviderThread,
+        userMessageId: MessageId.make("message-a"),
+        rootNodeId: originNode,
+        activeAttemptId: null,
+        status: "failed",
+        requestedAt: originNow,
+        startedAt: originNow,
+        completedAt: originNow,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    ],
+    providerThreads: [
+      {
+        id: originProviderThread,
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: originInstance,
+        providerSessionId: null,
+        appThreadId: originThread,
+        ownerNodeId: originNode,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "active",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: originNow,
+        updatedAt: originNow,
+      },
+    ],
+  };
+  const provider: ServerProvider = {
+    instanceId: originInstance,
+    driver: ProviderDriverKind.make("codex"),
+    displayName: "  Original instance  ",
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated", email: "not-an-instance@example.test" },
+    checkedAt: "2026-10-16T12:00:00Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+  };
+  return {
+    item,
+    projection,
+    providers: [
+      provider,
+      { ...provider, instanceId: otherInstance, displayName: "Current selection" },
+    ],
+  };
+}
+
+async function renderOrigin(
+  fixture: ReturnType<typeof originFixture>,
+  visibility: "local" | "inherited" = "local",
+) {
+  const projectedItem = {
+    position: 0,
+    visibility,
+    sourceThreadId: fixture.item.threadId,
+    sourceItemId: fixture.item.id,
+    item: fixture.item,
+  };
+  await renderElement(
+    <RegistryProvider
+      initialValues={[
+        [
+          environmentThreadDetails.threadAtom(
+            scopeThreadRef(ENVIRONMENT_ID, fixture.item.threadId),
+          ),
+          { environmentId: ENVIRONMENT_ID, projection: fixture.projection },
+        ],
+        [serverEnvironment.providersValueAtom(ENVIRONMENT_ID), fixture.providers],
+      ]}
+    >
+      <MessagesTimeline
+        {...baseProps()}
+        timelineEntries={[
+          work("origin-error", {
+            runId: originRun,
+            label: "Provider error",
+            tone: "error",
+            itemType: "error",
+            projectedItem,
+          }),
+        ]}
+        latestRun={{
+          runId: RunId.make("latest-b"),
+          status: "completed",
+          startedAt: CREATED_AT,
+          completedAt: CREATED_AT,
+        }}
+      />
+    </RegistryProvider>,
+  );
+}
+
+describe("quota origin", () => {
+  it.each(["local", "inherited"] as const)(
+    "keeps the source instance after selection changes for %s rows",
+    async (visibility) => {
+      await renderOrigin(originFixture(), visibility);
+      expect(container.textContent).toContain("Codex · Instance: Original instance");
+      expect(container.textContent).toContain(quotaMessage);
+      expect(container.textContent).not.toContain("Current selection");
+      expect(container.textContent).not.toContain("not-an-instance@example.test");
+    },
+  );
+  it.each([undefined, "   ", "Codex"])(
+    "does not expose an opaque instance ID for displayName %s",
+    async (displayName) => {
+      const fixture = originFixture();
+      fixture.providers = fixture.providers.map((p) =>
+        p.instanceId === originInstance ? { ...p, displayName } : p,
+      );
+      await renderOrigin(fixture);
+      expect(container.textContent).toContain(
+        displayName === "Codex" ? "Codex · Instance: Codex" : "Codex · Instance label unavailable",
+      );
+      expect(container.textContent).not.toContain("opaque-a-123");
+      expect(container.textContent).not.toContain("Current selection");
+    },
+  );
+  it("retains the known driver when the catalog entry is unavailable", async () => {
+    const fixture = originFixture();
+    fixture.providers = [];
+    await renderOrigin(fixture);
+    expect(container.textContent).toContain("Codex · Instance label unavailable");
+    expect(container.textContent).toContain(quotaMessage);
+  });
+  it("uses the child's provider even when it shares the root run", async () => {
+    const fixture = originFixture();
+    fixture.item = { ...fixture.item, nodeId: NodeId.make("child-node") };
+    fixture.projection = {
+      ...fixture.projection,
+      turnItems: [fixture.item],
+      providerThreads: fixture.projection.providerThreads.map((p) => ({
+        ...p,
+        providerInstanceId: otherInstance,
+        driver: ProviderDriverKind.make("claudeAgent"),
+      })),
+    };
+    fixture.providers = fixture.providers.map((p) =>
+      p.instanceId === otherInstance
+        ? { ...p, driver: ProviderDriverKind.make("claudeAgent"), displayName: "Child instance" }
+        : p,
+    );
+    await renderOrigin(fixture);
+    expect(container.textContent).toContain("Claude · Instance: Child instance");
+    expect(container.textContent).not.toContain("Original instance");
+  });
+  it("resolves a child thread's own root", async () => {
+    const fixture = originFixture();
+    const childThread = ThreadId.make("child-thread");
+    fixture.item = { ...fixture.item, threadId: childThread };
+    fixture.projection = {
+      ...fixture.projection,
+      thread: { ...fixture.projection.thread, id: childThread },
+      turnItems: [fixture.item],
+      runs: fixture.projection.runs.map((run) => ({ ...run, threadId: childThread })),
+      providerThreads: fixture.projection.providerThreads.map((provider) => ({
+        ...provider,
+        appThreadId: childThread,
+      })),
+    };
+    await renderOrigin(fixture);
+    expect(container.textContent).toContain("Codex · Instance: Original instance");
+  });
+  it("uses the exact run only when the item is its root", async () => {
+    const fixture = originFixture();
+    fixture.item = { ...fixture.item, providerThreadId: null };
+    fixture.projection = { ...fixture.projection, turnItems: [fixture.item], providerThreads: [] };
+    await renderOrigin(fixture);
+    expect(container.textContent).toContain("Codex · Instance: Original instance");
+  });
+  it.each(["missing", "contradictory", "unloaded inherited"])(
+    "leaves %s origin unknown",
+    async (kind) => {
+      const fixture = originFixture();
+      fixture.projection = {
+        ...fixture.projection,
+        turnItems: kind === "unloaded inherited" ? [] : [fixture.item],
+        providerThreads:
+          kind === "contradictory"
+            ? fixture.projection.providerThreads.map((p) => ({
+                ...p,
+                appThreadId: ThreadId.make("wrong-thread"),
+              }))
+            : [],
+      };
+      await renderOrigin(fixture, "inherited");
+      expect(container.textContent).toContain("Provider origin unavailable");
+      expect(container.textContent).not.toContain("Original instance");
+      expect(container.textContent).not.toContain("Current selection");
+    },
+  );
+});
+
+it("preserves non-quota messages and the workspace preparation Retry action", async () => {
+  const retry = vi.fn();
+  await renderTimeline(
+    [
+      work("setup-error", {
+        runId: "run-1",
+        label: "Setup failed",
+        tone: "error",
+        itemType: "error",
+        projectedItem: v2Item("error", {
+          id: "setup-error",
+          status: "failed",
+          failure: {
+            class: "unknown",
+            message: "Worktree setup failed.",
+            code: "workspace_preparation_failed",
+            retryable: true,
+            resetAt: null,
+          },
+        }),
+      }),
+    ],
+    {
+      retryableWorkspacePreparationRunIds: new Set([RunId.make("run-1")]),
+      onRetryWorkspacePreparation: retry,
+    },
+  );
+  expect(text()).toContain("Setup failed");
+  expect(text()).toContain("Worktree setup failed.");
+  expect(text()).not.toContain("Instance:");
+  await click(button("Retry"));
+  expect(retry.mock.calls).toEqual([["run-1"]]);
+});
+
+it("renders quota markup literally", async () => {
+  const fixture = originFixture();
+  const message =
+    '<script>throw "unsafe"</script><img src=x onerror="unsafe()"> try again at 3:33 PM';
+  fixture.item = { ...fixture.item, failure: { ...fixture.item.failure, message } };
+  fixture.projection = { ...fixture.projection, turnItems: [fixture.item] };
+  await renderOrigin(fixture);
+  expect(container.textContent).toContain(message);
+  expect(container.querySelector("script, img, [onerror]")).toBeNull();
 });
