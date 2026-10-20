@@ -139,11 +139,13 @@ const restoreHostFocusScript = (guestId: number) =>
 
 /**
  * The app's focus held for a guest's agent mouse input. Overlapping events share
- * one hold: a later event would only note the guest an earlier one focused.
+ * one hold: a later event would only note the guest an earlier one focused. The
+ * hold stays registered while its focus is handed back, so an event arriving
+ * then waits for the hand-back and takes a new hold.
  */
 const heldHostFocus = new WeakMap<
   Electron.WebContents,
-  { inFlight: number; readonly held: Promise<void> }
+  { inFlight: number; readonly held: Promise<void>; restoring?: Promise<void> }
 >();
 
 /** Runs an agent's mouse input in a guest the app does not have focused, then hands the app its focus back. */
@@ -157,6 +159,10 @@ const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () =>
     } catch {}
   };
   let hold = heldHostFocus.get(webContents);
+  while (hold?.restoring) {
+    await hold.restoring;
+    hold = heldHostFocus.get(webContents);
+  }
   if (!hold) {
     hold = { inFlight: 0, held: inHost(holdHostFocusScript(webContents.id)) };
     heldHostFocus.set(webContents, hold);
@@ -168,8 +174,9 @@ const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () =>
   } finally {
     hold.inFlight -= 1;
     if (hold.inFlight === 0) {
-      heldHostFocus.delete(webContents);
-      await inHost(restoreHostFocusScript(webContents.id));
+      hold.restoring = inHost(restoreHostFocusScript(webContents.id));
+      await hold.restoring;
+      if (heldHostFocus.get(webContents) === hold) heldHostFocus.delete(webContents);
     }
   }
 };

@@ -166,19 +166,47 @@ describe("preview guest input", () => {
       host.composer.focus();
       const guest = makeGuest({ focused: false, host });
       let finishPress = () => {};
+      const pressStarted = Promise.withResolvers<void>();
       guest.sendCommand.mockImplementationOnce(async () => {
         host.webview.focus();
+        pressStarted.resolve();
         await new Promise<void>((resolve) => {
           finishPress = resolve;
         });
         return { result: {} };
       });
       const pressing = guest.send("Input.dispatchMouseEvent", press);
-      await vi.waitFor(() => expect(host.activeElement()).toBe(host.webview));
+      await pressStarted.promise;
+      expect(host.activeElement()).toBe(host.webview);
       // The relay forwards the release without waiting for the press to finish.
       await guest.send("Input.dispatchMouseEvent", { ...press, type: "mouseReleased" });
       finishPress();
       await pressing;
+      expect(host.activeElement()).toBe(host.composer);
+    });
+
+    it("holds a click that arrives while the app's focus is being handed back", async () => {
+      const host = makeHost();
+      host.composer.focus();
+      const guest = makeGuest({ focused: false, host });
+      const runScript = host.hostWebContents.executeJavaScript.getMockImplementation()!;
+      let finishRestore = () => {};
+      const restoreStarted = Promise.withResolvers<void>();
+      host.hostWebContents.executeJavaScript
+        .mockImplementationOnce(runScript)
+        .mockImplementationOnce(async (script: string) => {
+          restoreStarted.resolve();
+          await new Promise<void>((resolve) => {
+            finishRestore = resolve;
+          });
+          return runScript(script);
+        });
+      const first = guest.send("Input.dispatchMouseEvent", press);
+      await Promise.race([restoreStarted.promise, first]);
+      expect(host.hostWebContents.executeJavaScript).toHaveBeenCalledTimes(2);
+      const second = guest.send("Input.dispatchMouseEvent", press);
+      finishRestore();
+      await Promise.all([first, second]);
       expect(host.activeElement()).toBe(host.composer);
     });
 
