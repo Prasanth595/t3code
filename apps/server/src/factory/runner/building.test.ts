@@ -47,6 +47,8 @@ import {
   type AdvanceOutcome,
   type BuildingContext,
 } from "./building.ts";
+import { readProgress } from "./progress.ts";
+import { runProject } from "./run.ts";
 import { interruptible } from "./testSupport.ts";
 
 const tempDir = useTempDirs();
@@ -849,12 +851,11 @@ describe("advance: done", () => {
           rig.world.pr = { ...defaultPr(), baseRef: base };
           const shown = base.replaceAll("@", "@\u200B");
           assertStuck(rig, yield* advanceIn(rig), {
-            publicReason:
-              "the session reported PR #12 but its base is not the configured base branch",
+            publicReason: "the session reported PR #12 but its base is not the base branch main",
             text: DONE_MESSAGE,
             before: ["pullRequest 12"],
             recorded: joined(
-              `the session reported PR #12 but its base ${shown} is not the configured base branch`,
+              `the session reported PR #12 but its base ${shown} is not the base branch main`,
               DONE_MESSAGE,
             ),
           });
@@ -867,6 +868,45 @@ describe("advance: done", () => {
       const rig = rigFor(STARTED, { base: "develop" });
       rig.world.pr = { ...defaultPr(), baseRef: "develop" };
       assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+    }),
+  );
+
+  it.effect("binds to the base the run's launch recorded, not the project's", () =>
+    Effect.gen(function* () {
+      const onFeature = STARTED.map((event) =>
+        event.event === "session_launched"
+          ? { ...event, data: { ...event.data, base: "feature/x" } }
+          : event,
+      );
+      const forRun = (rig: Rig): Rig => ({
+        ...rig,
+        ctx: {
+          ...rig.ctx,
+          project: runProject(
+            rig.ctx.project,
+            readProgress(readRun(rig.dataDir, rig.run).entries).base,
+          ),
+        },
+      });
+      const bound = forRun(rigFor(onFeature));
+      bound.world.pr = { ...defaultPr(), baseRef: "feature/x" };
+      assert.strictEqual((yield* advanceIn(bound)).kind, "ready-for-gate");
+      const refused = forRun(rigFor(onFeature));
+      refused.world.pr = { ...defaultPr(), baseRef: "main" };
+      assert.deepStrictEqual(yield* advanceIn(refused), {
+        kind: "stuck",
+        reason: joined(
+          "the session reported PR #12 but its base main is not the base branch feature/x",
+          DONE_MESSAGE,
+        ),
+      });
+      assert.deepStrictEqual(refused.gh, [
+        "pullRequest 12",
+        ...stuckCalls(
+          "the session reported PR #12 but its base is not the base branch feature/x",
+          DONE_MESSAGE,
+        ),
+      ]);
     }),
   );
 

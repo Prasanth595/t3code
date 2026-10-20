@@ -132,6 +132,7 @@ export const relaunchSession = (
             model: project.model.model,
             model_options: project.model.options ?? null,
             resumed_from: { run: runIdToString(run), branch: relaunch.branch },
+            base: ctx.project.base,
           },
         },
         makeCause(at.step, "resumed-from-branch"),

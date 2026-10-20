@@ -26,7 +26,7 @@ The factory gave up. The comment gives the reason and, when the session had made
 | No model to launch with                                       | Set a default model on the T3 project or in T3's Settings.                                                                         |
 | Stopped by hand                                               | Nothing: someone stopped it.                                                                                                       |
 
-Fix the cause, then an instructor sets `factory:ready` to start a new run. A new run starts from the base branch, not from the old branch.
+Fix the cause, then an instructor sets `factory:ready` to start a new run. A new run starts from the issue's base branch (its `## Base`, else the repo's), not from the old branch.
 
 ## The time limit
 

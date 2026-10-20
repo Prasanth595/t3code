@@ -90,6 +90,7 @@ import {
   type GateStepError,
 } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
+import { runProject } from "./runner/run.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
 import * as Events from "./t3/events.ts";
@@ -426,11 +427,12 @@ export const liveWorld = (
     sessions,
     clock,
   });
-  const buildingContext = (repo: Repo): BuildingContext => ({
+  // A run's steps get the repo's project with the run's own base: the one its launch recorded.
+  const buildingContext = (repo: Repo, project: ProjectConfig): BuildingContext => ({
     repo: repo.watched.repo,
     trackerUser: repo.trackerUser,
     machine: host,
-    project: repo.project,
+    project,
     dataDir,
     tracker: trackerFor(repo.watched),
     sessions,
@@ -438,15 +440,16 @@ export const liveWorld = (
   });
   // The steps of a building run that can also start the next attempt: `advance` finishes a
   // relaunch, `interrupted` decides one. The tracker and the sessions are the same for both.
-  const interruptContext = (repo: Repo): InterruptContext => ({
-    ...buildingContext(repo),
+  const interruptContext = (repo: Repo, project: ProjectConfig): InterruptContext => ({
+    ...buildingContext(repo, project),
+    repoProject: repo.project,
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
     tracker: trackerFor(repo.watched),
     sessions,
   });
-  const gateContext = (repo: Repo): FeedbackContext => ({
-    ...buildingContext(repo),
+  const gateContext = (repo: Repo, project: ProjectConfig): FeedbackContext => ({
+    ...buildingContext(repo, project),
     tracker: trackerFor(repo.watched),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
@@ -489,8 +492,9 @@ export const liveWorld = (
         { readonly state: State; readonly step: GateStep; readonly moved: Moved | null },
         GateStepError
       > = Effect.gen(function* () {
-        const context = gateContext(repo);
-        const state = (yield* ledger(() => readProgress(readRun(dataDir, run).entries))).state;
+        const seen = yield* ledger(() => readProgress(readRun(dataDir, run).entries));
+        const context = gateContext(repo, runProject(repo.project, seen.base));
+        const state = seen.state;
         if (state === "pr-open") {
           const regated = yield* regate(context, run);
           return { state, step: regated.step, moved: regated.moved };
@@ -611,23 +615,27 @@ export const liveWorld = (
     start: (repo: Repo, issue: number) => start(startContext(repo), issue),
     resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
     takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
-    timeLimit: (repo, run) => timeLimit(buildingContext(repo), run),
-    watch: (repo, run) => watch(buildingContext(repo), run),
-    forward: (repo, run) => forward(buildingContext(repo), run),
-    advance: (repo, run) => advance(interruptContext(repo), run),
+    timeLimit: (repo, run, base) =>
+      timeLimit(buildingContext(repo, runProject(repo.project, base)), run),
+    watch: (repo, run, base) => watch(buildingContext(repo, runProject(repo.project, base)), run),
+    forward: (repo, run, base) =>
+      forward(buildingContext(repo, runProject(repo.project, base)), run),
+    advance: (repo, run, base) =>
+      advance(interruptContext(repo, runProject(repo.project, base)), run),
     t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
     t3Starts: () => ledger(() => serverStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
     t3Stops: () =>
       ledger(() => serverStopsForStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
-    interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
+    interrupted: (repo, run, base, evidence) =>
+      interrupted(interruptContext(repo, runProject(repo.project, base)), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
     hasPendingGateSend: (run) =>
       ledger(() => gateSendPending(readProgress(readRun(dataDir, run).entries))),
     lastPass: (run) => lastPass(dataDir, run),
-    baseTip: (repo) =>
+    baseTip: (repo, base) =>
       trackerFor(repo.watched)
-        .branchTip(repo.project.base)
+        .branchTip(base)
         .pipe(
           Effect.map((tip) => tip.toLowerCase()),
           Effect.mapError(asPassError("tracker")),
@@ -646,7 +654,7 @@ export const liveWorld = (
           Effect.mapError(asPassError("tracker")),
         ),
     gate: startGate,
-    feedback: (repo, run) => feedback(gateContext(repo), run),
+    feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
     nowMs: clock,

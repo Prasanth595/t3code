@@ -203,7 +203,13 @@ class Fake implements PassWorld {
       }),
   };
 
-  runIn(issue: number, state: State | null, repo = REPO, session = false) {
+  runIn(
+    issue: number,
+    state: State | null,
+    repo = REPO,
+    session = false,
+    base: string | null = null,
+  ) {
     this.runs.push({
       id: rid(issue, repo),
       state,
@@ -211,7 +217,13 @@ class Fake implements PassWorld {
       confirmed: true,
       session,
       prReported: false,
+      base,
     });
+  }
+
+  /** A step called for a run on its own base says so: `<step> <run> on <base>`. */
+  private onBase(step: string, run: RunId, base: string | null) {
+    if (base !== null) this.calls.push(`${step} ${runIdToString(run)} on ${base}`);
   }
 
   pushStart(key: string, answer: StartOutcome | StartError) {
@@ -337,6 +349,7 @@ class Fake implements PassWorld {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       });
     }
     if ("kind" in answer && answer.kind === "started") {
@@ -352,6 +365,7 @@ class Fake implements PassWorld {
           confirmed: true,
           session: false,
           prReported: false,
+          base: null,
         });
       return Effect.succeed(answer);
     }
@@ -379,18 +393,21 @@ class Fake implements PassWorld {
     return typeof answer === "string" ? Effect.succeed(answer) : Effect.fail(answer);
   }
 
-  timeLimit(repo: Repo, run: RunId) {
+  timeLimit(repo: Repo, run: RunId, base: string | null) {
+    this.onBase("time_limit", run, base);
     return this.scripted(this.timeLimits, "time_limit", repo, Number(run.issue), {
       kind: "within",
     });
   }
 
-  watch(repo: Repo, run: RunId) {
+  watch(repo: Repo, run: RunId, base: string | null) {
+    this.onBase("watch", run, base);
     return this.scripted(this.watches, "watch", repo, Number(run.issue), { kind: "unchanged" });
   }
 
   /** A forward of a run whose issue a person closed ends the run, as the ledger does. */
-  forward(repo: Repo, run: RunId) {
+  forward(repo: Repo, run: RunId, base: string | null) {
+    this.onBase("forward", run, base);
     const key = `${repo.watched.repo}#${run.issue}`;
     this.calls.push(`forward ${key}`);
     const answer = this.forwards[key]?.shift() ?? NOTHING_SENT;
@@ -401,7 +418,8 @@ class Fake implements PassWorld {
     return Effect.succeed(answer);
   }
 
-  feedback(repo: Repo, run: RunId) {
+  feedback(repo: Repo, run: RunId, base: string | null) {
+    this.onBase("feedback", run, base);
     const id = runIdToString(run);
     this.feedbacks.push(id);
     this.calls.push(`feedback ${repo.watched.repo}#${run.issue}`);
@@ -410,7 +428,8 @@ class Fake implements PassWorld {
   }
 
   /** An advance that ends the run (`needs-info`, `stuck`) takes it off the list, as the ledger does. */
-  advance(repo: Repo, run: RunId) {
+  advance(repo: Repo, run: RunId, base: string | null) {
+    this.onBase("advance", run, base);
     const answered = this.scripted(this.advances, "advance", repo, Number(run.issue), {
       kind: "running",
     });
@@ -459,7 +478,8 @@ class Fake implements PassWorld {
   }
 
   /** A decision that sends the run to `stuck` or relaunches it takes it off the list, as the ledger does. */
-  interrupted(repo: Repo, run: RunId, evidence: Evidence) {
+  interrupted(repo: Repo, run: RunId, base: string | null, evidence: Evidence) {
+    this.onBase("interrupted", run, base);
     this.calls.push(
       `interrupted ${runIdToString(run)} t3=${evidence.t3Error ?? "none"} ended=${evidence.endedInPass}`,
     );
@@ -513,7 +533,7 @@ class Fake implements PassWorld {
     this.calls.push(`last_pass ${key}`);
     const found =
       this.lastPasses[key] === undefined
-        ? { pr: 12, head: HEAD, base: BASE }
+        ? { pr: 12, head: HEAD, base: BASE, baseBranch: null }
         : this.lastPasses[key];
     if (found === "error") {
       return Effect.fail(
@@ -523,9 +543,10 @@ class Fake implements PassWorld {
     return Effect.succeed(found);
   }
 
-  baseTip(repo: Repo) {
-    this.calls.push(`base_tip ${repo.watched.repo}`);
-    const found = this.baseTips[repo.watched.repo] ?? BASE;
+  baseTip(repo: Repo, base: string) {
+    this.calls.push(`base_tip ${repo.watched.repo} ${base}`);
+    const found =
+      this.baseTips[`${repo.watched.repo} ${base}`] ?? this.baseTips[repo.watched.repo] ?? BASE;
     return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
   }
 
@@ -655,6 +676,7 @@ describe("claiming new issues", () => {
         confirmed: true,
         session: true,
         prReported: true,
+        base: null,
       });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
@@ -886,6 +908,7 @@ describe("claiming new issues", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
@@ -1055,6 +1078,7 @@ describe("runs that are confirmed and still in triage", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       });
       fake.pushStart(`${REPO}#13`, started(13));
       yield* pass(fake, [REPO], 3);
@@ -1274,6 +1298,33 @@ describe("runs that are confirmed and still in triage", () => {
     }),
   );
 
+  it.effect("every step of a run gets the base its launch recorded, as the listing read it", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true, "feature/x");
+      fake.runIn(41, BUILDING, REPO, true, "feature/y");
+      fake.advances[`${REPO}#41`] = [{ kind: "ended-badly", what: "cancelled" }];
+      fake.runIn(42, "pr-open", REPO, false, "feature/z");
+      fake.feedbackSteps[runIdToString(rid(42))] = [{ kind: "relaunched", pr: 7, items: 1 }];
+      yield* pass(fake, [REPO], 3);
+      assert.deepEqual(
+        fake.calls.filter((c) => c.includes(" on feature/")),
+        [
+          `time_limit ${runIdToString(rid(40))} on feature/x`,
+          `watch ${runIdToString(rid(40))} on feature/x`,
+          `forward ${runIdToString(rid(40))} on feature/x`,
+          `advance ${runIdToString(rid(40))} on feature/x`,
+          `time_limit ${runIdToString(rid(41))} on feature/y`,
+          `watch ${runIdToString(rid(41))} on feature/y`,
+          `forward ${runIdToString(rid(41))} on feature/y`,
+          `advance ${runIdToString(rid(41))} on feature/y`,
+          `interrupted ${runIdToString(rid(41))} on feature/y`,
+          `feedback ${runIdToString(rid(42))} on feature/z`,
+        ],
+      );
+    }),
+  );
+
   it.effect("a run that is not confirmed is never time-limited, watched or advanced", () =>
     Effect.gen(function* () {
       const fake = new Fake();
@@ -1289,6 +1340,7 @@ describe("runs that are confirmed and still in triage", () => {
           confirmed: false,
           session: true,
           prReported: false,
+          base: null,
         });
       }
       const { lines } = yield* pass(fake, [REPO], 3);
@@ -1362,6 +1414,7 @@ describe("claims that have no run in the ledger", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       });
       fake.triage[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
@@ -1381,6 +1434,7 @@ describe("claims that have no run in the ledger", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       });
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#3`, started(3));
@@ -1940,6 +1994,7 @@ describe("what the pass records", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       });
       const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(fake.events[0], { event: "pass_started", data: {} });
@@ -2230,6 +2285,7 @@ describe("following a building run", () => {
           confirmed: true,
           session: true,
           prReported: true,
+          base: null,
         });
         fake.advances[`${REPO}#40`] = [
           { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
@@ -2259,6 +2315,7 @@ describe("following a building run", () => {
         confirmed: true,
         session: true,
         prReported: true,
+        base: null,
       });
       fake.advances[`${REPO}#40`] = [{ kind: "needs-info" }];
       yield* pass(fake, [REPO], 3);
@@ -2281,6 +2338,7 @@ describe("following a building run", () => {
         confirmed: true,
         session: true,
         prReported: true,
+        base: null,
       });
       fake.advances[`${REPO}#40`] = [
         { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
@@ -2809,6 +2867,7 @@ describe("following a building run", () => {
             confirmed: false,
             session: false,
             prReported: false,
+            base: null,
           });
           fake[listing][REPO] = [12];
           fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [rid(12)] });
@@ -3925,7 +3984,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       // The comparison reads the ledger, the base tip, and the pull request's head.
       assert.deepEqual(
         fake.calls.filter((c) => /^(last_pass|base_tip|open_head) /.test(c)),
-        [`last_pass ${REPO}#41`, `base_tip ${REPO}`, `open_head ${REPO}#12`],
+        [`last_pass ${REPO}#41`, `base_tip ${REPO} main`, `open_head ${REPO}#12`],
       );
     }),
   );
@@ -4069,6 +4128,30 @@ describe("pr-open runs: gated again only when something moved", () => {
       }),
   );
 
+  it.effect("two runs of one repo on different bases each compare with their own base's tip", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      pr(fake, 42);
+      fake.lastPasses[`${REPO}#42`] = { pr: 12, head: HEAD, base: BASE, baseBranch: "feature/x" };
+      fake.baseTips[`${REPO} feature/x`] = MOVED;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(reads(fake, "base_tip"), [
+        `base_tip ${REPO} main`,
+        `base_tip ${REPO} feature/x`,
+      ]);
+      assert.deepEqual(gated(fake), [`gate ${REPO}#42`]);
+      // And the other way round: main moved, the feature branch did not.
+      const other = new Fake();
+      pr(other, 41);
+      pr(other, 42);
+      other.lastPasses[`${REPO}#42`] = { pr: 12, head: HEAD, base: BASE, baseBranch: "feature/x" };
+      other.baseTips[`${REPO} main`] = MOVED;
+      yield* pass(other, [REPO], 5);
+      assert.deepEqual(gated(other), [`gate ${REPO}#41`]);
+    }),
+  );
+
   it.effect("the tip is read once for two runs of one repo, and once for each repo", () =>
     Effect.gen(function* () {
       const fake = new Fake();
@@ -4076,7 +4159,10 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 42);
       pr(fake, 43, OTHER);
       yield* pass(fake, [REPO, OTHER], 5);
-      assert.deepEqual(reads(fake, "base_tip"), [`base_tip ${REPO}`, `base_tip ${OTHER}`]);
+      assert.deepEqual(reads(fake, "base_tip"), [
+        `base_tip ${REPO} main`,
+        `base_tip ${OTHER} main`,
+      ]);
       assert.deepEqual(gated(fake), []);
     }),
   );
@@ -4157,7 +4243,7 @@ describe("pr-open runs: instructor feedback", () => {
   /** Run 12 waits in `pr-open` with pull request 7, nothing moved. */
   const quiet = (fake: Fake) => {
     fake.runIn(12, "pr-open", REPO, false);
-    fake.lastPasses[`${REPO}#12`] = { pr: 7, head: HEAD, base: BASE };
+    fake.lastPasses[`${REPO}#12`] = { pr: 7, head: HEAD, base: BASE, baseBranch: null };
   };
   /** Run 12 as `quiet`, and the feedback step answers `step` for it. */
   const reviewed = (step: FeedbackStep | BuildingError) => {

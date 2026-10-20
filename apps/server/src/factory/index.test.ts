@@ -704,6 +704,7 @@ describe("liveWorld", () => {
   const REPO = "rawphp/softfac";
   const NOW = Date.UTC(2026, 9, 8, 2, 0, 0);
   const MINUTE = 60 * 1000;
+  const tempDir = useTempDirs();
 
   /** A process that answers gh by its arguments and records every call. */
   const ghWith = (answer: (args: ReadonlyArray<string>) => string | null) => {
@@ -773,19 +774,16 @@ describe("liveWorld", () => {
       headRefOid: head,
     });
 
-  it.effect("the base tip is read from the repo's base branch, in lower case", () =>
+  it.effect("the base tip is read from the run's base branch, in lower case", () =>
     Effect.gen(function* () {
       const { process, calls } = ghWith(() =>
         JSON.stringify({ object: { type: "commit", sha: SHA } }),
       );
-      const tip = yield* worldOf(process).baseTip({
-        ...repo,
-        project: { ...repo.project, base: "main" },
-      });
+      const tip = yield* worldOf(process).baseTip(repo, "feature/x");
       assert.strictEqual(tip, SHA);
       assert.deepStrictEqual(calls[0]?.slice(0, 2), [
         "api",
-        "repos/rawphp/softfac/git/ref/heads/main",
+        "repos/rawphp/softfac/git/ref/heads/feature/x",
       ]);
     }),
   );
@@ -793,9 +791,110 @@ describe("liveWorld", () => {
   it.effect("a base tip that cannot be read is a tracker error", () =>
     Effect.gen(function* () {
       const { process } = ghWith(() => null);
-      const failed = yield* Effect.flip(worldOf(process).baseTip(repo));
+      const failed = yield* Effect.flip(worldOf(process).baseTip(repo, "main"));
       assert.strictEqual(failed.kind, "tracker");
     }),
+  );
+
+  it.effect(
+    "a step is built for the base the pass hands it: advance binds the PR to that base",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = newRunId(REPO, "10", 1);
+        const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+        ledger.append(
+          { event: "state_changed", data: { from: "triage", to: "building" } },
+          makeCause("start", "seed"),
+        );
+        ledger.append(
+          {
+            event: "session_launched",
+            data: {
+              thread_id: "thread-1",
+              worktree: "/t3/wt",
+              branch: "t3code/abc",
+              model_instance: null,
+              model: null,
+              model_options: null,
+              resumed_from: null,
+              base: "feature/x",
+            },
+          },
+          makeCause("start", "seed"),
+        );
+        ledger.close();
+        // The session is done and reported a pull request against `feature/x`, not `main`.
+        const sessions = Sessions.FactorySessions.of({
+          ...stubSessions,
+          status: () =>
+            Effect.succeed({
+              worktreePath: "/t3/wt",
+              branch: "t3code/abc",
+              archived: false,
+              run: "completed" as const,
+              runOrdinal: 1,
+              runStartedAt: null,
+              runCompletedAt: null,
+              lastAssistantMessage:
+                "Built it.\nFACTORY-DONE: https://github.com/rawphp/softfac/pull/12",
+            }),
+        });
+        const { process, calls } = ghWith((args) => {
+          if (args[0] === "issue" && args[1] === "view") {
+            return JSON.stringify({
+              number: 10,
+              title: "Build step",
+              body: "Build it.\n\n## Base\n\nfeature/x\n",
+              labels: [{ name: "factory:building" }],
+              assignees: [{ login: "rawphp" }],
+              state: "OPEN",
+              author: { login: "rawphp" },
+            });
+          }
+          if (args[0] === "pr" && args[1] === "view") {
+            return JSON.stringify({
+              number: 12,
+              isDraft: true,
+              state: "OPEN",
+              headRefName: "t3code/abc",
+              isCrossRepository: false,
+              baseRefName: "feature/x",
+              headRefOid: SHA,
+            });
+          }
+          return null;
+        });
+        const world = liveWorld(
+          machine,
+          dataDir,
+          process,
+          NodeServices.layer,
+          sessions,
+          () => NOW,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.die("no gate") },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+        );
+        // Built with the repo's base, the pull request would not bind and the run would go stuck,
+        // which stops the session first: the stub's `archive` would die.
+        assert.deepStrictEqual(yield* world.advance(repo, run, "feature/x"), {
+          kind: "ready-for-gate",
+          pr: 12,
+          prUrl: "https://github.com/rawphp/softfac/pull/12",
+        });
+        assert.deepStrictEqual(
+          calls.map((args) => args.slice(0, 2)),
+          [
+            ["issue", "view"],
+            ["pr", "view"],
+          ],
+        );
+      }),
   );
 
   it.effect("the head of an open pull request is read in lower case; one that ended has none", () =>

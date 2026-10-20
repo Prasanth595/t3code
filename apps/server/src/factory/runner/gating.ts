@@ -1255,6 +1255,8 @@ export interface LastPass {
   readonly head: string;
   /** The base branch tip it ran against; empty when the ledger has none. */
   readonly base: string;
+  /** The run's base branch as its launch recorded it; null for the project's `factory.base`. */
+  readonly baseBranch: string | null;
 }
 
 /**
@@ -1300,7 +1302,12 @@ export const lastPass = (
       return null;
     }
     if (!seen.worktreeDone || leftoverCheckouts(dataDir, run).length > 0) return null;
-    return { pr: seen.lastPr.pr, head: seen.pass.sha, base: seen.pass.baseSha };
+    return {
+      pr: seen.lastPr.pr,
+      head: seen.pass.sha,
+      base: seen.pass.baseSha,
+      baseBranch: seen.base,
+    };
   });
 
 /**

@@ -30,6 +30,7 @@ import {
 } from "../t3/sessions.ts";
 import {
   GitHubFailed,
+  GitHubInvalidArgument,
   type ClaimOutcome,
   type FactoryComment,
   type GitHubError,
@@ -347,6 +348,7 @@ const startedLines = (): Array<{ line: RunEvent; cause: Cause }> => [
         model: "claude-opus-5-5",
         model_options: null,
         resumed_from: null,
+        base: "main",
       },
     },
     cause: cause("session-launched"),
@@ -469,6 +471,7 @@ describe("start: a fresh ready issue", () => {
         model: "gpt-5.5",
         model_options: null,
         resumed_from: null,
+        base: "main",
       });
     }),
   );
@@ -490,6 +493,7 @@ describe("start: a fresh ready issue", () => {
         model: "gpt-5.5",
         model_options: options,
         resumed_from: null,
+        base: "main",
       });
     }),
   );
@@ -510,6 +514,7 @@ describe("start: a fresh ready issue", () => {
         model: "claude-opus-5-5",
         model_options: null,
         resumed_from: null,
+        base: "main",
       });
     }),
   );
@@ -2167,6 +2172,176 @@ describe("start: the resume after a time limit", () => {
       const request = t3.launchRequests[0]!;
       assert.strictEqual(request.baseRef, "main");
       assert.strictEqual(request.startFromOrigin, false);
+    }),
+  );
+});
+
+describe("start: an issue that names its base", () => {
+  const withBody = (body: string) => ({ ...detail("ready"), body });
+  const baseOf = (dataDir: string) =>
+    (entriesOf(dataDir).find((e) => e.event === "session_launched")?.data as { base?: unknown })
+      ?.base;
+
+  it.effect("launches from the named branch on origin and records it", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [withBody("Build it.\n\n## Base\n\nfeature/x\n\n## Notes\nx\n")],
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(outcome.kind, "started");
+      assert.ok(calls.includes("branchTip feature/x"), calls.join("\n"));
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.baseRef, "feature/x");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.strictEqual(
+        request.message,
+        launchMessage(REPO, 7, USER, "/gh/rawphp", undefined, "feature/x"),
+      );
+      assert.ok(
+        request.message.includes(
+          "Open the pull request against feature/x, not the repo's default base.",
+        ),
+        request.message,
+      );
+      assert.strictEqual(baseOf(dataDir), "feature/x");
+    }),
+  );
+
+  it.effect("an issue with no base records the project's base and says nothing more", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({ issues: [withBody("## Base\n\nNone.\n")] });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      assert.strictEqual(t3.launchRequests[0]!.message, launchMessage(REPO, 7, USER, "/gh/rawphp"));
+      assert.strictEqual(baseOf(dataDir), "main");
+    }),
+  );
+
+  it.effect("a base that is not a branch name goes stuck before any launch is sent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({ issues: [withBody("## Base\n--force x\n")] });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      const reason = "base branch --force x is not a branch name";
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+      assert.deepStrictEqual(calls.slice(3), stuckCalls(reason, null));
+      assert.deepStrictEqual(t3.launchRequests, []);
+      assert.deepStrictEqual(entriesOf(dataDir), [
+        ...startedEvents().slice(0, 3),
+        ...stuckTail(reason, "launch-failed"),
+      ]);
+    }),
+  );
+
+  it.effect("a base that origin does not have goes stuck before any launch is sent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [withBody("## Base\nfeature/gone\n")],
+        branchTip: "missing",
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      const reason = "base branch feature/gone is not on origin";
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+      assert.deepStrictEqual(calls.slice(3), [
+        "branchTip feature/gone",
+        ...stuckCalls(reason, null),
+      ]);
+      assert.deepStrictEqual(t3.launchRequests, []);
+    }),
+  );
+
+  it.effect("a base with an empty or dot segment is not a branch name", () =>
+    Effect.gen(function* () {
+      for (const name of ["feature/", "/x", "a//b", "a/./b"]) {
+        const dataDir = tempDir();
+        const { tracker, calls } = fakeTracker({ issues: [withBody(`## Base\n${name}\n`)] });
+        const t3 = fakeSessions(dataDir, {});
+        const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+        const reason = `base branch ${name} is not a branch name`;
+        assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+        assert.deepStrictEqual(lookups(calls), []);
+      }
+    }),
+  );
+
+  it.effect("a base the tracker refuses as a name is not a branch name, not an error", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [withBody("## Base\nfeature/odd\n")],
+        branchTip: new GitHubInvalidArgument({ argument: "feature/odd", expected: "a branch" }),
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      const reason = "base branch feature/odd is not a branch name";
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+      assert.deepStrictEqual(calls.slice(3), [
+        "branchTip feature/odd",
+        ...stuckCalls(reason, null),
+      ]);
+      assert.deepStrictEqual(t3.launchRequests, []);
+    }),
+  );
+
+  it.effect(
+    "a launch sent again keeps the base the first send decided and asks GitHub nothing",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        seedRun(dataDir, [
+          ...startedLines().slice(0, 3),
+          {
+            line: { event: "step_changed", data: { step: "launch-base feature/x" } },
+            cause: cause("launch-sending"),
+          },
+          startedLines()[3]!,
+        ]);
+        // An instructor took the heading out after the first send.
+        const { tracker, calls } = fakeTracker({
+          issues: [{ ...detail("triage", [USER]), body: "Build it." }],
+        });
+        const t3 = fakeSessions(dataDir, {});
+        assert.strictEqual((yield* startIn(dataDir, tracker, t3.sessions)).kind, "started");
+        assert.deepStrictEqual(lookups(calls), []);
+        const request = t3.launchRequests[0]!;
+        assert.strictEqual(request.baseRef, "feature/x");
+        assert.strictEqual(request.startFromOrigin, true);
+        assert.strictEqual(baseOf(dataDir), "feature/x");
+      }),
+  );
+
+  it.effect("the first send records the base it decided before the launch", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({ issues: [withBody("## Base\nfeature/x\n")] });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const steps = entriesOf(dataDir)
+        .filter((e) => e.event === "step_changed")
+        .map((e) => (e.data as { step: string }).step);
+      assert.deepStrictEqual(steps.slice(1, 3), ["launch-base feature/x", "launch-sending"]);
+    }),
+  );
+
+  it.effect("a base whose lookup fails claims and waits for the next pass", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({
+        issues: [withBody("## Base\nfeature/x\n")],
+        branchTip: ghFailure(),
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* Effect.result(startIn(dataDir, tracker, t3.sessions));
+      assert.strictEqual(outcome._tag, "Failure");
+      assert.deepStrictEqual(t3.launchRequests, []);
+      assert.ok(!stepsOf(dataDir).includes("stuck"));
     }),
   );
 });

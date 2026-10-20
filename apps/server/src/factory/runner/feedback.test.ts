@@ -68,6 +68,7 @@ import {
 import { gate, lastPass, regate, type GateContext } from "./gating.ts";
 import { SESSION_MAY_EXIST, feedbackMessage } from "./messages.ts";
 import { nextGateAttempt, readProgress } from "./progress.ts";
+import { runProject } from "./run.ts";
 
 const tempDir = useTempDirs();
 
@@ -865,6 +866,7 @@ const relaunchedLine: Line = {
     model: "claude-opus-5-5",
     model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
+    base: "main",
   },
 };
 
@@ -1961,6 +1963,41 @@ describe("feedback: the step", () => {
         ],
       };
       assert.strictEqual((yield* forward(rig.ctx, rig.run)).comments, 1);
+    }),
+  );
+});
+
+describe("feedback: a run whose launch recorded a base other than the project's", () => {
+  const onFeature = STARTED.map((event) =>
+    event.event === "session_launched"
+      ? { ...event, data: { ...event.data, base: "feature/x" } }
+      : event,
+  );
+
+  it.effect("relaunches on that base, records it, and the next gate reads that base's tip", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(onFeature);
+      rig.project = runProject(rig.project, progressOf(rig).base);
+      assert.strictEqual(rig.project.base, "feature/x");
+      rig.gh.pr = { ...defaultPr(), baseRef: "feature/x" };
+      setRun(rig, "completed", 1);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      rig.gh.feedback.push(review11());
+      assert.deepStrictEqual(yield* feedbackIn(rig), relaunched(1));
+      assert.deepStrictEqual(
+        eventsOf(rig, "session_launched").map((l) => (l.data as { base: string }).base),
+        ["feature/x", "feature/x"],
+      );
+      assert.strictEqual(progressOf(rig).base, "feature/x");
+      // The relaunched session's work is gated against the run's base, not the project's.
+      setRun(rig, "completed", 2);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.ok(rig.gh.calls.includes("branchTip feature/x"), rig.gh.calls.join("\n"));
+      assert.ok(!rig.gh.calls.includes("branchTip main"), rig.gh.calls.join("\n"));
+      assert.strictEqual((yield* lastPass(rig.dataDir, rig.run))?.baseBranch, "feature/x");
     }),
   );
 });

@@ -8,10 +8,12 @@
 | `## Acceptance criteria` | yes      | Numbered, each checkable.            |
 | `## Depends on`          | yes      | Issue references, or `None.`         |
 | `## Notes`               | yes      | Constraints, pointers, out of scope. |
+| `## Base`                | no       | A branch on `origin`, or `None.`     |
 
 - The build session copies the body as its brief. It does not improve it.
 - One change per issue.
-- The server parses only `## Depends on`. The other headings are for the session.
+- The server parses `## Depends on` and `## Base`. The other headings are for the session.
+- `## Base` names the branch the run starts from, opens its pull request against and is gated on. No section, an empty one or `None.` means `factory.base`. The branch must already be on `origin`.
 
 ## Labels
 

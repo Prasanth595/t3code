@@ -12,6 +12,7 @@ const notExpected = (name: string) => () =>
 
 export const interruptible = (ctx: BuildingContext): InterruptContext => ({
   ...ctx,
+  repoProject: ctx.project,
   tracker: {
     approval: notExpected("tracker.approval"),
     claim: notExpected("tracker.claim"),

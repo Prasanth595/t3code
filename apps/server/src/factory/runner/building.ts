@@ -309,8 +309,13 @@ export type InterruptOutcome =
   /** Not an interruption, or the cap is used up: the issue went to `stuck`. `reason` is the one the ledger records. */
   | { readonly kind: "stuck"; readonly reason: string };
 
-/** What `interrupted` asks: the steps of a building run, and the claim's context to start the next attempt with. */
-export type InterruptContext = BuildingContext & StartContext;
+/**
+ * What `interrupted` asks: the steps of a building run, and the claim's context to start the next
+ * attempt with. `project` is the run's (its base is the one its launch recorded); `repoProject` is
+ * the repo's, which the next attempt, a new run, starts with.
+ */
+export type InterruptContext = BuildingContext &
+  StartContext & { readonly repoProject: ProjectConfig };
 
 /** What `watch` did. */
 export type WatchOutcome =
@@ -545,9 +550,10 @@ export const checkBinding = (
   if (pull.open && mustBeDraft && !pull.isDraft) return { public: `${reported} it is not a draft` };
   if (pull.crossRepository) return { public: `${reported} it comes from a fork` };
   if (pull.baseRef !== base) {
+    const runBase = prepareSessionText(base);
     return {
-      public: `${reported} its base is not the configured base branch`,
-      detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the configured base branch`,
+      public: `${reported} its base is not the base branch ${runBase}`,
+      detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the base branch ${runBase}`,
     };
   }
   const launched = isLaunchBranch(pull.headRef, worktreePath);
@@ -1800,5 +1806,5 @@ const carryOutRelaunch = (
         );
       }),
     );
-    return yield* resume(ctx, issueOf(run));
+    return yield* resume({ ...ctx, project: ctx.repoProject }, issueOf(run));
   });

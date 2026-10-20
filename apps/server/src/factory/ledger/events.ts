@@ -79,6 +79,11 @@ export type RunEvent =
           readonly value: string | boolean;
         }> | null;
         resumed_from: ResumedFrom | null;
+        /**
+         * The branch the run lands on: the issue's `## Base`, else `factory.base`. Absent on a
+         * line written before the run's base was recorded, which reads as `factory.base`.
+         */
+        base?: string;
       };
     }
   | { readonly event: "comment_forwarded"; readonly data: { comment_id: string } }
@@ -186,6 +191,7 @@ export const RUN_EVENT_FIELDS = {
     "model",
     "model_options",
     "resumed_from",
+    "base",
   ],
   comment_forwarded: ["comment_id"],
   session_interrupted: [

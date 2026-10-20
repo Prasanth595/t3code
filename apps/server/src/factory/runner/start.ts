@@ -34,6 +34,7 @@ import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
 import { refusalReason, unapprovedComment, type Refusal } from "../domain/approval.ts";
+import { issueBase } from "../domain/base.ts";
 import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
@@ -51,6 +52,7 @@ import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runI
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
+  isBranchPath,
   isNotFound,
   type BoundGitHub,
   type GitHubError,
@@ -68,6 +70,8 @@ import {
   CUT_SHORT_COMMENT,
   LAUNCH_FAILED,
   TEXT_CHANGED,
+  baseNotABranch,
+  baseNotOnOrigin,
   launchMessage,
   sessionMayExistNote,
   type EarlierRunResume,
@@ -75,6 +79,7 @@ import {
 import { launchable } from "./launchTarget.ts";
 import {
   APPROVAL_RECHECKED,
+  LAUNCH_BASE,
   LAUNCH_SENDING,
   LAUNCH_SENDING_RESUMED,
   readProgress,
@@ -597,7 +602,7 @@ const begin = (
       const launched = yield* launchSession(ctx, issue, detail, run, out, seen, project);
       if (!launched.ok) {
         yield* goStuck(ctx, issue, out, at, "launch-failed", {
-          reason: LAUNCH_FAILED,
+          reason: launched.reason ?? LAUNCH_FAILED,
           detail: launched.detail,
         });
         return { kind: "stuck", run, reason: launched.detail };
@@ -634,9 +639,10 @@ const begin = (
     return { kind: "started", run, threadId };
   });
 
+/** A launch not sent or refused. `reason` is the public line when it is not `LAUNCH_FAILED`. */
 type Launch =
   | { readonly ok: true; readonly threadId: string; readonly worktree: string | null }
-  | { readonly ok: false; readonly detail: string };
+  | { readonly ok: false; readonly detail: string; readonly reason?: string };
 
 /**
  * Sends the launch: `launch-sending` is written once per run, before the first call, so a
@@ -651,6 +657,12 @@ type Launch =
  * decision and asks GitHub nothing, so every request under the one command id is the same
  * request, the one T3 acted on, and the ledger's `resumed_from` says what the thread T3 answers
  * with was really made from.
+ *
+ * The run's base is the issue's `## Base` when it names a branch, else `factory.base` (see
+ * `runBase`), decided once like the resume: a named base is in the `launch-base <branch>` step
+ * before `launch-sending`, and a call sent again reads it from there. The `session_launched`
+ * line records the base for every later pass. A plain start from a named base starts from its
+ * tip on `origin`.
  */
 const launchSession = (
   ctx: StartContext,
@@ -674,12 +686,27 @@ const launchSession = (
       };
     }
     const project = target.success;
+    // A launch sent again keeps the base the first send was decided on.
+    const based = seen.launchSent
+      ? ({ ok: true, base: seen.launchBase ?? ctx.project.base } as const)
+      : yield* runBase(ctx, detail);
+    if (!based.ok) return { ok: false, reason: based.reason, detail: based.reason };
+    const base = based.base;
+    const named = base !== ctx.project.base;
     const resumed = seen.launchSent
       ? seen.launchResumedFrom === null
         ? null
         : yield* recordedResume(ctx, run, seen.launchResumedFrom)
       : yield* resumeFrom(ctx, run, issue);
     if (!seen.launchSent) {
+      if (named) {
+        yield* ledger(() =>
+          out.append(
+            { event: "step_changed", data: { step: `${LAUNCH_BASE}${base}` } },
+            makeCause("start", "launch-sending"),
+          ),
+        );
+      }
       yield* ledger(() =>
         out.append(
           {
@@ -698,14 +725,15 @@ const launchSession = (
         commandId,
         projectId: project.id,
         title: `${ctx.repo}#${issue} ${detail.title}`,
-        baseRef: resumed === null ? ctx.project.base : resumed.branch,
-        startFromOrigin: resumed !== null,
+        baseRef: resumed === null ? base : resumed.branch,
+        startFromOrigin: resumed !== null || named,
         message: launchMessage(
           ctx.repo,
           issue,
           ctx.trackerUser,
           ctx.ghConfigDir,
           resumed ?? undefined,
+          named ? base : undefined,
         ),
         model: project.model,
       }),
@@ -730,6 +758,7 @@ const launchSession = (
             model_options: project.model.options ?? null,
             resumed_from:
               resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
+            base,
           },
         },
         makeCause("start", resumed === null ? "session-launched" : "resumed-from-branch"),
@@ -824,6 +853,37 @@ const resumeFrom = (
     const tip = yield* Effect.result(ctx.tracker.branchTip(found.branch));
     if (tip._tag === "Success") return { run: previous.id, ...found };
     if (isNotFound(tip.failure)) return null;
+    return yield* tip.failure;
+  });
+
+/**
+ * The branch the run lands on: the issue's `## Base` (`issueBase`), else `factory.base`. A named
+ * branch must be a plain ref name and be on `origin` (`branchTip`); either failing is a refusal
+ * with its public reason. A lookup that fails in any other way is an error, and the next pass
+ * asks again.
+ */
+const runBase = (
+  ctx: StartContext,
+  detail: IssueDetail,
+): Effect.Effect<
+  { readonly ok: true; readonly base: string } | { readonly ok: false; readonly reason: string },
+  GitHubError
+> =>
+  Effect.gen(function* () {
+    const named = issueBase(detail.body);
+    if (named === null || named === ctx.project.base) {
+      return { ok: true, base: ctx.project.base } as const;
+    }
+    if (!isPlainRefName(named) || !isBranchPath(named)) {
+      return { ok: false, reason: baseNotABranch(named) } as const;
+    }
+    const tip = yield* Effect.result(ctx.tracker.branchTip(named));
+    if (tip._tag === "Success") return { ok: true, base: named } as const;
+    // A name the tracker refuses is not a branch name either, whatever rule refused it.
+    if (tip.failure._tag === "GitHubInvalidArgument") {
+      return { ok: false, reason: baseNotABranch(named) } as const;
+    }
+    if (isNotFound(tip.failure)) return { ok: false, reason: baseNotOnOrigin(named) } as const;
     return yield* tip.failure;
   });
 
