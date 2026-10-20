@@ -551,11 +551,40 @@ MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+LAUNCH_LOCK="$STATE_DIR/launch.lock"
 mkdir -p "$STATE_DIR"
-cleanup_runner_next() {
+cleanup_launch() {
   rm -f "$RUNNER_NEXT"
+  rm -rf "$LAUNCH_LOCK"
 }
-trap cleanup_runner_next EXIT
+# The local manager lock does not cover other clients. Serialize before reading
+# ownership or comparing runners so a waiter reuses the completed launch's log.
+# uutils mkdir can report success on EEXIST, so use shell noclobber.
+LOCK_WAITED=0
+LOCK_UNOWNED=0
+while ! (set -C; printf '%s\\n' "$$" > "$LAUNCH_LOCK") 2>/dev/null; do
+  LOCK_OWNER="$(cat "$LAUNCH_LOCK" 2>/dev/null || true)"
+  if [ -n "$LOCK_OWNER" ]; then
+    LOCK_UNOWNED=0
+    if ! kill -0 "$LOCK_OWNER" 2>/dev/null; then
+      rm -rf "$LAUNCH_LOCK"
+    fi
+  else
+    # An empty lock gets a short grace period for its owner to publish a PID.
+    LOCK_UNOWNED=$((LOCK_UNOWNED + 1))
+    if [ "$LOCK_UNOWNED" -ge 5 ]; then
+      rm -rf "$LAUNCH_LOCK"
+    fi
+  fi
+  if [ "$LOCK_WAITED" -ge @@T3_LAUNCH_LOCK_WAIT_SECONDS@@ ]; then
+    printf 'Another remote T3 launch has held %s for too long.\\n' "$LAUNCH_LOCK" >&2
+    exit 1
+  fi
+  sleep 1
+  LOCK_WAITED=$((LOCK_WAITED + 1))
+done
+trap cleanup_launch EXIT
+trap 'exit 1' HUP INT TERM
 cat >"$RUNNER_NEXT" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
@@ -717,6 +746,7 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  rm -f "$LOG_FILE"
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
@@ -853,6 +883,10 @@ export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
+    T3_LAUNCH_LOCK_WAIT_SECONDS: String(
+      (isNodeScriptRunner(input) ? REMOTE_LAUNCH_TIMEOUT_MS : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS) /
+        1_000,
+    ),
   });
 }
 
@@ -894,9 +928,10 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
       stdin: buildRemoteLaunchScript(runner),
-      timeoutMs: isNodeScriptRunner(runner)
-        ? REMOTE_LAUNCH_TIMEOUT_MS
-        : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
+      // A contender can wait for one launch before spending its own launch budget.
+      timeoutMs:
+        (isNodeScriptRunner(runner) ? REMOTE_LAUNCH_TIMEOUT_MS : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS) *
+        2,
       ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
       ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
       ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),

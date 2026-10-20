@@ -1055,6 +1055,7 @@ const runScript = (
   args: ReadonlyArray<string>,
   options?: {
     path?: string;
+    env?: Record<string, string>;
     stdin?: Stream.Stream<Uint8Array>;
     onStderrLine?: (line: string) => Effect.Effect<void>;
   },
@@ -1063,7 +1064,7 @@ const runScript = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make("sh", args, {
-        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home },
+        env: { PATH: options?.path ?? process.env.PATH ?? "", HOME: home, ...options?.env },
         extendEnv: false,
         ...(options?.stdin ? { stdin: { stream: options.stdin } } : {}),
       }),
@@ -1325,6 +1326,7 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
       home,
       stateDir,
       launch,
+      fakeServer,
       readManagedPid,
       runLaunchScript,
       runLaunch,
@@ -1363,6 +1365,166 @@ server.listen(Number(flag("--port")), "127.0.0.1", () => {
         assert.isFalse(yield* fs.exists(`${stateDir}/pid`));
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "reports a silent launch with a fresh log isolated from a lingering writer",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, stateDir, launch, fakeServer } = yield* prepareLaunch;
+        const log = `${stateDir}/server.log`;
+        yield* fs.writeFileString(log, "STALE_PREVIOUS_RUN\n");
+        const oldWriter = yield* fs.open(log, { flag: "a" });
+        yield* fs.makeDirectory(`${home}/bin`);
+        assert.equal((yield* runScript(home, ["-c", 'mkfifo "$HOME/silent"'])).exitCode, 0);
+        yield* fs.writeFileString(
+          fakeServer,
+          `require("node:fs").writeFileSync(${JSON.stringify(`${home}/silent`)}, "done\\n");`,
+        );
+        // Readiness fails only after the silent CLI has opened its redirected log.
+        yield* fs.writeFileString(
+          `${home}/bin/node`,
+          `#!/bin/sh
+if [ "\${3-}" = "60000" ]; then
+  read -r done < "$HOME/silent"
+  exit 1
+fi
+exec "$REAL_NODE" "$@"
+`,
+        );
+        yield* fs.chmod(`${home}/bin/node`, 0o700);
+        const result = yield* runScript(home, [launch, "test-state"], {
+          path: `${home}/bin:${process.env.PATH ?? ""}`,
+          env: { REAL_NODE: process.execPath },
+        });
+        assert.equal(result.exitCode, 1, result.stderr);
+        assert.include(result.stderr, "It wrote nothing to");
+        assert.notInclude(result.stderr, "STALE_PREVIOUS_RUN");
+        // A survivor can still append after the replacement has finished launching.
+        yield* oldWriter.writeAll(new TextEncoder().encode("LATE_OLD_OUTPUT\n"));
+        assert.equal(yield* fs.readFileString(log), "");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "times out when launch lock creation keeps failing without an owner",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, stateDir, launch } = yield* prepareLaunch;
+        yield* fs.remove(`${stateDir}/port`);
+        const bin = `${home}/bin`;
+        yield* fs.makeDirectory(bin);
+        // Simulate the state directory disappearing after mkdir succeeds. Lock
+        // creation then fails even as root, while removing the missing lock succeeds.
+        // Bound the broken loop independently of sleep, which it can skip entirely.
+        for (const [name, script] of Object.entries({
+          mkdir: 'PATH=${PATH#*:}\nmkdir "$@" && rmdir "$2"',
+          sleep: "exit 0",
+          rm: `attempts=0
+if [ -f "$HOME/removals" ]; then read -r attempts < "$HOME/removals"; fi
+attempts=$((attempts + 1))
+echo "$attempts" > "$HOME/removals"
+if [ "$attempts" -gt 100 ]; then
+  echo 'FIXTURE_RETRY_LIMIT_EXHAUSTED' >&2
+  exit 1
+fi
+PATH=\${PATH#*:}
+exec rm "$@"`,
+        })) {
+          yield* fs.writeFileString(`${bin}/${name}`, `#!/bin/sh\n${script}\n`);
+          yield* fs.chmod(`${bin}/${name}`, 0o700);
+        }
+        const result = yield* runScript(home, [launch, "test-state"], {
+          path: `${bin}:${process.env.PATH ?? ""}`,
+        });
+        assert.equal(result.exitCode, 1, result.stderr);
+        assert.include(
+          result.stderr,
+          `Another remote T3 launch has held ${stateDir}/launch.lock for too long.`,
+        );
+        assert.notInclude(result.stderr, "FIXTURE_RETRY_LIMIT_EXHAUSTED");
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps the first server log when concurrent launchers share a state key and then reuse it",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { home, stateDir, launch, readManagedPid, runLaunch } = yield* prepareLaunch;
+        assert.equal(
+          (yield* runScript(home, ["-c", 'mkfifo "$HOME/entered" "$HOME/start" "$HOME/continue"']))
+            .exitCode,
+          0,
+        );
+        // Match the archive fixture: mkdir reports success even when a lock already exists.
+        for (const bin of ["first-bin", "second-bin"]) {
+          yield* fs.makeDirectory(`${home}/${bin}`);
+          yield* fs.writeFileString(
+            `${home}/${bin}/mkdir`,
+            '#!/bin/sh\nPATH=${PATH#*:}\nexec mkdir -p "$@"\n',
+          );
+          yield* fs.chmod(`${home}/${bin}/mkdir`, 0o700);
+        }
+        yield* fs.writeFileString(
+          `${home}/first-bin/node`,
+          `#!/bin/sh
+case "\${2-}" in
+  */port) echo entered > "$HOME/entered"; read -r start < "$HOME/start" ;;
+esac
+exec "$REAL_NODE" "$@"
+`,
+        );
+        // The contender either reaches port selection with stale ownership, or
+        // waits for the remote launch lock. Both release the first launcher.
+        const contender = `#!/bin/sh
+case "$0:\${2-}" in
+  */sleep:*|*/node:*/port)
+    if (set -C; : > "$HOME/released") 2>/dev/null; then
+      echo start > "$HOME/start"
+      read -r continue < "$HOME/continue"
+    fi ;;
+esac
+case "$0" in
+  */node) exec "$REAL_NODE" "$@" ;;
+  */sleep) exec "$REAL_SLEEP" "$@" ;;
+esac
+`;
+        yield* fs.writeFileString(`${home}/second-bin/node`, contender);
+        yield* fs.writeFileString(`${home}/second-bin/sleep`, contender);
+        for (const file of ["first-bin/node", "second-bin/node", "second-bin/sleep"]) {
+          yield* fs.chmod(`${home}/${file}`, 0o700);
+        }
+        const realSleep = (yield* runScript(home, ["-c", "command -v sleep"])).stdout.trim();
+        const first = yield* runScript(home, [launch, "test-state"], {
+          path: `${home}/first-bin:${process.env.PATH ?? ""}`,
+          env: { REAL_NODE: process.execPath },
+        }).pipe(Effect.forkScoped);
+        yield* fs.readFileString(`${home}/entered`);
+        const second = yield* runScript(home, [launch, "test-state"], {
+          path: `${home}/second-bin:${process.env.PATH ?? ""}`,
+          env: { REAL_NODE: process.execPath, REAL_SLEEP: realSleep },
+        }).pipe(Effect.forkScoped);
+        const firstResult = yield* Fiber.join(first);
+        assert.equal(firstResult.exitCode, 0, firstResult.stderr);
+        const firstPid = yield* readManagedPid;
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (isAlive(firstPid)) process.kill(firstPid, "SIGKILL");
+          }),
+        );
+        const firstLog = yield* fs.readFileString(`${stateDir}/server.log`);
+        assert.isNotEmpty(firstLog);
+        yield* fs.writeFileString(`${home}/continue`, "continue\n");
+        const secondResult = yield* Fiber.join(second);
+        assert.equal(secondResult.exitCode, 0, secondResult.stderr);
+        assert.include(yield* fs.readFileString(`${stateDir}/server.log`), firstLog);
+        assert.deepEqual(launchResult(secondResult.stdout), launchResult(firstResult.stdout));
+        assert.deepEqual(yield* runLaunch, launchResult(firstResult.stdout));
+        assert.equal(yield* fs.readFileString(`${stateDir}/server.log`), firstLog);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect.skipIf(windowsHost)(
