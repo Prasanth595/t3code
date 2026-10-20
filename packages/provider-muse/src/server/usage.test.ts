@@ -173,7 +173,11 @@ describe("Muse history discovery", () => {
         ]);
         expect(create).toHaveBeenCalledWith({
           binaryPath: "/test-home/bin/custom-muse",
-          environment: { XDG_DATA_HOME: xdg, MUSE_NO_AUTO_UPDATE: "1" },
+          environment: {
+            PATH: "/host/bin",
+            XDG_DATA_HOME: xdg ?? "/host/data",
+            MUSE_NO_AUTO_UPDATE: "1",
+          },
           readOnly: true,
           startupTimeoutMs: 5_000,
         });
@@ -181,6 +185,10 @@ describe("Muse history discovery", () => {
       }).pipe(
         Effect.provide(NodeServices.layer),
         Effect.provideService(HostProcess.HomeDirectory, "/test-home"),
+        Effect.provideService(HostProcess.Environment, {
+          PATH: "/host/bin",
+          XDG_DATA_HOME: "/host/data",
+        }),
       ),
   );
 

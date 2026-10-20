@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   tokenCount,
@@ -117,6 +118,12 @@ export const museUsageReader: ProviderUsageReader<MuseSettings, Path.Path> = {
   directories: Effect.fn("museUsageReader.directories")(function* ({ config, environment }) {
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
+    const processEnvironment = yield* mergeProviderInstanceEnvironment(
+      Object.entries(environment).flatMap(([name, value]) =>
+        value === undefined ? [] : [{ name, value, sensitive: false }],
+      ),
+      yield* HostProcess.Environment,
+    );
     // Initialize only: no session or model turn is needed to resolve Muse's
     // configured home, including XDG overrides and native platform defaults.
     return yield* Effect.scoped(
@@ -124,7 +131,7 @@ export const museUsageReader: ProviderUsageReader<MuseSettings, Path.Path> = {
         const host = yield* Effect.acquireRelease(
           createMuseSdkHostEffect({
             binaryPath: expandHomePath(config?.binaryPath ?? "muse", home),
-            environment: makeMuseEnvironment(environment),
+            environment: makeMuseEnvironment(processEnvironment),
             readOnly: true,
             startupTimeoutMs: 5_000,
           }),
