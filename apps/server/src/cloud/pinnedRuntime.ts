@@ -462,7 +462,8 @@ const runningExecutables = Effect.fn("cloud.pinned_runtime.running_executables")
     const executables: Array<string> = [];
     for (const pid of pids.value) {
       if (!/^\d+$/.test(pid)) continue;
-      // Other users' processes are unreadable, and none of them run this user's runtimes.
+      // Unreadable ones belong to other users or are this user's non-dumpable daemons (systemd
+      // --user, ssh-agent). Neither runs a t3 runtime, and bailing on them would never prune.
       const executable = yield* fs.readLink(`/proc/${pid}/exe`).pipe(Effect.option);
       if (Option.isSome(executable)) executables.push(executable.value);
     }
