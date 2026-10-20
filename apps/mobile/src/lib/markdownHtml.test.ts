@@ -136,4 +136,18 @@ describe("HTML in native Markdown", () => {
       ],
     });
   });
+
+  it("keeps an anchor around block content a single link", () => {
+    const document = parseMarkdownDocument(
+      "<div><a href='https://example.com'><p>Open</p><p>docs</p></a></div>",
+    );
+    expect(document.children).toMatchObject([
+      {
+        type: "paragraph",
+        children: [
+          { type: "link", url: "https://example.com", children: [{ value: "Open docs " }] },
+        ],
+      },
+    ]);
+  });
 });

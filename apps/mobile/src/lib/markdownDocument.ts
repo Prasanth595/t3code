@@ -199,11 +199,13 @@ function htmlTagMarkdown(
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
-  if (/^<summary\b/i.test(tag)) return "\n\n**";
-  if (/^<\/summary\s*>/i.test(tag)) return "**\n\n";
+  // A blank line inside an open link label would end the paragraph before its "]".
+  const blockBreak = anchors.open === 0 ? "\n\n" : tag[1] === "/" ? " " : "";
+  if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
+  if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
   // A line break would end the table row, so a cell keeps its content on one line.
   if (/^<br\b/i.test(tag)) return options.inTableCell ? " " : "  \n";
-  if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
+  if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
 
