@@ -75,6 +75,7 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
+    await expect.poll(() => loaded.previewRenders.length).toBe(1);
     expect(loaded).toMatchObject({ diff: 0, preview: 1, terminal: 0, device: 0 });
     expect(loaded.previewRenders).toEqual([{ props: { tabId: "tab-1" }, host }]);
   });

@@ -5,9 +5,11 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act } from "react";
-import { userEvent } from "vite-plus/test/browser";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
 
 // The profile list normally comes from client settings; the built-ins are enough to choose from.
 vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
@@ -33,6 +35,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
+  vi.spyOn(Element.prototype, "getAnimations").mockReturnValue([]);
   opened = [];
   container = document.createElement("div");
   document.body.append(container);
@@ -42,6 +45,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
