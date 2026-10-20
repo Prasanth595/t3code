@@ -28,7 +28,10 @@ import {
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  createInboxReturnTracker,
+  isThreadWorking,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
@@ -61,6 +64,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -151,7 +155,6 @@ import {
   filterSidebarProjectScopeItems,
   firstValidTimestampMs,
   isSidebarNestedLinkClick,
-  isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
@@ -383,6 +386,7 @@ function useSidebarThreads(input: {
           ),
         );
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  useSyncExternalStore(inboxReturns.subscribe, inboxReturns.getSnapshot);
   const nowMinute = useNowMinute();
   // Snooze wake times are second-precise, so classifying with the quantized
   // minute would hold a woken thread on the shelf for up to a minute.
@@ -520,8 +524,11 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
-  const inbox = (thread: EnvironmentThreadShell) =>
-    workingShelfEnabled && isSidebarThreadWorking(thread) ? working : active;
+  const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
+    workingShelfEnabled &&
+    (manuallyMoved ? isThreadWorking(thread) : inboxReturns.isWorking(thread))
+      ? working
+      : active;
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const draggable = new Set<string>();
@@ -546,7 +553,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
         ? pinned
         : optimisticDrop.section === "settled"
           ? settled
-          : inbox(projected)
+          : inbox(projected, true)
       ).push(
         optimisticDrop.clearsSnooze
           ? projected

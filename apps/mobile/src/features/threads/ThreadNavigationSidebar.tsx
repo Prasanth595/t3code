@@ -16,7 +16,7 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { LayoutChangeEvent, TextInputInstance } from "react-native";
 import { Platform, StyleSheet, TextInput, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
@@ -320,6 +320,7 @@ function ThreadNavigationSidebarPane(
       ...(workingShelfEnabled ? [] : sectionAvailability("active")),
     ]);
   })();
+  useSyncExternalStore(threadListInboxReturns.subscribe, threadListInboxReturns.getSnapshot);
   const threadListV2Layout = (() => {
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
@@ -337,6 +338,7 @@ function ThreadNavigationSidebarPane(
       workingShelfEnabled,
       workingShelfExpanded,
       inboxReturnAt: threadListInboxReturns.returnedAt,
+      isWorking: threadListInboxReturns.isWorking,
       snoozedShelfExpanded,
       settledShelfExpanded,
       selectedThreadKey: props.selectedThreadKey ?? null,
