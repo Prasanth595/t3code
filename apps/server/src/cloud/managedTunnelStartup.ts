@@ -67,44 +67,51 @@ export const relayRetrySchedule = Schedule.exponential("1 second").pipe(
 
 const windowMillis = Duration.toMillis(MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW);
 
-const retryWithinWindow = <A, E, R>(
+/**
+ * Retries on the relay schedule. The window closes at the first sleep that
+ * would end past it: then `onWindowExhausted` runs, and retrying continues
+ * only while `whilePastWindow` holds. One schedule covers both sides, so the
+ * relay's Retry-After still holds across the handoff.
+ */
+const retryAcrossWindow = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-  isRetryable: (error: E) => boolean,
+  options: {
+    readonly while: (error: E) => boolean;
+    readonly whilePastWindow: (error: E) => boolean;
+    readonly onWindowExhausted: (error: E) => Effect.Effect<void, never, R>;
+  },
 ) =>
-  effect.pipe(
-    Effect.retry({
-      while: isRetryable,
-      // A backed-off sleep can outlast the window; trim it so whatever follows
-      // the window starts on time. At least 1 ms, so time moves past the
-      // window and `upTo` stops.
-      schedule: relayRetrySchedule.pipe(
-        Schedule.modifyDelay(({ duration, elapsed }) =>
-          Effect.succeed(
-            Duration.min(duration, Duration.millis(Math.max(1, windowMillis - elapsed))),
-          ),
+  Effect.suspend(() => {
+    let pastWindow = false;
+    return effect.pipe(
+      Effect.retry({
+        while: (error) => (pastWindow ? options.whilePastWindow(error) : options.while(error)),
+        schedule: relayRetrySchedule.pipe(
+          Schedule.setInputType<E>(),
+          Schedule.modifyDelay(({ duration, elapsed, input }) => {
+            if (pastWindow || elapsed + Duration.toMillis(duration) < windowMillis) {
+              return Effect.succeed(duration);
+            }
+            pastWindow = true;
+            return options.whilePastWindow(input)
+              ? options.onWindowExhausted(input).pipe(Effect.as(duration))
+              : Effect.fail(input);
+          }),
         ),
-        Schedule.upTo({ duration: MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW }),
-      ),
-    }),
-  );
+      }),
+    );
+  });
 
 export const retryManagedTunnelRegistration = <A, E, R>(
   registration: Effect.Effect<A, E, R>,
   isRetryable: (error: E) => boolean,
   onRetryWindowExhausted?: Effect.Effect<void, never, R>,
-) => {
-  const withinWindow = retryWithinWindow(registration, isRetryable);
-  if (onRetryWindowExhausted === undefined) return withinWindow;
-  return withinWindow.pipe(
-    Effect.catchIf(isRetryable, () =>
-      onRetryWindowExhausted.pipe(
-        Effect.andThen(
-          registration.pipe(Effect.retry({ while: isRetryable, schedule: relayRetrySchedule })),
-        ),
-      ),
-    ),
-  );
-};
+) =>
+  retryAcrossWindow(registration, {
+    while: isRetryable,
+    whilePastWindow: onRetryWindowExhausted === undefined ? () => false : isRetryable,
+    onWindowExhausted: () => onRetryWindowExhausted ?? Effect.void,
+  });
 
 /**
  * Relinks a desired link at startup. Past the retry window it keeps going only
@@ -117,15 +124,11 @@ export const retryDesiredLinkReconcile = <A, E, R>(
   isRetryable: (error: E) => boolean,
   onRetryWindowExhausted: (error: E) => Effect.Effect<void, never, R>,
 ) =>
-  retryWithinWindow(reconcile, isRetryable).pipe(
-    Effect.catchIf(isRelayUnavailable, (error) =>
-      onRetryWindowExhausted(error).pipe(
-        Effect.andThen(
-          reconcile.pipe(Effect.retry({ while: isRelayUnavailable, schedule: relayRetrySchedule })),
-        ),
-      ),
-    ),
-  );
+  retryAcrossWindow(reconcile, {
+    while: isRetryable,
+    whilePastWindow: isRelayUnavailable,
+    onWindowExhausted: onRetryWindowExhausted,
+  });
 
 // Every managed host shares one relay, so a host stuck in a bad loop must not
 // turn into a fleet-wide request storm.
@@ -133,7 +136,7 @@ export const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
 
 // Retries inside one recovery, while the relay keeps failing, stay at least a
 // cooldown apart. They do not grow the cooldown: only a new request does.
-export const managedTunnelRecoveryRetrySchedule = relayRetrySchedule.pipe(
+const managedTunnelRecoveryRetrySchedule = relayRetrySchedule.pipe(
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.max(duration, MANAGED_TUNNEL_RECOVERY_COOLDOWN)),
   ),

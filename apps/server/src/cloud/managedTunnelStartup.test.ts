@@ -229,15 +229,21 @@ describe("makeManagedTunnelRecovery", () => {
 });
 
 describe("retryManagedTunnelRegistration fallback", () => {
-  it.effect("falls back when the window ends even if Retry-After asks for longer", () =>
+  it.effect("falls back by the end of the window and keeps honoring Retry-After", () =>
     Effect.gen(function* () {
       let fallbackAtMillis: number | undefined;
-      const registration = Effect.fail(
-        new RelayRequestError({
-          rejection: "unavailable",
-          description: "paused",
-          retryAfterMillis: 120_000,
-        }),
+      const attemptMillis: Array<number> = [];
+      const registration = Clock.currentTimeMillis.pipe(
+        Effect.tap((now) => Effect.sync(() => attemptMillis.push(now))),
+        Effect.andThen(
+          Effect.fail(
+            new RelayRequestError({
+              rejection: "unavailable",
+              description: "paused",
+              retryAfterMillis: 900_000,
+            }),
+          ),
+        ),
       );
       yield* Effect.forkChild(
         retryManagedTunnelRegistration(
@@ -254,9 +260,13 @@ describe("retryManagedTunnelRegistration fallback", () => {
         ),
         { startImmediately: true },
       );
-      yield* TestClock.adjust("15 minutes");
+      yield* TestClock.adjust("1 hour");
       expect(fallbackAtMillis).toBeDefined();
-      expect(fallbackAtMillis).toBeLessThanOrEqual(10 * 60_000 + 1_000);
+      expect(fallbackAtMillis).toBeLessThanOrEqual(10 * 60_000);
+      expect(attemptMillis.length).toBeGreaterThan(2);
+      for (let index = 1; index < attemptMillis.length; index++) {
+        expect(attemptMillis[index]! - attemptMillis[index - 1]!).toBeGreaterThanOrEqual(900_000);
+      }
     }),
   );
 });
