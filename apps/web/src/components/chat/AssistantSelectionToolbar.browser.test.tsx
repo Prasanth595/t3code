@@ -1,21 +1,10 @@
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 
-let root: Root | undefined;
-beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
-afterEach(() => {
-  act(() => root?.unmount());
-  root = undefined;
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-function setup() {
+async function setup() {
   const viewport = document.createElement("div");
   const source = document.createElement("div");
   source.dataset.assistantCitationSource = "render-tool-item";
@@ -30,15 +19,13 @@ function setup() {
   const onCite = vi.fn<
     (citation: AssistantCitation, anchor: AssistantCitationSourceAnchor) => boolean
   >(() => true);
-  root = createRoot(mount);
-  act(() =>
-    root!.render(
-      <AssistantSelectionToolbar
-        viewport={viewport}
-        threadRef={{ environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") }}
-        onCite={onCite}
-      />,
-    ),
+  const screen = await render(
+    <AssistantSelectionToolbar
+      viewport={viewport}
+      threadRef={{ environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") }}
+      onCite={onCite}
+    />,
+    { container: mount, router: false },
   );
   frame.focus();
   const quote = { text: "quoted text", start: 7, end: 18, prefix: "Before ", suffix: " after." };
@@ -55,13 +42,25 @@ function setup() {
     act(() => {
       window.dispatchEvent(new MessageEvent("message", { source: origin, data: payload }));
     });
-  return { frame, onCite, quote, data, send };
+  return {
+    frame,
+    onCite,
+    quote,
+    data,
+    send,
+    async [Symbol.asyncDispose]() {
+      await screen[Symbol.asyncDispose]();
+      viewport.remove();
+      vi.restoreAllMocks();
+    },
+  };
 }
 
 describe("HTML selection Cite toolbar", () => {
-  it("retains the host's citation scope and omits page-authored comments", () => {
-    const { data, send, onCite, quote } = setup();
-    send({
+  it("retains the host's citation scope and omits page-authored comments", async () => {
+    await using fixture = await setup();
+    const { data, send, onCite, quote } = fixture;
+    await send({
       ...data,
       params: {
         ...data.params,
@@ -75,7 +74,7 @@ describe("HTML selection Cite toolbar", () => {
         },
       },
     });
-    act(() =>
+    await act(() =>
       document
         .querySelector<HTMLButtonElement>('[aria-label="Cite selection in composer"]')!
         .click(),
@@ -89,17 +88,18 @@ describe("HTML selection Cite toolbar", () => {
     });
   });
 
-  it("adds the iframe quote to the composer with a source anchor in client coordinates", () => {
-    const { frame, onCite, quote, send } = setup();
+  it("adds the iframe quote to the composer with a source anchor in client coordinates", async () => {
+    await using fixture = await setup();
+    const { frame, onCite, quote, send } = fixture;
     const post = vi.spyOn(frame.contentWindow!, "postMessage");
-    send();
+    await send();
     const button = document.querySelector<HTMLButtonElement>(
       '[aria-label="Cite selection in composer"]',
     )!;
     expect(button).not.toBeNull();
     expect(button.style.left).toBe("170px");
     expect(button.style.top).toBe("75px");
-    act(() => button.click());
+    await act(() => button.click());
     expect(onCite).toHaveBeenCalledOnce();
     const [citation, anchor] = onCite.mock.calls[0]!;
     expect(citation).toEqual({
@@ -118,25 +118,27 @@ describe("HTML selection Cite toolbar", () => {
     expect(document.querySelector('[aria-label="Cite selection in composer"]')).toBeNull();
   });
 
-  it("ignores messages from unrelated or unfocused frames", () => {
-    const { frame, data, send } = setup();
-    send(data, window);
+  it("ignores messages from unrelated or unfocused frames", async () => {
+    await using fixture = await setup();
+    const { frame, data, send } = fixture;
+    await send(data, window);
     expect(document.querySelector('[aria-label="Cite selection in composer"]')).toBeNull();
     frame.blur();
-    send();
+    await send();
     expect(document.querySelector('[aria-label="Cite selection in composer"]')).toBeNull();
   });
 
-  it("offers shortening for oversized selections and dismisses on iframe interaction", () => {
-    const { onCite, data, send } = setup();
-    send({ ...data, params: { tooLong: true, rect: data.params.rect, pointer: null } });
+  it("offers shortening for oversized selections and dismisses on iframe interaction", async () => {
+    await using fixture = await setup();
+    const { onCite, data, send } = fixture;
+    await send({ ...data, params: { tooLong: true, rect: data.params.rect, pointer: null } });
     const button = document.querySelector<HTMLButtonElement>(
       '[aria-label="Selection is too long to cite"]',
     )!;
     expect(button.disabled).toBe(true);
-    act(() => button.click());
+    await act(() => button.click());
     expect(onCite).not.toHaveBeenCalled();
-    send({ ...data, params: null });
+    await send({ ...data, params: null });
     expect(document.querySelector('[aria-label="Selection is too long to cite"]')).toBeNull();
   });
 });

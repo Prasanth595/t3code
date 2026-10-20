@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   htmlSelectionCommand,
   htmlSelectionParams,
@@ -7,13 +7,6 @@ import {
 import { injectHtmlSelectionBridge } from "@t3tools/shared/htmlRender";
 import { createAssistantTextSelector } from "./assistantTextSelection";
 
-const documents: HTMLIFrameElement[] = [];
-afterEach(() => {
-  for (const frame of documents.splice(0)) frame.remove();
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-});
-
 async function page(
   html = "<p>Before <strong>quoted text</strong> after.</p><p>Second paragraph</p>",
 ) {
@@ -21,7 +14,6 @@ async function page(
   const frame = document.createElement("iframe");
   frame.style.cssText = "width: 1024px; height: 768px; border: 0";
   document.body.append(frame);
-  documents.push(frame);
   const view = frame.contentWindow as Window & typeof globalThis;
   const loaded = new Promise<void>((resolve) =>
     frame.addEventListener("load", () => resolve(), { once: true }),
@@ -76,12 +68,27 @@ async function page(
         data: { method: "t3/selection-command", params: { action, selector } },
       }),
     );
-  return { view, post, rect, pointer, select, finish, messages, command };
+  return {
+    view,
+    post,
+    rect,
+    pointer,
+    select,
+    finish,
+    messages,
+    command,
+    frame,
+    async [Symbol.asyncDispose]() {
+      frame.remove();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    },
+  };
 }
 
 describe("HTML render selection bridge", () => {
   it("omits CSS-hidden subtrees from captured quotes and source matching", async () => {
-    const p = await page(
+    await using p = await page(
       '<style>.hidden { display: none }</style><p>Before <span class="hidden"><b>secret</b></span><strong>quoted text</strong> after.</p>',
     );
     const paragraph = p.view.document.querySelector("p")!;
@@ -99,7 +106,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("uses CSS layout for word boundaries when capturing and resolving quotes", async () => {
-    const p = await page(
+    await using p = await page(
       '<style>.block { display: block } .inline { display: inline } .contents { display: contents }</style><span class="block">first</span><span class="block">second</span><div class="inline">third</div><span class="contents">fourth<br>fifth</span>',
     );
     const first = p.view.document.querySelector("span")!;
@@ -115,7 +122,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("reveals a quote through nested scroll containers before returning its target", async () => {
-    const p = await page(
+    await using p = await page(
       '<div id="outer" style="overflow-x: auto; overflow-y: auto; scroll-behavior: smooth"><div id="inner" style="overflow-x: auto; overflow-y: auto; scroll-behavior: smooth"><p>quoted text</p></div></div>',
     );
     const outer = p.view.document.querySelector<HTMLElement>("#outer")!;
@@ -200,7 +207,9 @@ describe("HTML render selection bridge", () => {
   ])(
     "reveals a quote at ($left, $top) before replying on a smooth-scrolling page",
     async ({ left, top, expectedLeft, expectedTop }) => {
-      const p = await page("<style>html { scroll-behavior: smooth }</style><p>quoted text</p>");
+      await using p = await page(
+        "<style>html { scroll-behavior: smooth }</style><p>quoted text</p>",
+      );
       Object.defineProperties(p.view, {
         innerWidth: { value: 320 },
         innerHeight: { value: 240 },
@@ -235,7 +244,7 @@ describe("HTML render selection bridge", () => {
   );
 
   it("keeps native Tab navigation for oversized selections", async () => {
-    const p = await page(`<p>${"x".repeat(8001)}</p><button>Next</button>`);
+    await using p = await page(`<p>${"x".repeat(8001)}</p><button>Next</button>`);
     const paragraph = p.view.document.querySelector("p")!;
     p.pointer("pointerdown", paragraph);
     p.select(paragraph.firstChild!, 0);
@@ -252,7 +261,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("accepts paragraph selection whose empty endpoint is in the following control", async () => {
-    const p = await page("<p>quoted paragraph</p><button>Next</button>");
+    await using p = await page("<p>quoted paragraph</p><button>Next</button>");
     const paragraph = p.view.document.querySelector("p")!;
     const button = p.view.document.querySelector("button")!;
     p.pointer("pointerdown", paragraph);
@@ -266,7 +275,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("clears stale highlights and revalidates an open comment when its text changes", async () => {
-    const p = await page();
+    await using p = await page();
     p.view.requestAnimationFrame = (callback) => p.view.setTimeout(() => callback(0), 0);
     const highlights = new Map();
     Object.assign(p.view, { CSS: { highlights }, Highlight: vi.fn() });
@@ -296,7 +305,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("only reports changed comment targets during page mutation validation", async () => {
-    const p = await page();
+    await using p = await page();
     const callbacks: FrameRequestCallback[] = [];
     p.view.requestAnimationFrame = (callback) => {
       callbacks.push(callback);
@@ -350,7 +359,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("projects selector fields in both directions across the iframe boundary", async () => {
-    const p = await page();
+    await using p = await page();
     const selector = { text: "quote", start: 0, end: 5, prefix: "", suffix: "" };
     const citation = {
       ...selector,
@@ -366,7 +375,7 @@ describe("HTML render selection bridge", () => {
       params: { selector: citation, rect: p.rect, pointer: null },
     });
     expect(parsed?.selector).toEqual(selector);
-    const frame = documents.at(-1)!;
+    const frame = p.frame;
     const post = vi.spyOn(frame.contentWindow!, "postMessage");
     htmlSelectionCommand(frame, "mark", citation);
     expect(post).toHaveBeenLastCalledWith(
@@ -376,7 +385,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("anchors paragraph selection to visible text when its trailing newline has no width", async () => {
-    const p = await page();
+    await using p = await page();
     const paragraph = p.view.document.querySelector("p")!;
     Object.assign(p.view.Range.prototype, {
       getClientRects: () => [p.rect, { ...p.rect, left: 90, width: 0 }],
@@ -389,7 +398,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("captures text inside a saved render only after release, with the same selector as assistant text", async () => {
-    const p = await page();
+    await using p = await page();
     const strong = p.view.document.querySelector("strong")!;
     p.pointer("pointerdown", strong);
     p.select(strong.firstChild!, 0);
@@ -409,7 +418,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("omits controls and scripts from a quote spanning paragraphs", async () => {
-    const p = await page(
+    await using p = await page(
       "<p>one<button>ignore</button><script>/* ignored */</script></p><p>two</p>",
     );
     const paragraphs = p.view.document.querySelectorAll("p");
@@ -422,7 +431,7 @@ describe("HTML render selection bridge", () => {
 
   it("does not shorten the multi-click delay when selectionchange arrives late", async () => {
     vi.useFakeTimers();
-    const p = await page();
+    await using p = await page();
     const strong = p.view.document.querySelector("strong")!;
     p.pointer("pointerdown", strong);
     p.select(strong.firstChild!, 0);
@@ -435,7 +444,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("resolves the saved quote after surrounding text moves and rejects ambiguous repeats", async () => {
-    const p = await page();
+    await using p = await page();
     const selector = createAssistantTextSelector(
       "Before quoted text after.\nSecond paragraph",
       7,
@@ -461,7 +470,7 @@ describe("HTML render selection bridge", () => {
   });
 
   it("dismisses a quote on Escape and excludes form selections", async () => {
-    const p = await page("<textarea>private control</textarea><p>visible</p>");
+    await using p = await page("<textarea>private control</textarea><p>visible</p>");
     const input = p.view.document.querySelector("textarea")!;
     p.pointer("pointerdown", input);
     p.select(input.firstChild!, 0);
@@ -486,7 +495,7 @@ describe("HTML render selection bridge", () => {
     "captures Select All after Escape with $key (ctrl=$ctrlKey, meta=$metaKey)",
     async (shortcut) => {
       vi.useFakeTimers();
-      const p = await page("<p>Before <strong>quoted text</strong> after.</p>");
+      await using p = await page("<p>Before <strong>quoted text</strong> after.</p>");
       const paragraph = p.view.document.querySelector("p")!;
       const strong = p.view.document.querySelector("strong")!;
       p.pointer("pointerdown", strong);
@@ -519,7 +528,7 @@ describe("HTML render selection bridge", () => {
   );
 
   it("keeps oversized selections out of cross-window messages", async () => {
-    const p = await page(`<p>${"x".repeat(8001)}</p>`);
+    await using p = await page(`<p>${"x".repeat(8001)}</p>`);
     const text = p.view.document.querySelector("p")!;
     p.pointer("pointerdown", text);
     p.select(text.firstChild!, 0);

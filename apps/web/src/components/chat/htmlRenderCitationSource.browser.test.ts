@@ -1,14 +1,14 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { observeHtmlRenderCitationSource } from "./htmlRenderCitationSource";
 import type { AssistantCitationTarget } from "./AssistantCitationSource";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("../ui/toast", () => ({ toastManager: { add: toast } }));
-const disposers: Array<() => void> = [];
-beforeEach(() => {
+function environment() {
+  const disposers: Array<() => void> = [];
   toast.mockClear();
   vi.stubGlobal(
     "ResizeObserver",
@@ -18,16 +18,19 @@ beforeEach(() => {
     },
   );
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
-});
-afterEach(() => {
-  for (const dispose of disposers.splice(0)) dispose();
-  document.body.replaceChildren();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
-});
+  return {
+    disposers,
+    [Symbol.dispose]() {
+      for (const dispose of disposers.splice(0)) dispose();
+      document.body.replaceChildren();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    },
+  };
+}
 
-function setup(ready = true) {
+function setup(disposers: Array<() => void>, ready = true) {
   const root = document.createElement("div");
   const frame = document.createElement("iframe");
   frame.style.cssText = "width: 400px; height: 300px; border: 0";
@@ -100,7 +103,9 @@ describe("HTML citation source navigation", () => {
     "finishes with a recovery message when readiness is %s and the frame does not reply",
     (ready) => {
       vi.useFakeTimers();
-      const p = setup(ready);
+      using fixture = environment();
+      const disposers = fixture.disposers;
+      const p = setup(disposers, ready);
       vi.advanceTimersByTime(5000);
       expect(p.request.onComplete).toHaveBeenCalledOnce();
       expect(p.request.activationRef.current.dismissed).toBe(true);
@@ -111,7 +116,9 @@ describe("HTML citation source navigation", () => {
   );
 
   it("updates a comment anchor and releases it when the quote disappears", () => {
-    const p = setup();
+    using fixture = environment();
+    const disposers = fixture.disposers;
+    const p = setup(disposers);
     p.dispose();
     disposers.pop();
     const onUnavailable = vi.fn();
@@ -165,7 +172,9 @@ describe("HTML citation source navigation", () => {
   });
 
   it("waits for iframe readiness, then resolves and scrolls to the saved quote", async () => {
-    const p = setup(false);
+    using fixture = environment();
+    const disposers = fixture.disposers;
+    const p = setup(disposers, false);
     expect(p.post).not.toHaveBeenCalled();
     p.frame.dataset.htmlSelectionReady = "true";
     p.frame.dispatchEvent(new Event("t3-html-selection-ready", { bubbles: true }));
@@ -196,7 +205,9 @@ describe("HTML citation source navigation", () => {
   });
 
   it("ignores unrelated frames and stale replies for a different quote", () => {
-    const p = setup();
+    using fixture = environment();
+    const disposers = fixture.disposers;
+    const p = setup(disposers);
     p.send(p.request.citation, window);
     p.send({ ...p.request.citation, text: "other" });
     expect(p.scrollToOffset).not.toHaveBeenCalled();
@@ -204,7 +215,9 @@ describe("HTML citation source navigation", () => {
   });
 
   it("finishes navigation with an actionable error when the page cannot load", async () => {
-    const p = setup(false);
+    using fixture = environment();
+    const disposers = fixture.disposers;
+    const p = setup(disposers, false);
     const error = document.createElement("p");
     error.dataset.htmlRenderError = "true";
     p.root.append(error);
