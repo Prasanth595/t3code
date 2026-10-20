@@ -1024,7 +1024,7 @@ it.effect.each([
         {
           ...registry,
           getProviderMaintenanceCapabilitiesForInstance: () => Effect.succeed(pinnedCapabilities),
-          refreshInstance: () =>
+          refreshAfterUpdate: () =>
             Effect.gen(function* () {
               assert.strictEqual(calls.length, 1);
               const refreshed = yield* enrichProviderSnapshotWithVersionAdvisory(
