@@ -336,12 +336,17 @@ export function mathWrapperOf(element: Element | null): Element | null {
   return element?.closest(MATH_SELECTOR) ?? null;
 }
 
-/** A cell's text, with each formula as its TeX. */
+/** Copy formulas as TeX and citation labels as complete references. */
 function csvCellText(cell: Element): string {
-  if (!cell.querySelector(MATH_SELECTOR)) return cell.textContent ?? "";
+  if (!cell.querySelector(`${MATH_SELECTOR}, [data-markdown-copy-text]`)) {
+    return cell.textContent ?? "";
+  }
   const copy = cell.cloneNode(true) as Element;
   for (const wrapper of copy.querySelectorAll(MATH_SELECTOR)) {
     wrapper.replaceWith(wrapper.getAttribute("data-markdown-copy")?.trim() ?? "");
+  }
+  for (const node of copy.querySelectorAll("[data-markdown-copy-text]")) {
+    node.textContent = node.getAttribute("data-markdown-copy-text");
   }
   return copy.textContent ?? "";
 }
@@ -389,6 +394,9 @@ function sanitizedHtmlFrom(container: Element): string {
   for (const wrapper of container.querySelectorAll(MATH_SELECTOR)) {
     wrapper.replaceWith(mathSourceElement(wrapper));
   }
+  for (const node of container.querySelectorAll("[data-markdown-copy-text]")) {
+    node.textContent = node.getAttribute("data-markdown-copy-text");
+  }
   for (const node of container.querySelectorAll(SANITIZED_HTML_SELECTOR)) {
     if (
       node.classList.contains("chat-markdown-file-link") ||
@@ -413,7 +421,6 @@ export function chatMarkdownClipboardPayload(
     const range = selection.getRangeAt(index);
     if (range.collapsed) continue;
     const container = document.createElement("div");
-    container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;
     const ancestorElement =
       ancestor.nodeType === Node.ELEMENT_NODE ? (ancestor as Element) : ancestor.parentElement;
@@ -434,6 +441,16 @@ export function chatMarkdownClipboardPayload(
       texts.push(math.getAttribute("data-markdown-copy")?.trim() ?? "");
       htmls.push(`<meta charset="utf-8">${mathSourceElement(math).outerHTML}`);
       continue;
+    }
+    const copySource = ancestorElement?.closest("[data-markdown-copy][data-markdown-copy-text]");
+    const fragment = range.cloneContents();
+    // A range inside a citation's number label omits its copy metadata wrapper.
+    if (copySource) {
+      const wrapper = copySource.cloneNode(false);
+      wrapper.appendChild(fragment);
+      container.appendChild(wrapper);
+    } else {
+      container.appendChild(fragment);
     }
     if (ancestorElement?.closest("pre")) {
       const text = range.toString();
