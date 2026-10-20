@@ -383,6 +383,26 @@ it.effect.each([
     expected: Option.some(ID_A),
   },
   {
+    case: "gives no answer when a config may return another file's config on some builds",
+    files: {
+      "app.config.js": `module.exports = process.env.PROD
+        ? { extra: { eas: { projectId: "${ID_A}" } } }
+        : require("./app.config.staging.js");`,
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config assigns over the object holding the project id",
+    files: {
+      "app.config.js": `export default ({ config }) => {
+        const c = { extra: { eas: { projectId: "${ID_A}" } } };
+        c.extra.eas = require("./eas.local.js");
+        return c;
+      };`,
+    },
+    expected: Option.none(),
+  },
+  {
     case: "reads a project id that follows spreads",
     files: {
       "app.config.js": `export default ({ config }) => ({
