@@ -84,7 +84,7 @@ export function resolveGitHubRepository(input: {
     host: gitHubApiHostForRemote(remote.url),
   }));
   const host =
-    (input.hostHint === undefined ? undefined : apiHostForHint(input.hostHint)) ??
+    (input.hostHint === undefined ? undefined : apiHostForHint(input.hostHint, fetchRemotes)) ??
     fetchRemotes.find((remote) => remote.name === "origin" && remote.host !== null)?.host ??
     fetchRemotes.find((remote) => remote.host !== null)?.host ??
     input.defaultHost;
@@ -190,7 +190,16 @@ export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   return provider.kind === "github" ? host : null;
 }
 
-function apiHostForHint(host: string): string {
+function apiHostForHint(host: string, remotes: ReadonlyArray<{ readonly url: string }>): string {
   const normalized = host.toLowerCase();
+  if (GITHUB_DOT_COM_SSH_ALIAS.test(normalized)) {
+    const matching = remotes.filter(
+      (remote) => normalizeGitRemoteUrl(remote.url).split("/")[0] === normalized,
+    );
+    // A hint carries no transport; an HTTPS remote or missing evidence must not select
+    // the github.com endpoint and credentials for a dotted host.
+    if (matching.length === 0 || matching.some((remote) => !isSshRemoteUrl(remote.url)))
+      return normalized;
+  }
   return apiHostForSshAlias(normalized) ?? normalized;
 }

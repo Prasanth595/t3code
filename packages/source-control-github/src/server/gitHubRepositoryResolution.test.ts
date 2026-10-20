@@ -202,6 +202,73 @@ describe("github.com-<name> SSH aliases", () => {
     );
   });
 
+  it.each([false, true])("preserves an HTTPS alias-shaped host hint (upstream: %s)", (upstream) => {
+    const remotes = [
+      "origin\thttps://github.com-scale/me/web.git (fetch)",
+      ...(upstream ? ["upstream\thttps://github.com/acme/web.git (fetch)"] : []),
+    ].join("\n");
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "",
+        hostHint: "github.com-scale",
+        defaultHost: "github.com",
+      }),
+      {
+        host: "github.com-scale",
+        locator: { host: "github.com-scale", owner: "me", name: "web" },
+      },
+    );
+  });
+
+  it("requires matching SSH evidence to normalize a dotted hint", () => {
+    for (const remotes of [
+      "",
+      "origin\tgit@github.com-work:me/web.git (fetch)",
+      "origin\tgit@github.com-scale:me/web.git (push)",
+    ]) {
+      assert.deepStrictEqual(
+        resolveGitHubRepository({
+          remotes,
+          resolved: "",
+          hostHint: "GitHub.com-Scale",
+          defaultHost: "github.com",
+        }),
+        { host: "github.com-scale", locator: null },
+      );
+    }
+  });
+
+  it("preserves a dotted hint when matching remotes use both transports", () => {
+    const entries = [
+      "origin\tgit@github.com-scale:me/web.git (fetch)",
+      "mirror\thttps://github.com-scale/me/web.git (fetch)",
+    ];
+    for (const remotes of [entries.join("\n"), entries.toReversed().join("\n")]) {
+      assert.deepStrictEqual(
+        resolveGitHubRepository({
+          remotes,
+          resolved: "",
+          hostHint: "github.com-scale",
+          defaultHost: "github.com",
+        }),
+        {
+          host: "github.com-scale",
+          locator: { host: "github.com-scale", owner: "me", name: "web" },
+        },
+      );
+    }
+  });
+
+  it("retains dotless hint compatibility without remote evidence", () => {
+    for (const hostHint of ["github", "github-work", "workgithub"]) {
+      assert.deepStrictEqual(
+        resolveGitHubRepository({ remotes: "", resolved: "", hostHint, defaultHost: hostHint }),
+        { host: "github.com", locator: null },
+      );
+    }
+  });
+
   it("keeps a hostile host hint and its remote off github.com", () => {
     const remotes = "origin\tgit@github.com-evil.example:acme/web.git (fetch)";
     assert.deepStrictEqual(
