@@ -379,6 +379,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       tag: WS_METHODS.pullRequestsChangeBreakdown,
       execute: (input) => routedRequest(WS_METHODS.pullRequestsChangeBreakdown, input),
       staleTimeMs: 60_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
     }),
     /**
      * One write in flight per change request: the host applies these in order, and a reader
