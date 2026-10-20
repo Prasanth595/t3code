@@ -59,7 +59,6 @@ import {
   type ServerProviderSkill,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
-import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import {
   isAtomCommandInterrupted,
@@ -161,7 +160,7 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
-import { GitHubIcon } from "./Icons";
+import { MarkdownLinkFavicon } from "./chat/MarkdownLinkFavicon";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
 import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
@@ -1254,45 +1253,6 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
     ? rewrittenHref.replaceAll("\\", "/")
     : rewrittenHref;
 }
-
-const MARKDOWN_LINK_FAVICON_CLASS_NAME = "block size-full shrink-0 select-none";
-
-const failedFaviconHosts = new Set<string>();
-
-function isGitHubHost(host: string): boolean {
-  const hostname = host.toLowerCase();
-  return hostname === "github.com" || hostname.endsWith(".github.com");
-}
-
-const MarkdownLinkFavicon = memo(function MarkdownLinkFavicon({ host }: { host: string }) {
-  const [failedHost, setFailedHost] = useState<string | null>(null);
-  const brandIcon = isGitHubHost(host);
-  const faviconUrl = brandIcon ? null : faviconUrlForOrigin(`https://${host}`);
-  return (
-    <span
-      className="ms-[0.25em] me-[0.2em] inline-flex size-[14px] [vertical-align:-0.125em]"
-      aria-hidden
-    >
-      {brandIcon ? (
-        <GitHubIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
-      ) : faviconUrl === null || failedHost === host || failedFaviconHosts.has(host) ? (
-        <GlobeIcon className={MARKDOWN_LINK_FAVICON_CLASS_NAME} />
-      ) : (
-        <img
-          src={faviconUrl}
-          alt=""
-          loading="lazy"
-          draggable={false}
-          className={cn(MARKDOWN_LINK_FAVICON_CLASS_NAME, "rounded-sm")}
-          onError={() => {
-            failedFaviconHosts.add(host);
-            setFailedHost(host);
-          }}
-        />
-      )}
-    </span>
-  );
-});
 
 const CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME = "max-w-[min(100%,30rem)]";
 const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
