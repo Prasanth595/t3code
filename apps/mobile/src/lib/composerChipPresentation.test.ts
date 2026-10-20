@@ -103,20 +103,14 @@ describe("context chip kinds", () => {
   });
 });
 
-describe("contextChipColors", () => {
-  it("mixes the accent into the fill, border and text with web's weights", async () => {
-    const { contextChipColors } = await import("./composerChipPresentation");
-    expect(contextChipColors("#009f6e", { foreground: "#ffffff", border: "#000000" })).toEqual({
-      background: "#009f6e1c",
-      border: "#003626",
-      foreground: "#c7eadf",
-    });
+describe("contextChipForeground", () => {
+  it("mixes 22% of the accent into the text color, as web does", async () => {
+    const { contextChipForeground } = await import("./composerChipPresentation");
+    expect(contextChipForeground("#009f6e", "#ffffff")).toBe("#c7eadf");
   });
 
-  it("replaces an alpha byte the theme role already carries", async () => {
-    const { contextChipColors } = await import("./composerChipPresentation");
-    expect(
-      contextChipColors("#ffffffff", { foreground: "#000000ff", border: "#000000" }).background,
-    ).toBe("#ffffff1c");
+  it("replaces an alpha byte the accent already carries", async () => {
+    const { contextChipForeground } = await import("./composerChipPresentation");
+    expect(contextChipForeground("#ffffffff", "#000000")).toBe("#383838");
   });
 });

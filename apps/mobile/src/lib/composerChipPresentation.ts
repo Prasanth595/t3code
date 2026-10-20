@@ -48,20 +48,8 @@ export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
   icon: "circle-dashed",
 };
 
-export function contextChipColors(
-  accent: string,
-  surface: { readonly foreground: string; readonly border: string },
-) {
-  const opaqueAccent = accent.slice(0, 7);
-  const alpha = (weight: number) =>
-    `${opaqueAccent}${Math.round(weight * 255)
-      .toString(16)
-      .padStart(2, "0")}`;
-  return {
-    background: alpha(0.11),
-    border: flattenThemeColor(alpha(0.34), surface.border),
-    foreground: flattenThemeColor(alpha(0.22), surface.foreground),
-  };
+export function contextChipForeground(accent: string, foreground: string) {
+  return flattenThemeColor(`${accent.slice(0, 7)}38`, foreground);
 }
 
 export function composerChipSizeSuffix(record?: {

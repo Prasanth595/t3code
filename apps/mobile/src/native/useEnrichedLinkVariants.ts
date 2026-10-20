@@ -6,7 +6,7 @@ import type {
   MarkdownStyle,
 } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
-import { contextChipColors, contextChipPresentation } from "../lib/composerChipPresentation";
+import { contextChipForeground, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
@@ -89,17 +89,14 @@ export function useEnrichedLinkVariants(
     }
     return byUrl;
   }, [assets, linkCustomization, skills, textStyle]);
-  const chips = useMemo(
+  const chipForegrounds = useMemo(
     () =>
       new Map(
         [...links].map(([url, link]) => [
           url,
           link.chip
-            ? contextChipColors(link.chip.accent ?? textStyle.color, {
-                foreground: textStyle.color,
-                border: textStyle.contextChipBorderColor ?? textStyle.dividerColor,
-              })
-            : null,
+            ? contextChipForeground(link.chip.accent ?? textStyle.color, textStyle.color)
+            : undefined,
         ]),
       ),
     [links, textStyle],
@@ -108,27 +105,26 @@ export function useEnrichedLinkVariants(
     () =>
       Object.fromEntries(
         [...links].map(([url, link]) => {
-          const colors = chips.get(url);
-          const composerChipEm = textStyle.fontSize * 0.86 * 0.5;
+          const chipForeground = chipForegrounds.get(url);
           return [
             enrichedLinkVariantPattern(url),
             {
               pill: {
-                borderColor: colors?.border ?? "transparent",
-                borderWidth: colors ? 1 : 0,
-                borderRadius: colors ? composerChipEm : 6,
-                paddingHorizontal: colors ? composerChipEm : 5,
-                paddingVertical: colors ? 0 : 2,
+                borderColor: "transparent",
+                borderWidth: 0,
+                borderRadius: 6,
+                paddingHorizontal: 5,
+                paddingVertical: 2,
               },
-              fontFamily: colors ? FONT_FAMILIES.medium : textStyle.fontFamily,
-              color: colors?.foreground ?? link.color ?? textStyle.fileTextColor,
+              fontFamily: chipForeground ? FONT_FAMILIES.medium : textStyle.fontFamily,
+              color: chipForeground ?? link.color ?? textStyle.fileTextColor,
               underline: false,
-              backgroundColor: colors?.background ?? "transparent",
+              backgroundColor: "transparent",
             },
           ];
         }),
       ),
-    [chips, links, textStyle],
+    [chipForegrounds, links, textStyle],
   );
   const linkPillContent = useMemo<Record<string, LinkPillContent>>(
     () =>
@@ -138,11 +134,11 @@ export function useEnrichedLinkVariants(
           {
             label: link.label,
             iconUri: link.icon ? Image.resolveAssetSource(link.icon)?.uri : undefined,
-            iconTintColor: link.chip?.tintsIcon ? chips.get(url)?.foreground : link.iconTintColor,
+            iconTintColor: link.chip?.tintsIcon ? chipForegrounds.get(url) : link.iconTintColor,
           },
         ]),
       ),
-    [chips, links],
+    [chipForegrounds, links],
   );
   return { linkVariants, linkPillContent };
 }

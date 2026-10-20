@@ -850,13 +850,10 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownCodeText = theme["--color-md-code-text"];
   const markdownInlineCodeText = theme["--color-foreground-secondary"];
   const markdownHrColor = theme["--color-md-hr"];
-  const userContextChipBorderColor = flattenThemeColor(
+  // Native chip drawing parses opaque hex only, and this role is translucent.
+  const contextChipBorderColor = flattenThemeColor(
     theme["--color-border"],
     theme["--color-user-bubble"],
-  );
-  const assistantContextChipBorderColor = flattenThemeColor(
-    theme["--color-border"],
-    theme["--color-thread-canvas"],
   );
   const markdownUserBodyColor = theme["--color-user-bubble-foreground"];
   const markdownUserCodeBg = theme["--color-md-user-code-bg"];
@@ -881,7 +878,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
           fileTextColor: markdownUserBodyColor,
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
-          contextChipBorderColor: userContextChipBorderColor,
+          contextChipBorderColor,
           fontSize: nativeMarkdownTypography.fontSize,
           lineHeight: nativeMarkdownTypography.lineHeight,
           headingFontSizes: nativeMarkdownTypography.headingFontSizes,
@@ -903,7 +900,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
           fileTextColor: markdownCodeText,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
-          contextChipBorderColor: assistantContextChipBorderColor,
+          contextChipBorderColor,
           fontSize: nativeMarkdownTypography.fontSize,
           lineHeight: nativeMarkdownTypography.lineHeight,
           headingFontSizes: nativeMarkdownTypography.headingFontSizes,
@@ -914,8 +911,8 @@ function useMarkdownStyles(): MarkdownStyleSets {
       },
     };
   }, [
-    assistantContextChipBorderColor,
     boldFontFamily,
+    contextChipBorderColor,
     markdownBlockquoteBorder,
     markdownBodyColor,
     markdownCodeBg,
@@ -931,7 +928,6 @@ function useMarkdownStyles(): MarkdownStyleSets {
     markdownUserInlineCodeText,
     nativeMarkdownTypography,
     regularFontFamily,
-    userContextChipBorderColor,
   ]);
 }
 
