@@ -137,7 +137,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }, [activeQuestion?.id, disabled]);
 
   const handleOptionSelection = (questionId: string, optionValue: string) => {
-    if (disabled || isResponding) return;
+    if (responseDisabled) return;
     if (activeQuestion?.multiSelect) {
       onToggleOption(questionId, optionValue);
       return;
@@ -290,7 +290,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const isSelected =
                   isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const shortcutKey = index < 9 ? index + 1 : null;
-                const optionDisabled = disabled || isResponding;
+                const optionDisabled = responseDisabled;
                 const className = cn(
                   "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 select-text focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
                   isSelected
