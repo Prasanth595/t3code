@@ -65,23 +65,26 @@ export function cursorUsageResponseToLimits(
 
 const ExchangedAccessToken = Schema.Struct({ accessToken: Schema.NonEmptyString });
 
-const requestUsage = (endpoint: string, token: string, clientType: "cli" | "sdk") =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient;
-    const response = yield* client.execute(
-      HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
-        HttpClientRequest.bearerToken(token),
-        HttpClientRequest.setHeaders({
-          "connect-protocol-version": "1",
-          "x-cursor-client-type": clientType,
-        }),
-        HttpClientRequest.bodyJsonUnsafe({}),
-      ),
-    );
-    return yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
-      yield* HttpClientResponse.filterStatusOk(response),
-    );
-  });
+const requestUsage = Effect.fn("CursorUsageLimits.requestUsage")(function* (
+  endpoint: string,
+  token: string,
+  clientType: "cli" | "sdk",
+) {
+  const client = yield* HttpClient.HttpClient;
+  const response = yield* client.execute(
+    HttpClientRequest.post(`${endpoint}/aiserver.v1.DashboardService/GetCurrentPeriodUsage`).pipe(
+      HttpClientRequest.bearerToken(token),
+      HttpClientRequest.setHeaders({
+        "connect-protocol-version": "1",
+        "x-cursor-client-type": clientType,
+      }),
+      HttpClientRequest.bodyJsonUnsafe({}),
+    ),
+  );
+  return yield* HttpClientResponse.schemaBodyJson(CursorUsageResponse)(
+    yield* HttpClientResponse.filterStatusOk(response),
+  );
+});
 
 const signInAgain = (checkedAt: string) =>
   makeUnavailableUsageLimits({
@@ -94,8 +97,8 @@ const signInAgain = (checkedAt: string) =>
  * The stored browser login is a user API key, which the dashboard rejects as a bearer. Like
  * `@cursor/sdk`, exchange it for a short-lived access token at the login's own backend first.
  */
-const readStoredLoginUsage = (login: CursorStoredLogin, checkedAt: string) =>
-  Effect.gen(function* () {
+const readStoredLoginUsage = Effect.fn("CursorUsageLimits.readStoredLoginUsage")(
+  function* (login: CursorStoredLogin, checkedAt: string) {
     if (login.status === "expired") return signInAgain(checkedAt);
     const endpoint = yield* Effect.try(() => {
       const url = new URL(login.backendUrl);
@@ -119,10 +122,10 @@ const readStoredLoginUsage = (login: CursorStoredLogin, checkedAt: string) =>
       yield* requestUsage(endpoint, accessToken, "sdk"),
       checkedAt,
     );
-  }).pipe(
-    // A redirect would carry the user's key to another host.
-    Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-  );
+  },
+  // A redirect would carry the user's key to another host.
+  Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+);
 
 export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function* (
   settings: Pick<CursorSettings, "apiEndpoint">,
