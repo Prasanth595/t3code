@@ -641,6 +641,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "provider-sync-across-devices",
+    title: "Sync across devices",
+    to: "/settings/providers",
+    searchTerms: [
+      "sync providers accounts settings across devices environments t3 connect copy setup",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: "Usage providers",
     to: "/settings/providers",

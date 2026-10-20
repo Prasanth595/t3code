@@ -2,6 +2,7 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CodexSettings,
+  SECRET_REDACTED,
   type ServerSettings,
   UsageLimitSourceConfig,
   secretSettingsFields,
@@ -19,7 +20,7 @@ import {
   writeSecretFieldValues,
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
-export const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+export { SECRET_REDACTED };
 
 const providerSecretFields = new Map([
   ["codex", secretSettingsFields(CodexSettings)],

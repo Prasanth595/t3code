@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { type CommandId, ProjectId } from "./baseSchemas.ts";
+import { type CommandId, EnvironmentId, ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
   ClientSettingsSchema,
@@ -145,6 +145,28 @@ describe("storage cleanup settings", () => {
   it.each([-1, 1.5, 3651])("rejects invalid settled retention %s", (days) => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeSettledAfterDays: days } }),
+    ).toThrow();
+  });
+});
+
+describe("ClientSettings provider sync across devices", () => {
+  it("defaults sync off and round-trips the preference and dismissed environments", () => {
+    expect(decodeClientSettings({}).providerSyncAcrossDevicesEnabled).toBe(false);
+    expect(decodeClientSettings({}).providerSyncSetupDismissedEnvironmentIds).toEqual([]);
+    for (const providerSyncAcrossDevicesEnabled of [true, false]) {
+      const preference = { providerSyncAcrossDevicesEnabled };
+      expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+      expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+    }
+    expect(() => decodeClientSettingsPatch({ providerSyncAcrossDevicesEnabled: "yes" })).toThrow();
+
+    const dismissed = {
+      providerSyncSetupDismissedEnvironmentIds: [EnvironmentId.make("env-main-pc")],
+    };
+    expect(decodeClientSettingsPatch(dismissed)).toEqual(dismissed);
+    expect(encodeClientSettings(decodeClientSettings(dismissed))).toMatchObject(dismissed);
+    expect(() =>
+      decodeClientSettingsPatch({ providerSyncSetupDismissedEnvironmentIds: [""] }),
     ).toThrow();
   });
 });

@@ -4,6 +4,7 @@ import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
+  type ProviderSyncRemovalScope,
 } from "@t3tools/contracts";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
@@ -13,6 +14,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -98,6 +100,9 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { AddProviderInstanceDialog } from "./AddProviderInstanceDialog";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
+import { ProviderSyncAcrossDevices } from "./ProviderSyncAcrossDevices";
+import { ProviderSyncSetupDialog } from "./ProviderSyncSetupDialog";
+import { RemoveProviderSyncDialog } from "./RemoveProviderSyncDialog";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -105,6 +110,7 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
+import { useProviderInstanceSync } from "./useProviderInstanceSync";
 import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
@@ -576,6 +582,7 @@ export function EnvironmentProviderSettings({
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
   const toggleModelFavorite = useToggleEnvironmentModelFavorite(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
+  const providerSync = useProviderInstanceSync(environmentId);
   const serverProviders = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
   // Older servers decode an unknown providerInstances key away, so sending
   // a project override patch would silently do nothing. Hide the switch
@@ -599,6 +606,11 @@ export function EnvironmentProviderSettings({
   });
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<{
+    readonly instanceId: ProviderInstanceId;
+    readonly instance: ProviderInstanceConfig;
+  } | null>(null);
+  const [dismissedSetupTargetId, setDismissedSetupTargetId] = useState<EnvironmentId | null>(null);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
     targetInstanceId ?? null,
   );
@@ -830,6 +842,10 @@ export function EnvironmentProviderSettings({
         title: "Could not update provider instance",
         description: error instanceof Error ? error.message : "The settings update failed.",
       });
+      return;
+    }
+    if (result._tag === "Success") {
+      void providerSync.fanoutUpsert(instanceId, next);
     }
   };
 
@@ -857,22 +873,8 @@ export function EnvironmentProviderSettings({
       persistInstance(instanceId, next),
   );
 
-  const deleteInstance = useStableCallback(
-    async (instanceId: ProviderInstanceId, instance: ProviderInstanceConfig) => {
-      const updateResult = await persistProviderInstance({
-        operation: "remove",
-        instanceId,
-      });
-      if (updateResult._tag === "Failure") {
-        const error = squashAtomCommandFailure(updateResult);
-        toastManager.add({
-          type: "error",
-          title: "Could not delete provider instance",
-          description: error instanceof Error ? error.message : "The settings update failed.",
-        });
-        return;
-      }
-
+  const cleanupManagedBinaryAfterRemove = useStableCallback(
+    async (instance: ProviderInstanceConfig) => {
       if (instance.driver !== ProviderDriverKind.make("acpRegistry")) return;
       if (providerConfigString(instance.config, "source") === "local") return;
       const agentId = providerConfigString(instance.config, "agentId");
@@ -895,6 +897,50 @@ export function EnvironmentProviderSettings({
       }
     },
   );
+
+  const deleteInstanceLocally = useStableCallback(
+    async (instanceId: ProviderInstanceId, instance: ProviderInstanceConfig) => {
+      const updateResult = await persistProviderInstance({
+        operation: "remove",
+        instanceId,
+      });
+      if (updateResult._tag === "Failure") {
+        const error = squashAtomCommandFailure(updateResult);
+        toastManager.add({
+          type: "error",
+          title: "Could not delete provider instance",
+          description: error instanceof Error ? error.message : "The settings update failed.",
+        });
+        return false;
+      }
+      await cleanupManagedBinaryAfterRemove(instance);
+      return true;
+    },
+  );
+
+  const deleteInstance = useStableCallback(
+    async (instanceId: ProviderInstanceId, instance: ProviderInstanceConfig) => {
+      if (providerSync.syncEnabled && providerSync.syncedDeviceLabels.length > 1) {
+        setPendingRemove({ instanceId, instance });
+        return;
+      }
+      await deleteInstanceLocally(instanceId, instance);
+    },
+  );
+
+  const confirmRemoveWithScope = useStableCallback(async (scope: ProviderSyncRemovalScope) => {
+    if (pendingRemove === null) return;
+    const { instanceId, instance } = pendingRemove;
+    setPendingRemove(null);
+    if (scope === "this-device" || !providerSync.syncEnabled) {
+      await deleteInstanceLocally(instanceId, instance);
+      return;
+    }
+    const ok = await providerSync.removeWithScope(instanceId, scope);
+    if (ok) {
+      await cleanupManagedBinaryAfterRemove(instance);
+    }
+  });
 
   const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
     const result = await persistProviderInstance({
@@ -1042,6 +1088,20 @@ export function EnvironmentProviderSettings({
         {deviceTabs ? (
           <div className="flex min-h-11 min-w-0 items-center gap-2 px-3 sm:px-4">{deviceTabs}</div>
         ) : null}
+        <div className="px-3 pb-3 sm:px-4">
+          <ProviderSyncAcrossDevices
+            enabled={providerSync.syncEnabled}
+            peers={providerSync.peers}
+            disabled={readOnly}
+            onEnabledChange={(enabled) => {
+              if (enabled) {
+                void providerSync.enableSyncAndPush(settings.providerInstances);
+              } else {
+                void providerSync.disableSync();
+              }
+            }}
+          />
+        </div>
         {readOnly ? (
           <SettingsGroup divided={false} className="overflow-hidden">
             <SettingsRow
@@ -1187,6 +1247,43 @@ export function EnvironmentProviderSettings({
           environmentLabel={environmentLabel}
           onOpenChange={setIsAddInstanceDialogOpen}
           onCreated={setSelectedInstanceId}
+        />
+      ) : null}
+
+      {pendingRemove !== null ? (
+        <RemoveProviderSyncDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingRemove(null);
+          }}
+          providerLabel={resolveProviderInstanceDisplayName({
+            instanceId: pendingRemove.instanceId,
+            driver: pendingRemove.instance.driver,
+            displayName: pendingRemove.instance.displayName,
+          })}
+          currentDeviceLabel={environmentLabel}
+          syncedDeviceLabels={providerSync.syncedDeviceLabels}
+          onConfirm={(scope) => void confirmRemoveWithScope(scope)}
+        />
+      ) : null}
+
+      {providerSync.setupOffer !== null &&
+      providerSync.setupOffer.targetEnvironmentId !== dismissedSetupTargetId ? (
+        <ProviderSyncSetupDialog
+          open
+          onOpenChange={(open) => {
+            if (open || providerSync.setupOffer === null) return;
+            setDismissedSetupTargetId(providerSync.setupOffer.targetEnvironmentId);
+            void providerSync.dismissSetupOffer(providerSync.setupOffer.targetEnvironmentId);
+          }}
+          targetLabel={providerSync.setupOffer.targetLabel}
+          sourceLabel={providerSync.setupOffer.sourceLabel}
+          providerSummary={providerSync.setupOffer.providerSummary}
+          onConfirm={() => {
+            if (providerSync.setupOffer === null) return;
+            setDismissedSetupTargetId(providerSync.setupOffer.targetEnvironmentId);
+            void providerSync.applySetupOffer();
+          }}
         />
       ) : null}
     </>

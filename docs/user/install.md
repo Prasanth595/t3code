@@ -132,7 +132,9 @@ before sharing.
 Open **Settings → Providers** in the web or desktop app, select the environment,
 and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
-computer.
+computer. When several environments are linked through T3 Connect, turn on
+**Sync across devices** there to copy provider setups between them; accounts and
+API keys stay on each machine.
 
 | Provider    | Install and authenticate                                                                                                                                  |
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
