@@ -5,9 +5,13 @@ import type {
   ProviderReplayEntry,
   ProviderReplayTranscript,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -25,6 +29,8 @@ import {
 } from "../Adapters/MuseAdapterV2.testkit.ts";
 import { PiOrchestratorReplayHarness } from "../Adapters/PiAdapterV2.testkit.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { messageRestartInput } from "./fixtures/message_steering/input.ts";
@@ -84,6 +90,72 @@ function isStreamingAssistantEvent(event: OrchestrationV2DomainEvent): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Holds each session's next event after it emits a pending runtime request
+ * until the adapter receives that request's answer, so the answer lands
+ * between the request and whatever the adapter emits next.
+ */
+function answerBeforeNextEvent<Transcript extends ProviderReplayTranscript, Error>(
+  harness: OrchestratorV2ProviderReplayHarness<Transcript, Error>,
+): OrchestratorV2ProviderReplayHarness<Transcript, Error> {
+  const gateSession = (
+    session: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+  ): Effect.Effect<ProviderAdapter.ProviderAdapterV2SessionRuntime> =>
+    Effect.gen(function* () {
+      const answered = new Map<string, Deferred.Deferred<void>>();
+      const answerFor = (requestId: string) => {
+        const existing = answered.get(requestId);
+        if (existing !== undefined) return existing;
+        const created = Deferred.makeUnsafe<void>();
+        answered.set(requestId, created);
+        return created;
+      };
+      const awaiting = yield* Ref.make<string | null>(null);
+      return {
+        ...session,
+        events: session.events.pipe(
+          Stream.tap((event) =>
+            Effect.gen(function* () {
+              const requestId = yield* Ref.getAndSet(awaiting, null);
+              if (requestId !== null) yield* Deferred.await(answerFor(requestId));
+              if (
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "pending"
+              ) {
+                yield* Ref.set(awaiting, String(event.runtimeRequest.id));
+              }
+            }),
+          ),
+        ),
+        respondToRuntimeRequest: (request) =>
+          session
+            .respondToRuntimeRequest(request)
+            .pipe(Effect.ensuring(Deferred.succeed(answerFor(String(request.requestId)), void 0))),
+      };
+    });
+  return {
+    ...harness,
+    makeProviderAdapterRegistryLayer: (transcript, options) =>
+      Layer.effect(
+        ProviderAdapterRegistry.ProviderAdapterRegistryV2,
+        Effect.gen(function* () {
+          const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
+          return {
+            ...registry,
+            get: (instanceId) =>
+              registry.get(instanceId).pipe(
+                Effect.map((adapter) => ({
+                  ...adapter,
+                  openSession: (sessionInput) =>
+                    adapter.openSession(sessionInput).pipe(Effect.flatMap(gateSession)),
+                })),
+              ),
+          };
+        }),
+      ).pipe(Layer.provide(harness.makeProviderAdapterRegistryLayer(transcript, options))),
+  };
 }
 
 const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
@@ -261,6 +333,40 @@ describe("orchestrator replay fixtures", () => {
       }),
     );
   }
+
+  it.effect("settles a question answered before its card arrives and retains the answer", () => {
+    const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find(
+      (candidate) => candidate.name === "opencode2_question",
+    );
+    assert.isDefined(fixture);
+    const provider = fixture.providers.find((candidate) => candidate.driver === "opencode");
+    assert.isDefined(provider);
+    return runFixtureProvider({
+      fixtureName: fixture.name,
+      buildInput: fixture.buildInput,
+      driver: provider,
+      harness: answerBeforeNextEvent(OpenCode2OrchestratorReplayHarness),
+    }).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          const projection = [...result.projections.values()][0]!;
+          const questions = projection.turnItems.filter(
+            (item) => item.type === "user_input_request",
+          );
+          assert.lengthOf(questions, 1);
+          const question = questions[0]!;
+          assert.equal(question.status, "completed");
+          assert.deepEqual(question.questionAnswer?.answers, { q0: "blue" });
+          assert.equal(
+            projection.nodes.find((node) => node.id === question.nodeId)?.status,
+            "completed",
+          );
+        }),
+      ),
+      Effect.mapError(normalizeTestError),
+      Effect.scoped,
+    );
+  });
 
   it.effect.each(
     (

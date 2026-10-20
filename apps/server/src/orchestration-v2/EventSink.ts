@@ -1,6 +1,8 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   OrchestrationV2StoredEvent,
@@ -207,6 +209,13 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
   "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
+const OPEN_REQUEST_STATUSES: ReadonlySet<string> = new Set([
+  "idle",
+  "pending",
+  "running",
+  "waiting",
+]);
+
 const layerBase: Layer.Layer<
   EventSinkV2,
   never,
@@ -321,6 +330,161 @@ const layerBase: Layer.Layer<
         });
       });
 
+    // Recheck in the write transaction: artifacts can arrive after resolution,
+    // or between the response handler reading its context and committing it.
+    const settleRequestArtifacts = Effect.fnUntraced(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
+      const requests = new Map(
+        events.flatMap((event) =>
+          event.type === "runtime-request.updated"
+            ? [[event.payload.id, event.payload] as const]
+            : [],
+        ),
+      );
+      const writtenNodes = new Set(
+        events.flatMap((event) => (event.type === "node.updated" ? [event.payload.id] : [])),
+      );
+      const writtenCards = new Set(
+        events.flatMap((event) =>
+          event.type === "turn-item.updated" &&
+          (event.payload.type === "approval_request" || event.payload.type === "user_input_request")
+            ? [event.payload.requestId]
+            : [],
+        ),
+      );
+      const requestFor = Effect.fnUntraced(function* (
+        threadId: ThreadId,
+        requestId: RuntimeRequestId,
+      ) {
+        const written = requests.get(requestId);
+        if (written !== undefined) return written;
+        return yield* projectionStore.getRuntimeRequest(threadId, requestId).pipe(
+          // A thread created in this write has no stored requests yet.
+          Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.undefined }),
+        );
+      });
+      const resolutionFor = (request: OrchestrationV2RuntimeRequest | undefined) =>
+        request === undefined || request.status === "pending"
+          ? undefined
+          : {
+              status:
+                request.status === "resolved" &&
+                request.decision !== "decline" &&
+                request.decision !== "cancel"
+                  ? ("completed" as const)
+                  : ("cancelled" as const),
+              at: request.resolvedAt ?? request.createdAt,
+            };
+
+      const expanded: Array<OrchestrationV2DomainEvent> = [];
+      for (const event of events) {
+        expanded.push(event);
+        if (
+          event.type !== "runtime-request.updated" ||
+          event.payload.status === "pending" ||
+          (writtenNodes.has(event.payload.nodeId) && writtenCards.has(event.payload.id))
+        )
+          continue;
+        const context = yield* projectionStore
+          .getRuntimeResponseContext(event.threadId, event.payload.id)
+          .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.undefined }));
+        const node = context?.node;
+        if (
+          node !== undefined &&
+          (node.kind === "approval_request" || node.kind === "user_input_request") &&
+          !writtenNodes.has(node.id) &&
+          OPEN_REQUEST_STATUSES.has(node.status)
+        ) {
+          expanded.push({
+            ...event,
+            id: EventId.make(`${event.id}:node`),
+            type: "node.updated",
+            runId: node.runId ?? undefined,
+            nodeId: node.id,
+            payload: node,
+          });
+        }
+        const card = context?.item;
+        if (
+          card !== undefined &&
+          (card.type === "approval_request" || card.type === "user_input_request") &&
+          !writtenCards.has(event.payload.id) &&
+          OPEN_REQUEST_STATUSES.has(card.status)
+        ) {
+          expanded.push({
+            ...event,
+            id: EventId.make(`${event.id}:card`),
+            type: "turn-item.updated",
+            runId: card.runId ?? undefined,
+            nodeId: card.nodeId ?? undefined,
+            payload: card,
+          });
+        }
+      }
+
+      const normalized: Array<OrchestrationV2DomainEvent> = [];
+      for (const event of expanded) {
+        if (
+          event.type === "node.updated" &&
+          (event.payload.kind === "approval_request" ||
+            event.payload.kind === "user_input_request") &&
+          event.payload.runtimeRequestId !== null &&
+          OPEN_REQUEST_STATUSES.has(event.payload.status)
+        ) {
+          const resolution = resolutionFor(
+            yield* requestFor(event.threadId, event.payload.runtimeRequestId),
+          );
+          if (resolution !== undefined) {
+            normalized.push({
+              ...event,
+              payload: { ...event.payload, status: resolution.status, completedAt: resolution.at },
+            });
+            continue;
+          }
+        } else if (
+          event.type === "turn-item.updated" &&
+          (event.payload.type === "approval_request" ||
+            event.payload.type === "user_input_request") &&
+          OPEN_REQUEST_STATUSES.has(event.payload.status)
+        ) {
+          const item = event.payload;
+          const request = yield* requestFor(event.threadId, item.requestId);
+          const resolution = resolutionFor(request);
+          if (resolution !== undefined) {
+            normalized.push({
+              ...event,
+              payload: {
+                ...item,
+                // Attached answers come from a client that already has the card.
+                // Preserve those; only reconstruct answers when the card was absent.
+                ...(item.type === "user_input_request" &&
+                item.questionAnswer === undefined &&
+                request?.answers !== undefined
+                  ? {
+                      questionAnswer: {
+                        requestId: item.requestId,
+                        answers: request.answers,
+                        attachmentsByQuestionId: {},
+                        questionTextById: Object.fromEntries(
+                          item.questions.map((question) => [question.id, question.question]),
+                        ),
+                      },
+                    }
+                  : {}),
+                status: resolution.status,
+                completedAt: resolution.at,
+                updatedAt: resolution.at,
+              },
+            });
+            continue;
+          }
+        }
+        normalized.push(event);
+      }
+      return normalized;
+    });
+
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
@@ -329,18 +493,24 @@ const layerBase: Layer.Layer<
             : [],
         ),
       );
-      return Effect.forEach(
-        events,
-        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
-        { concurrency: 1 },
+      return settleRequestArtifacts(events).pipe(
+        Effect.flatMap((settled) =>
+          Effect.forEach(
+            settled,
+            (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
+              event.type === "turn-item.updated"
+                ? turnItemPositions
+                    .normalize(
+                      event.payload,
+                      event.payload.runId === null
+                        ? undefined
+                        : runOrdinals.get(event.payload.runId),
+                    )
+                    .pipe(Effect.map((payload) => ({ ...event, payload })))
+                : Effect.succeed(event),
+            { concurrency: 1 },
+          ),
+        ),
       );
     };
 
