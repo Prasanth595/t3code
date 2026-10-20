@@ -8,9 +8,11 @@ import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
 import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
 import { BranchPickerScreen } from "../threads/NewTaskContextPickerScreens";
+import { filterNewTaskBranches } from "../threads/new-task-context-presentation";
 import { ThreadSettingsPickerScreen } from "../threads/ThreadSettingsSheet";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
+import { useScheduledTaskBaseRef } from "./useScheduledTaskBaseRef";
 
 function MissingTaskDraft() {
   return (
@@ -114,9 +116,13 @@ export function ScheduledTaskBranchPickerRouteScreen() {
     cwd: project?.workspaceRoot ?? null,
     query: debouncedQuery,
   });
-  const visibleBranches = branches.refs.filter(
-    (branch) => !branch.isRemote && branch.name.toLowerCase().includes(query.trim().toLowerCase()),
-  );
+  const { baseRef, pending: baseRefPending } = useScheduledTaskBaseRef({
+    environmentId: editor?.environmentId ?? null,
+    cwd: project?.workspaceRoot ?? null,
+    chosen: editor?.draft.baseRef ?? "",
+    worktree: editor?.draft.workspace === "worktree",
+  });
+  const visibleBranches = filterNewTaskBranches(branches.refs, query);
 
   if (!editor) return <MissingTaskDraft />;
 
@@ -125,11 +131,21 @@ export function ScheduledTaskBranchPickerRouteScreen() {
       title="Base branch"
       project={project}
       branches={visibleBranches}
-      selectedBranchName={editor.draft.baseRef}
+      selectedBranchName={
+        visibleBranches.find(
+          (branch) =>
+            branch.name === baseRef ||
+            (editor.draft.startFromOrigin &&
+              branch.isRemote &&
+              branch.name === `origin/${baseRef}`),
+        )?.name ?? baseRef
+      }
       query={query}
       onQueryChange={setQuery}
       loading={
-        query.trim() !== debouncedQuery.trim() || (branches.isPending && branches.data === null)
+        baseRefPending ||
+        query.trim() !== debouncedQuery.trim() ||
+        (branches.isPending && branches.data === null)
       }
       error={project ? branches.error : "This project is no longer available."}
       refreshing={branches.isFetchingNextPage}

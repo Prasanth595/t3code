@@ -245,6 +245,7 @@ describe("editing scheduled task branch settings", () => {
     const draft = editDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+    expect(editDraft({ ...legacyTask, workspaceStrategy: { type: "root" } }).baseRef).toBe("");
   });
 
   it.each([true, false])("preserves an explicit origin flag of %s", (startFromOrigin) => {
@@ -256,8 +257,10 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
-it("continues to default newly created tasks to origin", () => {
-  expect(createDraft(null, null).startFromOrigin).toBe(true);
+it("leaves a new task's base branch automatic while defaulting to origin", () => {
+  const draft = createDraft(null, null);
+  expect(draft.baseRef).toBe("");
+  expect(draft.startFromOrigin).toBe(true);
 });
 
 describe("scheduled task model defaults", () => {

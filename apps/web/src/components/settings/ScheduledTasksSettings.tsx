@@ -63,6 +63,7 @@ import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/qu
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { WorktreeBaseBranchPicker } from "../WorktreeBaseBranchPicker";
+import { scheduledTaskBaseRefAtom } from "../../state/vcs";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ConnectionStatusDot, connectionPhaseDotClassName } from "../ConnectionStatusDot";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -133,7 +134,7 @@ const EMPTY_DRAFT: DraftState = {
   projectId: "",
   threadId: "",
   workspaceMode: "worktree",
-  baseRef: "main",
+  baseRef: "",
   startFromOrigin: true,
   existingWorktreePath: "",
   modelKey: "",
@@ -1003,6 +1004,15 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const autoBaseRefCwd =
+    draft.workspaceMode === "worktree" && !draft.baseRef
+      ? (selectedProject?.workspaceRoot ?? null)
+      : null;
+  const autoBaseRef = useAtomValue(
+    scheduledTaskBaseRefAtom({ environmentId, cwd: autoBaseRefCwd }),
+  );
+  const baseRef = draft.baseRef || autoBaseRef.baseRef;
+  const baseRefPending = autoBaseRef.pending;
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(providers),
@@ -1045,7 +1055,8 @@ function ScheduledTaskEditorForm({
       saving ||
       editingTaskMissing ||
       !connected ||
-      tasksQuery.data === null
+      tasksQuery.data === null ||
+      baseRefPending
     )
       return;
     const selection = activeSelection;
@@ -1100,7 +1111,7 @@ function ScheduledTaskEditorForm({
           ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
           : {
               type: "worktree",
-              baseRef: draft.baseRef.trim() || "main",
+              baseRef: baseRef.trim() || "main",
               startFromOrigin: draft.startFromOrigin,
             };
     const input: ScheduledTaskUpsertInput = {
@@ -1159,7 +1170,7 @@ function ScheduledTaskEditorForm({
                   projectId: "",
                   modelKey: "",
                   baseModelSelection: null,
-                  baseRef: "main",
+                  baseRef: "",
                   startFromOrigin: true,
                   existingWorktreePath: "",
                 }));
@@ -1286,7 +1297,7 @@ function ScheduledTaskEditorForm({
                 id="scheduled-task-base-ref"
                 environmentId={environmentId}
                 cwd={selectedProject?.workspaceRoot ?? null}
-                value={draft.baseRef}
+                value={baseRef}
                 onValueChange={(baseRef) => setDraft((current) => ({ ...current, baseRef }))}
                 startFromOrigin={draft.startFromOrigin}
                 onStartFromOriginChange={(startFromOrigin) =>
@@ -1567,7 +1578,14 @@ function ScheduledTaskEditorForm({
         </DialogClose>
         <Button
           size="sm"
-          disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+          disabled={
+            !canOperate ||
+            saving ||
+            editingTaskMissing ||
+            !connected ||
+            !tasksQuery.data ||
+            baseRefPending
+          }
           onClick={() => void submit()}
         >
           {draft.editingId ? "Save task" : "Create task"}
