@@ -7232,19 +7232,21 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const git = yield* GitVcsDriver.GitVcsDriver;
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
-          Layer.mock(GitLabCli.GitLabCli)({
-            getMergeRequest: () =>
-              Effect.succeed({
-                number: 90,
-                title: "MR ref only",
-                url: "https://gitlab.com/group/project/-/merge_requests/90",
-                baseRefName: "main",
-                headRefName: "feature/mr",
-                state: "open",
-              }),
-          }),
+          Layer.mergeAll(
+            Layer.mock(GitLabCli.GitLabCli)({
+              getMergeRequest: () =>
+                Effect.succeed({
+                  number: 90,
+                  title: "MR ref only",
+                  url: "https://gitlab.com/group/project/-/merge_requests/90",
+                  baseRefName: "main",
+                  headRefName: "feature/mr",
+                  state: "open",
+                }),
+            }),
+            TestSourceControlHost.layer({ git: { execute: git.execute } }),
+          ),
         ),
-        Effect.provide(TestSourceControlHost.layer({ git: { execute: git.execute } })),
       );
       const { manager } = yield* makeManager({ sourceControlProvider: provider });
       const input = { cwd: repoDir, reference: "90", mode: "worktree" } as const;
