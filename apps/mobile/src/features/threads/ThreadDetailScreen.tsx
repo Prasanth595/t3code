@@ -1182,7 +1182,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
           threadId={props.selectedThread.id}
           tabs={browserTabs.tabs}
           loaded={browserTabs.loaded}
-          top={navigationHeaderHeight + 8}
+          top={
+            navigationHeaderHeight +
+            (props.usesAutomaticContentInsets === true && Platform.OS === "ios"
+              ? statusStripInset
+              : 0) +
+            8
+          }
           onOpen={openBrowserPreview}
         />
       ) : null}
