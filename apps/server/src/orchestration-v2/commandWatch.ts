@@ -51,13 +51,9 @@ function cut(text: string, maxBytes: number): string {
 }
 
 /**
- * Judges one run against what the agent was last told. The first run that works only records a
- * baseline, so a state that already holds when the watch starts, such as a closed discussion,
- * never wakes the agent. After it, exit 0 with output the agent has not seen wakes it. Exit 0
- * with no output, and exit 1 with nothing on stderr, are quiet, so `grep` and `jq -e` gates work
- * while a `gh` error, which exits 1 with a message, still counts as a failure. A quiet run keeps
- * the last output, so output that comes back unchanged after a quiet spell is not news.
- * Anything else is a failure.
+ * The first working run is only a baseline, so a state that already holds never wakes the agent.
+ * Exit 1 with empty stderr is quiet so `grep` and `jq -e` gates work, while a `gh` error, exit 1
+ * with a message, still fails. A quiet run keeps the last output, so its return is not news.
  */
 export function evaluateCommandWatch(
   watch: ThreadCommandWatch,
@@ -77,7 +73,7 @@ export function evaluateCommandWatch(
   }
   const output = gated ? "" : run.stdout.trim();
   if (
-    output.length > 0 &&
+    !gated &&
     (run.stdoutTruncated || Buffer.byteLength(output, "utf8") > COMMAND_WATCH_OUTPUT_LIMIT_BYTES)
   ) {
     return { kind: "too-long" };

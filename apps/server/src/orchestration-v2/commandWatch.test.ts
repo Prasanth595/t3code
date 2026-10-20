@@ -119,6 +119,11 @@ describe("evaluateCommandWatch", () => {
       evaluateCommandWatch(watch(), exited(0, "short", { stdoutTruncated: true })),
       { kind: "too-long" },
     );
+    // What the cut hid may be the news, even when what was captured is blank.
+    assert.deepStrictEqual(
+      evaluateCommandWatch(baselined(), exited(0, "   \n", { stdoutTruncated: true })),
+      { kind: "too-long" },
+    );
   });
 
   it("spends the last wake at the limit", () => {
