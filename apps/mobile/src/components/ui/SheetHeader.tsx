@@ -40,6 +40,7 @@ function NativeSheetHeader(props: SheetHeaderProps) {
     <>
       <NativeStackScreenOptions
         options={{
+          headerShown: true,
           title: props.title,
           headerBackVisible: false,
           unstable_headerSubtitle: props.subtitle,

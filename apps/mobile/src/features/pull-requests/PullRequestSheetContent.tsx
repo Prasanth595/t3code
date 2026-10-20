@@ -13,6 +13,7 @@ export function PullRequestSheetContent(props: {
   readonly busy?: boolean;
   readonly children: ReactNode;
   readonly footer?: ReactNode;
+  readonly trailing?: ReactNode;
   readonly scrollable?: boolean;
 }) {
   const navigation = useNavigation();
@@ -33,11 +34,12 @@ export function PullRequestSheetContent(props: {
   const content = (
     <>
       <SheetHeader
-        presentation="inline"
+        presentation={android ? "inline" : "native"}
         title={props.title}
         subtitle={props.subtitle}
         onCancel={() => navigation.goBack()}
         dismissDisabled={props.busy}
+        trailing={props.trailing}
       />
       <ScreenContent fitToContents={fitToContents}>
         {props.scrollable === false ? (
@@ -48,6 +50,7 @@ export function PullRequestSheetContent(props: {
           <ScrollView
             nestedScrollEnabled
             className="android:shrink android:grow-0 ios:flex-1"
+            contentInsetAdjustmentBehavior="automatic"
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{
               paddingHorizontal: 16,

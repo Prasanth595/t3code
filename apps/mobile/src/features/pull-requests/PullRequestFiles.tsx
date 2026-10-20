@@ -61,6 +61,7 @@ export function usePullRequestFilesContent(props: {
   readonly params: PullRequestDiffParams;
   readonly onSelectFile?: (path: string) => void;
   readonly groupByDirectory?: boolean;
+  readonly headerInToolbar?: boolean;
 }) {
   const navigation = useNavigation();
   const result = usePullRequestDiff(props.params);
@@ -169,6 +170,7 @@ export function usePullRequestFilesContent(props: {
   });
   return {
     refresh: result.refresh,
+    filter,
     rows: loading
       ? Array.from({ length: Math.min(fileCount ?? 4, 6) }, (_, index) => ({
           key: `loading-file:${index}`,
@@ -201,7 +203,9 @@ export function usePullRequestFilesContent(props: {
             className="min-h-17 flex-row items-center gap-2 py-3"
           >
             <View className="min-w-0 flex-1 gap-1">
-              <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              {props.headerInToolbar ? null : (
+                <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+              )}
               {fileCount !== undefined ? (
                 <Text className="text-2xs text-foreground-muted">
                   {fileCount} {fileCount === 1 ? "file" : "files"}
@@ -217,57 +221,52 @@ export function usePullRequestFilesContent(props: {
                 compact
               />
             ) : null}
-            <View className="size-11 items-center justify-center opacity-40">
-              <SymbolView
-                name="line.3.horizontal.decrease"
-                size={20}
-                tintColorClassName="accent-icon-muted"
-              />
-            </View>
+            {props.headerInToolbar ? null : (
+              <View className="size-11 items-center justify-center opacity-40">
+                <SymbolView
+                  name="line.3.horizontal.decrease"
+                  size={20}
+                  tintColorClassName="accent-icon-muted"
+                />
+              </View>
+            )}
           </View>
         ) : parsed.kind === "files" ? (
           <>
-            <View className="min-h-17 flex-row items-center gap-2 py-3">
+            <View
+              className={
+                props.headerInToolbar
+                  ? "flex-row items-center gap-2 py-2"
+                  : "min-h-17 flex-row items-center gap-2 py-3"
+              }
+            >
               <View className="min-w-0 flex-1 gap-1">
-                <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+                {props.headerInToolbar ? null : (
+                  <PullRequestSectionHeading>Changed files</PullRequestSectionHeading>
+                )}
                 <Text className="text-2xs text-foreground-muted">
                   {parsed.fileCount} {filter.hiddenCount ? "visible" : "changed"}{" "}
                   {parsed.fileCount === 1 ? "file" : "files"}
                   {viewed.supported
                     ? ` · ${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
                     : ""}
-                  {" · "}
+                  {filter.hideTestFiles || !props.headerInToolbar ? " · " : ""}
                   {filter.hideTestFiles
                     ? `${filter.hiddenCount} test ${filter.hiddenCount === 1 ? "file" : "files"} hidden`
-                    : "Test files included"}
+                    : props.headerInToolbar
+                      ? ""
+                      : "Test files included"}
                 </Text>
-                {breakdown ? <PullRequestChangeBreakdownLine breakdown={breakdown} /> : null}
+                {breakdown && !props.headerInToolbar ? (
+                  <PullRequestChangeBreakdownLine breakdown={breakdown} />
+                ) : null}
               </View>
               <PullRequestDiffStats
                 additions={parsed.additions}
                 deletions={parsed.deletions}
                 compact
               />
-              <Menu
-                title="Review files"
-                actions={[
-                  {
-                    id: "hide-tests",
-                    title: "Hide test files",
-                    image: "line.3.horizontal.decrease",
-                    state: filter.hideTestFiles ? "on" : "off",
-                  },
-                ]}
-                onPressAction={filter.toggle}
-              >
-                <View pointerEvents="none">
-                  <IconButton
-                    icon="line.3.horizontal.decrease"
-                    accessibilityLabel="Filter review files"
-                    selected={filter.hideTestFiles}
-                  />
-                </View>
-              </Menu>
+              {props.headerInToolbar ? null : <PullRequestFilesFilter filter={filter} />}
             </View>
             {parsed.files.length === 0 && filter.hiddenCount > 0 ? (
               <EmptyState
@@ -307,8 +306,40 @@ export function usePullRequestFilesContent(props: {
   };
 }
 
-export function PullRequestFiles(props: Parameters<typeof usePullRequestFilesContent>[0]) {
-  const content = usePullRequestFilesContent(props);
+export function PullRequestFilesFilter({
+  filter,
+}: {
+  readonly filter: Pick<ReturnType<typeof usePullRequestFileFilter>, "hideTestFiles" | "toggle">;
+}) {
+  return (
+    <Menu
+      title="Review files"
+      actions={[
+        {
+          id: "hide-tests",
+          title: "Hide test files",
+          image: "line.3.horizontal.decrease",
+          state: filter.hideTestFiles ? "on" : "off",
+        },
+      ]}
+      onPressAction={filter.toggle}
+    >
+      <View pointerEvents="none">
+        <IconButton
+          icon="line.3.horizontal.decrease"
+          accessibilityLabel="Filter review files"
+          selected={filter.hideTestFiles}
+        />
+      </View>
+    </Menu>
+  );
+}
+
+export function PullRequestFiles({
+  content,
+}: {
+  readonly content: ReturnType<typeof usePullRequestFilesContent>;
+}) {
   const [animationsReady, setAnimationsReady] = useState(false);
   return (
     <AnimatedLegendList
@@ -325,6 +356,7 @@ export function PullRequestFiles(props: Parameters<typeof usePullRequestFilesCon
           {item.content}
         </Animated.View>
       )}
+      contentInsetAdjustmentBehavior="automatic"
       recycleItems={false}
       estimatedItemSize={64}
       ListHeaderComponent={content.header}

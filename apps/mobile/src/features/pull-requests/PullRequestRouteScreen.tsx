@@ -105,7 +105,11 @@ import {
   PullRequestDiffStats,
   PullRequestReadStatus,
 } from "./PullRequestPresentation";
-import { PullRequestFiles, usePullRequestFilesContent } from "./PullRequestFiles";
+import {
+  PullRequestFiles,
+  PullRequestFilesFilter,
+  usePullRequestFilesContent,
+} from "./PullRequestFiles";
 import { PullRequestSheetContent } from "./PullRequestSheetContent";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
@@ -752,25 +756,46 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
 export function PullRequestFilesRouteScreen({ route }: StaticScreenProps<PullRequestDiffParams>) {
   const navigation = useNavigation();
   const fileSelectionId = useRoute().key;
+  const content = usePullRequestFilesContent({
+    params: route.params,
+    groupByDirectory: true,
+    headerInToolbar: true,
+    onSelectFile: (path) =>
+      navigation.dispatch(
+        StackActions.popTo("PullRequestFile", {
+          ...route.params,
+          path,
+          fileSelectionId,
+        }),
+      ),
+  });
   return (
     <PullRequestSheetContent
       title="Changed files"
       scrollable={false}
       subtitle={`#${route.params.number}${route.params.commit ? ` · ${route.params.commit.slice(0, 7)}` : ` · ${route.params.repository}`}`}
+      trailing={
+        Platform.OS === "android" ? <PullRequestFilesFilter filter={content.filter} /> : undefined
+      }
     >
-      <PullRequestFiles
-        params={route.params}
-        groupByDirectory
-        onSelectFile={(path) =>
-          navigation.dispatch(
-            StackActions.popTo("PullRequestFile", {
-              ...route.params,
-              path,
-              fileSelectionId,
-            }),
-          )
-        }
-      />
+      {Platform.OS === "ios" ? (
+        <Toolbar placement="right">
+          <Toolbar.Menu
+            title="Review files"
+            accessibilityLabel="Filter review files"
+            icon="line.3.horizontal.decrease"
+          >
+            <Toolbar.MenuAction
+              icon="line.3.horizontal.decrease"
+              isOn={content.filter.hideTestFiles}
+              onPress={content.filter.toggle}
+            >
+              <Toolbar.Label>Hide test files</Toolbar.Label>
+            </Toolbar.MenuAction>
+          </Toolbar.Menu>
+        </Toolbar>
+      ) : null}
+      <PullRequestFiles content={content} />
     </PullRequestSheetContent>
   );
 }
