@@ -1028,7 +1028,9 @@ it.layer(
       yield* Deferred.await(drained);
       const events = yield* getEvents;
       expect(events.some((event) => event.type === "exited" && event.exitCode === 7)).toBe(true);
-      expect(events.some((event) => event.type === "output" && event.data === "discarded")).toBe(false);
+      expect(events.some((event) => event.type === "output" && event.data === "discarded")).toBe(
+        false,
+      );
     }),
   );
 
