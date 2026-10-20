@@ -18,9 +18,10 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useLayoutEffect, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
+import { observeResize } from "../../lib/observeResize";
 import { environmentPresentations } from "../../state/presentation";
 import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
@@ -76,7 +77,7 @@ export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
 // The tick sits in a transparent gap cut from the bar, clamped so it stays inside at 0% and 100%.
 // The gap is a clip-path slot rather than a mask: a mask composites its layer and re-antialiases
 // the bar's rounded ends, and the polygon reaches 1px past the box so only the slot edges clip.
-export function paceMarkStyles(timeLeft: number | null) {
+function paceMarkStyles(timeLeft: number | null) {
   if (timeLeft === null) return null;
   const at = `clamp(3px, ${timeLeft}%, calc(100% - 3px))`;
   const [left, right] = [`calc(${at} - 3px)`, `calc(${at} + 3px)`];
@@ -94,6 +95,22 @@ export function paceMarkStyles(timeLeft: number | null) {
   };
 }
 
+/**
+ * Pace mark styles for the bar given the returned ref. Below 6px there is no room for the gap
+ * and tick, so the bar draws neither, as the mobile bars do.
+ */
+export function usePaceMark(timeLeft: number | null) {
+  const [bar, setBar] = useState<HTMLElement | null>(null);
+  const [roomy, setRoomy] = useState(false);
+  useLayoutEffect(() => {
+    if (!bar) return;
+    const measure = () => setRoomy(bar.getBoundingClientRect().width >= 6);
+    measure();
+    return observeResize(bar, measure);
+  }, [bar]);
+  return [setBar, roomy ? paceMarkStyles(timeLeft) : null] as const;
+}
+
 function WindowBar({
   color,
   window,
@@ -106,7 +123,7 @@ function WindowBar({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const timeLeft = paceRemainingPercent(window, now);
-  const paceMark = paceMarkStyles(timeLeft);
+  const [barRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
@@ -120,6 +137,7 @@ function WindowBar({
       <TooltipTrigger
         render={
           <div
+            ref={barRef}
             role="img"
             aria-label={summary}
             tabIndex={0}
