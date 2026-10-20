@@ -4,6 +4,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { resolveInitialCommitExclusions } from "@t3tools/client-runtime/state/vcs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -46,7 +47,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  // Null until the user edits the selection, so the sheet follows the index as it changes.
+  const [editedExclusions, setEditedExclusions] = useState<ReadonlySet<string> | null>(null);
+  const excludedFiles = editedExclusions ?? resolveInitialCommitExclusions(allFiles);
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
@@ -127,7 +130,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                 label={allSelected ? "Deselect all" : "Select all"}
                 tone="text"
                 onPress={() =>
-                  setExcludedFiles(
+                  setEditedExclusions(
                     allSelected ? new Set(allFiles.map((file) => file.path)) : new Set(),
                   )
                 }
@@ -150,8 +153,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
                   accessibilityLabel={file.path}
                   accessibilityState={{ checked: included }}
                   onPress={() =>
-                    setExcludedFiles((current) => {
-                      const next = new Set(current);
+                    setEditedExclusions((current) => {
+                      const next = new Set(current ?? excludedFiles);
                       if (next.has(file.path)) next.delete(file.path);
                       else next.add(file.path);
                       return next;

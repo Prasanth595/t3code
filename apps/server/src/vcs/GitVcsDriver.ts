@@ -29,6 +29,7 @@ import {
   type VcsListRefsResult,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
+  type VcsStageFilesInput,
   type VcsStatusInput,
   type VcsStatusResult,
   type WorktreeSubmodules,
@@ -416,6 +417,8 @@ export class GitVcsDriver extends Context.Service<
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
     readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
+    readonly stageFiles: (input: VcsStageFilesInput) => Effect.Effect<void, GitCommandError>;
+    readonly unstageFiles: (input: VcsStageFilesInput) => Effect.Effect<void, GitCommandError>;
     readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
   }
 >()("t3/vcs/GitVcsDriver") {}

@@ -352,3 +352,13 @@ export function resolveDefaultBranchActionDialogCopy(input: {
     continueLabel: "Push & create PR",
   };
 }
+
+/** Once anything is staged, a commit starts from the index: files with nothing staged begin excluded. */
+export function resolveInitialCommitExclusions(
+  files: VcsStatusResult["workingTree"]["files"],
+): ReadonlySet<string> {
+  if (!files.some((file) => file.staged === "all" || file.staged === "partial")) {
+    return new Set();
+  }
+  return new Set(files.filter((file) => file.staged === "none").map((file) => file.path));
+}

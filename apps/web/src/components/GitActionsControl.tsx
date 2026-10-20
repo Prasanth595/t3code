@@ -119,6 +119,7 @@ import {
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { resolveInitialCommitExclusions } from "@t3tools/client-runtime/state/vcs";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
@@ -1002,7 +1003,8 @@ export default function GitActionsControl({
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+  // Null until the user edits the selection, so the dialog follows the index as it changes.
+  const [editedExclusions, setEditedExclusions] = useState<ReadonlySet<string> | null>(null);
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
   const [inlineSuccess, setInlineSuccess] = useState<InlineGitActionSuccess | null>(null);
@@ -1096,6 +1098,7 @@ export default function GitActionsControl({
   // Changed-file paths are repository-relative, so they must resolve against
   // the worktree root from the same status snapshot, not the project cwd.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
+  const excludedFiles = editedExclusions ?? resolveInitialCommitExclusions(allFiles);
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
@@ -1384,7 +1387,7 @@ export default function GitActionsControl({
 
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
-    setExcludedFiles(new Set());
+    setEditedExclusions(null);
     setIsEditingFiles(false);
 
     void runGitActionWithToast({
@@ -1473,7 +1476,7 @@ export default function GitActionsControl({
       void runGitActionWithToast({ action: "create_pr" });
       return;
     }
-    setExcludedFiles(new Set());
+    setEditedExclusions(null);
     setIsEditingFiles(false);
     setIsCommitDialogOpen(true);
   };
@@ -1483,7 +1486,7 @@ export default function GitActionsControl({
     const commitMessage = dialogCommitMessage.trim();
     setIsCommitDialogOpen(false);
     setDialogCommitMessage("");
-    setExcludedFiles(new Set());
+    setEditedExclusions(null);
     setIsEditingFiles(false);
     void runGitActionWithToast({
       action: "commit",
@@ -1854,7 +1857,7 @@ export default function GitActionsControl({
           if (!open) {
             setIsCommitDialogOpen(false);
             setDialogCommitMessage("");
-            setExcludedFiles(new Set());
+            setEditedExclusions(null);
             setIsEditingFiles(false);
           }
         }}
@@ -1883,7 +1886,7 @@ export default function GitActionsControl({
                         checked={allSelected}
                         indeterminate={!allSelected && !noneSelected}
                         onCheckedChange={() => {
-                          setExcludedFiles(
+                          setEditedExclusions(
                             allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
                           );
                         }}
@@ -1924,8 +1927,8 @@ export default function GitActionsControl({
                                   <Checkbox
                                     checked={!excludedFiles.has(file.path)}
                                     onCheckedChange={() => {
-                                      setExcludedFiles((prev) => {
-                                        const next = new Set(prev);
+                                      setEditedExclusions((prev) => {
+                                        const next = new Set(prev ?? excludedFiles);
                                         if (next.has(file.path)) {
                                           next.delete(file.path);
                                         } else {
@@ -1999,7 +2002,7 @@ export default function GitActionsControl({
               onClick={() => {
                 setIsCommitDialogOpen(false);
                 setDialogCommitMessage("");
-                setExcludedFiles(new Set());
+                setEditedExclusions(null);
                 setIsEditingFiles(false);
               }}
             >
