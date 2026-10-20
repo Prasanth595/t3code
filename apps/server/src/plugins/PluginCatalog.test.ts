@@ -218,6 +218,32 @@ const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(SqlitePersistence.layerMemory));
 
 it.layer(NodeServices.layer)("PluginCatalog", (it) => {
+  it.effect("revokes changed code even when persisting its disabled record fails", () =>
+    withDatabase(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const stub = yield* makeStubSupervisor;
+        const catalog = yield* startStubCatalog(yield* Scope.Scope, stub.service);
+        const plugin = yield* preparePlugin("test.failed-revocation");
+        const { installation } = yield* catalog.add({ directory: plugin.directory });
+        const installationId = installation.installationId;
+        yield* catalog.consent({ installationId, digest: installation.source!.digest });
+        yield* catalog.enable({ installationId });
+        yield* plugin.edit("changed after consent");
+        yield* sql`CREATE TRIGGER refuse_plugin_save BEFORE UPDATE ON plugin_installations BEGIN SELECT RAISE(FAIL, 'test write failure'); END`;
+        const failed = yield* catalog.refresh({ installationId }).pipe(Effect.flip);
+        expect(failed.reason).toBe("storage");
+        expect(stub.registrations.size).toBe(0);
+        const invoked = yield* catalog.invoke(installationId, "ping", null).pipe(Effect.flip);
+        expect(invoked._tag).toBe("PluginCatalogError");
+        expect(stub.invoked).toEqual([]);
+        yield* sql`DROP TRIGGER refuse_plugin_save`;
+        yield* catalog.refresh({ installationId });
+        expect((yield* catalog.list).installations[0]?.enabled).toBe(false);
+      }),
+    ),
+  );
+
   describe("consent", () => {
     it.effect("runs nothing until the exact bytes are approved, then starts on first use", () =>
       withDatabase(

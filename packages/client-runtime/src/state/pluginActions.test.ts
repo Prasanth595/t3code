@@ -190,12 +190,15 @@ describe("plugin actions across a reconnect", () => {
   it.effect("pins a subscription to the session whose capability it checked", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const { sessionRef, supervisor } = yield* makeEnvironment({ pluginActions: true });
+        const { sessionRef, supervisor } = yield* makeEnvironment({
+          repositoryIdentity: true,
+          pluginActions: true,
+        });
         const oldCalls: Array<string> = [];
         const checkedCalls: Array<string> = [];
         const replacement = makeSession({ repositoryIdentity: true }, oldCalls);
         const checked = makeSession(
-          { pluginActions: true },
+          { repositoryIdentity: true, pluginActions: true },
           checkedCalls,
           Stream.succeed({ actions: ACTIONS }),
         );
