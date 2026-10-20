@@ -344,6 +344,7 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const subscribed = yield* Deferred.make<void>();
+    const running = yield* Deferred.make<void>();
     const removed = yield* Deferred.make<void>();
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
@@ -383,16 +384,19 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
         interactionMode: "default",
       });
       yield* service.subscribeList().pipe(
-        Stream.runForEach(({ tasks }) =>
-          tasks.some((candidate) => candidate.id === task.id)
-            ? Deferred.succeed(subscribed, undefined)
-            : Deferred.succeed(removed, undefined),
-        ),
+        Stream.runForEach(({ tasks }) => {
+          const current = tasks.find((candidate) => candidate.id === task.id);
+          if (current === undefined) return Deferred.succeed(removed, undefined);
+          return current.lastRunStatus === "running"
+            ? Deferred.succeed(running, undefined)
+            : Deferred.succeed(subscribed, undefined);
+        }),
         Effect.forkChild,
       );
       yield* Deferred.await(subscribed);
       const run = yield* service.runNow({ id: task.id }).pipe(Effect.forkChild);
       yield* Deferred.await(started);
+      yield* Deferred.await(running);
       yield* service.deleteForThread(threadId);
       yield* Deferred.await(removed);
       yield* Deferred.succeed(release, undefined);
