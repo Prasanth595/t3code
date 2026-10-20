@@ -1,6 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { backgroundWorkNotification } from "@t3tools/provider-core/server/notification";
+import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { isSnoozed } from "./ThreadSettlementService.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -12,6 +15,7 @@ import {
   CommandId,
   ContextTransferId,
   EventId,
+  EnvironmentId,
   MessageId,
   NodeId,
   RuntimeRequestId,
@@ -5148,6 +5152,120 @@ it.layer(layerTest)("snooze queued runs", (it) => {
           const awake = yield* orchestrator.getThreadProjection(threadId);
           assert.isNull(awake.thread.snoozedUntil);
           assert.deepEqual(awake.runs, beforeSnooze.runs);
+        }
+      }),
+  );
+});
+
+it.layer(layerTest)("quiet snooze automatic dispatch", (it) => {
+  it.effect.each([
+    { origin: "server", outcome: "completed", quiet: true, staysSnoozed: true },
+    { origin: "provider", outcome: "completed", quiet: true, staysSnoozed: true },
+    { origin: "server", outcome: "failed", quiet: true, staysSnoozed: false },
+    { origin: "provider", outcome: "failed", quiet: true, staysSnoozed: false },
+    { origin: "server", outcome: "updated", quiet: true, staysSnoozed: false },
+    { origin: "web", outcome: "completed", quiet: true, staysSnoozed: false },
+    { origin: "server", outcome: "completed", quiet: false, staysSnoozed: false },
+  ] as const)(
+    "preserves only quiet completion snoozes: $origin $outcome quiet=$quiet",
+    ({ origin, outcome, quiet, staysSnoozed }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`quiet-dispatch:${origin}:${outcome}:${quiet}`);
+        const snoozedUntil = "2099-07-25T09:00:00.000Z";
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId: ProjectId.make("quiet-dispatch-project"),
+          title: "Quiet automatic dispatch",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/quiet-dispatch",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`snooze:${threadId}`),
+          threadId,
+          snoozedUntil,
+          quiet,
+        });
+        const snoozed = (yield* orchestrator.getThreadProjection(threadId)).thread;
+        // This is the notification shape produced by provider background-work
+        // reports and forwarded by ProviderContinuationService, including its
+        // server-created message_text delivery route.
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`dispatch:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`message:${threadId}`),
+          text: "Background work finished",
+          attachments: [],
+          createdBy: origin === "web" ? "user" : "agent",
+          creationSource: origin,
+          dispatchMode: { type: "queue_after_active" },
+          ...(origin === "web"
+            ? {}
+            : {
+                notification:
+                  outcome === "updated"
+                    ? {
+                        source: {
+                          kind: "delegated_task" as const,
+                          taskIds: [NodeId.make("question-task")],
+                        },
+                        outcome,
+                        summary: "Delegated task has a question",
+                      }
+                    : backgroundWorkNotification([{ kind: "command", outcome }]),
+              }),
+        });
+        const dispatched = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(dispatched.thread.snoozeQuiet, staysSnoozed);
+        assert.deepEqual(
+          dispatched.thread.snoozedUntil,
+          staysSnoozed ? snoozed.snoozedUntil : null,
+        );
+        assert.deepEqual(dispatched.thread.snoozedAt, staysSnoozed ? snoozed.snoozedAt : null);
+        // Queued automatic delivery to an idle thread really starts a turn.
+        // Its eventual completion must still retain the original quiet deadline.
+        const run = dispatched.runs[0]!;
+        assert.equal(run.status, "starting");
+        yield* TestClock.adjust("1 second");
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`complete:${threadId}`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const [candidate] = yield* projections.getSettlementCandidates(threadId);
+        assert.isDefined(candidate);
+        assert.equal(isSnoozed(candidate!, DateTime.toEpochMillis(now)), staysSnoozed);
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (t) => t.id === threadId,
+        )!;
+        const awareness = projectThreadAwarenessV2({
+          environmentId: EnvironmentId.make("quiet-dispatch-environment"),
+          project: { title: "Quiet dispatch" },
+          thread: shell,
+        });
+        assert.equal(awareness?.phase, "completed");
+        assert.equal(awareness?.completionQuietUntil, staysSnoozed ? snoozedUntil : undefined);
+        if (staysSnoozed) {
+          assert.isFalse(isSnoozed(candidate!, Date.parse(snoozedUntil)));
         }
       }),
   );
