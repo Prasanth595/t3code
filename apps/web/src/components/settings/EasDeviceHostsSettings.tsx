@@ -303,7 +303,15 @@ function EasDeviceHostEditor(props: {
                   placeholder="Optional"
                   onChange={(event) => {
                     const value = event.target.value;
-                    setToken(value ? { kind: "new", value } : { kind: "cleared" });
+                    // Emptying the field is not clearing the saved token; the
+                    // Clear button is, so a saved token comes back here.
+                    setToken(
+                      value
+                        ? { kind: "new", value }
+                        : props.host.accessToken
+                          ? { kind: "saved" }
+                          : { kind: "cleared" },
+                    );
                     resetAccount();
                   }}
                 />
