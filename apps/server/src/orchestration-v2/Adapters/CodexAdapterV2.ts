@@ -1397,12 +1397,14 @@ const decodeCodexWorkspaceWriteConfig = Schema.decodeUnknownEffect(
 );
 const decodeCodexPermissionProfileRequirements = Schema.decodeUnknownEffect(
   Schema.Struct({
-    requirements: Schema.NullOr(
-      Schema.Struct({
-        allowedPermissionProfiles: Schema.optionalKey(
-          Schema.NullOr(Schema.Record(Schema.String, Schema.Boolean)),
-        ),
-      }),
+    requirements: Schema.optionalKey(
+      Schema.NullOr(
+        Schema.Struct({
+          allowedPermissionProfiles: Schema.optionalKey(
+            Schema.NullOr(Schema.Record(Schema.String, Schema.Boolean)),
+          ),
+        }),
+      ),
     ),
   }),
 );

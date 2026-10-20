@@ -3310,6 +3310,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           excludeSlashTmp: false,
         },
       },
+      {
+        mode: "auto",
+        configReply: { result: { config: { sandbox_workspace_write: workspaceWriteConfig } } },
+        requirementsReply: { result: {} },
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          networkAccess: true,
+          writableRoots: ["/cache"],
+          excludeTmpdirEnvVar: true,
+          excludeSlashTmp: false,
+        },
+      },
       { mode: "full-access", sandboxPolicy: { type: "dangerFullAccess" } },
       {
         mode: "auto-accept-edits",
