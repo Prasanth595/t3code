@@ -18,6 +18,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { mergeOlderHistoryIntoProjection } from "@t3tools/client-runtime/state/threads";
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { deriveMessagesTimelineRows } from "./components/chat/MessagesTimeline.logic";
 import * as DateTime from "effect/DateTime";
@@ -1759,6 +1760,136 @@ describe("work-log failure policy (#7999/#7893)", () => {
 });
 
 describe("incremental v2 timeline entries", () => {
+  it("reuses history presentation after a prepend while refreshing sources and previews", () => {
+    const fixture = makeStreamingTimelineFixture("Partial");
+    const attempt: OrchestrationV2RunAttempt = {
+      id: RunAttemptId.make("live-attempt"),
+      runId: fixture.runId,
+      attemptOrdinal: 1,
+      rootNodeId: NodeId.make("live-root"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerThreadId: ProviderThreadId.make("live-provider-thread"),
+      providerTurnId: null,
+      reason: "initial",
+      status: "running",
+      startedAt: DateTime.makeUnsafe(fixture.time(5)),
+      completedAt: null,
+    };
+    const attachment = {
+      type: "image" as const,
+      id: "live-image",
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    };
+    const visibleTurnItems = fixture.visibleTurnItems.slice(3).map((row, position) => ({
+      ...row,
+      position,
+      item: {
+        ...row.item,
+        nodeId: attempt.rootNodeId,
+        ...(row.item.type === "user_message" ? { attachments: [attachment] } : {}),
+      },
+    }));
+    const base = makeThreadProjectionFixture();
+    const projection = {
+      ...base,
+      thread: { ...base.thread, id: fixture.threadId },
+      visibleTurnItems,
+      turnItems: visibleTurnItems.map((row) => row.item),
+    };
+    const input = {
+      visibleTurnItems,
+      optimisticMessages: [],
+      attachmentUrlById: new Map([[attachment.id, "https://server.test/image"]]),
+      attempts: [attempt],
+    };
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const merged = mergeOlderHistoryIntoProjection(
+      projection,
+      fixture.visibleTurnItems.slice(0, 3),
+    );
+    const nextInput = {
+      ...input,
+      visibleTurnItems: merged.visibleTurnItems,
+      attachmentUrlById: new Map([
+        ...input.attachmentUrlById,
+        ["older-image", "https://server.test/older-image"],
+      ]),
+    };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
+    const rowsFor = (entries: TimelineEntry[]) =>
+      deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        latestRun: null,
+        isWorking: false,
+        activeTurnStartedAt: null,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+    const previousRows = rowsFor(previous.entries);
+    const nextRows = rowsFor(next.entries);
+    for (const entry of next.entries) {
+      const source =
+        entry.kind === "message" || entry.kind === "event"
+          ? entry.projectedItem
+          : entry.kind === "work"
+            ? entry.entry.projectedItem
+            : undefined;
+      expect(source).toBe(
+        merged.visibleTurnItems.find((row) => row.sourceItemId === source?.sourceItemId),
+      );
+    }
+    const completedAttempt = {
+      ...attempt,
+      status: "completed" as const,
+      completedAt: DateTime.makeUnsafe(fixture.time(8)),
+    };
+    const completedInput = { ...nextInput, attempts: [completedAttempt] };
+    const completed = deriveTimelineEntriesFromVisibleTurnItemsWithState(completedInput, next);
+    expect(completed.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(completedInput));
+    const removedInput = { ...completedInput, attempts: [] };
+    const removed = deriveTimelineEntriesFromVisibleTurnItemsWithState(removedInput, completed);
+    expect(removed.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(removedInput));
+    for (const entry of next.entries) {
+      if (entry.kind !== "message" || entry.message.runId !== fixture.runId) continue;
+      const refreshed = completed.entries.find((candidate) => candidate.id === entry.id);
+      const cleared = removed.entries.find((candidate) => candidate.id === entry.id);
+      expect(refreshed?.kind === "message" && refreshed.message).toBe(entry.message);
+      expect(refreshed?.attempt).toBe(completedAttempt);
+      expect(cleared?.kind === "message" && cleared.message).toBe(entry.message);
+      expect(cleared).not.toHaveProperty("attempt");
+      expect(entry.attempt).toBe(attempt);
+      expect(refreshed?.attempt?.status).toBe("completed");
+    }
+    const renewedInput = {
+      ...nextInput,
+      attachmentUrlById: new Map([[attachment.id, "https://renewed.test/image"]]),
+    };
+    const renewed = deriveTimelineEntriesFromVisibleTurnItemsWithState(renewedInput, next);
+    expect(renewed.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(renewedInput));
+    expect(
+      rowsFor(renewed.entries).find(
+        (row) => row.kind === "message" && row.message.id === "live-user",
+      ),
+    ).toMatchObject({ message: { attachments: [{ previewUrl: "https://renewed.test/image" }] } });
+    expect(previous.entries[0]).toMatchObject({
+      message: { attachments: [{ previewUrl: "https://server.test/image" }] },
+      projectedItem: { position: 0 },
+    });
+    for (const entry of previous.entries) {
+      if (entry.kind !== "work") continue;
+      const retained = next.entries.find((nextEntry) => nextEntry.id === entry.id);
+      expect(retained?.kind === "work" && retained.entry.toolData).toBe(entry.entry.toolData);
+    }
+    for (const row of previousRows) {
+      if (row.kind !== "message") continue;
+      const retained = nextRows.find((nextRow) => nextRow.id === row.id);
+      expect(retained?.kind === "message" && retained.message).toBe(row.message);
+    }
+  });
+
   it("retains history and attachment previews through decoded streaming updates", () => {
     const fixture = makeStreamingTimelineFixture("Partial");
     const attachment = {

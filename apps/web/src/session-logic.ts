@@ -622,9 +622,14 @@ export interface TimelineEntriesProjection {
 
 export function deriveTimelineEntriesFromVisibleTurnItems(
   input: TimelineEntriesInput,
+  previous: TimelineEntriesProjection | null = null,
 ): TimelineEntry[] {
   const committedMessageIds = new Set<string>();
   const entries: TimelineEntry[] = [];
+  const previousById = new Map(previous?.entries.map((entry) => [entry.id, entry]));
+  const previousRows = new Map(previous?.input.visibleTurnItems.map((row) => [row.item, row]));
+  const sameAttachmentUrls =
+    previous !== null && shallow(input.attachmentUrlById, previous.input.attachmentUrlById);
   const attemptByRootNodeId = new Map(
     (input.attempts ?? []).map((attempt) => [attempt.rootNodeId, attempt] as const),
   );
@@ -660,8 +665,55 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     if (turnItemIsWorkspacePreparation(item)) continue;
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
-    const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
+    const previousRow = previousRows.get(item);
+    const old = previousById.get(
+      item.type === "user_message" || item.type === "assistant_message" ? item.messageId : item.id,
+    );
+    if (
+      previous !== null &&
+      previousRow !== undefined &&
+      previousRow.visibility === row.visibility &&
+      previousRow.sourceThreadId === row.sourceThreadId &&
+      previousRow.sourceItemId === row.sourceItemId &&
+      old !== undefined &&
+      (old.kind === "message" || old.attempt === attempt) &&
+      (item.type !== "proposed_plan" || input.plans === previous.input.plans) &&
+      (sameAttachmentUrls ||
+        (item.type !== "user_message" && item.type !== "assistant_message") ||
+        (item.attachments ?? []).every(
+          (attachment) =>
+            input.attachmentUrlById?.get(attachment.id) ===
+            previous.input.attachmentUrlById?.get(attachment.id),
+        ))
+    ) {
+      // History prepends renumber wrappers while retaining immutable item payloads.
+      if (old.kind === "message") {
+        if (previousRow === row && old.attempt === attempt) {
+          entries.push(old);
+        } else {
+          const { attempt: _previousAttempt, ...rest } = old;
+          entries.push({
+            ...rest,
+            projectedItem: row,
+            ...(attempt === undefined ? {} : { attempt }),
+          });
+        }
+        committedMessageIds.add(old.message.id);
+        continue;
+      }
+      entries.push(
+        previousRow === row
+          ? old
+          : old.kind === "work"
+            ? { ...old, entry: { ...old.entry, projectedItem: row } }
+            : old.kind === "event"
+              ? { ...old, projectedItem: row }
+              : old,
+      );
+      continue;
+    }
+    const createdAt = projectedItemCreatedAt(row);
     const attemptMetadata = attempt === undefined ? {} : { attempt };
     if (item.type === "notification") {
       entries.push({
@@ -1034,24 +1086,7 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 ): TimelineEntriesProjection {
   const reused = previous === null ? null : reuseTimelineEntries(input, previous);
   if (reused !== null) return { input, entries: reused };
-  const entries = deriveTimelineEntriesFromVisibleTurnItems(input);
-  if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
-    return { input, entries };
-  }
-  const previousMessages = new Map(
-    previous.entries.flatMap((entry) =>
-      entry.kind === "message" ? [[entry.id, entry] as const] : [],
-    ),
-  );
-  return {
-    input,
-    entries: entries.map((entry) => {
-      if (entry.kind !== "message" || entry.projectedItem === undefined) return entry;
-      const before = previousMessages.get(entry.id);
-      if (before?.projectedItem !== entry.projectedItem) return entry;
-      return before.attempt === entry.attempt ? before : { ...entry, message: before.message };
-    }),
-  };
+  return { input, entries: deriveTimelineEntriesFromVisibleTurnItems(input, previous) };
 }
 
 // Run ordinals keep increasing after a rewind; only visible local runs define predecessors.
