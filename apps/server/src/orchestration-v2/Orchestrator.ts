@@ -4897,7 +4897,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     let limitedRun =
       dispatchMode.type === "queue_after_active"
-        ? usageLimitHoldingRun(projection, projection.thread.providerInstanceId)
+        ? usageLimitHoldingRun(
+            projection,
+            (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+          )
         : null;
     if (limitedRun !== null) {
       const failure = latestRootProviderFailure(limitedRun, projection.turnItems);

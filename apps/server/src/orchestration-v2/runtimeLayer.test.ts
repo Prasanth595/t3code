@@ -7041,7 +7041,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     }),
   );
 
-  it.effect.each(["snoozed", "settled", "settled after reset"] as const)(
+  it.effect.each([
+    "snoozed",
+    "snoozed, other provider",
+    "settled",
+    "settled after reset",
+  ] as const)(
     "handles background wakes on a %s usage-limited thread",
     (scenario) =>
       Effect.gen(function* () {
@@ -7129,11 +7134,12 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         const shellOf = Effect.map(orchestrator.getShellSnapshot(), (snapshot) =>
           snapshot.threads.find((thread) => thread.id === threadId),
         );
+        const snoozed = scenario === "snoozed" || scenario === "snoozed, other provider";
         if (scenario !== "settled after reset")
           yield* orchestrator.dispatch(
             limitRecoveryCommand((yield* shellOf)!, true, DateTime.toEpochMillis(now), true)!,
           );
-        if (scenario !== "snoozed")
+        if (!snoozed)
           yield* orchestrator.dispatch({
             type: "thread.settle",
             commandId: CommandId.make(`recovery:settle:held-wake:${scenario}`),
@@ -7158,12 +7164,16 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             summary: 'Subagent "Step 4" failed',
           },
           attachments: [],
+          ...(scenario === "snoozed, other provider"
+            ? { modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" } }
+            : {}),
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
           creationSource: "provider",
         });
         const held = yield* orchestrator.getThreadProjection(threadId);
-        if (scenario === "settled after reset") {
+        // Another provider's work is not held behind this provider's limit.
+        if (scenario === "settled after reset" || scenario === "snoozed, other provider") {
           assert.deepEqual(
             held.runs.map((run) => run.status),
             ["failed", "starting"],
