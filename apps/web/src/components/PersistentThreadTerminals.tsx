@@ -18,12 +18,13 @@ import {
   useRightPanelStore,
   type RightPanelSurface,
 } from "../rightPanelStore";
-import { useProject, useThreadShell } from "../state/entities";
+import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentScope } from "../state/session";
 import { useKnownTerminalSessions } from "../state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
+import { resolveTerminalWorktreePath } from "./ChatView.logic";
 
 /** Where a drawer or panel opens new terminals when a script run overrides the thread's own. */
 export type PersistentTerminalLaunchContext = {
@@ -105,7 +106,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
 }: PersistentThreadTerminalDrawerProps) {
   const canOperateTerminal = useEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope);
   const terminalActions = useThreadTerminalActions(threadRef);
-  const serverThread = useThreadShell(threadRef);
+  const serverThread = useQuietThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -330,7 +331,7 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   newShortcutLabel,
   closeShortcutLabel,
 }: PersistentThreadTerminalPanelProps) {
-  const serverThread = useThreadShell(threadRef);
+  const serverThread = useQuietThreadShell(threadRef);
   const draftThread = useComposerDraftStore((store) => store.getDraftThreadByRef(threadRef));
   const projectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -346,8 +347,11 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
-  const worktreePath =
-    launchContext?.worktreePath ?? activeSummary?.worktreePath ?? threadWorktreePath;
+  const worktreePath = resolveTerminalWorktreePath({
+    launchContext,
+    summary: activeSummary,
+    threadWorktreePath,
+  });
   const cwd =
     launchContext?.cwd ??
     activeSummary?.cwd ??
@@ -363,8 +367,11 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
         .summary ?? null;
     terminalLabelsById.set(terminalId, resolveTerminalSessionLabel(terminalId, summary));
     if (!project) continue;
-    const terminalWorktreePath =
-      launchContext?.worktreePath ?? summary?.worktreePath ?? threadWorktreePath;
+    const terminalWorktreePath = resolveTerminalWorktreePath({
+      launchContext,
+      summary,
+      threadWorktreePath,
+    });
     terminalLaunchLocationsById.set(terminalId, {
       cwd:
         launchContext?.cwd ??

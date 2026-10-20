@@ -17,7 +17,7 @@ import {
 } from "~/components/ui/sheet";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
-import { useIsMobile } from "~/hooks/useMediaQuery";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { resolveSidebarState, type ResponsiveSidebarState } from "./sidebarState";
 import * as Schema from "effect/Schema";
@@ -96,6 +96,7 @@ function useSidebarVisibility() {
 
 function SidebarProvider({
   defaultOpen = true,
+  mobileBreakpoint,
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -104,66 +105,57 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean;
+  mobileBreakpoint?: number;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const isMobile = useIsMobile();
+  const isMobile = useMediaQuery(
+    mobileBreakpoint === undefined ? "max-md" : { max: mobileBreakpoint },
+  );
   const [openMobile, setOpenMobile] = React.useState(false);
+  if (!isMobile && openMobile) {
+    setOpenMobile(false);
+  }
   const [mobileSheetMounted, setMobileSheetMounted] = React.useState(false);
-  const setMobileSheetElement = React.useCallback((element: HTMLDivElement | null) => {
+  const setMobileSheetElement = (element: HTMLDivElement | null) => {
     setMobileSheetMounted(element !== null);
-  }, []);
+  };
 
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
-  const setOpen = React.useCallback(
-    async (value: boolean | ((value: boolean) => boolean)) => {
-      const openState = typeof value === "function" ? value(open) : value;
-      if (setOpenProp) {
-        setOpenProp(openState);
-      } else {
-        _setOpen(openState);
-      }
+  const setOpen = async (value: boolean | ((value: boolean) => boolean)) => {
+    const openState = typeof value === "function" ? value(open) : value;
+    if (setOpenProp) {
+      setOpenProp(openState);
+    } else {
+      _setOpen(openState);
+    }
 
-      await cookieStore.set({
-        expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
-        name: SIDEBAR_COOKIE_NAME,
-        path: "/",
-        value: String(openState),
-      });
-    },
-    [setOpenProp, open],
-  );
+    await cookieStore.set({
+      expires: Date.now() + SIDEBAR_COOKIE_MAX_AGE * 1000,
+      name: SIDEBAR_COOKIE_NAME,
+      path: "/",
+      value: String(openState),
+    });
+  };
 
-  const toggleSidebar = React.useCallback(() => {
+  const toggleSidebar = () => {
     return isMobile ? setOpenMobile((open) => !open) : setOpen((open) => !open);
-  }, [isMobile, setOpen]);
+  };
 
   const state = resolveSidebarState({ isMobile, open, openMobile });
 
-  const contextValue = React.useMemo<SidebarContextProps>(
-    () => ({
-      isMobile,
-      open,
-      openMobile,
-      mobileSheetMounted,
-      setMobileSheetElement,
-      setOpen,
-      setOpenMobile,
-      state,
-      toggleSidebar,
-    }),
-    [
-      state,
-      open,
-      setOpen,
-      isMobile,
-      openMobile,
-      mobileSheetMounted,
-      setMobileSheetElement,
-      toggleSidebar,
-    ],
-  );
+  const contextValue: SidebarContextProps = {
+    isMobile,
+    open,
+    openMobile,
+    mobileSheetMounted,
+    setMobileSheetElement,
+    setOpen,
+    setOpenMobile,
+    state,
+    toggleSidebar,
+  };
 
   return (
     <SidebarContext value={contextValue}>
@@ -173,6 +165,7 @@ function SidebarProvider({
           SIDEBAR_TITLEBAR_CONTROL_SIZE,
           className,
         )}
+        data-sidebar-mobile={isMobile}
         data-sidebar-state={state}
         data-slot="sidebar-wrapper"
         style={
@@ -192,6 +185,29 @@ function SidebarProvider({
   );
 }
 
+function resolveSidebarResizable({
+  collapsible,
+  isMobile,
+  resizable,
+}: {
+  collapsible: "offcanvas" | "icon" | "none";
+  isMobile: boolean;
+  resizable: boolean | SidebarResizableOptions;
+}): SidebarResolvedResizableOptions | null {
+  if (isMobile || collapsible === "none" || !resizable) {
+    return null;
+  }
+
+  const options = typeof resizable === "boolean" ? {} : resizable;
+  return {
+    maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
+    minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
+    storageKey: options.storageKey ?? null,
+    ...(options.onResize ? { onResize: options.onResize } : {}),
+    ...(options.shouldAcceptWidth ? { shouldAcceptWidth: options.shouldAcceptWidth } : {}),
+  };
+}
+
 function Sidebar({
   side = "left",
   variant = "sidebar",
@@ -207,24 +223,26 @@ function Sidebar({
   resizable?: boolean | SidebarResizableOptions;
 }) {
   const { isMobile, state, openMobile, setOpenMobile, setMobileSheetElement } = useSidebar();
-  const resolvedResizable = React.useMemo<SidebarResolvedResizableOptions | null>(() => {
-    if (isMobile || collapsible === "none" || !resizable) {
-      return null;
-    }
+  const desktopSidebarRef = React.useRef<HTMLDivElement>(null);
+  const offcanvasCollapsed = !isMobile && collapsible === "offcanvas" && state === "collapsed";
 
-    const options = typeof resizable === "boolean" ? {} : resizable;
-    return {
-      maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
-      minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
-      storageKey: options.storageKey ?? null,
-      ...(options.onResize ? { onResize: options.onResize } : {}),
-      ...(options.shouldAcceptWidth ? { shouldAcceptWidth: options.shouldAcceptWidth } : {}),
-    };
-  }, [collapsible, isMobile, resizable]);
-  const instanceContextValue = React.useMemo<SidebarInstanceContextProps>(
-    () => ({ side, resizable: resolvedResizable }),
-    [resolvedResizable, side],
-  );
+  React.useLayoutEffect(() => {
+    const sidebar = desktopSidebarRef.current;
+    if (!sidebar) return;
+
+    // Transfer focus before inert causes the browser to clear the focused descendant.
+    if (offcanvasCollapsed && sidebar.contains(document.activeElement)) {
+      const wrapper = sidebar.closest('[data-slot="sidebar-wrapper"]');
+      const trigger = Array.from(
+        wrapper?.querySelectorAll<HTMLElement>('[data-sidebar="trigger"]') ?? [],
+      ).find((element) => !sidebar.contains(element));
+      trigger?.focus({ preventScroll: true });
+    }
+    sidebar.toggleAttribute("inert", offcanvasCollapsed);
+  }, [offcanvasCollapsed]);
+
+  const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
+  const instanceContextValue: SidebarInstanceContextProps = { side, resizable: resolvedResizable };
 
   if (collapsible === "none") {
     return (
@@ -287,7 +305,8 @@ function Sidebar({
   return (
     <SidebarInstanceContext value={instanceContextValue}>
       <div
-        className="group peer hidden text-sidebar-foreground md:block"
+        ref={desktopSidebarRef}
+        className="group peer text-sidebar-foreground"
         data-collapsible={state === "collapsed" ? collapsible : ""}
         data-side={side}
         data-slot="sidebar"
@@ -308,7 +327,7 @@ function Sidebar({
         />
         <div
           className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) md:flex",
+            "fixed inset-y-0 z-10 flex h-svh w-(--sidebar-width)",
             "[[data-panel-animations=true]_&]:transition-[left,right,width] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
             side === "left"
               ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
@@ -459,28 +478,26 @@ function SidebarRail({
       },
     };
   }, String(open));
+  const refreshResize = React.useEffectEvent(() => resize.refresh());
   React.useLayoutEffect(() => {
     latestResizable.current = resolvedResizable;
-    resize.refresh();
+    refreshResize();
   }, [resolvedResizable]);
 
-  const handleClick = React.useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
-      onClick?.(event);
-      if (event.defaultPrevented) return;
-      if (suppressClickRef.current) {
-        suppressClickRef.current = false;
-        event.preventDefault();
-        return;
-      }
-      if (resolvedResizable && open) {
-        event.preventDefault();
-        return;
-      }
-      toggleSidebar();
-    },
-    [onClick, open, resolvedResizable, toggleSidebar],
-  );
+  const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    onClick?.(event);
+    if (event.defaultPrevented) return;
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      event.preventDefault();
+      return;
+    }
+    if (resolvedResizable && open) {
+      event.preventDefault();
+      return;
+    }
+    toggleSidebar();
+  };
 
   React.useLayoutEffect(() => {
     if (!resolvedResizable?.storageKey || typeof window === "undefined") return;
