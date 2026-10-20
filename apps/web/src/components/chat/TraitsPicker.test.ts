@@ -133,7 +133,7 @@ describe("buildTraitsTriggerDisplay", () => {
     expect(display([thinking(false), fastModeDescriptor(true)])).toEqual({
       label: "Thinking Off · Fast",
     });
-    expect(display([thinking(true)])).toEqual({ label: "" });
+    expect(display([thinking(true)])).toEqual({ label: "Thinking" });
   });
 
   it.each([true, false])("keeps boolean thinking %s independent of Fast", (currentValue) => {

@@ -569,6 +569,7 @@ export function buildTraitsTriggerDisplay(input: {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
+  let thinkingOnly = false;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
@@ -578,7 +579,10 @@ export function buildTraitsTriggerDisplay(input: {
     }
     // Thinking on is the resting state, so only Off claims pill space.
     if (descriptor.id === "thinking" && descriptor.type === "boolean") {
-      if (descriptor.currentValue !== false) continue;
+      if (descriptor.currentValue !== false) {
+        thinkingOnly = true;
+        continue;
+      }
       labels.push("Thinking Off");
       continue;
     }
@@ -630,6 +634,9 @@ export function buildTraitsTriggerDisplay(input: {
 
   if (labels.length === 0 && fastModeFallbackLabel !== null) {
     return { label: fastModeFallbackLabel };
+  }
+  if (labels.length === 0 && thinkingOnly) {
+    return { label: "Thinking" };
   }
   if (speedLabel) {
     if (reasoningLabelIndex >= 0) {
