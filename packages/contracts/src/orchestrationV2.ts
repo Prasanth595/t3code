@@ -1272,7 +1272,14 @@ const OrchestrationV2ProviderFailureCode = TrimmedNonEmptyString.check(Schema.is
 /**
  * Producers must redact credentials before constructing this value.
  */
+export const DelegatedQuotaScope = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("account") }),
+  Schema.Struct({ type: Schema.Literal("window"), windowId: TrimmedNonEmptyString }),
+]);
+export type DelegatedQuotaScope = typeof DelegatedQuotaScope.Type;
+
 export const OrchestrationV2ProviderFailure = Schema.Struct({
+  quotaScope: Schema.optional(DelegatedQuotaScope),
   class: OrchestrationV2ProviderFailureClass,
   message: OrchestrationV2ProviderFailureMessage,
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),

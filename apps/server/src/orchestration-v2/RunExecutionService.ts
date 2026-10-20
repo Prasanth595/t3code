@@ -1,4 +1,4 @@
-import { isLaunchQuotaFailure } from "./DelegatedLaunchAdmission.ts";
+import { isLaunchQuotaFailure, launchQuotaScope } from "./DelegatedLaunchAdmission.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -574,7 +574,9 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly onLaunchWorkStarted?: () => Effect.Effect<void, RunExecutionStartError>;
-  readonly onLaunchQuotaFailure?: () => Effect.Effect<boolean, RunExecutionStartError>;
+  readonly onLaunchQuotaFailure?: (
+    scope: import("@t3tools/contracts").DelegatedQuotaScope,
+  ) => Effect.Effect<boolean, RunExecutionStartError>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -1336,7 +1338,7 @@ export const layer: Layer.Layer<
                 event.failure?.class === "usage_limit" &&
                 !launchDidWork &&
                 input.onLaunchQuotaFailure &&
-                (yield* input.onLaunchQuotaFailure())
+                (yield* input.onLaunchQuotaFailure(launchQuotaScope(event.failure)))
               ) {
                 yield* Ref.set(terminalEvent, event);
                 yield* Ref.set(rootTerminalSeen, true);
@@ -1577,6 +1579,9 @@ export const layer: Layer.Layer<
           providerThread: input.providerThread,
           message: input.message,
           modelSelection: input.modelSelection,
+          ...(input.run.delegatedLaunch && !input.run.delegatedLaunch.complete
+            ? { delegatedLaunchDomains: input.run.delegatedLaunch.admittedDomains }
+            : {}),
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
         };
@@ -1621,7 +1626,7 @@ export const layer: Layer.Layer<
                 !launchDidWork &&
                 input.onLaunchQuotaFailure &&
                 isLaunchQuotaFailure(Cause.squash(cause)) &&
-                (yield* input.onLaunchQuotaFailure())
+                (yield* input.onLaunchQuotaFailure(launchQuotaScope(Cause.squash(cause))))
               ) {
                 yield* Ref.set(rootRunFinalized, true);
                 yield* Fiber.interrupt(providerEventFiber);

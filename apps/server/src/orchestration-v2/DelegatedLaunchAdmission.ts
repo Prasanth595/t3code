@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DelegatedQuotaScope,
   resolveProjectProviderInstanceEnabled,
   type ProjectId,
   type RuntimeMode,
@@ -55,15 +56,40 @@ export function isLaunchQuotaFailure(error: unknown, depth = 0): boolean {
   if (
     "code" in error &&
     typeof error.code === "string" &&
-    ["usage_limit", "quota_exceeded", "insufficient_quota", "rate_limit_exceeded"].includes(
-      error.code,
-    )
+    [
+      "usage_limit",
+      "quota_exceeded",
+      "insufficient_quota",
+      "rate_limit_exceeded",
+      "delegated_capacity_unverified",
+    ].includes(error.code)
   )
     return true;
   return (
     ("failure" in error && isLaunchQuotaFailure(error.failure, depth + 1)) ||
     ("cause" in error && isLaunchQuotaFailure(error.cause, depth + 1))
   );
+}
+
+const isDelegatedQuotaScope = Schema.is(DelegatedQuotaScope);
+
+export function launchQuotaScope(error: unknown, depth = 0): DelegatedQuotaScope {
+  if (depth > 8 || typeof error !== "object" || error === null) return { type: "account" };
+  if ("quotaScope" in error && isDelegatedQuotaScope(error.quotaScope)) return error.quotaScope;
+  if ("failure" in error) return launchQuotaScope(error.failure, depth + 1);
+  if ("cause" in error) return launchQuotaScope(error.cause, depth + 1);
+  return { type: "account" };
+}
+
+export function refusedQuotaDomains(
+  domains: ReadonlyArray<string>,
+  scope: DelegatedQuotaScope,
+): ReadonlyArray<string> {
+  const accounts = [...new Set(domains.map((key) => key.split(":quota:")[0]!))];
+  if (scope.type === "account") return accounts;
+  const scoped = accounts.map((key) => `${key}:quota:${scope.windowId}`);
+  // Only a window observed at admission establishes a narrower bucket.
+  return scoped.some((key) => domains.includes(key)) ? scoped : accounts;
 }
 
 export type AdmissionDecision =
@@ -184,6 +210,7 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
           ? ["opus", "sonnet", "haiku"]
               .filter((family) => candidate.model.toLowerCase().includes(family))
               .map((family) => `seven_day_${family}`)
+              .filter((id) => provider.usageLimits?.windows.some((w) => w.id === id))
           : provider.driver === "cursor"
             ? [candidate.model === "auto" ? "autoPercentUsed" : "apiPercentUsed"]
             : [];
@@ -222,9 +249,7 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
         return {
           status: "ready",
           selection: { ...candidate, ...(options ? { options } : {}) },
-          // A first-request refusal without a reported scope only proves this
-          // model bucket failed. Other models still need their own fresh probe.
-          domains: scopedWindowIds.length ? scopedWindowIds.flatMap(scopedIdentities) : identities,
+          domains: [...identities, ...scopedWindowIds.flatMap(scopedIdentities)],
         } as const;
       }
       if (assessment === "exhausted") {
@@ -273,6 +298,7 @@ export class DelegatedLaunchAdmission extends Context.Service<
       threadId: ThreadId,
       runId: RunId,
       launchGeneration: number,
+      scope?: DelegatedQuotaScope,
     ) => Effect.Effect<boolean, DelegatedLaunchAdmissionError>;
     readonly prepare: (
       threadId: ThreadId,
@@ -319,16 +345,13 @@ export const layer = Layer.effect(
               ))
           )
             return undefined;
-          // A Codex app-server can report a local account while its responses
-          // provider routes through an unpinned external pool. No current instance
-          // contract pins the eventual request to the probed account. Fail closed.
-          if (
-            instance.driverKind === "codex" &&
-            instance.delegatedLaunchAccountBinding !== "pinned"
-          )
-            return undefined;
           const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
-          const provider = yield* instance.snapshot.refresh;
+          // Codex requires runtime evidence, never a configuration assertion.
+          if (instance.driverKind === "codex" && !instance.probeDelegatedLaunch) return undefined;
+          const provider = instance.probeDelegatedLaunch
+            ? yield* instance.probeDelegatedLaunch(candidate.model)
+            : yield* instance.snapshot.refresh;
+          if (!provider) return undefined;
           if (
             context &&
             provider.supportedRuntimeModes &&
@@ -383,7 +406,7 @@ export const layer = Layer.effect(
         Effect.mapError((cause) => new DelegatedLaunchAdmissionError({ cause })),
       ),
       recover: Effect.fn("DelegatedLaunchAdmission.recover")(
-        function* (threadId, runId, launchGeneration) {
+        function* (threadId, runId, launchGeneration, scope = { type: "account" }) {
           const projection = yield* projections.getTurnStartContext(threadId, runId);
           const run = projection.runs.find((r) => r.id === runId);
           if (
@@ -428,7 +451,7 @@ export const layer = Layer.effect(
                   blockedDomains: [
                     ...new Set([
                       ...run.delegatedLaunch.blockedDomains,
-                      ...run.delegatedLaunch.admittedDomains,
+                      ...refusedQuotaDomains(run.delegatedLaunch.admittedDomains, scope),
                     ]),
                   ],
                   admittedDomains: [],

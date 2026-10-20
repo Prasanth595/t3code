@@ -1,3 +1,7 @@
+import {
+  verifyCodexLaunchBinding,
+  CodexLaunchCapacityError,
+} from "../../provider/CodexDelegatedLaunch.ts";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -151,6 +155,8 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
+const isCodexLaunchCapacityError = Schema.is(CodexLaunchCapacityError);
+
 export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 
@@ -6764,33 +6770,51 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
             ),
           ),
-          startTurn: (turnInput) => {
-            const goalCommand =
-              turnInput.message.attachments.length === 0 &&
-              turnInput.restartContinuationOfRunId === undefined
-                ? parseCodexGoalCommand(turnInput.message.text)
-                : null;
-            if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
-            return Effect.gen(function* () {
+          startTurn: Effect.fn("CodexAdapterV2.startTurn")(
+            function* (turnInput) {
+              if (turnInput.delegatedLaunchDomains) {
+                yield* verifyCodexLaunchBinding(
+                  client,
+                  resolvedRuntime?.environment ?? adapterOptions.environment,
+                  turnInput.delegatedLaunchDomains,
+                  yield* getNativeThreadId(turnInput.providerThread),
+                ).pipe(
+                  Effect.timeout("8 seconds"),
+                  Effect.mapError((cause) =>
+                    isCodexLaunchCapacityError(cause)
+                      ? cause
+                      : new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" }),
+                  ),
+                );
+              }
+
+              const goalCommand =
+                turnInput.message.attachments.length === 0 &&
+                turnInput.restartContinuationOfRunId === undefined
+                  ? parseCodexGoalCommand(turnInput.message.text)
+                  : null;
+              if (goalCommand !== null) return yield* runGoalCommand(turnInput, goalCommand);
               yield* startNativeTurn(
                 turnInput,
                 turnInput.restartContinuationOfRunId === undefined
                   ? yield* toCodexInput(turnInput)
                   : [],
               );
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: CODEX_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    cause,
-                  }),
+            },
+            (effect, turnInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: CODEX_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      cause,
+                    }),
+                ),
               ),
-            );
-          },
+          ),
           steerTurn: Effect.fn("CodexAdapterV2.steerTurn")(
             function* (turnInput) {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);

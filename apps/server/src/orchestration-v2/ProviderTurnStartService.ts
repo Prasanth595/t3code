@@ -603,6 +603,7 @@ export const layer: Layer.Layer<
             input.threadId,
             run.id,
             run.delegatedLaunch?.generation ?? 0,
+            DelegatedLaunchAdmission.launchQuotaScope(sessionResult.failure),
           ))
         )
           return;
@@ -627,6 +628,7 @@ export const layer: Layer.Layer<
             input.threadId,
             run.id,
             run.delegatedLaunch?.generation ?? 0,
+            DelegatedLaunchAdmission.launchQuotaScope(loaded.failure),
           ))
         )
           return undefined;
@@ -1258,9 +1260,9 @@ export const layer: Layer.Layer<
                       }),
                   ),
                 ),
-              onLaunchQuotaFailure: () =>
+              onLaunchQuotaFailure: (scope) =>
                 launchAdmission
-                  .recover(input.threadId, run.id, run.delegatedLaunch?.generation ?? 0)
+                  .recover(input.threadId, run.id, run.delegatedLaunch?.generation ?? 0, scope)
                   .pipe(
                     Effect.mapError(
                       (cause) =>

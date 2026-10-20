@@ -26,6 +26,7 @@ import {
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
+import { readCodexLaunchCapacity } from "../CodexDelegatedLaunch.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -353,6 +354,28 @@ export const CodexDriver: ProviderDriver<
       enabled,
       snapshot,
       snapshotForCwd,
+      probeDelegatedLaunch: Effect.fn("CodexDriver.probeDelegatedLaunch")(
+        function* () {
+          const provider = yield* snapshot.refresh;
+          const { client } = yield* withCodexAppServerClient({
+            binaryPath: effectiveConfig.binaryPath,
+            homePath: effectiveConfig.homePath,
+            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+            cwd: process.cwd(),
+            environment: processEnv,
+          });
+          const capacity = yield* readCodexLaunchCapacity(client, processEnv);
+          return {
+            ...provider,
+            auth: { ...provider.auth, email: capacity.email },
+            usageLimits: capacity.usageLimits,
+          };
+        },
+        Effect.scoped,
+        Effect.timeout("8 seconds"),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.orElseSucceed(() => undefined),
+      ),
       consumeResetCredit,
       orchestrationAdapter,
       textGeneration,

@@ -46,8 +46,8 @@ export interface ProviderInstance {
   readonly displayName: string | undefined;
   readonly accentColor?: string | undefined;
   readonly enabled: boolean;
-  /** Only a runtime that pins every request to the account used for its quota probe may set this. */
-  readonly delegatedLaunchAccountBinding?: "pinned";
+  /** Fresh runtime-owned usage, with the identity revalidated on the dispatch session. */
+  readonly probeDelegatedLaunch?: (model: string) => Effect.Effect<ServerProvider | undefined>;
   readonly snapshot: ManagedServerProvider;
   readonly snapshotForCwd?: (
     cwd: string,

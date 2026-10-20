@@ -4009,6 +4009,13 @@ it.layer(
         const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
           () =>
             ({
+              accountInfo: async () => ({
+                apiProvider: "firstParty",
+                email: "direct@example.com",
+                organization: "org",
+                subscriptionType: "max",
+                tokenSource: "oauth",
+              }),
               initializationResult: () => {
                 Deferred.doneUnsafe(initializationStarted, Effect.void);
                 return initialization.promise;
@@ -4069,6 +4076,13 @@ it.layer(
         assert.strictEqual(refreshed.usageLimits?.checkedAt, liveCheckedAt);
         assert.strictEqual(refreshed.usageLimits?.windows[0]?.usedPercent, 95);
         assert.strictEqual(first.usageLimits?.checkedAt, usageCheckedAt);
+        const admitted = yield* instance.probeDelegatedLaunch!("claude-sonnet-5-5");
+        assert.strictEqual(query.mock.calls.length, 2);
+        assert.strictEqual(admitted?.usageLimits?.checkedAt, refreshCheckedAt);
+        assert.strictEqual(admitted?.usageLimits?.windows[0]?.usedPercent, 12);
+        // Ordinary refresh still owns its capability cache and live telemetry.
+        yield* instance.snapshot.refresh;
+        assert.strictEqual(query.mock.calls.length, 2);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

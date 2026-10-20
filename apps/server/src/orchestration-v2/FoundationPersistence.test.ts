@@ -3748,8 +3748,8 @@ it.effect(
       const instance = {
         instanceId: providerInstanceId,
         driverKind: providerDriver,
-        get delegatedLaunchAccountBinding() {
-          return pinned ? "pinned" : undefined;
+        get probeDelegatedLaunch(): ProviderInstance["probeDelegatedLaunch"] {
+          return pinned ? () => instance.snapshot.refresh : undefined;
         },
         enabled: true,
         snapshot: {

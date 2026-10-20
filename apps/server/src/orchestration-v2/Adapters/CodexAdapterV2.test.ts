@@ -2020,6 +2020,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    capacity?: {
+      readonly accountId: string;
+      readonly used: number;
+      readonly threadProvider: string;
+    },
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2047,10 +2052,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   (client) =>
                     ({
                       ...client,
-                      request: (method, params) =>
-                        onRequest(method, params).pipe(
+                      request: ((method, params) => {
+                        if (capacity) {
+                          const response =
+                            method === "config/read"
+                              ? { config: { model_provider: "openai" } }
+                              : method === "account/read"
+                                ? {
+                                    account: {
+                                      type: "chatgpt",
+                                      email: "direct@example.com",
+                                      planType: "pro",
+                                    },
+                                  }
+                                : method === "account/rateLimits/read"
+                                  ? {
+                                      accountId: capacity.accountId,
+                                      rateLimits: {
+                                        primary: { usedPercent: capacity.used },
+                                        secondary: { usedPercent: 2 },
+                                      },
+                                    }
+                                  : method === "thread/read"
+                                    ? { thread: { modelProvider: capacity.threadProvider } }
+                                    : undefined;
+                          if (response) return onRequest(method, params).pipe(Effect.as(response));
+                        }
+                        return onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
-                        ),
+                        );
+                      }) as typeof client.request,
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -2136,6 +2167,62 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         firstTerminal: Deferred.await(firstTerminal),
       };
     });
+
+  it.effect.each([
+    { accountId: "backend-account", used: 1, threadProvider: "openai", starts: true },
+    { accountId: "changed-account", used: 1, threadProvider: "openai", starts: false },
+    { accountId: "backend-account", used: 100, threadProvider: "openai", starts: false },
+    { accountId: "backend-account", used: 1, threadProvider: "pool", starts: false },
+  ])("checks delegated binding on the actual Codex start path: %j", (capacity) =>
+    Effect.gen(function* () {
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "capacity-thread",
+        nativeTurnId: "capacity-turn",
+        prompt: "work",
+      });
+      const requests: string[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "delegated-capacity",
+          entries: capacity.starts ? preamble : preamble.slice(0, 5),
+        }),
+        () => Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            requests.push(method);
+          }),
+        undefined,
+        capacity,
+      );
+      const result = yield* harness.runtime
+        .startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("capacity-attempt"),
+            text: "work",
+          }),
+          delegatedLaunchDomains: [
+            "codex:account:direct@example.com",
+            "codex:credential:backend-account",
+          ],
+        })
+        .pipe(Effect.result);
+      assert.equal(result._tag, capacity.starts ? "Success" : "Failure");
+      assert.equal(
+        requests.filter((method) => method === "turn/start").length,
+        capacity.starts ? 1 : 0,
+      );
+      if (capacity.starts)
+        assert.isBelow(requests.indexOf("account/rateLimits/read"), requests.indexOf("turn/start"));
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",

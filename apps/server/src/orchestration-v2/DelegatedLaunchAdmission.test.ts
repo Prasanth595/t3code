@@ -13,6 +13,8 @@ import * as TestClock from "effect/testing/TestClock";
 import { describe, expect } from "vite-plus/test";
 import {
   assessCapacity,
+  launchQuotaScope,
+  refusedQuotaDomains,
   selectLaunchCandidate,
   isLaunchQuotaFailure,
 } from "./DelegatedLaunchAdmission.ts";
@@ -313,3 +315,92 @@ it("uses structured quota causes and preserves unrelated start errors", () => {
   expect(isLaunchQuotaFailure(new Error("usage limit reached"))).toBe(false);
   expect(isLaunchQuotaFailure({ failure: { class: "provider_error" } })).toBe(false);
 });
+
+it.effect(
+  "blocks a refused shared Claude account despite a lagging healthy alternate-model snapshot",
+  () =>
+    Effect.gen(function* () {
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
+      const sonnet = selection("native", "claude-sonnet-5-5");
+      const opus = selection("alias", "claude-opus-5-5");
+      const probe = (target: ModelSelection) =>
+        Effect.succeed({
+          provider: {
+            ...provider(target, "same@example.com", {
+              checkedAt: timestamp,
+              windows: ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"].map(
+                (id) => ({
+                  id,
+                  label: id,
+                  kind: "weekly" as const,
+                  usedPercent: 0,
+                }),
+              ),
+            }),
+            driver: ProviderDriverKind.make("claudeAgent"),
+          },
+          probeStartedAt: Date.parse(timestamp),
+        });
+      const admitted = yield* selectLaunchCandidate({ candidates: [sonnet], probe });
+      assert.equal(admitted.status, "ready");
+      if (admitted.status !== "ready") return;
+      for (const failure of [
+        { class: "usage_limit" },
+        { class: "usage_limit", quotaScope: { type: "account" } },
+        { class: "usage_limit", quotaScope: { type: "window", windowId: "unproven" } },
+      ]) {
+        const decision = yield* selectLaunchCandidate({
+          candidates: [opus],
+          probe,
+          blockedDomains: refusedQuotaDomains(admitted.domains, launchQuotaScope(failure)),
+        });
+        assert.equal(decision.status, "waiting");
+      }
+      const scoped = refusedQuotaDomains(admitted.domains, {
+        type: "window",
+        windowId: "seven_day_sonnet",
+      });
+      assert.equal(
+        (yield* selectLaunchCandidate({ candidates: [sonnet], probe, blockedDomains: scoped }))
+          .status,
+        "waiting",
+      );
+      assert.equal(
+        (yield* selectLaunchCandidate({ candidates: [opus], probe, blockedDomains: scoped }))
+          .status,
+        "ready",
+      );
+    }),
+);
+
+it.effect("does not narrow a Claude refusal to an absent model window", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const sonnet = selection("native", "claude-sonnet-5-5");
+    const admitted = yield* selectLaunchCandidate({
+      candidates: [sonnet],
+      probe: (target) =>
+        Effect.succeed({
+          provider: {
+            ...provider(target, "same@example.com", {
+              checkedAt: timestamp,
+              windows: ["five_hour", "seven_day"].map((id) => ({
+                id,
+                label: id,
+                kind: "weekly" as const,
+                usedPercent: 0,
+              })),
+            }),
+            driver: ProviderDriverKind.make("claudeAgent"),
+          },
+          probeStartedAt: Date.parse(timestamp),
+        }),
+    });
+    assert.equal(admitted.status, "ready");
+    if (admitted.status !== "ready") return;
+    assert.deepEqual(
+      refusedQuotaDomains(admitted.domains, { type: "window", windowId: "seven_day_sonnet" }),
+      ["claudeAgent:account:same@example.com"],
+    );
+  }),
+);

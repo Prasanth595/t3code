@@ -1,3 +1,8 @@
+import {
+  verifyClaudeLaunchBinding,
+  claudeRefusalScope,
+  ClaudeLaunchCapacityError,
+} from "../../provider/ClaudeDelegatedLaunch.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { claudeTaskOutputRoot, tailClaudeTaskOutput } from "./ClaudeTaskOutputTail.ts";
 import {
@@ -477,6 +482,10 @@ export interface ClaudeAgentSdkQueryOpenInput {
 }
 
 export interface ClaudeAgentSdkQuerySession {
+  readonly verifyDelegatedLaunch?: (
+    domains: ReadonlyArray<string>,
+    model: string,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -1098,6 +1107,13 @@ export const layerQueryRunner: Layer.Layer<
               }),
             ),
           ),
+          verifyDelegatedLaunch: (domains, model) =>
+            verifyClaudeLaunchBinding(
+              queryRuntime,
+              domains,
+              model,
+              queryOptions.env ?? process.env,
+            ).pipe(Effect.mapError((cause) => queryRunnerError(cause, "verifyDelegatedLaunch"))),
           close: Queue.shutdown(promptQueue).pipe(
             Effect.andThen(closeClaudeQuery(queryRuntime)),
             Effect.tap(() =>
@@ -8469,7 +8485,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
             const terminalFailure =
               resultFailure?.class === "usage_limit"
-                ? { ...resultFailure, resetAt: resetAt ?? resultFailure.resetAt ?? null }
+                ? {
+                    ...resultFailure,
+                    resetAt: resetAt ?? resultFailure.resetAt ?? null,
+                    quotaScope: claudeRefusalScope([
+                      ...context.rejectedRateLimitTypes,
+                      ...(assistantLimit?.type ? [assistantLimit.type] : []),
+                    ]),
+                  }
                 : resultFailure;
             yield* finalizeActiveTurn({
               context,
@@ -9340,6 +9363,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     uuid: promptUuid,
                   });
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            if (turnInput.delegatedLaunchDomains) {
+              if (!querySession.query.verifyDelegatedLaunch)
+                return yield* new ClaudeLaunchCapacityError({
+                  code: "delegated_capacity_unverified",
+                });
+              yield* querySession.query.verifyDelegatedLaunch(
+                turnInput.delegatedLaunchDomains,
+                turnInput.modelSelection.model,
+              );
+            }
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               queryPolicy: querySession.queryPolicy,

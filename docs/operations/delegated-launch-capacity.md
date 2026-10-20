@@ -45,14 +45,30 @@ launcher, and unpinned OpenCode 2 database selection remain unsupported.
 External OpenCode servers are unsupported because
 local credentials cannot establish the runtime's account.
 
-The current Codex driver cannot pin its runtime requests to the account reported
-by its app-server probe. A custom responses provider or launcher can route to
-an external pool while reporting healthy local-account bars. Codex delegated
-launches therefore remain unverified until a driver implements the explicit
-`delegatedLaunchAccountBinding: "pinned"` contract. No current Codex driver
-claims that contract. The configured `codex-t3` pool and the `opencode-t3`
-launcher that loads a Kimi secret only inside the child process consequently
-use healthy fallbacks or wait; this fragment alone cannot admit those routes.
+Direct Codex admission requires runtime `config/read`, ChatGPT `account/read`,
+and backend-bound `account/rateLimits/read` evidence. The backend account ID
+travels as an opaque quota identity. Before generation the dispatch app-server
+rechecks that identity, fresh usage and the native thread's provider. Custom
+providers, overrides of the built-in OpenAI provider, external API endpoints,
+missing backend account IDs and changed accounts remain unverified. A caller's
+`pinned` assertion cannot authorize a start. Managed token-sharing instances do
+not expose this binding yet and remain unverified.
+
+Native Claude admission uses a fresh read-only SDK capabilities/usage request,
+independent of the ordinary five-minute cache. Its dispatch query rechecks
+first-party account, organization, subscription and auth-source identity plus
+fresh usage before accepting the prompt. API-key and custom-endpoint overrides
+remain unverified. These controls do not atomically reserve quota or lock out an
+external credential change between verification and generation. A structured
+launch refusal still returns to fallback/waiting; no live account-swap or quota
+race guarantee is claimed from the unit tests.
+Unknown/account-wide first-request refusals block the account across aliases;
+only a typed model window observed at admission permits a narrower block.
+
+The configured `codex-t3` pool and the `opencode-t3` launcher that loads a Kimi
+secret only inside the child process still need wrapper/pool integration.
+They use healthy fallbacks or wait; this fragment alone cannot admit those
+routes. No wrapper, credentials or live settings are changed by this feature.
 
 ACP does not expose quota or pin a pooled account. Copilot's ACP integration
 therefore reports unsupported; neither a GitHub login nor another account's
