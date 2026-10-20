@@ -336,8 +336,7 @@ const make = Effect.gen(function* () {
    * One request. Every deadline is read from the clock when the answer arrives,
    * not when the request left, so a slow answer cannot shorten the wait it asks for.
    */
-  const fetchCandidates = (query: string) =>
-    Effect.gen(function* () {
+  const fetchCandidates = Effect.fn("KnownIssueSearch.fetchCandidates")(function* (query: string) {
       const response = yield* httpClient.execute(
         HttpClientRequest.get(SEARCH_URL).pipe(
           HttpClientRequest.setUrlParams({ q: query, per_page: String(MAX_CANDIDATES) }),
@@ -380,7 +379,7 @@ const make = Effect.gen(function* () {
       }
       cache.set(query, { expiresAt: receivedAt + CACHE_TTL_MS, candidates });
       return candidates;
-    }).pipe(
+    },
       Effect.timeout(SEARCH_TIMEOUT),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)

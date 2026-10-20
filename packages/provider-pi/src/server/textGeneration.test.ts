@@ -16,7 +16,7 @@ import { makePiTextGeneration } from "./textGeneration.ts";
 const decodeJsonLine = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const makeFakePi = (reply: string) =>
+const makeFakePi = (reply: string, setModelError?: string) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     const received: Array<Record<string, unknown>> = [];
@@ -38,6 +38,8 @@ const makeFakePi = (reply: string) =>
             yield* emit({ type: "agent_settled" });
           } else if (record["type"] === "get_last_assistant_text") {
             yield* emit({ ...response, success: true, data: { text: reply } });
+          } else if (record["type"] === "set_model" && setModelError !== undefined) {
+            yield* emit({ ...response, success: false, error: setModelError });
           } else {
             yield* emit({ ...response, success: true });
           }
@@ -119,5 +121,31 @@ it.effect("runs a provider failure explanation with tools off in an empty temp d
     // The scope that owned the directory is closed, so the directory is gone.
     assert.isFalse(yield* fileSystem.exists(spawn?.cwd ?? ""));
     assert.isTrue(spawn?.args.includes("--no-tools"));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("names the model and the disabled extensions when Pi cannot load it", () =>
+  Effect.gen(function* () {
+    const pi = yield* makeFakePi("", "Model not found: demo/demo-model");
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+
+    const error = yield* textGeneration
+      .generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "main",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("pi"), "demo/demo-model"),
+      })
+      .pipe(Effect.flip);
+
+    assert.equal(error._tag, "TextGenerationError");
+    assert.include(error.detail, "Pi rejected model 'demo/demo-model'");
+    assert.include(error.detail, "Model not found: demo/demo-model");
+    assert.include(error.detail, "--no-extensions");
+    assert.isUndefined(pi.received.find((record) => record["type"] === "prompt"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
