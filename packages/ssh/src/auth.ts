@@ -176,9 +176,10 @@ const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpa
     const userId = yield* HostProcess.UserId;
     const cached = defaultSshAskpassRuntimeDirectory;
     if (cached !== undefined) {
-      const reusable = yield* fs.stat(cached).pipe(
+      const reusable = yield* Effect.all([fs.realPath(cached), fs.stat(cached)]).pipe(
         Effect.map(
-          (info) =>
+          ([resolved, info]) =>
+            resolved === cached &&
             info.type === "Directory" &&
             (userId === undefined || Option.getOrUndefined(info.uid) === userId),
         ),
@@ -190,7 +191,9 @@ const ensureDefaultSshAskpassHelpers = Effect.fn("ssh/auth.ensureDefaultSshAskpa
         });
       }
     }
-    const runtimeDirectory = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" });
+    const runtimeDirectory = yield* fs.realPath(
+      yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" }),
+    );
     const launcherPath = yield* ensureSshAskpassHelpers({
       directory: path.join(runtimeDirectory, SSH_ASKPASS_DIR_NAME),
     });

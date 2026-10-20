@@ -87,6 +87,33 @@ describe("ssh auth", () => {
     ),
   );
 
+  it.effect("does not reuse a symlink left at the default askpass directory path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const askpassPath = () =>
+        buildSshChildEnvironment({ interactiveAuth: true, authSecret: "pw" }).pipe(
+          Effect.map((env) => env.SSH_ASKPASS ?? ""),
+        );
+      const runtimeDirectoryOf = (askpass: string) => path.dirname(path.dirname(askpass));
+
+      const first = yield* askpassPath();
+      const ownedTarget = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-symlink-target-" });
+      yield* fs.remove(runtimeDirectoryOf(first), { recursive: true });
+      yield* fs.symlink(ownedTarget, runtimeDirectoryOf(first));
+
+      const next = yield* askpassPath();
+      assert.notEqual(next, first);
+      assert.equal(yield* fs.exists(path.join(ownedTarget, "t3code-ssh-askpass")), false);
+
+      yield* fs.remove(runtimeDirectoryOf(first));
+      yield* fs.remove(ownedTarget, { recursive: true });
+      yield* fs.remove(runtimeDirectoryOf(next), { recursive: true });
+    }).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
+    ),
+  );
+
   it.effect("writes the default askpass helper once when interactive commands overlap", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
