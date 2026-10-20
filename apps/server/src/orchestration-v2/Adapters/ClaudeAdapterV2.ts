@@ -9141,7 +9141,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const hasPersistedProviderTurn =
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            resumeSessionAt !== undefined ||
+            openedWithResume ||
+            hasPersistedProviderTurn ||
+            // Imports, including old unmarked ones, can predate every T3 turn.
+            (yield* findClaudeTranscriptPaths(nativeThreadId, turnInput.runtimePolicy.cwd).pipe(
+              Effect.map((paths) => paths.length > 0),
+              Effect.orElseSucceed(() => false),
+            ));
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             nativeThreadId,
@@ -9849,30 +9856,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         });
         yield* Effect.addFinalizer(() => closeSession());
 
+        const findClaudeTranscriptPaths = Effect.fn("ClaudeAdapterV2.findClaudeTranscriptPaths")(
+          function* (nativeThreadId: string, cwd: string | null) {
+            // Do not interpret a native id as a relative transcript path.
+            if (nativeThreadId.includes("/") || nativeThreadId.includes("\\")) {
+              return [];
+            }
+            const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
+            const projectsDir = path.join(
+              configuredDir.length > 0
+                ? path.resolve(cwd ?? ".", configuredDir)
+                : path.join(yield* HostProcess.HomeDirectory, ".claude"),
+              "projects",
+            );
+            const paths: Array<string> = [];
+            for (const project of yield* fileSystem.readDirectory(projectsDir)) {
+              const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
+              // Stray files beside the project dirs fail with ENOTDIR.
+              if (
+                yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false))
+              ) {
+                paths.push(transcriptPath);
+              }
+            }
+            return paths;
+          },
+        );
+
         // A CLI stopped before it saved the first prompt can leave a transcript
         // with only metadata lines. Claude can neither resume that id nor
         // create it again, so resumeThread fails and the caller binds a fresh
         // native session with a context handoff.
         const hasEmptyClaudeTranscript = Effect.fn("ClaudeAdapterV2.hasEmptyClaudeTranscript")(
           function* (nativeThreadId: string) {
-            const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
-            const projectsDir = path.join(
-              configuredDir.length > 0
-                ? path.resolve(session.cwd, configuredDir)
-                : path.join(yield* HostProcess.HomeDirectory, ".claude"),
-              "projects",
-            );
+            const paths = yield* findClaudeTranscriptPaths(nativeThreadId, session.cwd);
             // Empty only when every copy of the id is empty; any message means
             // the CLI may still resume it.
-            let found = false;
-            for (const project of yield* fileSystem.readDirectory(projectsDir)) {
-              const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
-              // Stray files beside the project dirs fail with ENOTDIR.
-              if (
-                !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
-              ) {
-                continue;
-              }
+            for (const transcriptPath of paths) {
               const conversationLine = yield* fileSystem
                 .stream(transcriptPath)
                 .pipe(
@@ -9884,9 +9904,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (Option.isSome(conversationLine)) {
                 return false;
               }
-              found = true;
             }
-            return found;
+            return paths.length > 0;
           },
         );
 
