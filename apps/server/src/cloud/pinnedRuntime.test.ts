@@ -648,6 +648,11 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       // 1.2.0 is the default launcher, 1.2.5 a recorded one, 1.3.0 running, 1.3.5 in the unit,
       // 1.4.0 active, 1.5.0 the rolled-back target, 2.0.0 the caller's and 2.1.0 newer.
       assert.deepEqual(removed.toSorted(), ["0.8.0", "1.0.0", "1.1.0"]);
+      // The launcher found on PATH is remembered for a service that cannot see it.
+      assert.equal(
+        yield* fs.readFileString(path.join(baseDir, "runtime", "launchers")),
+        `${path.join(customBinDir, "t3")}\n${path.join(binDir, "t3")}\n`,
+      );
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-abc",
         "0.9.0",
@@ -667,15 +672,20 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
 
   it.effect.each([
     { name: "the process list is unavailable", state: undefined, lsof: "" },
-    { name: "the service state is unreadable", state: "{", lsof: "p1\nftxt\nn/sbin/launchd\n" },
+    { name: "the service state is unparseable", state: "{", lsof: "p1\nftxt\nn/sbin/launchd\n" },
+    {
+      name: "the service state cannot be read",
+      state: null,
+      lsof: "p1\nftxt\nn/sbin/launchd\n",
+    },
   ])("keeps everything when $name", ({ state, lsof }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { baseDir, versionsDir } = yield* setup(["1.0.0"]);
-      if (state !== undefined) {
-        yield* fs.writeFileString(path.join(baseDir, "runtime", "service-state.json"), state);
-      }
+      const statePath = path.join(baseDir, "runtime", "service-state.json");
+      if (state === null) yield* fs.makeDirectory(statePath);
+      else if (state !== undefined) yield* fs.writeFileString(statePath, state);
 
       const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner(lsof)),

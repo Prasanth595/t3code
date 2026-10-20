@@ -522,7 +522,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* prunePinnedRuntimes({
       baseDir: input.baseDir,
       keep: [currentVersion, targetVersion],
-      references: Option.toArray(unit),
+      references: Option.toArray(Option.flatMapNullishOr(unit, BootService.bootServiceProgramOf)),
     });
   }
 

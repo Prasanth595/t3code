@@ -375,10 +375,11 @@ export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =
 
 const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
 /**
- * One `t3` launcher path per line, appended by the install scripts. A service does not see the
- * installer's `T3CODE_INSTALL_BIN_DIR` or interactive PATH, so this is how it finds a custom one.
+ * One `t3` launcher path per line, appended by the install scripts and by any prune that finds a
+ * launcher on PATH. A service does not see the installer's `T3CODE_INSTALL_BIN_DIR` or the
+ * interactive PATH, so this is how it finds a custom one, including installs that predate the file.
  */
-export const PINNED_RUNTIME_LAUNCHERS_FILE = "launchers";
+const PINNED_RUNTIME_LAUNCHERS_FILE = "launchers";
 
 export function launcherOwnsVersionsDir(
   path: Path.Path,
@@ -402,18 +403,20 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const environment = yield* HostProcess.Environment;
   const home = yield* HostProcess.HomeDirectory;
   const launcherName = platform === "win32" ? "t3.cmd" : "t3";
-  const recorded = yield* fs
-    .readFileString(path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE))
-    .pipe(Effect.orElseSucceed(() => ""));
-  const launchers = [
-    ...recorded.split(/\r?\n/),
-    ...[
-      environment["T3CODE_INSTALL_BIN_DIR"] || path.join(home, ".local", "bin"),
-      ...(environment["PATH"] ?? environment["Path"] ?? "").split(platform === "win32" ? ";" : ":"),
-    ].map((directory) => (directory.trim().length > 0 ? path.join(directory, launcherName) : "")),
-  ].filter((launcher) => launcher.trim().length > 0);
+  const launchersFile = path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE);
+  const recorded = (yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => "")))
+    .split(/\r?\n/)
+    .filter((launcher) => launcher.trim().length > 0);
+  const found = [
+    environment["T3CODE_INSTALL_BIN_DIR"] || path.join(home, ".local", "bin"),
+    ...(environment["PATH"] ?? environment["Path"] ?? "").split(platform === "win32" ? ";" : ":"),
+  ]
+    .filter((directory) => path.isAbsolute(directory))
+    .map((directory) => path.join(directory, launcherName));
+  const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
+  const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
-  for (const launcher of launchers) {
+  for (const launcher of [...recorded, ...found]) {
     const target =
       platform === "win32"
         ? yield* fs.readFileString(launcher).pipe(
@@ -424,7 +427,22 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
             Effect.map((link) => path.resolve(path.dirname(launcher), link)),
             Effect.orElseSucceed(() => undefined),
           );
-    if (target !== undefined) targets.push(target);
+    if (target === undefined) continue;
+    targets.push(target);
+    if (
+      launcherOwnsVersionsDir(path, versionsDir, target) &&
+      !recorded.includes(launcher) &&
+      !unrecorded.includes(launcher)
+    ) {
+      unrecorded.push(launcher);
+    }
+  }
+  if (unrecorded.length > 0) {
+    yield* fs
+      .writeFileString(launchersFile, unrecorded.map((launcher) => `${launcher}\n`).join(""), {
+        flag: "a",
+      })
+      .pipe(Effect.ignore);
   }
   return targets;
 });
@@ -505,10 +523,16 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
   const keep = new Set(input.keep);
   const stateText = yield* fs
     .readFileString(path.join(input.baseDir, PINNED_RUNTIME_DIR, SERVICE_STATE_FILE))
-    .pipe(Effect.option);
+    .pipe(
+      Effect.asSome,
+      Effect.catch((error) =>
+        Effect.succeed(error.reason._tag === "NotFound" ? Option.none<string>() : undefined),
+      ),
+    );
+  // State this version cannot read may reference runtimes in ways it does not know.
+  if (stateText === undefined) return pruned;
   if (Option.isSome(stateText)) {
     const state = parseServiceState(stateText.value);
-    // State this version cannot read may reference runtimes in ways it does not know.
     if (state === undefined) return pruned;
     keep.add(state.activeVersion);
     if (state.update !== undefined) {
