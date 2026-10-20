@@ -177,10 +177,17 @@ describe("isAutoSettlementCandidate", () => {
     ).toBe(true);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
-        shell({ ...snoozed, latestRunCompletedAt: at(-30 * 60 * 1_000) }),
+        shell({ ...snoozed, status: "completed", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
         NOW_MS,
       ),
     ).toBe(true);
+    // An interrupted run leaves the thread snoozed, as the sidebar shows it.
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ ...snoozed, status: "interrupted", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
+        NOW_MS,
+      ),
+    ).toBe(false);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
@@ -1420,6 +1427,12 @@ describe("isSnoozed", () => {
     });
     expect(ThreadSettlementService.isSnoozed(completed, NOW_MS)).toBe(true);
     expect(ThreadSettlementService.isAutoSettlementCandidate(completed, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        { ...completed, status: "interrupted" },
+        NOW_MS,
+      ),
+    ).toBe(false);
     expect(ThreadSettlementService.isSnoozed({ ...completed, status: "failed" }, NOW_MS)).toBe(
       false,
     );
