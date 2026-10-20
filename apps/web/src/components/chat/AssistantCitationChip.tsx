@@ -175,6 +175,10 @@ export function AssistantCitationChip({
               {...composerFloatingLayerProps}
               side={activeSourceAnchor ? "bottom" : "top"}
               align="end"
+              // The anchor is the quote's last line rect, which can lie past the window edge
+              // inside a code block's horizontal overflow. Without sticky, Base UI keeps the
+              // popup attached to that rect instead of shifting it into view.
+              sticky
               anchor={popupAnchor}
               initialFocus={() => {
                 commentInputRef.current?.focus({ preventScroll: true });

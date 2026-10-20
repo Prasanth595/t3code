@@ -152,3 +152,25 @@ describe("citation comment source disappearance", () => {
     expect(textarea()).toBeNull();
   });
 });
+
+describe("citation comment popup placement", () => {
+  it("opens inside the window when the cited line ends in a code block's horizontal overflow", async () => {
+    const pre = document.createElement("pre");
+    pre.style.cssText = "width: 120px; overflow-x: auto; white-space: pre; margin: 0";
+    pre.textContent = `${"x".repeat(400)}\ny`;
+    document.body.append(pre);
+    const range = document.createRange();
+    range.setStart(pre.firstChild!, 0);
+    range.setEnd(pre.firstChild!, 401);
+    sourceAnchor = { source: pre, range, viewport: document.body } as AssistantCitationSourceAnchor;
+    // The anchor is the selection's last rect: a narrow line-end rect past the window edge.
+    const rects = range.getClientRects();
+    expect(rects.item(rects.length - 1)!.left).toBeGreaterThan(window.innerWidth);
+
+    await mount();
+
+    const popup = document.querySelector('[data-slot="popover-popup"]')!.getBoundingClientRect();
+    expect(popup.left).toBeGreaterThanOrEqual(0);
+    expect(popup.right).toBeLessThanOrEqual(window.innerWidth);
+  });
+});
