@@ -229,6 +229,39 @@ index 827436c..fe9f371 100644
  }
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
+diff --git a/lib/commonjs/hooks/useKeyboardState/index.js b/lib/commonjs/hooks/useKeyboardState/index.js
+index a4b287006a47011a58c8a16f19b31a479087f44e..fc1da8b8c843968ade0a7033a70136166a80b674 100644
+--- a/lib/commonjs/hooks/useKeyboardState/index.js
++++ b/lib/commonjs/hooks/useKeyboardState/index.js
+@@ -7,7 +7,7 @@ exports.useKeyboardState = useKeyboardState;
+ var _react = require("react");
+ var _bindings = require("../../bindings");
+ var _module = require("../../module");
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ..._module.KeyboardController.state(),
+   isVisible: _module.KeyboardController.isVisible()
+diff --git a/lib/commonjs/module.js b/lib/commonjs/module.js
+index f27c5a095129cf60831088a73ce94d44f3ba52cd..9f64d066a2e647759046a7e8bda2c1f7c29a6585 100644
+--- a/lib/commonjs/module.js
++++ b/lib/commonjs/module.js
+@@ -18,10 +18,13 @@ _bindings.KeyboardEvents.addListener("keyboardDidHide", e => {
+   isClosed = true;
+   lastState = e;
+ });
+-_bindings.KeyboardEvents.addListener("keyboardWillShow", e => {
++const updateShownState = e => {
+   isClosed = false;
+   lastState = e;
+-});
++};
++_bindings.KeyboardEvents.addListener("keyboardWillShow", updateShownState);
++// Android can restore IME insets without an animation and emit only didShow.
++_bindings.KeyboardEvents.addListener("keyboardDidShow", updateShownState);
+ const dismiss = async options => {
+   const keepFocus = (options === null || options === void 0 ? void 0 : options.keepFocus) ?? false;
+   const animated = (options === null || options === void 0 ? void 0 : options.animated) ?? true;
 diff --git a/lib/module/components/KeyboardChatScrollView/index.js b/lib/module/components/KeyboardChatScrollView/index.js
 index e0c8391..8df802a 100644
 --- a/lib/module/components/KeyboardChatScrollView/index.js
@@ -473,6 +506,39 @@ index 3c90439..9e7ebb6 100644
  export { useExtraContentPadding };
  //# sourceMappingURL=index.js.map
 \ No newline at end of file
+diff --git a/lib/module/hooks/useKeyboardState/index.js b/lib/module/hooks/useKeyboardState/index.js
+index 8da7c09fbb398253420d7bfcd9a85abdb981065b..813b8ec3471c3695f76cf911a4a9dc3853f8e23b 100644
+--- a/lib/module/hooks/useKeyboardState/index.js
++++ b/lib/module/hooks/useKeyboardState/index.js
+@@ -1,7 +1,7 @@
+ import { useEffect, useState } from "react";
+ import { KeyboardEvents } from "../../bindings";
+ import { KeyboardController } from "../../module";
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"];
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"];
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+   isVisible: KeyboardController.isVisible()
+diff --git a/lib/module/module.js b/lib/module/module.js
+index 01aad2effee498a8daec55e1d4644a5fbc723765..f4a87b3f0b7b39d819bc4ee7a2e1795211a8cf75 100644
+--- a/lib/module/module.js
++++ b/lib/module/module.js
+@@ -12,10 +12,13 @@ KeyboardEvents.addListener("keyboardDidHide", e => {
+   isClosed = true;
+   lastState = e;
+ });
+-KeyboardEvents.addListener("keyboardWillShow", e => {
++const updateShownState = e => {
+   isClosed = false;
+   lastState = e;
+-});
++};
++KeyboardEvents.addListener("keyboardWillShow", updateShownState);
++// Android can restore IME insets without an animation and emit only didShow.
++KeyboardEvents.addListener("keyboardDidShow", updateShownState);
+ const dismiss = async options => {
+   const keepFocus = (options === null || options === void 0 ? void 0 : options.keepFocus) ?? false;
+   const animated = (options === null || options === void 0 ? void 0 : options.animated) ?? true;
 diff --git a/lib/typescript/components/KeyboardChatScrollView/types.d.ts b/lib/typescript/components/KeyboardChatScrollView/types.d.ts
 index eba1514..6597d80 100644
 --- a/lib/typescript/components/KeyboardChatScrollView/types.d.ts
@@ -902,3 +968,37 @@ index e7584ed..dc653b0 100644
    );
  }
  
+diff --git a/src/hooks/useKeyboardState/index.ts b/src/hooks/useKeyboardState/index.ts
+index e5fe38dd8e7b8370bfb575296259933094857ca5..d0b98f60a6d7ad7f72ebd70b22e1ce6b7fb56874 100644
+--- a/src/hooks/useKeyboardState/index.ts
++++ b/src/hooks/useKeyboardState/index.ts
+@@ -5,7 +5,7 @@ import { KeyboardController } from "../../module";
+ 
+ import type { IKeyboardState } from "../../types";
+ 
+-const EVENTS = ["keyboardWillShow", "keyboardDidHide"] as const;
++const EVENTS = ["keyboardWillShow", "keyboardDidShow", "keyboardDidHide"] as const;
+ 
+ const getLatestState = () => ({
+   ...KeyboardController.state(),
+diff --git a/src/module.ts b/src/module.ts
+index f74941914c9ecebbd0a6c2ba55c5436378de79d4..317f9908d88cd2812567c079611d4884807b713d 100644
+--- a/src/module.ts
++++ b/src/module.ts
+@@ -21,10 +21,14 @@ KeyboardEvents.addListener("keyboardDidHide", (e) => {
+   lastState = e;
+ });
+ 
+-KeyboardEvents.addListener("keyboardWillShow", (e) => {
++const updateShownState = (e: KeyboardEventData) => {
+   isClosed = false;
+   lastState = e;
+-});
++};
++
++KeyboardEvents.addListener("keyboardWillShow", updateShownState);
++// Android can restore IME insets without an animation and emit only didShow.
++KeyboardEvents.addListener("keyboardDidShow", updateShownState);
+ 
+ const dismiss = async (options?: Partial<DismissOptions>): Promise<void> => {
+   const keepFocus = options?.keepFocus ?? false;
