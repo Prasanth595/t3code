@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -39,12 +40,12 @@ const makeFailedProcess = (input: { readonly stdout: string; readonly stderr?: s
   });
 };
 
-const makeNeverFinishingProcess = () => {
+const makeNeverFinishingProcess = (stderr: Stream.Stream<Uint8Array> = Stream.empty) => {
   let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(123),
     stdout: Stream.empty,
-    stderr: Stream.empty,
+    stderr,
     all: Stream.empty,
     exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
       finish = (exitCode) => resume(Effect.succeed(exitCode));
@@ -293,5 +294,44 @@ describe("ssh command", () => {
         assert.include(result.failure.message, "SSH command timed out after 1ms.");
       }
     }).pipe(Effect.provide(layerProcess));
+  });
+
+  it.effect("reports the Tailscale SSH check link while ssh waits for approval", () => {
+    const url = "https://login.tailscale.com/a/1a2b3c4d5e6f";
+    const reported: Array<string> = [];
+    return Effect.gen(function* () {
+      const stderrRead = yield* Deferred.make<void>();
+      // Tailscale holds the session open after printing the link; split the
+      // link across reads the way a pipe can.
+      const stderr = Stream.make(
+        "# Tailscale SSH requires an additional check.\r\n# To authenticate, visit: https://login.tailscale.com/a/1a2b",
+        "3c4d5e6f\r\n",
+        "# Tailscale SSH requires an additional check.\r\n",
+      ).pipe(
+        Stream.map((chunk) => encoder.encode(chunk)),
+        Stream.ensuring(Deferred.succeed(stderrRead, undefined)),
+      );
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(makeNeverFinishingProcess(stderr)),
+      );
+      const fiber = yield* Effect.forkChild(
+        Effect.result(
+          runSshCommand(
+            { alias: "devbox", hostname: "devbox", username: null, port: null },
+            {
+              timeoutMs: 1,
+              onTailscaleCheck: (link) => Effect.sync(() => reported.push(link)),
+            },
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        ),
+      );
+      yield* Deferred.await(stderrRead);
+
+      assert.deepEqual(reported, [url]);
+
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Fiber.join(fiber);
+      assert.deepEqual(reported, [url]);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())));
   });
 });

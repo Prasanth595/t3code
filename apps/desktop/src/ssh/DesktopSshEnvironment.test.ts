@@ -8,6 +8,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
@@ -121,6 +122,7 @@ describe("sshEnvironment", () => {
               resolve: () => Effect.die("unexpected password prompt resolution"),
             }),
           ),
+          Layer.provideMerge(ElectronShell.layer),
           Layer.provideMerge(NodeServices.layer),
           Layer.provideMerge(NodeHttpClient.layerUndici),
           Layer.provideMerge(NetService.layer),
