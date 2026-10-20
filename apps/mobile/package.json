@@ -181,6 +181,16 @@
         "@react-native-menu/menu",
         "expo-audio",
         "expo-network"
+      ],
+      "include": [
+        "shiki",
+        "@shikijs/core",
+        "@shikijs/engine-javascript",
+        "@shikijs/engine-oniguruma",
+        "@shikijs/langs",
+        "@shikijs/themes",
+        "@shikijs/types",
+        "@shikijs/vscode-textmate"
       ]
     }
   },
