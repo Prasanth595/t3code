@@ -266,10 +266,8 @@ If `hasPendingQuestion`, pass `threadId=childThreadId` to `t3_pending_request_li
 the user; the task's completion still wakes this thread. A pending live approval for the
 task's own unfinished work also ends the wait. Its identity appears in `pendingApproval`;
 it grants no approval authority. Read the fresh full request in the child thread before
-responding, since the durable record can outlive its provider callback. Read it with
-`t3_pending_request_read` and respond through `t3_pending_request_respond` using
-`decision`. Accepting requires a full-access/default caller; declining or cancelling
-does not. Async questions do not end the wait.
+responding, since the durable record can outlive its provider callback. Async questions
+do not end the wait.
 
 ```ts
 type DelegateTaskResult = {
@@ -393,8 +391,8 @@ relabels local matches; cross-environment links can retain the written label.
 List and read results report `snoozed` and `snoozedUntil`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
-wakes early when it has a pending request, fails after snoozing, or completes a
-run requested after snoozing.
+wakes early only when it has a pending request or fails after snoozing. Completed
+runs, background wakes, and delegated completions keep it snoozed.
 
 ### `t3_thread_update`
 
@@ -476,7 +474,7 @@ a notification message telling it to answer with the pending request tools or
 ask the user. The message says whether the child is blocked or, for a Codex
 async question, still working. If the question is answered or dismissed before
 the notification starts a turn, that queued turn is cancelled. Approvals are not
-routed to the parent automatically.
+routed, because those tools cannot answer them.
 A parent still blocked in a `delegate_task` wait gets the blocking question
 through that wait instead.
 If the provider cuts that wait short, a still-pending live question wakes the

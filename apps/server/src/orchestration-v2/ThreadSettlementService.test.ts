@@ -1432,35 +1432,27 @@ describe("isSnoozed", () => {
     ).toBe(false);
     expect(ThreadSettlementService.isSnoozed(completed, NOW_MS + DAY_MS)).toBe(false);
   });
-  it.each([
-    { boundary: "before snooze", requestedAt: at(-2 * DAY_MS - 1), snoozed: true },
-    { boundary: "at snooze", requestedAt: snoozed.snoozedAt, snoozed: true },
-    { boundary: "unknown", requestedAt: null, snoozed: true },
-    { boundary: "after snooze", requestedAt: at(-2 * DAY_MS + 1), snoozed: false },
-  ])(
-    "agrees on snooze and settlement with completed request time $boundary",
-    ({ requestedAt, snoozed: parked }) => {
-      const thread = shell({
-        ...snoozed,
-        status: "completed",
-        latestRunRequestedAt: requestedAt,
-        latestRunStartedAt: at(-DAY_MS - 1),
-        latestRunCompletedAt: at(-DAY_MS),
-      });
+  it("keeps a run requested and completed after snoozing parked until the timer", () => {
+    const thread = shell({
+      ...snoozed,
+      status: "completed",
+      latestRunRequestedAt: at(-2 * DAY_MS + 1),
+      latestRunStartedAt: at(-DAY_MS - 1),
+      latestRunCompletedAt: at(-DAY_MS),
+    });
 
-      expect(ThreadSettlementService.isSnoozed(thread, NOW_MS)).toBe(parked);
-      expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(!parked);
-      expect(
-        ThreadSettlementService.resolveAutoSettlementAt({
-          thread,
-          pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
-          nowMs: NOW_MS,
-          autoSettleAfterDays: null,
-          autoSettleOnMerge: true,
-        }),
-      ).toEqual(parked ? null : at(-DAY_MS));
-    },
-  );
+    expect(ThreadSettlementService.isSnoozed(thread, NOW_MS)).toBe(true);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(thread, NOW_MS)).toBe(false);
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        thread,
+        pullRequest: { state: "merged", mergedAt: DateTime.formatIso(at(-1)) },
+        nowMs: NOW_MS,
+        autoSettleAfterDays: null,
+        autoSettleOnMerge: true,
+      }),
+    ).toBeNull();
+  });
 
   it.each([false, true])(
     "keeps idle and interrupted threads snoozed with quiet=%s",

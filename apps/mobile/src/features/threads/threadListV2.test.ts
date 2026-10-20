@@ -486,7 +486,7 @@ describe("buildThreadListV2Items", () => {
     expect(
       buildThreadListV2Items({ ...input, threads: [{ ...thread, snoozeQuiet: false }] })
         .snoozedCount,
-    ).toBe(0);
+    ).toBe(1);
     expect(
       buildThreadListV2Items({ ...input, threads: [{ ...thread, hasPendingApprovals: true }] })
         .snoozedCount,
