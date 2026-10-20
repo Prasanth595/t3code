@@ -660,6 +660,8 @@ describe("DesktopWindow", () => {
         assert.equal(yield* Ref.get(createCount), 1);
         assert.equal(createdWindowOptions[0]?.width, 1100);
         assert.equal(createdWindowOptions[0]?.height, 780);
+        assert.equal(createdWindowOptions[0]?.minWidth, 600);
+        assert.equal(createdWindowOptions[0]?.minHeight, 620);
         assert.isUndefined(createdWindowOptions[0]?.x);
         assert.isUndefined(createdWindowOptions[0]?.y);
         assert.isTrue(createdWindowOptions[0]?.disableAutoHideCursor);
@@ -774,9 +776,10 @@ describe("DesktopWindow", () => {
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.
-  it.effect("restores the preview browser's own zoom after zooming the app", () =>
+  it.effect("zooms main with a focused popup and reapplies preview zoom", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
+      const popup = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const previewZoomReapplies: number[] = [];
@@ -785,6 +788,7 @@ describe("DesktopWindow", () => {
         createCount,
         mainWindow,
         previewZoomReapplies,
+        focusedWindow: popup.window,
       });
 
       yield* Effect.gen(function* () {
@@ -801,6 +805,7 @@ describe("DesktopWindow", () => {
           [-0.5, -1, -0.5, 0],
         );
         assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
+        assert.equal(popup.setZoomLevel.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -915,7 +920,7 @@ describe("DesktopWindow", () => {
         createdWindowOptions,
         desktopSettings: {
           ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-          mainWindowBounds: { x: 120, y: 80, width: 1320, height: 880 },
+          mainWindowBounds: { x: 120, y: 80, width: 768, height: 780 },
         },
       });
 
@@ -923,8 +928,8 @@ describe("DesktopWindow", () => {
         const desktopWindow = yield* DesktopWindow.DesktopWindow;
         yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
 
-        assert.equal(createdWindowOptions[0]?.width, 1320);
-        assert.equal(createdWindowOptions[0]?.height, 880);
+        assert.equal(createdWindowOptions[0]?.width, 768);
+        assert.equal(createdWindowOptions[0]?.height, 780);
         assert.equal(createdWindowOptions[0]?.x, 120);
         assert.equal(createdWindowOptions[0]?.y, 80);
       }).pipe(Effect.provide(layer));
@@ -1149,14 +1154,14 @@ describe("DesktopWindow", () => {
         move();
         yield* TestClock.adjust(250);
 
-        fakeWindow.getBounds.mockReturnValue({ x: 160, y: 100, width: 1360, height: 900 });
+        fakeWindow.getBounds.mockReturnValue({ x: 160, y: 100, width: 664, height: 780 });
         resize();
         yield* TestClock.adjust(499);
         assert.deepEqual(mainWindowBoundsUpdates, []);
 
         yield* TestClock.adjust(1);
         yield* Effect.promise(() => Promise.resolve());
-        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 160, y: 100, width: 1360, height: 900 }]);
+        assert.deepEqual(mainWindowBoundsUpdates, [{ x: 160, y: 100, width: 664, height: 780 }]);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -1238,7 +1243,7 @@ describe("DesktopWindow", () => {
   it.effect("does not persist bounds that fail the domain schema", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.getBounds.mockReturnValue({ x: 100.4, y: 80.2, width: 839.4, height: 619.4 });
+      fakeWindow.getBounds.mockReturnValue({ x: 100, y: 80, width: 599, height: 620 });
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const mainWindowBoundsUpdates: DesktopAppSettings.DesktopWindowBounds[] = [];
