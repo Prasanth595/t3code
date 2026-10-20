@@ -47,7 +47,9 @@ const lucideIcons = [
 ];
 
 async function lucideSvg(name) {
-  const module = await import(NodePath.join(lucideIconsDirectory, `${name}.js`));
+  const module = await import(
+    NodeURL.pathToFileURL(NodePath.join(lucideIconsDirectory, `${name}.js`)).href
+  );
   const body = module.__iconNode
     .map(([tag, { key: _key, ...attributes }]) => {
       const attributeText = Object.entries(attributes)
