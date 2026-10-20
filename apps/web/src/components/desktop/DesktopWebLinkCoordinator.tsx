@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -10,21 +11,24 @@ import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
-import { useClientSettings } from "../../hooks/useSettings";
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
-import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { useProjects } from "../../state/entities";
-import { environmentServerConfigsAtom } from "../../state/server";
-import { allReachableShellsLiveAtom } from "../../state/shell";
+import { useOpenChangeRequestLink } from "../../lib/openPullRequestLink";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
+import { allReachableShellsLiveAtom } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { resolveDesktopWebLinkTarget } from "./desktopWebLinkTarget";
+
+/** A link handed over by the OS is a plain click: nothing about it asks for the browser. */
+const externalClick = {
+  preventDefault() {},
+  stopPropagation() {},
+  metaKey: false,
+  ctrlKey: false,
+};
 
 /**
  * HTML files are served by this machine's environment, so only its threads can
@@ -54,9 +58,8 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
-  const projects = useProjects();
-  const projectsReady = useAtomValue(allReachableShellsLiveAtom);
-  const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
+  const projectsSettled = useAtomValue(allReachableShellsLiveAtom);
+  const openChangeRequest = useOpenChangeRequestLink();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const openThread = useNewThreadHandler();
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -66,12 +69,15 @@ export function DesktopWebLinkCoordinator() {
   });
   const httpBaseUrl = useEnvironmentHttpBaseUrl(primaryEnvironment?.environmentId ?? null);
   const queueRef = useRef(Promise.resolve());
-  const pendingLinksRef = useRef<string[]>([]);
   const webLinks = window.desktopBridge?.webLinks;
+  // The desktop process holds links until the renderer is ready. A PR link resolves against
+  // the project list, and a connected server publishes its config before its project snapshot,
+  // so stay not-ready until every reachable environment has reported its projects.
   const ready =
     webLinks !== undefined &&
     primaryEnvironment?.connection.phase === "connected" &&
-    primaryEnvironment.serverConfig !== null;
+    primaryEnvironment.serverConfig !== null &&
+    projectsSettled;
 
   const reportFailure = (url: string, description = url) =>
     toastManager.add(
@@ -97,23 +103,12 @@ export function DesktopWebLinkCoordinator() {
   };
 
   const openLink = useEffectEvent(async (url: string) => {
-    const target = resolveDesktopWebLinkTarget({
-      url,
-      projects,
-      primaryEnvironmentId: primaryEnvironment?.environmentId ?? null,
-      capabilities: new Map(
-        [...appAtomRegistry.get(environmentServerConfigsAtom)].map(([id, config]) => [
-          id,
-          config.environment.capabilities,
-        ]),
-      ),
-      openPullRequestsInApp,
-    });
-    if (target !== null) {
-      if (target.href !== undefined) await router.navigate({ href: target.href });
-      else await router.navigate(target);
+    const appPath = promptLinkAppPath(url);
+    if (appPath !== null) {
+      await router.navigate({ href: appPath });
       return;
     }
+    if (openChangeRequest(externalClick, url)) return;
     const isFile = url.startsWith("file:");
     const routeParams = router.state.matches.at(-1)?.params ?? {};
     const threadRef =
@@ -144,27 +139,11 @@ export function DesktopWebLinkCoordinator() {
     }
   });
 
-  const flushLinks = useEffectEvent(() => {
-    while (pendingLinksRef.current.length > 0) {
-      const url = pendingLinksRef.current[0]!;
-      // A connected server can publish its config before its project snapshot.
-      // Offline environments must not prevent an unmatched PR from falling back.
-      if (openPullRequestsInApp && parseChangeRequestUrl(url) !== null && !projectsReady) return;
-      pendingLinksRef.current.shift();
-      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
-    }
-  });
-
-  useEffect(() => {
-    if (ready && (projectsReady || !openPullRequestsInApp)) flushLinks();
-  }, [ready, projectsReady, openPullRequestsInApp]);
-
   useEffect(() => {
     if (!ready || webLinks === undefined) return;
     let subscribed = true;
     const unsubscribe = webLinks.onOpen((url) => {
-      pendingLinksRef.current.push(url);
-      flushLinks();
+      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
     });
     queueMicrotask(() => {
       if (subscribed) void webLinks.setReady(true).catch(() => undefined);
