@@ -9,6 +9,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -76,6 +77,105 @@ const withServer = Effect.fn("withServer")(function* (
 });
 
 const target = { installationId, generation: 1, viewId: "board" };
+
+it.effect(
+  "never subscribes a replacement session using the previous server's view capability",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { supervisor, session } = yield* withServer({
+          repositoryIdentity: true,
+          pluginViews: true,
+        });
+        const calls: Array<string> = [];
+        const checkedCalls: Array<string> = [];
+        const snapshot: PluginViewsSnapshot = {
+          views: [],
+          problems: [{ installationId, generation: 1, message: "Checked session" }],
+        };
+        const subscribing = (received: Array<string>): RpcSession.RpcSession => ({
+          ...session,
+          client: {
+            [WS_METHODS.pluginViewsSubscribe]: () => {
+              received.push(WS_METHODS.pluginViewsSubscribe);
+              return Stream.succeed(snapshot).pipe(Stream.concat(Stream.never));
+            },
+          } as unknown as WsRpcProtocolClient,
+        });
+        yield* SubscriptionRef.set(supervisor.session, Option.some(subscribing(checkedCalls)));
+        const replacementRef = yield* SubscriptionRef.make(
+          Option.some({
+            ...subscribing(calls),
+            initialConfig: Effect.succeed({
+              environment: { capabilities: { repositoryIdentity: true } },
+            } as ServerConfig),
+          }),
+        );
+        let reads = 0;
+        // Deliver the captured session to the outer stream, then expose the replacement
+        // to an independent current-session read in the production RPC subscriber.
+        const racingSupervisor = {
+          ...supervisor,
+          get session() {
+            return reads++ === 0 ? supervisor.session : replacementRef;
+          },
+        };
+        const view = yield* pluginViewsStream.pipe(
+          Stream.filter((view) => view._tag === "available" && view.problems.length > 0),
+          Stream.runHead,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, racingSupervisor),
+        );
+        expect(Option.getOrThrow(view)).toEqual({ _tag: "available", ...snapshot });
+        expect(checkedCalls).toEqual([WS_METHODS.pluginViewsSubscribe]);
+        expect(calls).toEqual([]);
+      }),
+    ),
+);
+
+it.effect("rechecks view capabilities and subscribes again after a disconnect", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { run, supervisor, session } = yield* withServer({
+        repositoryIdentity: true,
+        pluginViews: true,
+      });
+      const calls: Array<number> = [];
+      const snapshot: PluginViewsSnapshot = {
+        views: [],
+        problems: [{ installationId, generation: 1, message: "View problem" }],
+      };
+      const capable = (generation: number): RpcSession.RpcSession => ({
+        ...session,
+        client: {
+          [WS_METHODS.pluginViewsSubscribe]: () => {
+            calls.push(generation);
+            return Stream.succeed(snapshot).pipe(Stream.concat(Stream.never));
+          },
+        } as unknown as WsRpcProtocolClient,
+      });
+      yield* SubscriptionRef.set(supervisor.session, Option.some(capable(1)));
+      const frames = yield* Queue.unbounded<PluginViewsView>();
+      yield* run(
+        pluginViewsStream.pipe(Stream.runForEach((view) => Queue.offer(frames, view))),
+      ).pipe(Effect.forkScoped);
+      const empty = { _tag: "available", views: [], problems: [] };
+      expect(yield* Queue.take(frames)).toEqual(empty);
+      expect(yield* Queue.take(frames)).toEqual({ _tag: "available", ...snapshot });
+      const older = yield* withServer({ repositoryIdentity: true });
+      yield* SubscriptionRef.set(supervisor.session, Option.some(older.session));
+      expect(yield* Queue.take(frames)).toEqual(empty);
+      expect(yield* Queue.take(frames)).toEqual({ _tag: "unsupported" });
+      expect(older.calls).toEqual([]);
+      yield* SubscriptionRef.set(supervisor.session, Option.none());
+      expect(yield* Queue.take(frames)).toEqual(empty);
+      yield* SubscriptionRef.set(supervisor.session, Option.some(capable(2)));
+      expect(yield* Queue.take(frames)).toEqual(empty);
+      expect(yield* Queue.take(frames)).toEqual({ _tag: "available", ...snapshot });
+      expect(calls).toEqual([1, 2]);
+      expect(older.calls).toEqual([]);
+    }),
+  ),
+);
 
 describe("plugin views on servers with and without them", () => {
   it.effect("loads nothing and calls nothing on a server without views", () =>
