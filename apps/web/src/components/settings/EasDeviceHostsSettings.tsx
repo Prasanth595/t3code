@@ -204,7 +204,13 @@ function EasDeviceHostEditor(props: {
       environmentId: props.environmentId,
       input: {
         ...(token.kind === "saved" && !props.isNew ? { hostId: props.host.id } : {}),
-        ...(token.kind === "new" ? { accessToken: token.value } : {}),
+        // A cleared token is sent as empty, so the check does not fall back to
+        // the saved one that Save is about to drop.
+        ...(token.kind === "new"
+          ? { accessToken: token.value }
+          : token.kind === "cleared"
+            ? { accessToken: "" }
+            : {}),
       },
     });
     if (run !== latestCheck.current) return;

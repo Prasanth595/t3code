@@ -1106,12 +1106,26 @@ export const make = Effect.gen(function* () {
           ? ""
           : ((yield* settings.getSettings).easDeviceHosts.find((host) => host.id === input.hostId)
               ?.accessToken ?? "");
-      const credential = yield* resolveExpoCredential(input.accessToken || saved);
+      const credential = yield* resolveExpoCredential(input.accessToken ?? saved);
       const viewer = yield* makeExpoApi(yield* HttpClient.HttpClient, credential).viewer;
       return { signedInAs: viewer.name, credentialSource: credential.source, apps: viewer.apps };
     },
     Effect.provide(easContext),
-    Effect.mapError((cause) => new DeviceEasAccountError({ reason: cause.message })),
+    // Only bounded text reaches the browser: the credential errors' own
+    // guidance, or a category for what Expo answered, never Expo's text.
+    Effect.mapError(
+      (cause) =>
+        new DeviceEasAccountError({
+          reason:
+            cause._tag === "ExpoApiError"
+              ? cause.status === 401 || cause.status === 403
+                ? `Expo rejected the credential (HTTP ${cause.status}).`
+                : cause.rejected
+                  ? "Expo refused the account check."
+                  : "Could not complete the Expo account check."
+              : cause.message,
+        }),
+    ),
   );
 
   return {
