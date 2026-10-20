@@ -63,32 +63,35 @@ const walk = async (
 ): Promise<PluginSource> => {
   const files: Array<string> = [];
   let declaredBytes = 0;
-  const visit = async (relative: string) => {
-    const entries = await NodeFSP.readdir(NodePath.join(root, relative), {
-      withFileTypes: true,
-      encoding: "buffer",
-    });
-    for (const entry of entries) {
+  const directories = [""];
+  let directoryCount = 0;
+  for (let index = 0; index < directories.length; index++) {
+    const relative = directories[index]!;
+    // Latin-1 preserves each filename byte while opendir bounds the listing buffer.
+    const entries = await NodeFSP.opendir(NodePath.join(root, relative), { encoding: "latin1" });
+    for await (const entry of entries) {
       if (signal.aborted) throw new Refusal("the inspection was cancelled.");
-      const name = entry.name.toString("utf8");
-      if (!Buffer.from(name, "utf8").equals(entry.name))
+      const rawName = Buffer.from(entry.name, "latin1");
+      const name = rawName.toString("utf8");
+      if (!Buffer.from(name, "utf8").equals(rawName))
         throw new Refusal("a filename is not valid UTF-8.");
       const child = relative === "" ? name : `${relative}/${name}`;
       if (entry.isSymbolicLink()) throw new Refusal(`${child} is a symbolic link.`);
       if (entry.isDirectory()) {
-        await visit(child);
+        if (++directoryCount > limits.maxFiles)
+          throw new Refusal(`it has more than ${limits.maxFiles} directories.`);
+        directories.push(child);
         continue;
       }
       if (!entry.isFile()) throw new Refusal(`${child} is not a regular file.`);
-      files.push(child);
-      if (files.length > limits.maxFiles)
+      if (files.length >= limits.maxFiles)
         throw new Refusal(`it has more than ${limits.maxFiles} files.`);
+      files.push(child);
       declaredBytes += (await NodeFSP.lstat(NodePath.join(root, child))).size;
       if (declaredBytes > limits.maxBytes)
         throw new Refusal(`it is larger than ${limits.maxBytes} bytes.`);
     }
-  };
-  await visit("");
+  }
   // Code unit order of the relative path, independent of how the OS lists entries.
   files.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
