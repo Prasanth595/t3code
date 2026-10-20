@@ -462,17 +462,15 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
   let pausedUntilMillis = 0;
   let checkedAtMillis = Number.NEGATIVE_INFINITY;
   return (pause: CloudflareApiPause.CloudflareApiPause["Service"]) => {
-    const recordRateLimit = (cause: unknown) =>
-      Effect.gen(function* () {
-        const pauseMillis = cloudflareRateLimitPauseMillis(cause);
-        const until = (yield* Clock.currentTimeMillis) + pauseMillis;
-        pausedUntilMillis = Math.max(pausedUntilMillis, until);
-        yield* Effect.annotateCurrentSpan({
-          "relay.cloudflare.rate_limited": true,
-          "relay.cloudflare.pause_ms": pauseMillis,
-        });
-        yield* pause.pauseUntil(until);
-      });
+    const recordRateLimit = Effect.fn("relay.cloudflare_api_pause.rate_limited")(function* (
+      cause: unknown,
+    ) {
+      const pauseMillis = cloudflareRateLimitPauseMillis(cause);
+      const until = (yield* Clock.currentTimeMillis) + pauseMillis;
+      pausedUntilMillis = Math.max(pausedUntilMillis, until);
+      yield* Effect.annotateCurrentSpan({ "relay.cloudflare.pause_ms": pauseMillis });
+      yield* pause.pauseUntil(until);
+    });
     return <A, E>(
       call: Effect.Effect<A, E, Alchemy.RuntimeContext>,
     ): Effect.Effect<A, E | CloudflareApiPaused | Cause.TimeoutError> =>
