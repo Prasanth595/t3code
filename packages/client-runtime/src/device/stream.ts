@@ -126,6 +126,11 @@ export type DeviceHardwareButton = "home" | "back" | "recents" | "power" | "appS
 
 const RETRY_DELAY_MS = 1_000;
 const FIRST_FRAME_TIMEOUT_MS = 15_000;
+// A WebRTC feed that shows no frame for this long is reconnected; checked
+// every WEBRTC_STALL_CHECK_MS, so a transient `disconnected` peer that
+// recovers is left alone.
+const WEBRTC_STALL_TIMEOUT_MS = FIRST_FRAME_TIMEOUT_MS;
+const WEBRTC_STALL_CHECK_MS = 5_000;
 const TRANSPORT_PROBE_TIMEOUT_MS = 5_000;
 // Offers carry every candidate: serve-sim does not accept trickled ICE.
 const ICE_GATHERING_TIMEOUT_MS = 2_000;
@@ -884,16 +889,37 @@ export function createDeviceStreamClient(
       generation === lifecycle &&
       videoGeneration === feedGeneration &&
       peer === current;
+    // After the first frame nothing else bounds a feed that stops: the peer
+    // can sit `disconnected` with the last frame on the canvas. A long gap
+    // between frames reconnects through the same path as a failed connection.
+    let checksWithoutFrame = 0;
+    let watchdog: ReturnType<typeof setInterval> | null = null;
+    const clearWatchdog = () => {
+      if (watchdog !== null) clearInterval(watchdog);
+      watchdog = null;
+    };
     const retry = (detail: string) => {
+      clearWatchdog();
       if (!isCurrent()) return;
       closePeer();
       connecting(detail);
       scheduleRetry("video", () => void readIosWebRtc(settings));
     };
     const presentFrame = () => {
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        clearWatchdog();
+        return;
+      }
       if (video.videoWidth > 0 && video.videoHeight > 0) {
         paint(video, video.videoWidth, video.videoHeight);
+        checksWithoutFrame = 0;
+        watchdog ??= setInterval(() => {
+          if (!isCurrent()) return clearWatchdog();
+          checksWithoutFrame++;
+          if (checksWithoutFrame * WEBRTC_STALL_CHECK_MS >= WEBRTC_STALL_TIMEOUT_MS) {
+            retry("Device stream stalled. Reconnecting…");
+          }
+        }, WEBRTC_STALL_CHECK_MS);
       }
       video.requestVideoFrameCallback(presentFrame);
     };

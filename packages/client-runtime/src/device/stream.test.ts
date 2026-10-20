@@ -1100,6 +1100,35 @@ describe("WebRTC-only iOS devices", () => {
     expect(closes.map(fixture.bodyOf)).toEqual([{ sessionId: offer.sessionId }]);
   });
 
+  it("reconnects a WebRTC feed that stops producing frames", async () => {
+    const fixture = webRtcFixture({ webCodecs: true });
+    fixture.client.start();
+    await fixture.settle();
+    const peer = fixture.peers[0]!;
+    peer.ontrack?.({ streams: [{}], track: {} });
+    fixture.frameCallbacks.shift()?.();
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    // Frames keep coming: nothing happens.
+    await vi.advanceTimersByTimeAsync(10_000);
+    fixture.frameCallbacks.shift()?.();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fixture.peers).toHaveLength(1);
+    expect(peer.closed).toBe(false);
+    // Then none for the first-frame deadline (checked every 5 s): the feed
+    // reconnects through the usual retry path.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(peer.closed).toBe(true);
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith(
+      "connecting",
+      "Device stream stalled. Reconnecting…",
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
+    expect(fixture.peers[1]!.remoteDescription).toEqual({ type: "answer", sdp: "v=0 answer" });
+    fixture.client.stop();
+  });
+
   it("retries a WebRTC offer while another viewer is negotiating", async () => {
     const fixture = webRtcFixture({ webCodecs: true, offerStatuses: [409] });
     fixture.client.start();
