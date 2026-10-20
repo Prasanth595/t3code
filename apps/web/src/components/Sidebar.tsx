@@ -2458,8 +2458,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-1 flex min-w-0 items-center gap-1.5">
-              <span className="shrink-0">{pinIndicator}</span>
+            <div
+              className={cn("mt-1 flex min-w-0 items-center", pinIndicator !== null && "gap-1.5")}
+            >
+              {pinIndicator !== null ? <span className="shrink-0">{pinIndicator}</span> : null}
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
