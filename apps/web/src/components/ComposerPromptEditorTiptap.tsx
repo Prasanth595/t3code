@@ -12,7 +12,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tip
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { isHistoryTransaction } from "@tiptap/pm/history";
+import { history, isHistoryTransaction, undoDepth } from "@tiptap/pm/history";
 import {
   type EditorState,
   NodeSelection,
@@ -99,6 +99,7 @@ import {
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { registerEditableUndoHistory } from "~/lib/editableFocus";
 import { basenameOfPath } from "~/pierre-icons";
 import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
@@ -123,6 +124,7 @@ import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import type { ComposerDraftContextRecords } from "./composerContextPresentation";
 
 export interface ComposerPromptEditorHandle {
+  resetUndoHistory: () => void;
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
@@ -138,6 +140,8 @@ export interface ComposerPromptEditorHandle {
 }
 
 export interface ComposerPromptEditorProps {
+  /** Draft identity: editor undo must never cross thread or draft boundaries. */
+  historyScopeKey: string;
   value: string;
   cursor: number;
   richTextEnabled?: boolean;
@@ -765,6 +769,12 @@ const ComposerMarkersExtension = Extension.create({
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
+// Must match the StarterKit `undoRedo` options, or a reset loses the grouping.
+function resetComposerUndoHistory(editor: TiptapEditor) {
+  editor.unregisterPlugin("history");
+  editor.registerPlugin(history({ newGroupDelay: COMPOSER_UNDO_GROUP_DELAY }));
+}
+
 function replaceSkillChips(
   editor: TiptapEditor,
   replacements: ReturnType<typeof skillChipReplacements>,
@@ -938,6 +948,7 @@ function ComposerPromptEditorTiptapInner(
   props: ComposerPromptEditorProps & { initialExpandedCursor: number },
 ) {
   const {
+    historyScopeKey,
     value,
     cursor,
     richTextEnabled,
@@ -1022,6 +1033,7 @@ function ComposerPromptEditorTiptapInner(
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
+  const historyScopeRef = useRef(historyScopeKey);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
@@ -1480,6 +1492,15 @@ function ComposerPromptEditorTiptapInner(
   );
 
   useEffect(() => {
+    if (!editor) return;
+    // The serialized snapshot includes textless drafts such as rules and fences.
+    return registerEditableUndoHistory(
+      editor.view.dom,
+      () => undoDepth(editor.state) > 0 || snapshotRef.current.value.length > 0,
+    );
+  }, [editor]);
+
+  useEffect(() => {
     editor?.setEditable(!disabled);
   }, [disabled, editor]);
 
@@ -1555,12 +1576,15 @@ function ComposerPromptEditorTiptapInner(
 
   useLayoutEffect(() => {
     if (!editor) return;
+    const historyScopeChanged = historyScopeRef.current !== historyScopeKey;
+    historyScopeRef.current = historyScopeKey;
     const initialSelection = !hasAppliedControlledSelectionRef.current;
     hasAppliedControlledSelectionRef.current = true;
     const normalizedCursor = clampEditorCursor(value, cursor);
     const previousSnapshot = snapshotRef.current;
     if (
       !initialSelection &&
+      !historyScopeChanged &&
       previousSnapshot.value === value &&
       previousSnapshot.cursor === normalizedCursor
     ) {
@@ -1582,7 +1606,8 @@ function ComposerPromptEditorTiptapInner(
     setIsEmpty(value.length === 0);
     const rootElement = editor.view.dom;
     const isFocused = Boolean(rootElement && document.activeElement === rootElement);
-    if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
+    if (!initialSelection && !historyScopeChanged && previousSnapshot.value === value && !isFocused)
+      return;
 
     isApplyingControlledUpdateRef.current = true;
     const pendingCitation =
@@ -1595,6 +1620,11 @@ function ComposerPromptEditorTiptapInner(
           emitUpdate: false,
         },
       );
+    }
+    // A different thread or controlled clear starts fresh history, after its
+    // content is applied. User deletion has already updated snapshotRef.
+    if (historyScopeChanged || (previousSnapshot.value !== value && value === "")) {
+      resetComposerUndoHistory(editor);
     }
     const map = serializeEditorDoc(editor.state.doc);
     const flat = markdownToFlat(map, normalizedExpandedCursor);
@@ -1628,6 +1658,7 @@ function ComposerPromptEditorTiptapInner(
     cursor,
     editor,
     expandEditorCursor,
+    historyScopeKey,
     initialExpandedCursor,
     literalText,
     richText,
@@ -1681,6 +1712,10 @@ function ComposerPromptEditorTiptapInner(
   useImperativeHandle(
     editorRef,
     () => ({
+      resetUndoHistory: () => {
+        if (!editor) return;
+        resetComposerUndoHistory(editor);
+      },
       focus: () => {
         // The collapsed cursor cannot say where inside `$name` text a caret
         // sits, so restoring the caret passes along its exact offset.

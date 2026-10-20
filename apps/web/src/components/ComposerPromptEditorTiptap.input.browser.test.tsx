@@ -1,11 +1,14 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import type { Editor } from "@tiptap/core";
-import { act, createRef, useState } from "react";
+import { closeHistory } from "@tiptap/pm/history";
+import { act, createRef, useImperativeHandle, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import { detectComposerTrigger } from "~/composer-logic";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
+import { editableOwnsUndo } from "~/lib/editableFocus";
+import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import {
   ComposerPromptEditor,
   type ComposerPromptEditorHandle,
@@ -48,6 +51,7 @@ function Composer({
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
+      historyScopeKey="input"
       editorRef={createRef<ComposerPromptEditorHandle>()}
       value={prompt.value}
       cursor={prompt.cursor}
@@ -213,6 +217,120 @@ it.each([false, true])(
     expect(serializeEditorDoc(editor.state.doc).value).toBe('"word"');
   },
 );
+
+const draftControl = createRef<{ replace: (value: string, scope?: string) => void }>();
+const editorHandle = createRef<ComposerPromptEditorHandle>();
+
+function ControlledComposer() {
+  const [draft, setDraft] = useState({ value: "", scope: "prompt" });
+  useImperativeHandle(draftControl, () => ({
+    replace: (value, scope) => setDraft((current) => ({ value, scope: scope ?? current.scope })),
+  }));
+  return (
+    <ComposerPromptEditor
+      historyScopeKey={draft.scope}
+      editorRef={editorHandle}
+      value={draft.value}
+      cursor={draft.value.length}
+      richTextEnabled
+      contextRecords={new Map()}
+      skills={[]}
+      disabled={false}
+      placeholder=""
+      onChange={(value) => setDraft((current) => ({ ...current, value }))}
+      onPaste={() => {}}
+    />
+  );
+}
+
+async function mountControlledEditor() {
+  await act(async () => root.render(<ControlledComposer />));
+  const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
+  if (!element) throw new Error("Composer did not mount");
+  return element.editor;
+}
+
+it("yields undo only when both the draft and editor history are empty", async () => {
+  const editor = await mountControlledEditor();
+  expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+  await act(async () => editor.commands.insertContent("draft"));
+  expect(editableOwnsUndo(editor.view.dom)).toBe(true);
+  await act(async () => {
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    editor.commands.selectAll();
+    editor.commands.deleteSelection();
+  });
+  expect(editorHandle.current?.readSnapshot().value).toBe("");
+  expect(editableOwnsUndo(editor.view.dom)).toBe(true);
+  await act(async () => editor.commands.undo());
+  expect(editorHandle.current?.readSnapshot().value).toBe("draft");
+  await act(async () => editor.commands.undo());
+  expect(editorHandle.current?.readSnapshot().value).toBe("");
+  expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+});
+
+it("forgets sent drafts, including an already-empty attachment-only send", async () => {
+  const editor = await mountControlledEditor();
+  await act(async () => editor.commands.insertContent("sent prompt"));
+  await act(async () => draftControl.current?.replace(""));
+  expect(editorHandle.current?.readSnapshot().value).toBe("");
+  expect(editor.commands.undo()).toBe(false);
+  expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+
+  await act(async () => editor.commands.insertContent("new draft"));
+  await act(async () => {
+    editor.view.dispatch(closeHistory(editor.state.tr));
+    editor.commands.selectAll();
+    editor.commands.deleteSelection();
+  });
+  expect(editableOwnsUndo(editor.view.dom)).toBe(true);
+  // Attachment-only sends clear no text, so they must explicitly reset history.
+  await act(async () => editorHandle.current?.resetUndoHistory());
+  expect(editor.commands.undo()).toBe(false);
+  expect(editorHandle.current?.readSnapshot().value).toBe("");
+  expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+});
+
+it.each([
+  "same draft",
+  "",
+  "---",
+  "~~~ts\n~~~",
+  formatInlineContextReference({ kind: "file", contextId: "file_one", label: "one.ts" }),
+])("isolates draft scopes without losing focus or draft ownership (%j)", async (value) => {
+  const editor = await mountControlledEditor();
+  await act(async () => editor.commands.insertContent("previous draft"));
+  await act(async () => {
+    if (value === "") {
+      editor.commands.selectAll();
+      editor.commands.deleteSelection();
+    } else {
+      draftControl.current?.replace(value);
+    }
+  });
+  expect(editableOwnsUndo(editor.view.dom)).toBe(true);
+  await act(async () => editor.view.focus());
+  const focusedEditor = document.activeElement;
+  expect(focusedEditor).toBe(editor.view.dom);
+
+  // Equal text still represents a different draft when its scope changes.
+  await act(async () => draftControl.current?.replace(value, "question"));
+  expect(document.activeElement).toBe(focusedEditor);
+  expect(editorHandle.current?.readSnapshot().value).toBe(value);
+  expect(editor.commands.undo()).toBe(false);
+  expect(editableOwnsUndo(editor.view.dom)).toBe(value !== "");
+
+  await act(async () => editor.commands.insertContent("answer"));
+  await act(async () => editor.commands.undo());
+  expect(editorHandle.current?.readSnapshot().value).toBe(value);
+  expect(editor.commands.undo()).toBe(false);
+  await act(async () => editor.commands.insertContent("another answer"));
+  await act(async () => draftControl.current?.replace("", "queued-edit"));
+  expect(document.activeElement).toBe(focusedEditor);
+  expect(editor.commands.undo()).toBe(false);
+  expect(editorHandle.current?.readSnapshot().value).toBe("");
+  expect(editableOwnsUndo(editor.view.dom)).toBe(false);
+});
 
 it("keeps unknown dollar names editable when restoring and pasting a draft", async () => {
   const value = "echo $HOME $PATH $anything $notaskill $20 $20k $babysit ";

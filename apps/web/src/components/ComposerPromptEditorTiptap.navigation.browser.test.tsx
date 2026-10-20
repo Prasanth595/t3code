@@ -31,6 +31,7 @@ async function mountEditor(value: string, richTextEnabled = true) {
   await act(async () =>
     root.render(
       <ComposerPromptEditor
+        historyScopeKey="navigation"
         editorRef={createRef<ComposerPromptEditorHandle>()}
         value={value}
         cursor={0}

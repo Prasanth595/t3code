@@ -73,6 +73,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  composerUndoHistoryKey,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
@@ -363,6 +364,29 @@ describe("composerDraftStore addImages", () => {
     expect(draft?.images.map((image) => image.id)).toEqual(["img-shared"]);
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:shared");
   });
+});
+
+it("keeps promoted draft history but separates queued-message edits on either route", () => {
+  const routeThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("thread-undo"));
+  const routeDraftId = DraftId.make("draft-undo");
+  const queuedEdit = DraftId.make("queued-edit:thread-undo:run-1");
+  const threadKey = composerUndoHistoryKey({
+    routeThreadRef,
+    routeDraftId: null,
+    composerDraftTarget: routeThreadRef,
+  });
+  expect(
+    composerUndoHistoryKey({ routeThreadRef, routeDraftId, composerDraftTarget: routeDraftId }),
+  ).toBe(threadKey);
+  for (const draftId of [routeDraftId, null]) {
+    expect(
+      composerUndoHistoryKey({
+        routeThreadRef,
+        routeDraftId: draftId,
+        composerDraftTarget: queuedEdit,
+      }),
+    ).not.toBe(threadKey);
+  }
 });
 
 describe("composerDraftStore copied attachments", () => {

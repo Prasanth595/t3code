@@ -69,6 +69,7 @@ function Composer({
       </div>
       <output data-prompt={prompt} data-answer={answer} />
       <ComposerPromptEditor
+        historyScopeKey={question ? "question" : "prompt"}
         editorRef={editorRef}
         value={question ? answer : prompt}
         cursor={0}
