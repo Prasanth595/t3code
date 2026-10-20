@@ -14,6 +14,8 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -147,6 +149,34 @@ const startRun = Effect.fn("startRun")(function* (
 
 it.layer(NodeServices.layer)("PluginContextEnrichment", (it) => {
   describe("sources", () => {
+    it.effect("takes its generation snapshot only after catalogue restoration is ready", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { catalog, install } = yield* start(yield* Scope.Scope);
+          const installation = yield* install(yield* pluginDirectory());
+          const milestones = yield* Queue.unbounded<string>();
+          const release = yield* Deferred.make<void>();
+          const restoringCatalog = {
+            ...catalog,
+            ready: Queue.offer(milestones, "ready").pipe(Effect.andThen(Deferred.await(release))),
+            list: Queue.offer(milestones, "list").pipe(Effect.andThen(catalog.list)),
+          };
+          const enricher = yield* PluginContextEnrichment.make.pipe(
+            Effect.provideService(PluginCatalog.PluginCatalog, restoringCatalog),
+            Effect.provideService(
+              ServerEnvironment,
+              ServerEnvironment.of({ getEnvironmentId: Effect.succeed(environmentId) } as never),
+            ),
+          );
+          const sources = yield* enricher.sources.pipe(Effect.forkScoped);
+          expect(yield* Queue.take(milestones)).toBe("ready");
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(sources)).toMatchObject([
+            { installationId: installation.installationId, generation: installation.generation },
+          ]);
+        }),
+      ),
+    );
     it.effect("lists only enabled plugins whose consent covers a declared enrich transform", () =>
       withDatabase(
         Effect.gen(function* () {
@@ -210,6 +240,51 @@ it.layer(NodeServices.layer)("PluginContextEnrichment", (it) => {
   });
 
   describe("enrich", () => {
+    it.effect("bounds cold activation by the enrichment deadline without waiting for startup", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { supervisor, catalog, enricher, install } = yield* start(yield* Scope.Scope);
+          const directory = yield* pluginDirectory();
+          yield* fs.writeFileString(
+            path.join(directory, "main.mjs"),
+            `
+            export function activate(context) {
+              context.proposed.handle("t3.transform.enrich", () => null);
+              context.log.info("cold-activation-started");
+              return new Promise((resolve) => context.signal.addEventListener("abort", resolve));
+            }
+          `,
+          );
+          const installation = yield* install(directory);
+          const [source] = yield* enricher.sources;
+          const events = yield* supervisor.subscribe;
+          const finished = yield* Deferred.make<unknown>();
+          const enriching = yield* enricher.enrich(source!, runInput("cold")).pipe(
+            Effect.tap((outcome) => Deferred.succeed(finished, outcome)),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Stream.fromSubscription(events).pipe(
+            Stream.filter(
+              (event) => event._tag === "Log" && event.message === "cold-activation-started",
+            ),
+            Stream.runHead,
+          );
+          yield* TestClock.adjust("2 seconds");
+          const finishedAtDeadline = yield* Deferred.isDone(finished);
+          // Release startup before asserting, so even the broken version cleans up its process.
+          yield* catalog.disable({ installationId: installation.installationId });
+          const outcome = yield* Fiber.join(enriching);
+          expect(finishedAtDeadline).toBe(true);
+          expect(outcome).toEqual({
+            _tag: "skipped",
+            reason: "Context fixture did not answer within 2 seconds.",
+          });
+        }),
+      ),
+    );
+
     it.effect("passes the run to the plugin and returns its context", () =>
       withDatabase(
         Effect.gen(function* () {

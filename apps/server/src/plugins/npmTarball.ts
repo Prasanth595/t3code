@@ -106,6 +106,8 @@ const readPax = (data: Uint8Array) => {
     const equals = record.indexOf(0x3d);
     if (equals === -1) throw unsafe("The tarball has a malformed extended header.");
     const key = keyDecoder.decode(record.subarray(0, equals));
+    if (key.startsWith("GNU.sparse."))
+      throw unsafe("The tarball uses unsupported sparse-file attributes.");
     if (key === "path" || key === "size")
       fields.set(key, decoder.decode(record.subarray(equals + 1)));
     offset += length;

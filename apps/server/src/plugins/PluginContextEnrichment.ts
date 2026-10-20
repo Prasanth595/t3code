@@ -55,7 +55,8 @@ export const make = Effect.gen(function* () {
   const environmentId: EnvironmentId = yield* (yield* ServerEnvironment).getEnvironmentId;
 
   return RunContextEnricherV2.of({
-    sources: catalog.list.pipe(
+    sources: catalog.ready.pipe(
+      Effect.andThen(catalog.list),
       Effect.map(({ installations }) =>
         installations.flatMap((installation) => {
           const { manifest, consent } = installation;

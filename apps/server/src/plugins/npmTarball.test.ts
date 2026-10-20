@@ -16,6 +16,23 @@ const refusal = (entries: ReadonlyArray<TarEntry>, limits?: NpmTarballLimits) =>
 const manifest: TarEntry = { path: "package/package.json", data: "{}" };
 
 describe("readNpmTarball", () => {
+  it.effect("refuses PAX sparse payloads instead of treating their bytes as an ordinary file", () =>
+    Effect.gen(function* () {
+      for (const record of [
+        "GNU.sparse.map=4096,1",
+        "GNU.sparse.size=4097",
+        "GNU.sparse.major=1",
+        "GNU.sparse.name=package/sparse.js",
+      ]) {
+        const error = yield* refusal([
+          manifest,
+          { path: "package/sparse.js", data: "x", pax: [new TextEncoder().encode(record)] },
+        ]);
+        expect(error.reason).toBe("npm-archive-unsafe");
+        expect(error.message).toMatch(/sparse/);
+      }
+    }),
+  );
   it.effect("reads files below the package root, long names and executable bits included", () =>
     Effect.gen(function* () {
       const deep = `package/${"nested/".repeat(20)}deep.js`;

@@ -141,8 +141,10 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.catchCause(failStep("record-finalized")));
   });
 
-  const abandon: RunFinalizationService["Service"]["abandon"] = (input) =>
-    Effect.gen(function* () {
+  const abandon: RunFinalizationService["Service"]["abandon"] = Effect.fn(
+    "RunFinalizationService.abandon",
+  )(
+    function* (input) {
       const { run } = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       const { committed } = yield* eventSink.failEffect({
         commandId: CommandId.make(`command:effect:run.finalization-failed:${input.runId}`),
@@ -162,18 +164,21 @@ const make = Effect.gen(function* () {
               ],
       });
       return committed;
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new RunFinalizationError({
-            threadId: input.threadId,
-            runId: input.runId,
-            scopeId: input.scopeId,
-            operation: input.operation,
-            cause,
-          }),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new RunFinalizationError({
+              threadId: input.threadId,
+              runId: input.runId,
+              scopeId: input.scopeId,
+              operation: input.operation,
+              cause,
+            }),
+        ),
       ),
-    );
+  );
 
   return RunFinalizationService.of({ finalize, abandon });
 });
