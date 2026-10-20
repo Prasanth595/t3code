@@ -7,7 +7,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NewThreadButton } from "../../components/NewThreadButton";
-import type { AndroidHomeFabLayout as SharedAndroidHomeFabLayout } from "./AndroidHomeFab.shared";
+import {
+  androidHomeFabPosition,
+  type AndroidHomeFabLayout as SharedAndroidHomeFabLayout,
+} from "./AndroidHomeFab.shared";
 import { useWorkspaceState } from "../../state/workspace";
 import { FabScrollContext } from "./FabScrollContext";
 import { updateFabScroll } from "./fab-scroll";
@@ -45,7 +48,7 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
           expanded={expanded}
           onPress={props.onStartNewTask}
           className="absolute"
-          style={{ right: 16, bottom: insets.bottom + 16 }}
+          style={androidHomeFabPosition(insets.bottom, props.sidebar)}
         />
       ) : null}
     </View>

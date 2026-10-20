@@ -17,6 +17,7 @@ import {
   use,
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -255,7 +256,14 @@ function AdaptiveWorkspaceLayoutContent(
   const [railOverlay, setRailOverlay] = useState(false);
   const [focusedAuxiliaryPaneRole, setFocusedAuxiliaryPaneRole] =
     useState<WorkspaceAuxiliaryPaneRole | null>(null);
-  const baseLayout = deriveLayout({ width: viewportWidth, height, nativeMetrics });
+  // The compiler can't memoize these derivations: they stay live across later hook calls. Fresh
+  // objects here change the workspace context on every render, so every workspace screen
+  // re-renders on any layout state change, and the inspector registration then loops: each
+  // re-register re-renders its screen, which hands over a new inspector renderer.
+  const baseLayout = useMemo(
+    () => deriveLayout({ width: viewportWidth, height, nativeMetrics }),
+    [height, viewportWidth, nativeMetrics],
+  );
   const primarySidebarPinned = isPrimarySidebarPinned({
     pathname,
     nativeWorkspace,
@@ -274,24 +282,32 @@ function AdaptiveWorkspaceLayoutContent(
     setHinge(next);
     setWindowHinge(nextWindow);
   };
-  const layout = alignListPaneToHinge({
-    layout: baseLayout,
-    hinge,
-    viewportWidth,
-    leadingWidth: navigationRailWidth,
-  });
+  const layout = useMemo(
+    () =>
+      alignListPaneToHinge({
+        layout: baseLayout,
+        hinge,
+        viewportWidth,
+        leadingWidth: navigationRailWidth,
+      }),
+    [baseLayout, hinge, navigationRailWidth, viewportWidth],
+  );
   const width = viewportWidth - navigationRailWidth;
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
-  const fileInspector = deriveFileInspectorPaneLayout({
-    layout,
-    viewportWidth: width,
-    preferredWidth: fileInspectorPreferredWidth ?? undefined,
-    reservedLeadingWidth:
-      shouldRenderPrimarySidebar && showPrimarySidebar
-        ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
-        : 0,
-  });
+  const fileInspector = useMemo(
+    () =>
+      deriveFileInspectorPaneLayout({
+        layout,
+        viewportWidth: width,
+        preferredWidth: fileInspectorPreferredWidth ?? undefined,
+        reservedLeadingWidth:
+          shouldRenderPrimarySidebar && showPrimarySidebar
+            ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
+            : 0,
+      }),
+    [fileInspectorPreferredWidth, layout, showPrimarySidebar, shouldRenderPrimarySidebar, width],
+  );
   const auxiliaryPaneRole: WorkspaceAuxiliaryPaneRole =
     focusedAuxiliaryPaneRole ?? (/\/files(?:\/|$)/.test(pathname) ? "inspector" : "supplementary");
   const auxiliaryPanePreferredVisible =
@@ -303,14 +319,25 @@ function AdaptiveWorkspaceLayoutContent(
     auxiliaryPaneRole === "inspector"
       ? fileInspectorPreferredWidth
       : supplementaryPanePreferredWidth;
-  const panes = deriveWorkspacePaneLayout({
-    layout,
-    viewportWidth: width,
-    primarySidebarPreferredVisible: showPrimarySidebar,
-    auxiliaryPanePreferredVisible,
-    auxiliaryPaneRole,
-    auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
-  });
+  const panes = useMemo(
+    () =>
+      deriveWorkspacePaneLayout({
+        layout,
+        viewportWidth: width,
+        primarySidebarPreferredVisible: showPrimarySidebar,
+        auxiliaryPanePreferredVisible,
+        auxiliaryPaneRole,
+        auxiliaryPanePreferredWidth: auxiliaryPanePreferredWidth ?? undefined,
+      }),
+    [
+      auxiliaryPanePreferredVisible,
+      auxiliaryPaneRole,
+      auxiliaryPanePreferredWidth,
+      layout,
+      showPrimarySidebar,
+      width,
+    ],
+  );
   const activeThread = parseActiveThreadPath(pathname);
   const environmentId = activeThread?.environmentId ?? null;
   const threadId = activeThread?.threadId ?? null;
