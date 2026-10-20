@@ -450,10 +450,6 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
   return { prompt, outputSchema };
 }
 
-// ---------------------------------------------------------------------------
-// Provider failure explanation
-// ---------------------------------------------------------------------------
-
 export interface ProviderFailureExplanationPromptInput {
   context: string;
 }
