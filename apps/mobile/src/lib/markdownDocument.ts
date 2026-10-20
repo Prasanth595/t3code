@@ -55,8 +55,34 @@ function attribute(tag: string, name: string): string | null {
   return null;
 }
 
-/** Called only for parsed HTML nodes, so Markdown code examples keep their literal tags. */
-export function markdownHtmlContent(content: string): string {
+function markdownDestination(url: string): string {
+  return `<${url.replace(/&/g, "\\&").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\n/g, "")}>`;
+}
+
+const ANCHOR_TAG = /^<\/?a[\s/>]/i;
+
+/**
+ * Pairs `<a>` tags in order. Only a closed anchor with an http(s) or mailto href becomes a
+ * Markdown link; any other anchor keeps its text unlinked.
+ */
+function anchorMarkdown(tags: readonly string[]): string[] {
+  const replacements = tags.map(() => "");
+  const open: Array<{ index: number; href: string | undefined }> = [];
+  tags.forEach((tag, index) => {
+    if (tag[1] !== "/") {
+      const href = attribute(tag, "href")?.trim();
+      open.push({ index, href: href && /^(?:https?|mailto):/i.test(href) ? href : undefined });
+      return;
+    }
+    const opening = open.pop();
+    if (!opening?.href) return;
+    replacements[opening.index] = "[";
+    replacements[index] = `](${markdownDestination(opening.href)})`;
+  });
+  return replacements;
+}
+
+function markdownHtmlTags(content: string): RegExpExecArray[] {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
@@ -101,40 +127,86 @@ export function markdownHtmlContent(content: string): string {
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
     index = closingIndex;
   }
-  return content.replace(HTML_TAG, (tag, offset: number) => {
-    if (codeRanges.some((range) => offset >= range.start && offset < range.end)) return tag;
-    if (tag.startsWith("<!--")) return "";
-    if (/^<img\b/i.test(tag)) {
-      const src = attribute(tag, "src");
-      if (!src) return "";
-      const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
-      const href = src
-        .replace(/&/g, "\\&")
-        .replace(/</g, "%3C")
-        .replace(/>/g, "%3E")
-        .replace(/\n/g, "");
-      return `![${alt}](<${href}>)`;
-    }
-    if (/^<summary\b/i.test(tag)) return "\n\n**";
-    if (/^<\/summary\s*>/i.test(tag)) return "**\n\n";
-    if (/^<br\b/i.test(tag)) return "  \n";
-    if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
-    return "";
-  });
+  return tags.filter(
+    (tag) => !codeRanges.some((range) => tag.index >= range.start && tag.index < range.end),
+  );
+}
+
+/**
+ * Called only for parsed HTML nodes, so Markdown code examples keep their literal tags.
+ * `anchors` holds the replacements for the anchor tags still ahead, shared across sibling
+ * inline HTML nodes because each of those carries a single tag.
+ */
+export function markdownHtmlContent(
+  content: string,
+  options: { readonly anchors?: string[]; readonly inTableCell?: boolean } = {},
+): string {
+  const tags = markdownHtmlTags(content);
+  const anchors =
+    options.anchors ??
+    anchorMarkdown(tags.map((tag) => tag[0]).filter((tag) => ANCHOR_TAG.test(tag)));
+  let result = "";
+  let end = 0;
+  for (const match of tags) {
+    result += content.slice(end, match.index) + htmlTagMarkdown(match[0], anchors, options);
+    end = match.index + match[0].length;
+  }
+  return result + content.slice(end);
+}
+
+function htmlTagMarkdown(
+  tag: string,
+  anchors: string[],
+  options: { readonly inTableCell?: boolean },
+): string {
+  if (tag.startsWith("<!--")) return "";
+  if (ANCHOR_TAG.test(tag)) return anchors.shift() ?? "";
+  if (/^<img\b/i.test(tag)) {
+    const src = attribute(tag, "src");
+    if (!src) return "";
+    const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
+    return `![${alt}](${markdownDestination(src)})`;
+  }
+  if (/^<summary\b/i.test(tag)) return "\n\n**";
+  if (/^<\/summary\s*>/i.test(tag)) return "**\n\n";
+  // A line break would end the table row, so a cell keeps its content on one line.
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? " " : "  \n";
+  if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
+  return "";
 }
 
 export function markdownWithHtml(markdown: string): string {
   if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];
-  const visit = (node: MarkdownNode) => {
-    if (node.type === "html") {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        edits.push({ start, end, content: markdownHtmlContent(node.value) });
-    } else if ("children" in node) node.children.forEach(visit);
+  const visit = (node: MarkdownNode, inTableCell: boolean) => {
+    if (!("children" in node)) return;
+    inTableCell ||= node.type === "tableCell";
+    const children: readonly MarkdownNode[] = node.children;
+    // Inline HTML arrives one tag per node, so anchors pair across phrasing siblings.
+    const anchors =
+      node.type === "root" || node.type === "blockquote" || node.type === "listItem"
+        ? undefined
+        : anchorMarkdown(
+            children.flatMap((child) =>
+              child.type === "html"
+                ? markdownHtmlTags(child.value)
+                    .map((tag) => tag[0])
+                    .filter((tag) => ANCHOR_TAG.test(tag))
+                : [],
+            ),
+          );
+    for (const child of children) {
+      if (child.type !== "html") {
+        visit(child, inTableCell);
+        continue;
+      }
+      const start = child.position?.start.offset;
+      const end = child.position?.end.offset;
+      const content = markdownHtmlContent(child.value, { anchors, inTableCell });
+      if (start !== undefined && end !== undefined) edits.push({ start, end, content });
+    }
   };
-  visit(parser.parse(markdown));
+  visit(parser.parse(markdown), false);
   for (const edit of edits.reverse())
     markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
   return markdown;
