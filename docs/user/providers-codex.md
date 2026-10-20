@@ -99,8 +99,10 @@ to see what Codex loads: ChatGPT connectors, plugins, MCP servers, and skills. A
 a Codex instance ends on the same list once you are signed in.
 
 Switch a connector or skill off to keep it out of T3 Code only. Codex and ChatGPT
-keep it, and the change applies to new threads. Plugins and MCP servers are listed
-but can only be turned off in Codex itself. To manage connectors everywhere, use
+keep it. The change takes effect from your next message. Codex threads share one
+Codex process, so while any Codex thread is still working, the change waits until it
+finishes. Plugins and MCP servers are listed but can only be turned off in Codex
+itself. To manage connectors everywhere, use
 **Manage on chatgpt.com**.
 
 ## Codex says I hit a usage limit

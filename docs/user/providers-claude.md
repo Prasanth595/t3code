@@ -85,7 +85,8 @@ claude.ai connectors, plugins, MCP servers, and skills, with each connector's si
 status. Adding a Claude instance ends on the same list once you are signed in.
 
 Switch an item off to keep it out of T3 Code only. Claude Code, the Claude apps, and
-claude.ai keep it. The change applies to new threads. To remove a connector
+claude.ai keep it. The change takes effect from a thread's next message; a thread that
+is still working keeps its current setup until it finishes. To remove a connector
 everywhere, use **Manage on claude.ai**. A plugin's skills and MCP servers go with
 the plugin's switch. Opening the list starts Claude Code and every MCP server it is
 configured with, so it can take a few seconds.
