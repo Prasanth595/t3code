@@ -218,7 +218,7 @@ describe("DesktopPreReadyPlatform", () => {
     getSwitchValueMock.mockReturnValue("");
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;
-      assert.include(writeFileSyncMock.mock.calls[0]?.[1], 'Exec="/usr/bin/t3code" %U');
+      assert.include(writeFileSyncMock.mock.calls[0]?.[1], "Exec=/usr/bin/t3code %U");
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
