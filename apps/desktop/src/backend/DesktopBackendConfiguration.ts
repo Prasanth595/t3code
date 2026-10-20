@@ -465,7 +465,7 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
 });
 
 // In WSL2 mirrored mode the distro's eth0 IP equals the host's, which is the
-// signature we use to detect that mode and switch the renderer URL to loopback.
+// signature we use to detect that mode and skip the distro-IP fallback.
 const isLocalHostIpv4 = (ip: string): boolean => {
   const interfaces = NodeOS.networkInterfaces();
   for (const list of Object.values(interfaces)) {
@@ -581,11 +581,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const wslEnvironment = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  // wslhost forwarding is unreliable on some Windows hosts: the desktop's
-  // readiness probe and the renderer's saved-env-style fetch both saw "Failed
-  // to fetch" when the backend only bound to 127.0.0.1 inside WSL. Binding to
-  // 0.0.0.0 plus advertising the WSL IP as the renderer-visible URL avoids that
-  // dependency.
+  // Keep the distro-IP route available when wslhost loopback forwarding fails.
   const wslBindHost = "0.0.0.0";
 
   const bootstrap = {
@@ -647,14 +643,12 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const distroForConfig = runningDistro ?? input.distro;
 
   const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
-  const usesSharedNetworkStack = Option.match(distroIp, {
-    onNone: () => false,
-    onSome: (ip) => isLocalHostIpv4(ip),
-  });
-  const rendererHost = usesSharedNetworkStack
-    ? "127.0.0.1"
-    : Option.getOrElse(distroIp, () => "127.0.0.1");
-  const httpBaseUrl = new URL(`http://${rendererHost}:${input.port}`);
+  const httpBaseUrl = new URL(`http://127.0.0.1:${input.port}`);
+  const fallbackHttpBaseUrl = distroIp.pipe(
+    Option.filter((ip) => !isLocalHostIpv4(ip)),
+    Option.map((ip) => new URL(`http://${ip}:${input.port}`)),
+    Option.getOrUndefined,
+  );
 
   const distroArgs = distroForConfig ? ["-d", distroForConfig] : [];
   const forwardedEnv: Record<string, string> = {};
@@ -691,6 +685,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     bootstrap,
     bootstrapDelivery: "stdin" as const,
     httpBaseUrl,
+    ...(fallbackHttpBaseUrl === undefined ? {} : { fallbackHttpBaseUrl }),
     captureOutput: true,
     ...(runningDistro !== null ? { runningDistro } : {}),
   };

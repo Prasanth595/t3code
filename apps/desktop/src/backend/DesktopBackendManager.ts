@@ -70,6 +70,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly bootstrap: DesktopBackendBootstrapValue;
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
+  readonly fallbackHttpBaseUrl?: URL;
   readonly captureOutput: boolean;
   readonly preflightFailure: Option.Option<PreflightFailure>;
   readonly runningDistro?: string;
@@ -196,7 +197,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly outputDrainTimeout?: Duration.Duration;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
-  readonly onReady?: () => Effect.Effect<void>;
+  readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onReadinessFailure?: (error: BackendReadinessTimeoutError) => Effect.Effect<void>;
   readonly onOutput?: (
     streamName: BackendProcessOutputStream,
@@ -234,11 +235,8 @@ export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
-  // Receives the *resolved* httpBaseUrl of the run that just became
-  // ready. The window service uses this to decide what URL to load
-  // (the WSL backend reports its distro IP, the Windows backend reports
-  // 127.0.0.1). Splitting this off from configResolve avoids races
-  // between "fired onReady" and "currentConfig already advanced".
+  // Pass the URL that answered readiness directly so window loading does not
+  // race with currentConfig advancing to another run.
   readonly onReady?: (httpBaseUrl: URL) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
@@ -548,15 +546,28 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // the initial readiness budget while the backend is about to come up moments
   // later; a one-shot probe left the app stuck on "Connecting to WSL…" forever
   // even though the backend kept running and became healthy.
-  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
+  const readinessTimeout = options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT;
+  const probeUrl = (httpBaseUrl: URL, timeout: Duration.Duration) =>
     waitForHttpReady({
       executablePath: options.executablePath,
       entryPath: options.entryPath,
       cwd: options.cwd,
-      httpBaseUrl: options.httpBaseUrl,
-      timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-    }).pipe(
-      Effect.flatMap(() => options.onReady?.() ?? Effect.void),
+      httpBaseUrl,
+      timeout,
+    }).pipe(Effect.as(httpBaseUrl));
+  const probeReachableUrl =
+    options.fallbackHttpBaseUrl === undefined
+      ? probeUrl(options.httpBaseUrl, readinessTimeout)
+      : Effect.race(
+          probeUrl(options.httpBaseUrl, readinessTimeout),
+          probeUrl(options.fallbackHttpBaseUrl, readinessTimeout).pipe(
+            // Give loopback a bounded preference once the fallback is ready.
+            Effect.tap(() => Effect.sleep(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT)),
+          ),
+        );
+  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
+    probeReachableUrl.pipe(
+      Effect.flatMap((readyUrl) => options.onReady?.(readyUrl) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
@@ -709,11 +720,18 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const resetFatalPreflightCounter =
           !current.desiredRunning && current.preflightFailureAttempt > 0;
         yield* cancelRestart;
+        const previousHttpBaseUrl = Option.getOrUndefined(current.config)?.httpBaseUrl;
         yield* Ref.update(state, (latest) => ({
           ...latest,
           desiredRunning: true,
           ready: false,
-          config: Option.some(config.value),
+          // Keep renderer bootstraps stable until readiness selects this run's URL.
+          config: Option.some(
+            previousHttpBaseUrl !== undefined &&
+              previousHttpBaseUrl.href === config.value.fallbackHttpBaseUrl?.href
+              ? { ...config.value, httpBaseUrl: previousHttpBaseUrl }
+              : config.value,
+          ),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
         }));
 
@@ -900,7 +918,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               ...run,
               exitObserved: true,
             })),
-          onReady: Effect.fn("desktop.backendInstance.onReady")(function* () {
+          onReady: Effect.fn("desktop.backendInstance.onReady")(function* (readyUrl) {
             const isCurrentRun = yield* Ref.modify(state, (latest) => {
               const activeRun = Option.getOrUndefined(latest.active);
               if (activeRun?.id !== runId) {
@@ -913,6 +931,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   ...latest,
                   restartAttempt: 0,
                   ready: true,
+                  config: Option.map(latest.config, (current) => ({
+                    ...current,
+                    httpBaseUrl: readyUrl,
+                  })),
                 },
               ] as const;
             });
@@ -920,7 +942,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               return;
             }
 
-            yield* spec.onReady?.(config.value.httpBaseUrl) ?? Effect.void;
+            if (readyUrl.href !== config.value.httpBaseUrl.href) {
+              yield* logInstanceWarning("backend unreachable at its primary URL; using fallback", {
+                httpBaseUrl: config.value.httpBaseUrl.href,
+                fallbackHttpBaseUrl: readyUrl.href,
+              });
+            }
+            yield* spec.onReady?.(readyUrl) ?? Effect.void;
             if (
               config.value.runningDistro !== undefined &&
               config.value.wslRuntimeId !== undefined

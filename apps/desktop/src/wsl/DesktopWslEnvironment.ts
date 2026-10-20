@@ -100,11 +100,7 @@ export class DesktopWslEnvironment extends Context.Service<
       windowsPath: string,
     ) => Effect.Effect<Option.Option<string>>;
     readonly getUserHome: (distro: string | null) => Effect.Effect<Option.Option<string>>;
-    // The orchestrator uses this for the WSL backend's httpBaseUrl so the
-    // renderer can reach it without relying on wslhost's localhost→WSL
-    // automatic forwarding, which is flaky in practice (the backend can be
-    // listening for 30+ seconds before wslhost starts forwarding 127.0.0.1:port
-    // to WSL-side localhost).
+    // Supplies the fallback route when wslhost loopback forwarding is unavailable.
     readonly getDistroIp: (distro: string | null) => Effect.Effect<Option.Option<string>>;
     readonly prepareRuntime: (
       distro: string | null,

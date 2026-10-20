@@ -123,7 +123,7 @@ interface MakeInstanceInput {
   readonly spawnerLayer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly backendOutputLog?: Partial<DesktopObservability.DesktopBackendOutputLogShape>;
-  readonly onReady?: Effect.Effect<void>;
+  readonly onReady?: Effect.Effect<void> | ((httpBaseUrl: URL) => Effect.Effect<void>);
   readonly onShutdown?: Effect.Effect<void>;
   readonly onStateDirOwned?: Effect.Effect<void>;
   readonly onPreflightFailed?: (
@@ -181,7 +181,12 @@ function makeTestInstance(input: MakeInstanceInput) {
     id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
     label: Effect.succeed("Windows"),
     configResolve: input.configResolve ?? Effect.succeed(input.config ?? baseConfig),
-    ...(input.onReady ? { onReady: () => input.onReady! } : {}),
+    ...(input.onReady
+      ? {
+          onReady: (httpBaseUrl: URL) =>
+            typeof input.onReady === "function" ? input.onReady(httpBaseUrl) : input.onReady!,
+        }
+      : {}),
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
@@ -753,71 +758,210 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect(
-    "re-probes readiness after the first budget expires while the backend is still alive",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const requestUrls: Array<string> = [];
-          let requestCount = 0;
-          let readyCount = 0;
-          let readinessTimeoutCount = 0;
-          const firstProbe = yield* Deferred.make<void>();
-          const childExit = yield* Deferred.make<void>();
+  it.effect("recovers after both readiness routes time out while the backend stays alive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let loopbackAvailable = false;
+        const firstProbe = yield* Deferred.make<void>();
+        const timedOut = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<void>();
+        const childExit = yield* Deferred.make<void>();
+        const config = {
+          ...baseConfig,
+          fallbackHttpBaseUrl: new URL("http://172.27.0.99:3773"),
+        };
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                exitCode: Deferred.await(childExit).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+              }),
+            ),
+          ),
+        );
+        const layerHttp = layerHttpClient((request) =>
+          Deferred.succeed(firstProbe, void 0).pipe(
+            Effect.andThen(() =>
+              loopbackAvailable && new URL(request.url).hostname === "127.0.0.1"
+                ? Effect.succeed(responseForRequest(request, 200))
+                : Effect.never,
+            ),
+          ),
+        );
 
-          const layerSpawner = Layer.succeed(
+        const runFiber = yield* DesktopBackendManager.runBackendProcess({
+          ...config,
+          desktopTelemetryStream: Stream.empty,
+          readinessTimeout: Duration.millis(50),
+          onReady: () => Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
+          onReadinessFailure: () => Deferred.succeed(timedOut, void 0).pipe(Effect.asVoid),
+        }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHttp)), Effect.forkChild);
+
+        yield* Deferred.await(firstProbe);
+        yield* TestClock.adjust(Duration.millis(50));
+        assert.isTrue(yield* Deferred.isDone(timedOut));
+        assert.isFalse(yield* Deferred.isDone(ready));
+
+        loopbackAvailable = true;
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.isTrue(yield* Deferred.isDone(ready));
+
+        yield* Deferred.succeed(childExit, void 0);
+        assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 0);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "prefers loopback when fallback answers first",
+      loopbackDelayMs: 500,
+      loopbackAnswers: true,
+      fallbackAnswers: true,
+      expectedUrl: "http://127.0.0.1:3773/",
+    },
+    {
+      name: "uses loopback when the distro IP is inaccessible",
+      loopbackDelayMs: 0,
+      loopbackAnswers: true,
+      fallbackAnswers: false,
+      expectedUrl: "http://127.0.0.1:3773/",
+    },
+    {
+      name: "uses the distro IP when loopback is inaccessible",
+      loopbackDelayMs: 0,
+      loopbackAnswers: false,
+      fallbackAnswers: true,
+      expectedUrl: "http://172.27.0.99:3773/",
+    },
+  ])("$name", ({ loopbackDelayMs, loopbackAnswers, fallbackAnswers, expectedUrl }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstProbe = yield* Deferred.make<void>();
+        const ready = yield* Deferred.make<URL>();
+        const config = {
+          ...baseConfig,
+          fallbackHttpBaseUrl: new URL("http://172.27.0.99:3773"),
+        };
+        const instance = yield* makeTestInstance({
+          config,
+          spawnerLayer: Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.succeed(makeProcess({ exitCode: Effect.never }))),
+          ),
+          httpClientLayer: layerHttpClient((request) =>
+            Deferred.succeed(firstProbe, void 0).pipe(
+              Effect.andThen(() => {
+                const isLoopback = new URL(request.url).hostname === "127.0.0.1";
+                const answers = isLoopback ? loopbackAnswers : fallbackAnswers;
+                return answers
+                  ? Effect.succeed(responseForRequest(request, 200)).pipe(
+                      Effect.delay(Duration.millis(isLoopback ? loopbackDelayMs : 0)),
+                    )
+                  : Effect.never;
+              }),
+            ),
+          ),
+          onReady: (url) => Deferred.succeed(ready, url).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(firstProbe);
+        yield* TestClock.adjust(Duration.seconds(2));
+        assert.isTrue(yield* Deferred.isDone(ready), "a reachable route must finish readiness");
+        assert.equal((yield* Deferred.await(ready)).href, expectedUrl);
+        assert.equal(
+          Option.getOrThrow(yield* instance.currentConfig).httpBaseUrl.href,
+          expectedUrl,
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("preserves the selected fallback URL while a restarted backend is not ready", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstProbe = yield* Deferred.make<void>();
+        const firstExit = yield* Deferred.make<void>();
+        const exited = yield* Deferred.make<void>();
+        const secondLoopbackProbe = yield* Deferred.make<void>();
+        const secondReadiness = yield* Deferred.make<void>();
+        const starts = yield* Queue.unbounded<number>();
+        const readyUrls = yield* Queue.unbounded<URL>();
+        let startCount = 0;
+        const fallbackHref = "http://172.27.0.99:3773/";
+        const instance = yield* makeTestInstance({
+          configResolve: Effect.sync(() => ({
+            ...baseConfig,
+            fallbackHttpBaseUrl: new URL(fallbackHref),
+          })),
+          spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
-              Effect.succeed(
-                makeProcess({
-                  exitCode: Deferred.await(childExit).pipe(
-                    Effect.as(ChildProcessSpawner.ExitCode(0)),
-                  ),
-                }),
-              ),
+              Effect.gen(function* () {
+                startCount += 1;
+                yield* Queue.offer(starts, startCount);
+                return makeProcess({
+                  exitCode:
+                    startCount === 1
+                      ? Deferred.await(firstExit).pipe(Effect.as(ChildProcessSpawner.ExitCode(1)))
+                      : Effect.never,
+                });
+              }),
             ),
-          );
-
-          const layerHttp = layerHttpClient((request) =>
+          ),
+          httpClientLayer: layerHttpClient((request) =>
             Effect.gen(function* () {
-              requestCount += 1;
-              requestUrls.push(request.url);
-              yield* Deferred.succeed(firstProbe, void 0);
-              return responseForRequest(request, requestCount <= 2 ? 503 : 200);
+              const isLoopback = new URL(request.url).hostname === "127.0.0.1";
+              if (startCount === 1) {
+                yield* Deferred.succeed(firstProbe, void 0);
+                return isLoopback ? yield* Effect.never : responseForRequest(request, 200);
+              }
+              if (isLoopback) {
+                yield* Deferred.succeed(secondLoopbackProbe, void 0);
+              }
+              yield* Deferred.await(secondReadiness);
+              return responseForRequest(request, 200);
             }),
-          );
+          ),
+          onReady: (url) => Queue.offer(readyUrls, url).pipe(Effect.asVoid),
+          backendOutputLog: {
+            persistFailure: () => Deferred.succeed(exited, void 0).pipe(Effect.asVoid),
+          },
+        });
 
-          const runFiber = yield* DesktopBackendManager.runBackendProcess({
-            ...baseConfig,
-            desktopTelemetryStream: Stream.empty,
-            readinessTimeout: Duration.millis(50),
-            onReady: () =>
-              Effect.sync(() => {
-                readyCount += 1;
-              }),
-            onReadinessFailure: () =>
-              Effect.sync(() => {
-                readinessTimeoutCount += 1;
-              }),
-          }).pipe(Effect.provide(Layer.merge(layerSpawner, layerHttp)), Effect.forkChild);
+        yield* instance.start;
+        assert.equal(yield* Queue.take(starts), 1);
+        yield* Deferred.await(firstProbe);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal((yield* Queue.take(readyUrls)).href, fallbackHref);
+        assert.equal(
+          Option.getOrThrow(yield* instance.currentConfig).httpBaseUrl.href,
+          fallbackHref,
+        );
 
-          yield* Deferred.await(firstProbe);
-          assert.equal(readyCount, 0);
-          assert.equal(readinessTimeoutCount, 0);
+        yield* Deferred.succeed(firstExit, void 0);
+        yield* Deferred.await(exited);
+        yield* TestClock.adjust(Duration.millis(500));
+        assert.equal(yield* Queue.take(starts), 2);
+        yield* Deferred.await(secondLoopbackProbe);
+        assert.isFalse((yield* instance.snapshot).ready);
+        assert.equal(
+          Option.getOrThrow(yield* instance.currentConfig).httpBaseUrl.href,
+          fallbackHref,
+        );
 
-          yield* TestClock.adjust(Duration.millis(50));
-          assert.equal(readinessTimeoutCount, 1);
-          assert.equal(readyCount, 0);
-
-          yield* TestClock.adjust(Duration.millis(100));
-          assert.equal(readinessTimeoutCount, 2);
-          assert.equal(readyCount, 1);
-          assert.equal(requestUrls.length, 3);
-
-          yield* Deferred.succeed(childExit, void 0);
-          assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 0);
-        }).pipe(Effect.provide(TestClock.layer())),
-      ),
+        yield* Deferred.succeed(secondReadiness, void 0);
+        assert.equal((yield* Queue.take(readyUrls)).href, baseConfig.httpBaseUrl.href);
+        assert.equal(
+          Option.getOrThrow(yield* instance.currentConfig).httpBaseUrl.href,
+          baseConfig.httpBaseUrl.href,
+        );
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
   );
 
   it.effect("starts the configured backend and closes the scoped process on stop", () =>
