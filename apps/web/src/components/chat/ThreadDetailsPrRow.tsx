@@ -82,6 +82,7 @@ export function ThreadDetailsPrRow({
   reference: linkedReference,
   status,
   project,
+  url,
   label,
   openAriaLabel,
   onOpen,
@@ -94,6 +95,7 @@ export function ThreadDetailsPrRow({
   reference?: Pick<PullRequestRef, "host" | "repository" | "number"> | null;
   status: PrStatusIndicator | null;
   project: EnvironmentProject | null;
+  url: string;
   label: string;
   openAriaLabel: string;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
@@ -390,7 +392,7 @@ export function ThreadDetailsPrRow({
       <TooltipTrigger
         render={
           <ThreadDetailsControl
-            type="button"
+            render={<a href={url} target="_blank" rel="noopener noreferrer" />}
             variant="ghost"
             size="sm"
             part={part}
