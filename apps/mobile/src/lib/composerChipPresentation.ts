@@ -2,7 +2,6 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 
-import { flattenThemeColor } from "./mobileTheme";
 import type { CONTEXT_CHIP_ICON_SOURCES } from "./contextChipIcons.generated";
 
 export type ContextChipIcon = keyof typeof CONTEXT_CHIP_ICON_SOURCES;
@@ -47,10 +46,6 @@ export const UNAVAILABLE_CONTEXT_CHIP_PRESENTATION: ContextChipPresentation = {
   symbol: "doc",
   icon: "circle-dashed",
 };
-
-export function contextChipForeground(accent: string, foreground: string) {
-  return flattenThemeColor(`${accent.slice(0, 7)}38`, foreground);
-}
 
 export function composerChipSizeSuffix(record?: {
   readonly kind?: string;

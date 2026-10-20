@@ -102,15 +102,3 @@ describe("context chip kinds", () => {
     expect(presentation.icon).toBe("circle-dashed");
   });
 });
-
-describe("contextChipForeground", () => {
-  it("mixes 22% of the accent into the text color, as web does", async () => {
-    const { contextChipForeground } = await import("./composerChipPresentation");
-    expect(contextChipForeground("#009f6e", "#ffffff")).toBe("#c7eadf");
-  });
-
-  it("replaces an alpha byte the accent already carries", async () => {
-    const { contextChipForeground } = await import("./composerChipPresentation");
-    expect(contextChipForeground("#ffffffff", "#000000")).toBe("#383838");
-  });
-});
