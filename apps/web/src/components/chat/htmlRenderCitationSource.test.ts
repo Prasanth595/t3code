@@ -96,16 +96,19 @@ function setup(ready = true) {
 }
 
 describe("HTML citation source navigation", () => {
-  it("finishes with a recovery message when the frame does not reply", () => {
-    vi.useFakeTimers();
-    const p = setup();
-    vi.advanceTimersByTime(5000);
-    expect(p.request.onComplete).toHaveBeenCalledOnce();
-    expect(p.request.activationRef.current.dismissed).toBe(true);
-    expect(toast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Could not open the cited HTML" }),
-    );
-  });
+  it.each([true, false])(
+    "finishes with a recovery message when readiness is %s and the frame does not reply",
+    (ready) => {
+      vi.useFakeTimers();
+      const p = setup(ready);
+      vi.advanceTimersByTime(5000);
+      expect(p.request.onComplete).toHaveBeenCalledOnce();
+      expect(p.request.activationRef.current.dismissed).toBe(true);
+      expect(toast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Could not open the cited HTML" }),
+      );
+    },
+  );
 
   it("updates a comment anchor and releases it when the quote disappears", () => {
     const p = setup();

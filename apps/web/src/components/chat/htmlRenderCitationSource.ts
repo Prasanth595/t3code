@@ -42,20 +42,20 @@ export function observeHtmlRenderCitationSource({
       });
       return;
     }
+    responseTimeout ??= setTimeout(() => {
+      if (stopped || activation.dismissed) return;
+      activation.dismissed = true;
+      if (frame) htmlSelectionCommand(frame, "unmark");
+      request.onComplete();
+      toastManager.add({
+        type: "warning",
+        title: "Could not open the cited HTML",
+        description:
+          "Update or reconnect to the environment and try again. The saved quote is unchanged.",
+      });
+    }, 5000);
     frame = root.querySelector<HTMLIFrameElement>("iframe[data-html-selection-ready]");
     if (frame) {
-      responseTimeout ??= setTimeout(() => {
-        if (stopped || activation.dismissed) return;
-        activation.dismissed = true;
-        if (frame) htmlSelectionCommand(frame, "unmark");
-        request.onComplete();
-        toastManager.add({
-          type: "warning",
-          title: "Could not open the cited HTML",
-          description:
-            "Update or reconnect to the environment and try again. The saved quote is unchanged.",
-        });
-      }, 5000);
       htmlSelectionCommand(frame, "target", request.citation);
     }
   };

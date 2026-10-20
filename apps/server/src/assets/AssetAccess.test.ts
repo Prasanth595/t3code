@@ -1302,6 +1302,22 @@ describe("AssetAccess", () => {
           download: true,
         });
         expect(yield* fs.readFileString(filePath)).toBe(html);
+        yield* fs.writeFile(filePath, new Uint8Array(MCP_APP_MAX_HTML_BYTES + 1));
+        expect(yield* resolve(urls[0]!, true)).toMatchObject({ kind: "file", path: filePath });
+        const mcp = yield* issueAssetUrl({
+          resource: {
+            _tag: "attachment",
+            attachmentId,
+            fileName: "saved.html",
+            mimeType: "text/html",
+            disposition: "inline",
+            renderIntent: "mcp-app",
+          },
+        });
+        expect(yield* resolve(mcp.relativeUrl, true)).toMatchObject({
+          kind: "file",
+          renderIntent: "mcp-app",
+        });
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
