@@ -1,12 +1,14 @@
 // Fake CLIProxyAPI management API serving the Limits scenarios in scenarios.json.
 // Usage: node hub.mjs <state.json> [port]. state.json is {"scenario": "A", "n0": <epoch ms>};
 // it is re-read on every request, so edit it and press Refresh limits to switch scenarios.
-import { readFileSync } from "node:fs";
-import { createServer } from "node:http";
+import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 
 const [statePath, port = "18517"] = process.argv.slice(2);
 if (!statePath) throw new Error("usage: node hub.mjs <state.json> [port]");
-const scenarios = JSON.parse(readFileSync(new URL("./scenarios.json", import.meta.url), "utf8"));
+const scenarios = JSON.parse(
+  NodeFS.readFileSync(new URL("./scenarios.json", import.meta.url), "utf8"),
+);
 const MINUTE = 60_000;
 
 // A window is [usedPercent, minutesFromN0 | null]; null is unknown reset timing.
@@ -52,11 +54,11 @@ const json = (response, body) => {
   response.end(JSON.stringify(body));
 };
 
-createServer((request, response) => {
+NodeHttp.createServer((request, response) => {
   let raw = "";
   request.on("data", (chunk) => (raw += chunk));
   request.on("end", () => {
-    const { scenario, n0 } = JSON.parse(readFileSync(statePath, "utf8"));
+    const { scenario, n0 } = JSON.parse(NodeFS.readFileSync(statePath, "utf8"));
     const accounts = scenarios[scenario];
     if (!accounts) return json(response, { files: [] });
     if (request.url.endsWith("/v0/management/auth-files")) {
