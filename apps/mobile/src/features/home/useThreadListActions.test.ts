@@ -48,9 +48,6 @@ vi.mock("../../components/ui/Dialog", () => ({
     state.alerts.push({ title, buttons }),
   confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
-vi.mock("../archive/useArchivedThreadSnapshots", () => ({
-  refreshArchivedThreadsForEnvironment: () => {},
-}));
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     state.scopes.get(environmentId)?.has(scope) === true,
@@ -243,7 +240,7 @@ describe("thread list operation permissions", () => {
   });
 
   it("unarchives with only task permission and blocks a later revoked callback", async () => {
-    const actions = useArchivedThreadListActions(() => {});
+    const actions = useArchivedThreadListActions();
     const thread = makeThread({ archivedAt: "2026-09-02T00:00:00.000Z" });
     await actions.unarchiveThread(thread);
     expect(state.requests).toEqual([expect.objectContaining({ action: "unarchive" })]);
@@ -257,7 +254,7 @@ describe("thread list operation permissions", () => {
 
   it("keeps delete independent of terminal and source-control permissions", async () => {
     vi.stubEnv("EXPO_OS", "android");
-    useArchivedThreadListActions(() => {}).confirmDeleteThread(makeThread());
+    useArchivedThreadListActions().confirmDeleteThread(makeThread());
     await state.dialogs[0]!.onConfirm();
 
     expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);

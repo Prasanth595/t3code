@@ -1,9 +1,15 @@
-import { EnvironmentId, type OrchestrationV2ArchivedShellSnapshot } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationV2ArchivedShellSnapshot,
+  type OrchestrationV2ArchivedShellStreamItem,
+} from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import { AsyncResult, Atom } from "effect/reactivity";
+
+import type { SupervisorConnectionState } from "../connection/model.ts";
 
 export interface ArchivedSnapshotEntry {
   readonly environmentId: EnvironmentId;
@@ -37,10 +43,32 @@ export function parseArchivedThreadsEnvironmentKey(key: string): ReadonlyArray<E
   );
 }
 
+/**
+ * Folds the archived-shell stream into a snapshot. Every (re)subscription
+ * starts with a full snapshot, so deltas before one have nothing to apply to.
+ */
+export function applyArchivedShellStreamItem(
+  snapshot: OrchestrationV2ArchivedShellSnapshot | null,
+  item: OrchestrationV2ArchivedShellStreamItem,
+): OrchestrationV2ArchivedShellSnapshot | null {
+  if (item.kind === "snapshot") return item.snapshot;
+  if (snapshot === null) return null;
+  const threadId = item.kind === "thread.updated" ? item.thread.id : item.threadId;
+  const threads = snapshot.threads.filter((thread) => thread.id !== threadId);
+  return {
+    ...snapshot,
+    snapshotSequence: item.sequence,
+    threads: item.kind === "thread.updated" ? [...threads, item.thread] : threads,
+  };
+}
+
 export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
   readonly getSnapshotAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<OrchestrationV2ArchivedShellSnapshot, E>>;
+  readonly getConnectionStateAtom: (
+    environmentId: EnvironmentId,
+  ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, unknown>>;
   readonly labelPrefix: string;
 }) {
   return Atom.family((environmentKey: string) =>
@@ -51,14 +79,22 @@ export function createArchivedThreadSnapshotsAtomFamily<E>(options: {
 
       for (const environmentId of parseArchivedThreadsEnvironmentKey(environmentKey)) {
         const result = get(options.getSnapshotAtom(environmentId));
-        isLoading ||= result.waiting;
+        const connection = get(options.getConnectionStateAtom(environmentId));
+        const state = Option.getOrNull(AsyncResult.value(connection));
+        const unavailable =
+          connection._tag === "Failure" ||
+          state?.phase === "available" ||
+          state?.phase === "offline" ||
+          state?.phase === "blocked";
+        // Live snapshots stay `waiting` while subscribed; only the first load counts.
+        isLoading ||= result._tag === "Initial" && !unavailable;
 
         const snapshot = Option.getOrNull(AsyncResult.value(result));
         if (snapshot !== null) {
           snapshots.push({ environmentId, snapshot });
         }
 
-        if (error === null && result._tag === "Failure") {
+        if (error === null && (result._tag === "Failure" || unavailable)) {
           error = "Failed to load archived threads.";
         }
       }

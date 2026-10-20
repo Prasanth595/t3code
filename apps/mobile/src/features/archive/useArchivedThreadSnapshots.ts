@@ -7,24 +7,19 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
+import { environmentCatalog } from "../../connection/catalog";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { orchestrationEnvironment } from "../../state/orchestration";
 
 function archivedSnapshotAtom(environmentId: EnvironmentId) {
-  return orchestrationEnvironment.archivedShellSnapshot({
-    environmentId,
-    input: {},
-  });
+  return orchestrationEnvironment.archivedShell({ environmentId, input: {} });
 }
 
 const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
   getSnapshotAtom: archivedSnapshotAtom,
+  getConnectionStateAtom: environmentCatalog.stateAtom,
   labelPrefix: "mobile:archived-thread-snapshots",
 });
-
-export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentId): void {
-  appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
-}
 
 export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {
   readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
