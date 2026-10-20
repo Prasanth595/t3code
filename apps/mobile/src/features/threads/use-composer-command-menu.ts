@@ -670,8 +670,8 @@ export function useComposerCommandMenu({
         current.projectId !== projectId ||
         !current.canRunPluginActions ||
         !canRunPluginActionsNow(current.environmentId) ||
-        trigger.kind !== "slash" ||
-        liveTrigger?.kind !== "slash" ||
+        trigger.kind !== "slash-command" ||
+        liveTrigger?.kind !== "slash-command" ||
         liveTrigger.rangeStart !== trigger.rangeStart ||
         liveTrigger.rangeEnd !== trigger.rangeEnd ||
         liveTrigger.query !== trigger.query ||
