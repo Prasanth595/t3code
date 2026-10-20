@@ -26,6 +26,18 @@ Constraints, pointers into the code, and anything out of scope.
 
 Keep one change per issue. When an issue holds two independent pieces of work, or leaves a real product choice open, the session stops and asks instead of guessing (see [needs-info](/guide/when-a-run-stops#needs-info)). [For agents → Issue contract](/agents/issue-contract) has the rules in table form.
 
+## Base
+
+To land the work on a feature branch instead of the repo's base, add a heading that names it:
+
+```md
+## Base
+
+feature/billing
+```
+
+The run starts from that branch, opens its pull request against it, and is gated on it. The branch must already exist on `origin`; the factory doesn't create it, and an issue naming a missing branch goes to `factory:stuck`. Leave the heading out, or write `None.`, to use the repo's base. A pull request merged into a feature branch doesn't close the issue, so close it yourself once it's merged.
+
 ## Instructors
 
 An instructor is a GitHub login listed under `instructors` in the repo's `.dw/config.yml`. Logins match without regard to case, and a bot or GitHub App never counts, even when listed. Instructors decide what the factory does:
