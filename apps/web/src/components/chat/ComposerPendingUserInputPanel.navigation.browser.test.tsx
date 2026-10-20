@@ -81,7 +81,7 @@ function Questions({
 }) {
   const [questionIndex, setQuestionIndex] = useState(initialIndex);
   const [answers, setAnswers] = useState<Record<string, PendingUserInputDraftAnswer>>({});
-  const question = questions[questionIndex]!;
+  const question = questions[questionIndex];
   const advance = () => setQuestionIndex(questionIndex + 1);
   return (
     <>
@@ -89,17 +89,23 @@ function Questions({
       <output aria-label="Answers">{JSON.stringify(answers)}</output>
       <button onClick={advance}>Next</button>
       <button onClick={() => setQuestionIndex(questionIndex - 1)}>Previous</button>
-      <input
-        aria-label="Custom answer"
-        value={answers[question.id]?.customAnswer ?? ""}
-        onChange={(event) => {
-          const value = event.currentTarget.value;
-          setAnswers((existing) => ({
-            ...existing,
-            [question.id]: setPendingUserInputCustomAnswer(existing[question.id], value, question),
-          }));
-        }}
-      />
+      {question && (
+        <input
+          aria-label="Custom answer"
+          value={answers[question.id]?.customAnswer ?? ""}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            setAnswers((existing) => ({
+              ...existing,
+              [question.id]: setPendingUserInputCustomAnswer(
+                existing[question.id],
+                value,
+                question,
+              ),
+            }));
+          }}
+        />
+      )}
       <ComposerPendingUserInputPanel
         pendingUserInputs={[{ ...pendingPrompt, questions }]}
         cwd="/repo"
