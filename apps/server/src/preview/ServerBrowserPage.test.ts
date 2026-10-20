@@ -408,21 +408,14 @@ it("captures the native display viewport after page script reassigns the globals
       zoom: 1,
       offset: { x: 0, y: 0 },
     });
-    const { windowId } = await cdp.send("Browser.getWindowForTarget");
-    // CDP acknowledges the bounds change before the renderer applies it, and a resize event can
-    // fire for a size on the way there. Page script replaced innerWidth, so read the layout.
-    const resize = await page.evaluateHandle(`({
-      done: new Promise(resolve => window.addEventListener("resize", () => {
-        const { clientWidth, clientHeight } = document.documentElement;
-        if (clientWidth === 390 && clientHeight === 844) resolve();
-      })),
-    })`);
-    await cdp.send("Browser.setWindowBounds", {
-      windowId,
-      bounds: { width: 390, height: 844 },
+    // Window bounds are ignored by headless Chromium on some hosts; a metrics override resizes
+    // the page everywhere, and Playwright's viewportSize() stays stale as it would on desktop.
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 390,
+      height: 844,
+      deviceScaleFactor: 0,
+      mobile: false,
     });
-    await resize.evaluate("resize => resize.done");
-    await resize.dispose();
     expect(await ServerBrowserPage.readPageMetrics(cdp)).toMatchObject({
       ratio: 1.5,
       width: 390,
