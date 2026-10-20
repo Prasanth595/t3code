@@ -416,10 +416,11 @@ function AdaptiveWorkspaceLayoutContent(
     if (primarySidebarPinned) {
       return;
     }
-    // The sidebar returns with the keyboard; the user's preference stays intact.
+    // A sidebar the keyboard set aside returns with the keyboard; the user's preference stays
+    // intact. One the user had hidden still opens.
     if (composerKeyboardActive) {
       void KeyboardController.dismiss();
-      return;
+      if (primarySidebarPreferredVisible) return;
     }
     if (!panes.primarySidebarVisible && panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
