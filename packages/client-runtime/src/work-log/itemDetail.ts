@@ -97,6 +97,8 @@ export function toolCallLines(input: {
   const args = input.args;
   const html =
     isHtmlRenderTool(input.toolName) &&
+    // Bounded inputs can omit the source; reject a blank source only when it is available.
+    (isRecord(args) && typeof args.html === "string" ? args.html.trim() !== "" : true) &&
     input.status !== "failed" &&
     compactDynamicToolOutput(input.output)?.isError !== true;
   if (isRecord(args) && !isSummarizedValue(args)) {

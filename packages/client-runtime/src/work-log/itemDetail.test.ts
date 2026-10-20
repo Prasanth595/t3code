@@ -26,6 +26,13 @@ const htmlTool = {
 };
 
 describe("HTML tool inputs", () => {
+  it("keeps blank HTML visible without requesting a preview", () => {
+    const html = " \n\t ";
+    const lines = toolCallLines({ toolName: "mcp__t3-code__html_preview", args: { html } });
+    expect(lines.html).toBe(false);
+    expect(lines.args).toEqual([["html", html]]);
+  });
+
   it.each([
     { status: "failed" as const },
     { status: "completed" as const, output: { isError: true } },
