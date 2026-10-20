@@ -1,0 +1,68 @@
+import { assert, it } from "@effect/vitest";
+import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import * as Effect from "effect/Effect";
+import * as SqlClient from "effect/sql/SqlClient";
+
+import { runMigrations } from "../Migrations.ts";
+
+const createdAt = "2026-10-01T00:00:00.000Z";
+const quote = serializeAssistantCitation({
+  version: 1,
+  environmentId: EnvironmentId.make("environment:local"),
+  threadId: ThreadId.make("thread:quoted"),
+  messageId: MessageId.make("quoted-answer"),
+  text: "A lighthouse guides ships safely through the darkness.",
+  comment: "what are you talking about",
+  start: 0,
+  end: 54,
+  prefix: "beacon01",
+  suffix: "harbor",
+});
+const readable =
+  "A lighthouse guides ships safely through the darkness.\nComment: what are you talking about";
+
+it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
+  "068_ProjectionMessageSearchText",
+  (it) => {
+    it.effect("backfills readable text only for messages whose citations read differently", () =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 67 });
+        const insertMessage = (messageId: string, text: unknown) => sql`
+          INSERT INTO orchestration_v2_projection_messages (
+            message_id, thread_id, role, streaming, created_at, updated_at, payload_json
+          ) VALUES (
+            ${messageId}, 'thread:quote', 'user', 0, ${createdAt}, ${createdAt},
+            ${JSON.stringify({ text })}
+          )
+        `;
+        yield* insertMessage("quoted", `${quote} quiet silver lantern`);
+        yield* insertMessage("plain", "quiet silver lantern");
+        yield* insertMessage("invalid", "[Assistant quote](t3-citation://v1/not-a-citation)");
+        yield* insertMessage("unreadable", 20261001);
+        yield* Effect.forEach(
+          Array.from({ length: 501 }, (_, index) => `page-${String(index).padStart(3, "0")}`),
+          (messageId) => insertMessage(messageId, quote),
+          { discard: true },
+        );
+
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 68 }), [
+          [68, "ProjectionMessageSearchText"],
+        ]);
+        const rows = yield* sql<{
+          readonly message_id: string;
+          readonly search_text: string | null;
+        }>`SELECT message_id, search_text FROM orchestration_v2_projection_messages`;
+        const searchText = new Map(rows.map((row) => [row.message_id, row.search_text]));
+        assert.equal(searchText.get("quoted"), `${readable} quiet silver lantern`);
+        assert.isNull(searchText.get("plain"));
+        assert.isNull(searchText.get("invalid"));
+        assert.isNull(searchText.get("unreadable"));
+        assert.equal(searchText.get("page-000"), readable);
+        assert.equal(searchText.get("page-500"), readable);
+      }),
+    );
+  },
+);

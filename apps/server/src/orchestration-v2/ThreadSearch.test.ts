@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -16,8 +17,11 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as EventStore from "./EventStore.ts";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
@@ -119,6 +123,20 @@ const message = (
   },
 });
 
+// The prefix and suffix are hidden selection context, not text the reader sees.
+const quote = serializeAssistantCitation({
+  version: 1,
+  environmentId: EnvironmentId.make("environment:local"),
+  threadId: ThreadId.make("thread:quoted"),
+  messageId: MessageId.make("quoted-answer"),
+  text: "A lighthouse guides ships safely through the darkness.",
+  comment: "what are you talking about",
+  start: 0,
+  end: 54,
+  prefix: "beacon01",
+  suffix: "harbor",
+});
+
 it.layer(layerTest)("ThreadSearch", (it) => {
   it.effect("returns one finished user or assistant match per active thread", () =>
     Effect.gen(function* () {
@@ -202,7 +220,78 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       assert.equal(error.operation, "decode");
     }),
   );
+
+  it.effect("matches the readable text of quotes and their comments", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-citation");
+      const threadId = ThreadId.make("thread:citation");
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [
+          thread(threadId, project),
+          message(threadId, "citation", "user", `${quote} quiet silver lantern`),
+        ],
+        projections.apply,
+        { discard: true },
+      );
+      const snippets = (query: string) =>
+        Effect.map(search.search({ query }), (result) =>
+          result.matches
+            .filter((match) => match.threadId === threadId)
+            .map((match) => match.snippet),
+        );
+
+      const readable =
+        "A lighthouse guides ships safely through the darkness. Comment: what are you talking about quiet silver lantern";
+      assert.deepEqual(yield* snippets("what are you talking about"), [readable]);
+      assert.deepEqual(yield* snippets("ships safely through"), [readable]);
+      assert.deepEqual(yield* snippets("beacon01"), []);
+      assert.deepEqual(yield* snippets("harbor"), []);
+
+      yield* projections.apply(message(threadId, "citation", "user", "quiet silver lantern"));
+      assert.deepEqual(yield* snippets("what are you talking about"), []);
+      assert.deepEqual(yield* snippets("lantern"), ["quiet silver lantern"]);
+    }),
+  );
 });
+
+it.effect("finds quote text after projections replay from events", () =>
+  Effect.gen(function* () {
+    const eventStore = yield* EventStore.EventStoreV2;
+    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const search = yield* ThreadSearch.ThreadSearch;
+    const project = ProjectId.make("project:search-replay");
+    const threadId = ThreadId.make("thread:replay");
+    yield* createProject(project);
+    yield* eventStore.append({
+      events: [thread(threadId, project), message(threadId, "replay", "user", quote)],
+    });
+
+    assert.isTrue((yield* maintenance.rebuild).valid);
+    assert.deepEqual(
+      (yield* search.search({ query: "what are you talking about" })).matches.map(
+        (match) => match.threadId,
+      ),
+      [threadId],
+    );
+  }).pipe(
+    Effect.provide(
+      ProjectionMaintenance.layer.pipe(
+        Layer.provideMerge(
+          Layer.mergeAll(
+            ThreadSearch.layer,
+            ProjectionStore.layer,
+            ProjectStore.layer,
+            EventStore.layer,
+          ),
+        ),
+        Layer.provideMerge(SqlitePersistence.layerMemory),
+      ),
+    ),
+  ),
+);
 
 it.effect("searches on the reader worker while the writer is busy", () =>
   Effect.gen(function* () {

@@ -81,7 +81,8 @@ export const make = Effect.gen(function* () {
           threads.thread_id,
           threads.project_id,
           messages.role,
-          json_extract(messages.payload_json, '$.text') AS match_text,
+          COALESCE(messages.search_text, json_extract(messages.payload_json, '$.text'))
+            AS match_text,
           messages.created_at AS message_created_at,
           messages.message_id,
           threads.updated_at AS thread_updated_at
@@ -95,7 +96,8 @@ export const make = Effect.gen(function* () {
           AND projects.deleted_at IS NULL
           AND messages.streaming = 0
           AND messages.role IN ('user', 'assistant')
-          AND json_extract(messages.payload_json, '$.text') LIKE ${pattern} ESCAPE '!'
+          AND COALESCE(messages.search_text, json_extract(messages.payload_json, '$.text'))
+            LIKE ${pattern} ESCAPE '!'
       ),
       ranked AS (
         SELECT
