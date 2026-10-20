@@ -1263,8 +1263,7 @@ export const layer: Layer.Layer<
                   const detachedItems = new Set(
                     [...current.childTurnItems.values(), ...current.turnItems.values()]
                       .filter(
-                        (item) =>
-                          item.threadId === moved.childThreadId || item.nodeId === moved.id,
+                        (item) => item.threadId === moved.childThreadId || item.nodeId === moved.id,
                       )
                       .map((item) => item.id),
                   );
@@ -1278,8 +1277,7 @@ export const layer: Layer.Layer<
                       childTurnItems,
                       nodes: new Map(
                         [...current.nodes].filter(
-                          ([id, node]) =>
-                            id !== moved.id && node.threadId !== moved.childThreadId,
+                          ([id, node]) => id !== moved.id && node.threadId !== moved.childThreadId,
                         ),
                       ),
                       linkedChildThreadIds: new Set(
@@ -1292,8 +1290,7 @@ export const layer: Layer.Layer<
                 });
                 yield* Ref.update(
                   activeChildSubagents,
-                  (current) =>
-                    new Set([...current].filter((id) => !detached.subagentIds.has(id))),
+                  (current) => new Set([...current].filter((id) => !detached.subagentIds.has(id))),
                 );
                 yield* Ref.update(
                   activeChildProviderTurns,
