@@ -67,9 +67,11 @@ import Migration0061 from "./Migrations/061_PullRequestReviewGuides.ts";
 import Migration0062 from "./Migrations/062_ThreadFailureLookupIndex.ts";
 import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
 import Migration0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
-import Migration0065 from "./Migrations/065_PluginInstallations.ts";
-import Migration0066 from "./Migrations/066_PluginEventCursors.ts";
-import Migration0067 from "./Migrations/067_PluginSettings.ts";
+import Migration0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
+import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+import Migration0067 from "./Migrations/067_PluginInstallations.ts";
+import Migration0068 from "./Migrations/068_PluginEventCursors.ts";
+import Migration0069 from "./Migrations/069_PluginSettings.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -137,9 +139,11 @@ export const migrationEntries = [
   [62, "ThreadFailureLookupIndex", Migration0062],
   [63, "DropUnusedV1Projections", Migration0063],
   [64, "CanonicalizeThreadPullRequestLinks", Migration0064],
-  [65, "PluginInstallations", Migration0065],
-  [66, "PluginEventCursors", Migration0066],
-  [67, "PluginSettings", Migration0067],
+  [65, "CodexUsageNativeTurnIndex", Migration0065],
+  [66, "RepairClientSettlementTimestamps", Migration0066],
+  [67, "PluginInstallations", Migration0067],
+  [68, "PluginEventCursors", Migration0068],
+  [69, "PluginSettings", Migration0069],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

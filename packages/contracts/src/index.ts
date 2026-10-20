@@ -65,6 +65,7 @@ export * from "./pluginViews.ts";
 export * from "./pluginNpm.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
+export * from "./previewCapture.ts";
 export * from "./resourceTelemetry.ts";
 export * from "./contributionStatus.ts";
 export * from "./usage.ts";
