@@ -11,6 +11,10 @@
       "types": "./src/server/AzureDevOpsCli.ts",
       "import": "./src/server/AzureDevOpsCli.ts"
     },
+    "./server/AzureDevOpsCredentials": {
+      "types": "./src/server/AzureDevOpsCredentials.ts",
+      "import": "./src/server/AzureDevOpsCredentials.ts"
+    },
     "./server/azureDevOpsDiff": {
       "types": "./src/server/azureDevOpsDiff.ts",
       "import": "./src/server/azureDevOpsDiff.ts"

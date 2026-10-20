@@ -5,12 +5,14 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 
 const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
@@ -22,14 +24,20 @@ const processOutput = (stdout: string): SourceControlHost.SourceControlProcessOu
 
 const mockRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 
+const mockForCheckout = vi.fn<
+  AzureDevOpsCredentials.AzureDevOpsCredentials["Service"]["forCheckout"]
+>(() => Effect.succeed(null));
+
 const layerSupport = Layer.mergeAll(
   TestSourceControlHost.layer({ process: { run: mockRun } }),
+  Layer.mock(AzureDevOpsCredentials.AzureDevOpsCredentials)({ forCheckout: mockForCheckout }),
   NodeServices.layer,
 );
 const layer = Layer.mergeAll(AzureDevOpsCli.layer.pipe(Layer.provide(layerSupport)), layerSupport);
 
 afterEach(() => {
   mockRun.mockReset();
+  mockForCheckout.mockClear();
 });
 
 describe("AzureDevOpsCli.layer", () => {
@@ -467,6 +475,32 @@ describe("AzureDevOpsCli.layer", () => {
 
       assert.instanceOf(error, AzureDevOpsCli.AzureDevOpsCliRateLimitError);
       assert.strictEqual(error.cause, cause);
+    }).pipe(Effect.provide(layer)),
+  );
+  it.effect("signs in as the login that belongs to the checkout's organization", () =>
+    Effect.gen(function* () {
+      const signIn = { subscriptionId: "acme-tenant", token: Redacted.make("acme-token") };
+      mockForCheckout.mockReturnValueOnce(Effect.succeed(signIn));
+      mockForCheckout.mockReturnValueOnce(Effect.succeed(signIn));
+      mockRun.mockReturnValue(Effect.succeed(processOutput("{}")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.execute({ cwd: "/repo", args: ["repos", "pr", "list", "--detect", "true"] });
+      yield* az.execute({ cwd: "/repo", args: ["account", "show", "--query", "user"] });
+
+      expect(mockForCheckout).toHaveBeenCalledWith("/repo");
+      const [list, viewer] = mockRun.mock.calls.map(([input]) => input);
+      assert.deepStrictEqual(list?.env, { AZURE_DEVOPS_EXT_PAT: "acme-token" });
+      assert.deepStrictEqual(list?.args, ["repos", "pr", "list", "--detect", "true"]);
+      // `az account show` would otherwise name the active login as the viewer.
+      assert.deepStrictEqual(viewer?.args, [
+        "account",
+        "show",
+        "--query",
+        "user",
+        "--subscription",
+        "acme-tenant",
+      ]);
     }).pipe(Effect.provide(layer)),
   );
 });

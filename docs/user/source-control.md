@@ -96,6 +96,10 @@ az extension add --name azure-devops
 az login
 ```
 
+Signed in to several accounts? T3 Code uses the `az login` account in the organization's own tenant,
+so you don't need to switch the active account with `az account set`. A token you export as
+`AZURE_DEVOPS_EXT_PAT` takes precedence.
+
 ### GitCafe
 
 Install the GitCafe CLI and sign in:

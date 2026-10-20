@@ -1,4 +1,5 @@
 import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as AzureDevOpsCredentials from "@t3tools/source-control-azure-devops/server/AzureDevOpsCredentials";
 import * as AzureDevOpsPullRequestCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsPullRequestCli";
 import * as AzureDevOpsDriver from "@t3tools/source-control-azure-devops/server/driver";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
@@ -40,7 +41,10 @@ export const layer = Layer.mergeAll(
   // `GitHubRest.layerWithDependencies` carries the quota reserve and rate-limit pause every GitHub
   // reader shares, so the server builds it once, here.
   GitHubPullRequestApi.layer.pipe(Layer.provideMerge(GitHubRest.layerWithDependencies)),
-  AzureDevOpsPullRequestCli.layer.pipe(Layer.provideMerge(AzureDevOpsCli.layer)),
+  AzureDevOpsPullRequestCli.layer.pipe(
+    Layer.provideMerge(AzureDevOpsCli.layer),
+    Layer.provide(AzureDevOpsCredentials.layer),
+  ),
   BitbucketPullRequestApi.layer.pipe(Layer.provideMerge(BitbucketApi.layer)),
   ForgejoCli.layer,
   GitCafeApi.layer.pipe(Layer.provideMerge(GitCafeCredentials.layer)),

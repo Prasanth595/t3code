@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import {
@@ -12,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as AzureDevOpsCredentials from "./AzureDevOpsCredentials.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -353,30 +355,44 @@ function decodeAzureDevOpsJson<S extends Schema.Top>(
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const credentials = yield* AzureDevOpsCredentials.AzureDevOpsCredentials;
 
-  const execute: AzureDevOpsCli["Service"]["execute"] = (input) =>
-    process
-      .run({
-        operation: "AzureDevOpsCli.execute",
-        command: "az",
-        args: input.args,
-        cwd: input.cwd,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
-      })
-      .pipe(
-        Effect.mapError((error) =>
-          AzureDevOpsCommandFailedError.fromVcsError(
-            {
-              operation: "execute",
-              command: "az",
-              cwd: input.cwd,
-              argumentCount: input.args.length,
-            },
-            error,
+  const execute: AzureDevOpsCli["Service"]["execute"] = Effect.fn("AzureDevOpsCli.execute")(
+    function* (input) {
+      // Left alone, the azure-devops extension signs in to every organization as the active `az`
+      // login, which fails for an organization in any other tenant.
+      const signIn = yield* credentials.forCheckout(input.cwd);
+      const args =
+        signIn !== null && input.args[0] === "account" && input.args[1] === "show"
+          ? [...input.args, "--subscription", signIn.subscriptionId]
+          : input.args;
+      return yield* process
+        .run({
+          operation: "AzureDevOpsCli.execute",
+          command: "az",
+          args,
+          cwd: input.cwd,
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
+          ...(signIn === null
+            ? {}
+            : { env: { AZURE_DEVOPS_EXT_PAT: Redacted.value(signIn.token) } }),
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            AzureDevOpsCommandFailedError.fromVcsError(
+              {
+                operation: "execute",
+                command: "az",
+                cwd: input.cwd,
+                argumentCount: input.args.length,
+              },
+              error,
+            ),
           ),
-        ),
-      );
+        );
+    },
+  );
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
     execute({
