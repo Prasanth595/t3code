@@ -244,10 +244,10 @@ export class AcpTransportError extends Schema.TaggedError<AcpTransportError>()(
   },
 ) {
   override get message() {
+    const operation = this.operation ? ` ${this.operation}` : "";
     const method = this.method ? ` for method ${this.method}` : "";
-    return this.operation
-      ? `ACP transport operation ${this.operation} failed${method}.`
-      : "ACP transport operation failed.";
+    const detail = this.detail ? `: ${this.detail}` : "";
+    return `ACP transport operation${operation} failed${method}${detail}.`;
   }
 }
 
