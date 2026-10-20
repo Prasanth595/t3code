@@ -329,6 +329,10 @@ export const make = Effect.gen(function* () {
       if (!invalidated && retryStacks.has(key) && !knownUnstacked) {
         yield* pullRequests.invalidate({ reference: ref });
       }
+      // The retry this read answers is consumed before the read, not after it: a sibling may
+      // flag this group again while the read is in flight, and that flag must survive to the
+      // next sweep because the answer below may predate the sibling's layers.
+      if (needsStack) retryStacks.delete(key);
       const fetchedStack = !needsStack
         ? null
         : knownUnstacked
@@ -354,7 +358,6 @@ export const make = Effect.gen(function* () {
           retryStacks.add(key);
           return;
         }
-        retryStacks.delete(key);
         const fetched = fetchedStack.stack;
         stacksReadThisSweep.set(key, fetched);
         // A layer pushed above an older member changes none of that member's own fields, so it

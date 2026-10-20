@@ -1303,6 +1303,62 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
+  it.effect("re-reads a member a sibling flags while its own stack read is in flight", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const stackOf = (numbers: ReadonlyArray<number>) => ({
+          id: "stack-80",
+          number: 80,
+          url: "https://github.com/owner/repository/stack/80",
+          base: "main",
+          layers: numbers.map(stackLayer),
+        });
+        const updated = { updatedAt: "2026-08-28T00:00:00.000Z" };
+        const synced83 = yield* Deferred.make<void>();
+        let staleReads = 1;
+        const fixture = yield* makeHarness({
+          // #18 still holds the layers from before #83 was pushed; #83 already has all three.
+          snapshot: makeSnapshot([
+            makeThread("one", {
+              pullRequests: [
+                makeLink(18, {}, { stack: { kind: "native", ...stackOf([18, 20]) } }),
+                makeLink(83, {}, { stack: { kind: "native", ...stackOf([18, 20, 83]) } }),
+              ],
+            }),
+          ]),
+          summary: (input) => Effect.succeed(makeSummary(input, updated)),
+          // #18's first read answers the old two layers, and only after #83 has read its stack,
+          // flagged #18 and synced.
+          stack: (input) =>
+            input.number === 18 && staleReads-- > 0
+              ? Deferred.await(synced83).pipe(Effect.as(stackOf([18, 20])))
+              : Effect.succeed(stackOf([18, 20, 83])),
+          onSync: (command) =>
+            command.number === 83 ? Deferred.succeed(synced83, undefined) : Effect.void,
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* applyRecordedSyncs(fixture);
+
+          // Neither summary changes again, so only #83's flag can make #18 read its stack.
+          // #18's stale answer also flags #83, whose fresh read in this sweep would flag #18
+          // back for a third sweep. The assertion sees the regression only because #18, the
+          // earlier group, finishes before #83 runs; the mocks answer synchronously, so it does.
+          // With the flag kept, #18 reads fresh here regardless of that order.
+          yield* sweepAgain(fixture, reactor);
+          yield* applyRecordedSyncs(fixture);
+
+          assert.deepStrictEqual(yield* storedStackLayers(fixture), [
+            [18, [18, 20, 83]],
+            [83, [18, 20, 83]],
+          ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
   it.effect("leaves stacks in other repositories alone when their ids match", () =>
     Effect.scoped(
       Effect.gen(function* () {
