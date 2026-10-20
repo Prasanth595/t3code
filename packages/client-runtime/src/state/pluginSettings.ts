@@ -180,8 +180,12 @@ export const pluginSettingForm = (
 ) => {
   const entries = rows.map((row) => {
     const shown = pluginSettingDraftOf(row);
-    const draft = drafts.get(row.field.key) ?? shown;
-    const outcome = draft === shown ? undefined : pluginSettingDraftChange(row.field, draft);
+    const edited = drafts.has(row.field.key);
+    const draft = edited ? drafts.get(row.field.key)! : shown;
+    const outcome =
+      !edited || (draft === shown && row.value !== undefined)
+        ? undefined
+        : pluginSettingDraftChange(row.field, draft);
     return { row, draft, outcome: outcome?._tag === "unchanged" ? undefined : outcome };
   });
   return {

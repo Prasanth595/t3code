@@ -140,7 +140,9 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
     ),
   );
 
-  const generationOf = Effect.fnUntraced(function* (lifetime: Scope.Scope) {
+  const generationOf = Effect.fn("PluginNotifications.generationOf")(function* (
+    lifetime: Scope.Scope,
+  ) {
     const existing = generations.get(lifetime);
     if (existing !== undefined) return existing;
     const generation: Generation = {
@@ -158,78 +160,82 @@ export const make = Effect.fn("PluginNotifications.make")(function* () {
     return generation;
   });
 
-  const show: PluginSupervisor.PluginHostMethod = ({ registration, input, admitted, lifetime }) =>
-    Effect.gen(function* () {
-      if (!registration.manifest.capabilities.includes(PLUGIN_NOTIFICATIONS_CAPABILITY))
-        return yield* new PluginSupervisor.PluginHostCallError({
-          message: `The plugin did not declare the "${PLUGIN_NOTIFICATIONS_CAPABILITY}" capability.`,
-        });
-      const request = yield* decodeShowInput(input).pipe(
-        Effect.mapError(
-          () =>
-            new PluginSupervisor.PluginHostCallError({
-              message: `A notification needs a title string; body is a string; threadId is a string of at most ${PLUGIN_NOTIFICATION_LIMITS.threadIdMaxLength} characters; tone is neutral, info, success, warning or error.`,
-            }),
-        ),
-      );
-      const title = normalizeContributionStatusText(
-        request.title,
-        PLUGIN_NOTIFICATION_TITLE_MAX_LENGTH,
-      );
-      if (title.length === 0)
-        return yield* new PluginSupervisor.PluginHostCallError({
-          message: "The notification title is empty.",
-        });
-      const body =
-        request.body === undefined
-          ? ""
-          : normalizeContributionStatusText(request.body, PLUGIN_NOTIFICATION_BODY_MAX_LENGTH);
-      const record = (sequence: number, createdAt: number): PluginNotification => ({
-        sequence,
-        pluginId: registration.manifest.id,
-        pluginName: registration.manifest.name,
-        title,
-        ...(body.length === 0 ? {} : { body }),
-        ...(request.tone === undefined || request.tone === "neutral" ? {} : { tone: request.tone }),
-        ...(request.threadId === undefined ? {} : { threadId: request.threadId }),
-        createdAt: DateTime.formatIso(DateTime.makeUnsafe(createdAt)),
+  const show: PluginSupervisor.PluginHostMethod = Effect.fn("PluginNotifications.show")(function* ({
+    registration,
+    input,
+    admitted,
+    lifetime,
+  }) {
+    if (!registration.manifest.capabilities.includes(PLUGIN_NOTIFICATIONS_CAPABILITY))
+      return yield* new PluginSupervisor.PluginHostCallError({
+        message: `The plugin did not declare the "${PLUGIN_NOTIFICATIONS_CAPABILITY}" capability.`,
       });
-      // Refused before it takes a token or a sequence. Measured with the widest
-      // sequence (an ISO timestamp is fixed width), so the record sent is never larger.
-      const widest = record(Number.MAX_SAFE_INTEGER, yield* Clock.currentTimeMillis);
-      if (encodedBytes(widest) > PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES)
-        return yield* new PluginSupervisor.PluginHostCallError({
-          message: `The notification is too large: at most ${PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES} bytes encoded.`,
-        });
-      const generation = yield* generationOf(lifetime);
-      if (!(yield* generation.bucket.take))
-        return yield* new PluginSupervisor.PluginHostCallError({
-          message: `Too many notifications: at most ${PLUGIN_NOTIFICATION_LIMITS.burst} at once, then one every ${PLUGIN_NOTIFICATION_LIMITS.refillMillis / 1000} seconds.`,
-        });
-      return yield* lock.withPermit(
-        Effect.gen(function* () {
-          // Checked under the lock, so a withdrawal never misses a notification it races.
-          if (generation.closed)
-            return yield* new PluginSupervisor.PluginHostCallError({
-              message: "The plugin was stopped.",
-            });
-          yield* admitted;
-          const now = yield* elapsedMillis;
-          sequence += 1;
-          retained = [
-            ...retained,
-            {
-              notification: record(sequence, yield* Clock.currentTimeMillis),
-              expiresAt: now + PLUGIN_NOTIFICATION_LIMITS.retentionMillis,
-              lifetime,
-            },
-          ].slice(-PLUGIN_NOTIFICATION_LIMITS.retained);
-          yield* PubSub.publish(changes, currentFrame());
-          yield* Queue.offer(retaining, undefined);
-          return null;
-        }),
-      );
+    const request = yield* decodeShowInput(input).pipe(
+      Effect.mapError(
+        () =>
+          new PluginSupervisor.PluginHostCallError({
+            message: `A notification needs a title string; body is a string; threadId is a string of at most ${PLUGIN_NOTIFICATION_LIMITS.threadIdMaxLength} characters; tone is neutral, info, success, warning or error.`,
+          }),
+      ),
+    );
+    const title = normalizeContributionStatusText(
+      request.title,
+      PLUGIN_NOTIFICATION_TITLE_MAX_LENGTH,
+    );
+    if (title.length === 0)
+      return yield* new PluginSupervisor.PluginHostCallError({
+        message: "The notification title is empty.",
+      });
+    const body =
+      request.body === undefined
+        ? ""
+        : normalizeContributionStatusText(request.body, PLUGIN_NOTIFICATION_BODY_MAX_LENGTH);
+    const record = (sequence: number, createdAt: number): PluginNotification => ({
+      sequence,
+      pluginId: registration.manifest.id,
+      pluginName: registration.manifest.name,
+      title,
+      ...(body.length === 0 ? {} : { body }),
+      ...(request.tone === undefined || request.tone === "neutral" ? {} : { tone: request.tone }),
+      ...(request.threadId === undefined ? {} : { threadId: request.threadId }),
+      createdAt: DateTime.formatIso(DateTime.makeUnsafe(createdAt)),
     });
+    // Refused before it takes a token or a sequence. Measured with the widest
+    // sequence (an ISO timestamp is fixed width), so the record sent is never larger.
+    const widest = record(Number.MAX_SAFE_INTEGER, yield* Clock.currentTimeMillis);
+    if (encodedBytes(widest) > PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES)
+      return yield* new PluginSupervisor.PluginHostCallError({
+        message: `The notification is too large: at most ${PLUGIN_NOTIFICATION_MAX_ENCODED_BYTES} bytes encoded.`,
+      });
+    const generation = yield* generationOf(lifetime);
+    if (!(yield* generation.bucket.take))
+      return yield* new PluginSupervisor.PluginHostCallError({
+        message: `Too many notifications: at most ${PLUGIN_NOTIFICATION_LIMITS.burst} at once, then one every ${PLUGIN_NOTIFICATION_LIMITS.refillMillis / 1000} seconds.`,
+      });
+    return yield* lock.withPermit(
+      Effect.gen(function* () {
+        // Checked under the lock, so a withdrawal never misses a notification it races.
+        if (generation.closed)
+          return yield* new PluginSupervisor.PluginHostCallError({
+            message: "The plugin was stopped.",
+          });
+        yield* admitted;
+        const now = yield* elapsedMillis;
+        sequence += 1;
+        retained = [
+          ...retained,
+          {
+            notification: record(sequence, yield* Clock.currentTimeMillis),
+            expiresAt: now + PLUGIN_NOTIFICATION_LIMITS.retentionMillis,
+            lifetime,
+          },
+        ].slice(-PLUGIN_NOTIFICATION_LIMITS.retained);
+        yield* PubSub.publish(changes, currentFrame());
+        yield* Queue.offer(retaining, undefined);
+        return null;
+      }),
+    );
+  });
 
   yield* supervisor.serveHostMethod("notifications.show", show);
 
