@@ -46,7 +46,7 @@ const refusal = <E>(cause: Cause.Cause<E>): Effect.Effect<never, CommandWatchFai
   });
 };
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const crypto = yield* Crypto.Crypto;

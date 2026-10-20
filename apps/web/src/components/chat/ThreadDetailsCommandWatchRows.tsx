@@ -1,8 +1,14 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadCommandWatch, ThreadId } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentId,
+  type ThreadCommandWatch,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { EyeOffIcon, TerminalIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
+import { useEnvironmentScope } from "../../state/session";
 import { useThreadProjection } from "../../state/entities";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -32,6 +38,7 @@ export function ThreadDetailsCommandWatchRows(props: {
   const projection = useThreadProjection(scopeThreadRef(props.environmentId, props.threadId));
   const watches = projection?.projection.thread.commandWatches ?? EMPTY_WATCHES;
   const stop = useAtomCommand(threadEnvironment.stopCommandWatch, { reportFailure: true });
+  const canOperateThread = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
   if (watches.length === 0) return null;
 
   return (
@@ -69,6 +76,7 @@ export function ThreadDetailsCommandWatchRows(props: {
                     variant="ghost"
                     part="icon"
                     aria-label={`Stop watching ${watch.label}`}
+                    disabled={!canOperateThread}
                     onClick={() =>
                       void stop({
                         environmentId: props.environmentId,
