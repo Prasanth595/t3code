@@ -8,7 +8,7 @@ import {
   useThreadShell,
 } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { PreparationProgressSheet, type WorktreeSetupCardProps } from "./worktree-setup-card";
 import { preparationPillLabel, preparationSteps } from "./preparation-progress";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
@@ -110,6 +110,7 @@ import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { parentThreadIsBelow } from "../../lib/android-workspace-navigation";
 import {
   clearThreadComposerError,
   threadComposerErrorsAtom,
@@ -576,10 +577,12 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         accessibilityLabel: `Open ${childInput.hasPendingApprovals ? "approval" : "question"} from ${childInput.title}`,
         onPress: () => {
           Keyboard.dismiss();
-          navigation.navigate("Thread", {
-            environmentId: props.environmentId,
-            threadId: childInput.id,
-          });
+          navigation.dispatch(
+            StackActions.push("Thread", {
+              environmentId: props.environmentId,
+              threadId: childInput.id,
+            }),
+          );
         },
       };
     }
@@ -1410,11 +1413,17 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
                         onOpenParent={
                           props.selectedThread.lineage.parentThreadId === null
                             ? null
-                            : () =>
-                                navigation.navigate("Thread", {
+                            : () => {
+                                const parent = {
                                   environmentId: String(props.environmentId),
                                   threadId: String(props.selectedThread.lineage.parentThreadId),
-                                })
+                                };
+                                navigation.dispatch((state) =>
+                                  parentThreadIsBelow(state, parent)
+                                    ? StackActions.pop()
+                                    : StackActions.push("Thread", parent),
+                                );
+                              }
                         }
                       />
                     </View>
