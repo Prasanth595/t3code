@@ -15,6 +15,7 @@ import {
   findExistingAddProject,
   getAddProjectInitialQuery,
   getCloneDestinationBrowsePath,
+  getCloneDestinationForPickedFolder,
   getCloneDestinationPath,
   getCloneDirectoryName,
   getDefaultCloneUrl,
@@ -160,6 +161,23 @@ describe("add project shared logic", () => {
         caseSensitive: false,
       }),
     ).toBe("C:\\Projects\\Repo\\");
+  });
+
+  it("resolves a native-picker folder like an in-app clone selection", () => {
+    const pick = (pickedPath: string, caseSensitive = true) =>
+      getCloneDestinationForPickedFolder({
+        pickedPath,
+        cloneDirectoryName: "repo",
+        caseSensitive,
+      });
+
+    expect(pick("/Users/me/code")).toBe("/Users/me/code/repo");
+    expect(pick("/Users/me/code/")).toBe("/Users/me/code/repo");
+    expect(pick("/Users/me/repo")).toBe("/Users/me/repo/");
+    expect(pick("/Users/me/Repo")).toBe("/Users/me/Repo/repo");
+    expect(pick("C:\\Projects\\Repo", false)).toBe("C:\\Projects\\Repo\\");
+    expect(pick("C:\\Projects", false)).toBe("C:\\Projects\\repo");
+    expect(pick("/")).toBe("/repo");
   });
 
   it("rejects unsupported windows paths on non-windows environments", () => {
