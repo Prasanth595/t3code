@@ -23,6 +23,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Stream from "effect/Stream";
+import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -147,12 +148,18 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     assert.equal(added?.title, "Alpha");
     assert.equal(added?.workspaceRoot, workspaceRoot);
 
+    yield* runCli(["project", "list", "--base-dir", baseDir]);
+    assert.equal((yield* TestConsole.logLines).at(-1), `${added?.id}\tAlpha\t${workspaceRoot}`);
+
     yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
     assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
     yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
-  }).pipe(Effect.provide(NodeServices.layer)),
+
+    yield* runCli(["project", "list", "--base-dir", baseDir]);
+    assert.equal((yield* TestConsole.logLines).at(-1), "No projects.");
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestConsole.layer))),
 );
 
 const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {

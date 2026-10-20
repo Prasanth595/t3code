@@ -579,7 +579,28 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const projectListCommand = Command.make("list", projectLocationFlags).pipe(
+  Command.withDescription("List projects."),
+  Command.withHandler((flags) =>
+    runProjectMutation(flags, ({ snapshot }) => {
+      const active = snapshot.projects.filter((project) => project.deletedAt === null);
+      return Effect.succeed(
+        active.length === 0
+          ? "No projects."
+          : active
+              .map((project) => `${project.id}\t${project.title}\t${project.workspaceRoot}`)
+              .join("\n"),
+      );
+    }),
+  ),
+);
+
 export const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectListCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+  ]),
 );
