@@ -449,6 +449,7 @@ describe("Codex usage history", () => {
         yield* sql`ALTER TABLE orchestration_events RENAME TO unavailable_events`;
         const error = yield* Effect.flip(history.resolve([input]));
         assert.instanceOf(error, CodexUsageHistory.CodexUsageHistoryReadError);
+        assert.strictEqual(error.requestedTurnCount, 1);
         yield* sql`ALTER TABLE unavailable_events RENAME TO orchestration_events`;
         assert.strictEqual((yield* history.resolve([input])).get(input), "fast");
       }).pipe(Effect.provide(historyLayer)),
