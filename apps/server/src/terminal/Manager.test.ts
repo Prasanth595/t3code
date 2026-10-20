@@ -2286,11 +2286,14 @@ it.layer(
 
       const closeFiber = yield* manager.close({ threadId: "thread-1" }).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("10 millis");
+      yield* TestClock.adjust("9 millis");
+      const signalsBeforeGrace = [...process.killSignals];
+
+      yield* TestClock.adjust("1 millis");
       yield* Fiber.join(closeFiber);
 
-      assert.equal(process.killSignals[0], "SIGTERM");
-      expect(process.killSignals).toContain("SIGKILL");
+      assert.deepEqual(signalsBeforeGrace, ["SIGHUP"]);
+      assert.deepEqual(process.killSignals, ["SIGHUP", "SIGKILL"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -2302,17 +2305,17 @@ it.layer(
       expect(process).toBeDefined();
       if (!process) return;
 
-      const sigterm = yield* Deferred.make<void>();
+      const sighup = yield* Deferred.make<void>();
       process.onKill = (signal) => {
-        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+        if (signal === "SIGHUP") Deferred.doneUnsafe(sighup, Effect.void);
       };
 
       yield* manager.close({ threadId: "thread-1" });
-      yield* Deferred.await(sigterm);
-      process.emitExit({ exitCode: 0, signal: 15 });
+      yield* Deferred.await(sighup);
+      process.emitExit({ exitCode: 0, signal: 1 });
       yield* TestClock.adjust("10 seconds");
 
-      assert.deepEqual(process.killSignals, ["SIGTERM"]);
+      assert.deepEqual(process.killSignals, ["SIGHUP"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -2339,7 +2342,7 @@ it.layer(
         const { manager, ptyAdapter } = yield* createManager();
         yield* manager.open(openInput());
         const process = ptyAdapter.processes[0]!;
-        process.onKill = () => process.emitExit({ exitCode: 0, signal: 15 });
+        process.onKill = () => process.emitExit({ exitCode: 0, signal: 1 });
         // Vary the caller's operation budget to cover child completion before
         // and after the parent resumes its registration step.
         yield* manager
@@ -2351,7 +2354,7 @@ it.layer(
         expect(SynchronizedRef.getUnsafe(managerState!).killFibers.size, `budget ${budget}`).toBe(
           0,
         );
-        expect(process.killSignals).toEqual(["SIGTERM"]);
+        expect(process.killSignals).toEqual(["SIGHUP"]);
       }
     }),
   );
@@ -2367,18 +2370,18 @@ it.layer(
       expect(process).toBeDefined();
       if (!process) return;
 
-      const sigterm = yield* Deferred.make<void>();
+      const sighup = yield* Deferred.make<void>();
       process.onKill = (signal) => {
-        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+        if (signal === "SIGHUP") Deferred.doneUnsafe(sighup, Effect.void);
       };
       yield* manager.close({ threadId: "thread-1" });
-      yield* Deferred.await(sigterm);
+      yield* Deferred.await(sighup);
       assert.isAbove(process.exitListenerCount, 0);
 
       yield* Scope.close(scope, Exit.void);
 
       assert.equal(process.exitListenerCount, 0);
-      assert.deepEqual(process.killSignals, ["SIGTERM"]);
+      assert.deepEqual(process.killSignals, ["SIGHUP"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -3741,11 +3744,14 @@ it.layer(
 
       const closeScope = yield* Scope.close(scope, Exit.void).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("10 millis");
+      yield* TestClock.adjust("9 millis");
+      const signalsBeforeGrace = [...process.killSignals];
+
+      yield* TestClock.adjust("1 millis");
       yield* Fiber.join(closeScope);
 
-      assert.equal(process.killSignals[0], "SIGTERM");
-      expect(process.killSignals).toContain("SIGKILL");
+      assert.deepEqual(signalsBeforeGrace, ["SIGHUP"]);
+      assert.deepEqual(process.killSignals, ["SIGHUP", "SIGKILL"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });

@@ -149,7 +149,7 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   "TerminalProcessSignalError",
   {
     cause: Schema.optional(Schema.Defect()),
-    signal: Schema.Literals(["SIGTERM", "SIGKILL"]),
+    signal: Schema.Literals(["SIGHUP", "SIGKILL"]),
     terminalPid: Schema.Number,
   },
 ) {
@@ -1702,7 +1702,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    // Subscribe before SIGTERM so an immediate exit is not missed. Released with
+    // Interactive shells ignore SIGTERM; hang up so they can clean up their jobs.
+    // Subscribe before SIGHUP so an immediate exit is not missed. Released with
     // Effect.ensuring because a JS `finally` does not run when the fiber is interrupted.
     const exited = Deferred.makeUnsafe<void>();
     const unsubscribeExit = process.onExit(() => {
@@ -1710,11 +1711,11 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
     yield* Effect.gen(function* () {
       const terminated = yield* Effect.try({
-        try: () => process.kill("SIGTERM"),
+        try: () => process.kill("SIGHUP"),
         catch: (cause) =>
           new TerminalProcessSignalError({
             cause,
-            signal: "SIGTERM",
+            signal: "SIGHUP",
             terminalPid: process.pid,
           }),
       }).pipe(
@@ -1723,7 +1724,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           Effect.logWarning("failed to kill terminal process", {
             threadId,
             terminalId,
-            signal: "SIGTERM",
+            signal: "SIGHUP",
             cause: error,
           }).pipe(Effect.as(false)),
         ),
