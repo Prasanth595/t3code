@@ -8843,6 +8843,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               state: "started",
               uuid: "started",
             },
+            {
+              type: "command_lifecycle",
+              command_uuid: promptUuid,
+              state: "started",
+              uuid: "started-again",
+            },
             ...(initEcho
               ? [
                   {
@@ -8870,6 +8876,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             );
           }
           assert.lengthOf(harness.offeredMessages, 1);
+          assert.equal(lastProviderTurn(harness.events).status, "running");
 
           // Until a CLI is known to echo early, untagged output counts as the prompt's.
           yield* harness.offerAndWait(
