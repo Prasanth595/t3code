@@ -401,6 +401,14 @@ export const make = Effect.gen(function* () {
               }),
           });
           const fileBytes = buffer.subarray(0, bytesRead);
+          const result = {
+            relativePath: target.relativePath,
+            byteLength: stat.size,
+            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+          };
+          if (input.encoding === "base64") {
+            return { ...result, contents: fileBytes.toString("base64") };
+          }
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
@@ -409,12 +417,7 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          return {
-            relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
-            byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
-          };
+          return { ...result, contents: new TextDecoder("utf-8").decode(fileBytes) };
         }),
       (handle) =>
         handle === null
@@ -544,13 +547,17 @@ export const make = Effect.gen(function* () {
     yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
       try: () =>
-        NodeFSP.writeFile(realTargetPath, input.contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
+        NodeFSP.writeFile(
+          realTargetPath,
+          input.encoding === "base64" ? Buffer.from(input.contents, "base64") : input.contents,
+          {
+            flag:
+              NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_TRUNC |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
+          },
+        ),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,

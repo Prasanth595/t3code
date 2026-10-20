@@ -363,6 +363,37 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("copies binary files byte for byte through base64", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const source = yield* makeTempDir;
+        const target = yield* makeTempDir;
+        // NUL plus bytes that are not valid UTF-8, which a text read would replace.
+        const bytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0, 0xff, 0xfe, 0x80, 0x0a]);
+        yield* fileSystem.writeFile(path.join(source, "asset.bin"), bytes);
+
+        const read = yield* workspaceFileSystem.readFile({
+          cwd: source,
+          relativePath: "asset.bin",
+          encoding: "base64",
+        });
+        expect(read).toMatchObject({ byteLength: bytes.length, truncated: false });
+        yield* workspaceFileSystem.writeFile({
+          cwd: target,
+          relativePath: "nested/asset.bin",
+          contents: read.contents,
+          encoding: "base64",
+        });
+
+        const copied = yield* fileSystem
+          .readFile(path.join(target, "nested/asset.bin"))
+          .pipe(Effect.orDie);
+        expect(Array.from(copied)).toEqual(Array.from(bytes));
+      }),
+    );
+
     it.effect("preserves the real cause and path for I/O failures", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
