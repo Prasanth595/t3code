@@ -1820,33 +1820,35 @@ export class DesktopBuildAlreadyRunningError extends Schema.TaggedError<DesktopB
   }
 }
 
-const withDesktopBuildLock = <A, E, R>(repoRoot: string, build: Effect.Effect<A, E, R>) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const lockPath = path.join(repoRoot, ".desktop-build.lock");
-    return yield* Effect.acquireUseRelease(
+const withDesktopBuildLock = Effect.fn("withDesktopBuildLock")(function* <A, E, R>(
+  repoRoot: string,
+  build: Effect.Effect<A, E, R>,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const lockPath = path.join(repoRoot, ".desktop-build.lock");
+  return yield* Effect.acquireUseRelease(
+    fs
+      .makeDirectory(lockPath)
+      .pipe(
+        Effect.mapError((error) =>
+          error.reason._tag === "AlreadyExists"
+            ? new DesktopBuildAlreadyRunningError({ lockPath })
+            : error,
+        ),
+      ),
+    // Stop packaging children and finish stage cleanup before another build can enter.
+    () => build.pipe(Effect.scoped),
+    (_, exit) =>
       fs
-        .makeDirectory(lockPath)
+        .remove(lockPath, { recursive: true })
         .pipe(
-          Effect.mapError((error) =>
-            error.reason._tag === "AlreadyExists"
-              ? new DesktopBuildAlreadyRunningError({ lockPath })
-              : error,
+          Effect.catch((error) =>
+            Exit.isFailure(exit) ? Effect.logError(error) : Effect.fail(error),
           ),
         ),
-      // Stop packaging children and finish stage cleanup before another build can enter.
-      () => build.pipe(Effect.scoped),
-      (_, exit) =>
-        fs
-          .remove(lockPath, { recursive: true })
-          .pipe(
-            Effect.catch((error) =>
-              Exit.isFailure(exit) ? Effect.logError(error) : Effect.fail(error),
-            ),
-          ),
-    );
-  });
+  );
+});
 
 // The artifact entry point holds the checkout lock through staging/packaging,
 // so it calls this implementation without reacquiring its own lock.
