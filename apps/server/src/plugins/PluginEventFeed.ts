@@ -562,27 +562,28 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
           if (!workers.has(installationId)) yield* start(installationId, generation, undefined);
         }
         // Removed installations forget their cursor; a later add is a new installation.
-        const present = new Set(installations.map((installation) => installation.installationId));
-        const cursors = yield* sql<{ readonly installation_id: PluginInstallationId }>`
-          SELECT installation_id FROM plugin_event_cursors
+        // Catalogue notifications can lag a concurrent enable. Decide from the durable
+        // installation rows in the same statement that removes their cursors.
+        const forgotten = yield* sql<{ readonly installation_id: PluginInstallationId }>`
+          DELETE FROM plugin_event_cursors
+          WHERE NOT EXISTS (
+            SELECT 1 FROM plugin_installations
+            WHERE plugin_installations.installation_id = plugin_event_cursors.installation_id
+          )
+          RETURNING installation_id
         `;
-        for (const { installation_id: installationId } of cursors) {
-          if (present.has(installationId)) continue;
-          yield* sql`DELETE FROM plugin_event_cursors WHERE installation_id = ${installationId}`.pipe(
-            Effect.andThen(publish({ _tag: "Forgotten", installationId })),
-            Effect.catch((error) =>
-              Effect.logWarning("Could not forget a removed plugin's event cursor", {
-                installationId,
-                error,
-              }),
-            ),
-          );
+        for (const { installation_id: installationId } of forgotten) {
+          yield* publish({ _tag: "Forgotten", installationId });
         }
       }),
     );
 
   yield* catalog.subscribe.pipe(
     Stream.runForEach((snapshot) => reconcile(snapshot.installations)),
+    Effect.tapError((error) =>
+      Effect.logWarning("Plugin event reconciliation failed; retrying", { error }),
+    ),
+    Effect.retry(Schedule.spaced(maxRetryBackoff)),
     Effect.forkScoped,
   );
 

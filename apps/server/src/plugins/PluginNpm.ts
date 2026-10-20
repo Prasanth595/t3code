@@ -435,14 +435,14 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   });
 
   /** GETs `url` into memory, at most `maxBytes`. */
-  const fetchBytes = (
-    url: string,
-    maxBytes: number,
-    timeout: `${number} seconds`,
-    what: string,
-    kind: "metadata" | "tarball",
-  ) =>
-    Effect.gen(function* () {
+  const fetchBytes = Effect.fn("PluginNpm.fetchBytes")(
+    function* (
+      url: string,
+      maxBytes: number,
+      _timeout: `${number} seconds`,
+      what: string,
+      kind: "metadata" | "tarball",
+    ) {
       // A tarball may come from anywhere: authenticated metadata pinned its integrity.
       const response =
         kind === "metadata"
@@ -475,26 +475,29 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
         }),
       );
       return Buffer.concat(chunks);
-    }).pipe(
-      Effect.scoped,
-      Effect.timeout(timeout),
-      Effect.catchTags({
-        HttpClientError: () =>
-          Effect.fail(
-            new PluginCatalogError({
-              reason: "npm-registry-unavailable",
-              message: `Could not download the ${what}.`,
-            }),
-          ),
-        TimeoutError: () =>
-          Effect.fail(
-            new PluginCatalogError({
-              reason: "npm-registry-unavailable",
-              message: `The registry did not send the ${what} in time.`,
-            }),
-          ),
-      }),
-    );
+    },
+    (effect, _url, _maxBytes, timeout, what) =>
+      effect.pipe(
+        Effect.scoped,
+        Effect.timeout(timeout),
+        Effect.catchTags({
+          HttpClientError: () =>
+            Effect.fail(
+              new PluginCatalogError({
+                reason: "npm-registry-unavailable",
+                message: `Could not download the ${what}.`,
+              }),
+            ),
+          TimeoutError: () =>
+            Effect.fail(
+              new PluginCatalogError({
+                reason: "npm-registry-unavailable",
+                message: `The registry did not send the ${what} in time.`,
+              }),
+            ),
+        }),
+      ),
+  );
 
   /** Asks the registry which exact version `request` names, and its tarball's integrity. */
   const resolve = Effect.fnUntraced(function* (registry: string, name: string, request: string) {
@@ -642,7 +645,7 @@ export const make = Effect.fn("PluginNpm.make")(function* (options: PluginNpmOpt
   /**
    * Finishes or rolls back a journaled swap. The catalogue decides under its
    * management lock, so a consent or enable from another client lands wholly
-   * before or after: finished when it holds consent to the new digest,
+   * before or after: finished when the persisted swap outcome is committed,
    * otherwise `.previous` goes back once the plugin has stopped. The decision
    * sets the reported version at once; the journal and `.previous` stay until
    * the cleanup after it has worked, so a failure is retried later and never
