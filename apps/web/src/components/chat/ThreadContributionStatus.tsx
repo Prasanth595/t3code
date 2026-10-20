@@ -37,7 +37,6 @@ function ContributionStatusChips(props: { readonly chips: ReadonlyArray<Contribu
   const { chips } = props;
   const visible = chips.slice(0, VISIBLE_CHIPS);
   const hiddenCount = chips.length - visible.length;
-  const origins = [...new Set(chips.map((chip) => chip.origin))];
   return (
     <Popover>
       <PopoverTrigger
@@ -78,14 +77,10 @@ function ContributionStatusChips(props: { readonly chips: ReadonlyArray<Contribu
               {chip.tooltip ? (
                 <span className="wrap-break-word text-muted-foreground">{chip.tooltip}</span>
               ) : null}
+              <span className="wrap-break-word text-muted-foreground">{chip.origin}</span>
             </li>
           ))}
         </ul>
-        {origins.map((origin) => (
-          <p key={origin} className="mt-2 text-muted-foreground text-xs">
-            {origin}
-          </p>
-        ))}
       </PopoverPopup>
     </Popover>
   );
