@@ -137,6 +137,8 @@ export const GitRunStackedActionInput = Schema.Struct({
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
+  // Commits the index as it is instead of staging every change. Ignored when filePaths is set.
+  stagedOnly: Schema.optional(Schema.Boolean),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });

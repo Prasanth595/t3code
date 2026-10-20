@@ -431,7 +431,6 @@ export function buildReviewSectionItems(input: {
     },
   );
 
-  // Staged and unstaged sources arrive only for clients that request them.
   const gitItems = input.gitSections.flatMap<ReviewSectionItem>((section) =>
     section.kind === "working-tree" || section.kind === "branch-range"
       ? [

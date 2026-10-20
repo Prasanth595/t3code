@@ -12,11 +12,10 @@ against your base branch. Restore still returns the complete saved workspace.
 
 ## Stage changes for a commit
 
-In the diff panel's **Uncommitted** view, **Changes** shows what isn't staged yet and **Staged**
-shows what the next commit contains. Use **+** on a file to stage it and **−** to unstage it, or
-the button beside the tabs for every file. A partly staged file appears in both, each with its own
-lines. Once anything is staged, the commit dialog starts with only the staged files selected; a
-partly staged file is committed whole.
+The diff panel's **Uncommitted** view splits into **Changes** and **Staged**. A partly staged file
+appears in both, each showing only its own lines. While anything is staged, committing records
+just the staged changes, as `git commit` does; choose **Include unstaged changes** in the commit
+dialog to commit everything.
 
 ## Connect an account
 

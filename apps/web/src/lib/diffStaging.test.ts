@@ -2,7 +2,7 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { fileDiffStagingPaths, sourceStagingPaths } from "./diffStaging";
+import { fileDiffStagingPaths, sectionPaths } from "./diffStaging";
 
 const source = (files?: ReviewDiffPreviewSource["files"]): ReviewDiffPreviewSource => ({
   id: "unstaged",
@@ -16,6 +16,13 @@ const source = (files?: ReviewDiffPreviewSource["files"]): ReviewDiffPreviewSour
   ...(files ? { files } : {}),
 });
 
+const statusFile = (path: string, staged: "none" | "partial" | "all") => ({
+  path,
+  insertions: 1,
+  deletions: 0,
+  staged,
+});
+
 describe("fileDiffStagingPaths", () => {
   it("stages both sides of a rename", () => {
     expect(
@@ -25,20 +32,33 @@ describe("fileDiffStagingPaths", () => {
   });
 });
 
-describe("sourceStagingPaths", () => {
-  it("covers files a truncated preview has not rendered", () => {
+describe("sectionPaths", () => {
+  const statusFiles = [
+    statusFile("staged.ts", "all"),
+    statusFile("partial.ts", "partial"),
+    statusFile("untracked.ts", "none"),
+  ];
+
+  it("takes every file in the section from status, even ones the preview left out", () => {
+    const truncated = source();
     expect(
-      sourceStagingPaths(
-        source([
-          { path: "a.ts", previousPath: null, additions: 1, deletions: 0 },
-          { path: "src/new.ts", previousPath: "src/old.ts", additions: 0, deletions: 0 },
-        ]),
-        [{ name: "a.ts" } as FileDiffMetadata],
-      ),
-    ).toEqual(["a.ts", "src/new.ts", "src/old.ts"]);
+      sectionPaths({ section: "unstaged", statusFiles, source: truncated, renderedFiles: [] }),
+    ).toEqual(["partial.ts", "untracked.ts"]);
+    expect(
+      sectionPaths({ section: "staged", statusFiles, source: truncated, renderedFiles: [] }),
+    ).toEqual(["staged.ts", "partial.ts"]);
   });
 
-  it("falls back to the rendered files without file stats", () => {
-    expect(sourceStagingPaths(source(), [{ name: "a.ts" } as FileDiffMetadata])).toEqual(["a.ts"]);
+  it("falls back to the preview's files when status has no staged state", () => {
+    expect(
+      sectionPaths({
+        section: "unstaged",
+        statusFiles: [{ path: "a.ts", insertions: 1, deletions: 0 }],
+        source: source([
+          { path: "src/new.ts", previousPath: "src/old.ts", additions: 0, deletions: 0 },
+        ]),
+        renderedFiles: [],
+      }),
+    ).toEqual(["src/new.ts", "src/old.ts"]);
   });
 });

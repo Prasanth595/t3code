@@ -2732,6 +2732,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("lists a file removed from the index but kept on disk as an unstaged addition", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "secret.env", "token\n");
+        yield* git(cwd, ["add", "secret.env"]);
+        yield* git(cwd, ["commit", "-m", "add secret"]);
+        yield* git(cwd, ["rm", "--cached", "secret.env"]);
+
+        const preview = yield* driver.getReviewDiffPreview({ cwd, includeIndexSources: true });
+
+        assert.deepStrictEqual(
+          preview.sources.map((source) => [source.kind, source.files]),
+          [
+            ["staged", [{ path: "secret.env", previousPath: null, additions: 0, deletions: 1 }]],
+            ["unstaged", [{ path: "secret.env", previousPath: null, additions: 1, deletions: 0 }]],
+          ],
+        );
+      }),
+    );
+
     it.effect("reads staged changes before the first commit", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -3543,6 +3565,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         });
 
         assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "nested/with space.txt");
+      }),
+    );
+
+    it.effect("reports a file removed from the index but kept on disk as partly staged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "secret.env", "token\n");
+        yield* git(cwd, ["add", "secret.env"]);
+        yield* git(cwd, ["commit", "-m", "add secret"]);
+        yield* git(cwd, ["rm", "--cached", "secret.env"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.deepInclude(status.workingTree.files, {
+          path: "secret.env",
+          insertions: 0,
+          deletions: 1,
+          staged: "partial",
+        });
+      }),
+    );
+
+    it.effect("stages the paths that still exist when others are gone", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "kept.txt", "kept\n");
+
+        yield* driver.stageFiles({ cwd, filePaths: ["vanished.txt", "kept.txt"] });
+
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "kept.txt");
       }),
     );
 

@@ -39,7 +39,7 @@ export type DefaultBranchConfirmableAction =
 
 export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
-  "action" | "commitMessage" | "featureBranch" | "filePaths"
+  "action" | "commitMessage" | "featureBranch" | "filePaths" | "stagedOnly"
 >;
 
 export function buildMenuItems(
@@ -353,12 +353,13 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   };
 }
 
-/** Once anything is staged, a commit starts from the index: files with nothing staged begin excluded. */
-export function resolveInitialCommitExclusions(
+export function hasStagedChanges(files: VcsStatusResult["workingTree"]["files"]): boolean {
+  return files.some((file) => file.staged === "all" || file.staged === "partial");
+}
+
+export function resolveUnstagedFiles(
   files: VcsStatusResult["workingTree"]["files"],
 ): ReadonlySet<string> {
-  if (!files.some((file) => file.staged === "all" || file.staged === "partial")) {
-    return new Set();
-  }
+  if (!hasStagedChanges(files)) return new Set();
   return new Set(files.filter((file) => file.staged === "none").map((file) => file.path));
 }

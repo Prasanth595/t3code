@@ -6,7 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import { AuthSourceControlWriteScope, type RunId, type ScopedThreadRef } from "@t3tools/contracts";
+import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -50,7 +50,7 @@ import {
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
-import { fileDiffStagingPaths, sourceStagingPaths } from "../lib/diffStaging";
+import { fileDiffStagingPaths, sectionPaths, type UncommittedSection } from "../lib/diffStaging";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadCheckpointSummaries, useQuietThreadShell } from "../state/entities";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
@@ -97,7 +97,6 @@ import { useReviewFilePatches } from "./diffs/useReviewFilePatches";
 import { DiffFileLoadingBoundary } from "./diffs/DiffFileLoadingBoundary";
 import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
-import { useEnvironmentScope } from "~/state/session";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -120,9 +119,12 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
-const EMPTY_PATHS: ReadonlySet<string> = new Set();
 
-type UncommittedSection = "staged" | "unstaged";
+interface PendingStageMove {
+  readonly section: UncommittedSection;
+  readonly paths: ReadonlySet<string>;
+  readonly settledAt: number | null;
+}
 
 function DiffStageButton({
   label,
@@ -411,38 +413,44 @@ export default function DiffPanel({
         ? "Uncommitted"
         : "Changes";
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const canWriteSourceControl = useEnvironmentScope(
-    activeThread?.environmentId ?? null,
-    AuthSourceControlWriteScope,
-  );
   const stageFiles = useAtomCommand(vcsEnvironment.stageFiles, "stage files");
   const unstageFiles = useAtomCommand(vcsEnvironment.unstageFiles, "unstage files");
-  // Files leave their section as soon as they are clicked, until the next preview arrives.
-  const [movedPaths, setMovedPaths] = useState<{
-    basis: typeof branchDiffPreview.data;
-    paths: ReadonlySet<string>;
-  } | null>(null);
-  const hiddenPaths =
-    movedPaths !== null && movedPaths.basis === branchDiffPreview.data
-      ? movedPaths.paths
-      : EMPTY_PATHS;
-  // Every file header holds this, so it keeps one identity.
+  const canStageFiles = useAtomValue(
+    vcsEnvironment.stageFiles.permissionAtom(activeThread?.environmentId ?? null),
+  );
+  const canUnstageFiles = useAtomValue(
+    vcsEnvironment.unstageFiles.permissionAtom(activeThread?.environmentId ?? null),
+  );
+  const canChangeSection = uncommittedSection === "staged" ? canUnstageFiles : canStageFiles;
+  const [pendingMoves, setPendingMoves] = useState<ReadonlyArray<PendingStageMove>>([]);
+  const previewUpdatedAt = branchDiffPreview.dataUpdatedAt;
+  const isMoveVisible = (move: PendingStageMove) =>
+    move.settledAt === null || previewUpdatedAt <= move.settledAt;
+  const hiddenPaths = new Set(
+    pendingMoves.flatMap((move) =>
+      move.section === uncommittedSection && isMoveVisible(move) ? [...move.paths] : [],
+    ),
+  );
   const setFilesStaged = useStableCallback((paths: ReadonlyArray<string>, staged: boolean) => {
     if (!activeThread || !activeCwd || paths.length === 0) return;
-    const basis = branchDiffPreview.data;
-    setMovedPaths((current) => ({
-      basis,
-      paths: new Set([
-        ...(current !== null && current.basis === basis ? current.paths : []),
-        ...paths,
-      ]),
-    }));
+    const move: PendingStageMove = {
+      section: uncommittedSection,
+      paths: new Set(paths),
+      settledAt: null,
+    };
+    setPendingMoves((current) => [...current.filter(isMoveVisible), move]);
     const run = staged ? stageFiles : unstageFiles;
     void run({
       environmentId: activeThread.environmentId,
       input: { cwd: activeCwd, filePaths: paths },
     }).then((result) => {
-      if (result._tag === "Failure") setMovedPaths(null);
+      setPendingMoves((current) =>
+        result._tag === "Failure"
+          ? current.filter((candidate) => candidate !== move)
+          : current.map((candidate) =>
+              candidate === move ? { ...candidate, settledAt: Date.now() } : candidate,
+            ),
+      );
       refreshPreviewQuery();
     });
   });
@@ -657,9 +665,12 @@ export default function DiffPanel({
   );
   const sectionStagingPaths =
     showsIndexSections && selectedGitSource
-      ? sourceStagingPaths(selectedGitSource, renderableFiles).filter(
-          (path) => !hiddenPaths.has(path),
-        )
+      ? sectionPaths({
+          section: uncommittedSection,
+          statusFiles: gitStatusQuery.data?.workingTree.files ?? [],
+          source: selectedGitSource,
+          renderedFiles: renderableFiles,
+        }).filter((path) => !hiddenPaths.has(path))
       : [];
   const treeRevealScope = { collapseScopeKey, diffSelection };
   const requestTreeReveal = useCodeViewFileReveal(codeView, treeRevealScope, codeViewFileKeys);
@@ -804,7 +815,7 @@ export default function DiffPanel({
         <DiffStageButton
           label={uncommittedSection === "staged" ? "Unstage all changes" : "Stage all changes"}
           staged={uncommittedSection === "staged"}
-          disabled={!canWriteSourceControl}
+          disabled={!canChangeSection}
           size="icon-sm"
           onClick={() => setFilesStaged(sectionStagingPaths, uncommittedSection === "unstaged")}
         />
@@ -1286,7 +1297,7 @@ export default function DiffPanel({
                             <DiffStageButton
                               label={staged ? `Unstage ${filePath}` : `Stage ${filePath}`}
                               staged={staged}
-                              disabled={!canWriteSourceControl}
+                              disabled={!canChangeSection}
                               size="icon-micro"
                               onClick={() =>
                                 setFilesStaged(fileDiffStagingPaths(fileDiff), !staged)

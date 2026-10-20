@@ -4,7 +4,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { resolveInitialCommitExclusions } from "@t3tools/client-runtime/state/vcs";
+import { hasStagedChanges, resolveUnstagedFiles } from "@t3tools/client-runtime/state/vcs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../../components/ui/AppSymbol";
@@ -47,9 +47,9 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
   const allFiles = gitStatus.data?.workingTree?.files ?? [];
 
   const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  // Null until the user edits the selection, so the sheet follows the index as it changes.
   const [editedExclusions, setEditedExclusions] = useState<ReadonlySet<string> | null>(null);
-  const excludedFiles = editedExclusions ?? resolveInitialCommitExclusions(allFiles);
+  const commitsStagedOnly = editedExclusions === null && hasStagedChanges(allFiles);
+  const excludedFiles = editedExclusions ?? resolveUnstagedFiles(allFiles);
 
   const selectedFiles = allFiles.filter((file) => !excludedFiles.has(file.path));
   const allSelected = excludedFiles.size === 0;
@@ -65,7 +65,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       action: "commit",
       featureBranch,
       ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((file) => file.path) } : {}),
+      ...(commitsStagedOnly
+        ? { stagedOnly: true }
+        : !allSelected
+          ? { filePaths: selectedFiles.map((file) => file.path) }
+          : {}),
     });
   };
 
@@ -121,13 +125,20 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             <View className="flex-1 gap-1">
               <Text className="text-base font-t3-bold text-foreground">Changed files</Text>
               <Text className="text-xs text-foreground-muted">
-                {selectedFiles.length} of {allFiles.length} selected · +
-                {formatDiffCount(selectedInsertions)} −{formatDiffCount(selectedDeletions)}
+                {selectedFiles.length} of {allFiles.length}{" "}
+                {commitsStagedOnly ? "staged" : "selected"} · +{formatDiffCount(selectedInsertions)}{" "}
+                −{formatDiffCount(selectedDeletions)}
               </Text>
             </View>
             {allFiles.length > 0 ? (
               <Button
-                label={allSelected ? "Deselect all" : "Select all"}
+                label={
+                  commitsStagedOnly
+                    ? "Include unstaged"
+                    : allSelected
+                      ? "Deselect all"
+                      : "Select all"
+                }
                 tone="text"
                 onPress={() =>
                   setEditedExclusions(
