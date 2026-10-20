@@ -158,21 +158,35 @@ export function parsePullRequestReference(
 }
 
 /**
- * An SSH alias (`git@github-work:owner/repo`) names no API host of its own; it is read
- * through `github.com`, which is what such an alias almost always stands for (issue
- * #6198).
+ * `github.com-<name>` is the usual per-account SSH alias (`Host github.com-work` with `HostName
+ * github.com`). Only that exact shape counts: one more dot makes a real DNS name, such as
+ * `github.com-evil.example`, which is read as itself and never handed github.com credentials.
+ */
+const GITHUB_DOT_COM_SSH_ALIAS = /^github\.com-[a-z0-9_-]+$/u;
+
+/** The API host an SSH alias stands for: null for a dotless non-GitHub alias, undefined for none. */
+function apiHostForSshAlias(host: string): string | null | undefined {
+  if (!host.includes(".")) return host.includes("github") ? "github.com" : null;
+  return GITHUB_DOT_COM_SSH_ALIAS.test(host) ? "github.com" : undefined;
+}
+
+/**
+ * An SSH alias (`git@github-work:owner/repo`, `git@github.com-work:owner/repo`) names no API
+ * host of its own; it is read through `github.com`, which is what such an alias almost always
+ * stands for (issue #6198).
  */
 export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
   if (provider === null) return null;
   const host = new URL(provider.baseUrl).host.toLowerCase();
-  if (isSshRemoteUrl(remoteUrl) && !host.includes(".")) {
-    return host.includes("github") ? "github.com" : null;
+  if (isSshRemoteUrl(remoteUrl)) {
+    const aliased = apiHostForSshAlias(host);
+    if (aliased !== undefined) return aliased;
   }
   return provider.kind === "github" ? host : null;
 }
 
 function apiHostForHint(host: string): string {
   const normalized = host.toLowerCase();
-  return !normalized.includes(".") && normalized.includes("github") ? "github.com" : normalized;
+  return apiHostForSshAlias(normalized) ?? normalized;
 }

@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  resolveGitHubRepository,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -87,5 +88,75 @@ describe("gitHubApiHostForRemote", () => {
       "github.example.com",
     );
     assert.strictEqual(gitHubApiHostForRemote("git@gitlab.com:a/b.git"), null);
+  });
+});
+
+describe("github.com-<name> SSH aliases", () => {
+  it("reads a per-account alias through github.com", () => {
+    for (const url of [
+      "git@github.com-scale:scalable-so/scalablev2.git",
+      "git@GitHub.com-Work:acme/web.git",
+      "ssh://git@github.com-personal/acme/web.git",
+      "ssh://git@github.com-scale:22/acme/web.git",
+    ]) {
+      assert.strictEqual(gitHubApiHostForRemote(url), "github.com", url);
+    }
+  });
+
+  it("never maps a hostile or real DNS host onto github.com", () => {
+    for (const [url, host] of [
+      ["git@github.com-evil.example:acme/web.git", "github.com-evil.example"],
+      ["ssh://git@github.com-evil.example/acme/web.git", "github.com-evil.example"],
+      ["git@github.com.evil.example:acme/web.git", "github.com.evil.example"],
+      ["git@evil-github.com:acme/web.git", null],
+      ["https://github.com-scale/acme/web.git", "github.com-scale"],
+    ] as const) {
+      assert.strictEqual(gitHubApiHostForRemote(url), host, url);
+    }
+  });
+
+  it("resolves the API host and repository from an alias remote and its host hint", () => {
+    const remotes = [
+      "origin\tgit@github.com-scale:scalable-so/scalablev2.git (fetch)",
+      "origin\tgit@github.com-scale:scalable-so/scalablev2.git (push)",
+    ].join("\n");
+    const expected = {
+      host: "github.com",
+      locator: { host: "github.com", owner: "scalable-so", name: "scalablev2" },
+    };
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "",
+        hostHint: "github.com-scale",
+        defaultHost: "github.com-scale",
+      }),
+      expected,
+    );
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "",
+        hostHint: undefined,
+        defaultHost: "github.com",
+      }),
+      expected,
+    );
+  });
+
+  it("keeps a hostile host hint and its remote off github.com", () => {
+    const remotes = "origin\tgit@github.com-evil.example:acme/web.git (fetch)";
+    assert.deepStrictEqual(
+      resolveGitHubRepository({
+        remotes,
+        resolved: "",
+        hostHint: "github.com-evil.example",
+        defaultHost: "github.com-evil.example",
+      }),
+      {
+        host: "github.com-evil.example",
+        locator: { host: "github.com-evil.example", owner: "acme", name: "web" },
+      },
+    );
   });
 });
