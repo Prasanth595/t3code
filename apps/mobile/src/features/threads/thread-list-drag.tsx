@@ -32,15 +32,12 @@ import {
   resolveThreadDrop,
   threadDragGapOffset,
   threadDropInsertionOffset,
-  type ThreadDragRow,
   type ThreadDropDestination,
 } from "./threadDragGap";
-import {
-  getThreadListV2OrderedSection,
-  isThreadListV2ListItem,
-  type ThreadListV2ListItem,
-} from "./threadListV2";
+import { getThreadListV2OrderedSection, isThreadListV2ListItem } from "./threadListV2";
 import { createThreadMovePlanner, threadDragAction, type ThreadDragSection } from "./threadOrder";
+
+import { dragSection, draggableThreadKeys, snapshotRows } from "./thread-list-drag-logic";
 
 // Long enough that a flick still scrolls, short enough to beat the long-press
 // menu (~500ms on iOS): holding still opens the menu, moving after the hold
@@ -51,7 +48,6 @@ const LIFT_SLOP = 6;
 const AUTO_SCROLL_EDGE = 56;
 
 type ListItem = { readonly type: string; readonly key: string };
-type ListState = ReturnType<LegendListRef["getState"]>;
 
 /** Published to rows so they can slide aside for the insertion gap. */
 interface DragLayout {
@@ -94,46 +90,6 @@ export interface ThreadListDragTarget {
   readonly layout: SharedValue<DragLayout | null>;
   readonly owner: SharedValue<string | null>;
   readonly draggableKeys: ReadonlySet<string>;
-}
-
-function dragSection(item: ThreadListV2ListItem): ThreadDragSection | null {
-  if (item.type === "v2-settled-shelf") return "settled";
-  if (item.type !== "v2-thread") return null;
-  if (item.item.snoozed) return "snoozed";
-  if (item.item.variant === "slim") return "settled";
-  return item.item.pinned ? "pinned" : "active";
-}
-
-/** The list's untransformed layout. The gap is a transform, so hit testing
- * never sees it. LegendList only reports sizes for measured rows. */
-function snapshotRows(state: ListState, items: readonly ListItem[], estimatedRowHeight: number) {
-  const rows: ThreadDragRow[] = [];
-  const offsets: Record<string, number> = {};
-  let cursor = 0;
-  let liveBlock = true;
-  items.forEach((item, index) => {
-    const position = state.positionAtIndex(index);
-    const offset = Number.isFinite(position) ? position : cursor;
-    const next = state.positionAtIndex(index + 1);
-    const height =
-      state.sizes.get(item.key) ??
-      (Number.isFinite(next) && next > offset ? next - offset : estimatedRowHeight);
-    cursor = offset + height;
-    offsets[item.key] = offset;
-    if (item.type !== "v2-thread") liveBlock = false;
-    if (!isThreadListV2ListItem(item)) return;
-    rows.push({
-      key: item.key,
-      threadKey:
-        item.type === "v2-thread"
-          ? scopedThreadKey(item.item.thread.environmentId, item.item.thread.id)
-          : null,
-      section: item.type === "v2-thread" && !liveBlock ? null : dragSection(item),
-      offset,
-      height,
-    });
-  });
-  return { rows, offsets };
 }
 
 /** Plan against the complete sections, exactly as the drop's `moveThread` will. */
@@ -412,16 +368,7 @@ export function useThreadListDrag(props: {
   useEffect(() => cancel, [cancel]);
 
   const previewStyle = useAnimatedStyle(() => ({ transform: [{ translateY: previewTop.value }] }));
-  const draggableKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const item of props.items) {
-      if (!isThreadListV2ListItem(item) || item.type !== "v2-thread") break;
-      const section = dragSection(item);
-      if (section !== "pinned" && section !== "active") break;
-      keys.add(item.key);
-    }
-    return keys;
-  }, [props.items]);
+  const draggableKeys = useMemo(() => draggableThreadKeys(props.items), [props.items]);
   const target = useMemo(
     () => ({ controller, layout, owner, draggableKeys }),
     [controller, layout, owner, draggableKeys],
