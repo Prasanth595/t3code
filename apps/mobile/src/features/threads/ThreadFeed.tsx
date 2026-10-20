@@ -941,7 +941,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
 });
 
 function useMarkdownStyles(): MarkdownStyleSets {
-  const { appearance, fonts, replyFontSize } = useAppearancePreferences();
+  const { appearance, fonts, replyFontSize, replyEmphasisFontFamily } = useAppearancePreferences();
   const replyTypography = useMemo(
     () => resolveNativeMarkdownTypography(replyFontSize),
     [replyFontSize],
@@ -1017,12 +1017,13 @@ function useMarkdownStyles(): MarkdownStyleSets {
           codeFontFamily: fonts.code.regular,
           fontFamily: fonts.reply.regular,
           headingFontFamily: fonts.reply.bold,
-          boldFontFamily: fonts.reply.bold,
+          boldFontFamily: replyEmphasisFontFamily,
         },
       },
     };
   }, [
     fonts.reply,
+    replyEmphasisFontFamily,
     fonts.code.regular,
     replyTypography,
     boldFontFamily,
@@ -2217,12 +2218,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const { appearance, fonts, replyFontSize } = useAppearancePreferences();
+  const { appearance, fonts, replyFontSize, replyEmphasisFontFamily } = useAppearancePreferences();
   const workRowSizing = deriveThreadWorkLogSizing({
     baseFontSize: appearance.baseFontSize,
     fontScale,
   });
-  const textLayoutKey = `${workRowSizing.textSizeKey}:${replyFontSize}:${fonts.interface.regular}:${fonts.interface.bold}:${fonts.reply.regular}:${fonts.reply.bold}:${fonts.code.regular}`;
+  const textLayoutKey = `${workRowSizing.textSizeKey}:${replyFontSize}:${fonts.interface.regular}:${fonts.interface.bold}:${fonts.reply.regular}:${fonts.reply.bold}:${replyEmphasisFontFamily}:${fonts.code.regular}`;
   const settledPaneWidth = useWorkspaceSettledContentWidth();
   const [measuredViewportWidth, setViewportWidth] = useState(() =>
     props.layoutVariant === "split" ? 0 : windowWidth,
