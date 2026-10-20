@@ -51,7 +51,7 @@ export function VoiceTranscriptionKeySection() {
         <View collapsable={false} className="gap-3 bg-grouped-card px-4 py-4">
           <ConnectionFormField
             label="OpenAI API key"
-            placeholder={saved.length > 0 ? "Saved" : "xi-…"}
+            placeholder={saved.length > 0 ? "Saved" : "sk-…"}
             autoCapitalize="none"
             autoCorrect={false}
             secureTextEntry

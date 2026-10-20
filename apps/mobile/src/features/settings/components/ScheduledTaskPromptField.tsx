@@ -23,7 +23,7 @@ export function ScheduledTaskPromptField(props: {
   const voice = props.voiceInput;
   const presentation = resolveVoiceComposerPresentation(voice.state, voice.elapsedSeconds);
   const showsDictation = presentation.statusLabel !== null;
-  const showsIdleTrigger = voice.isAvailable && !showsDictation;
+  const showsIdleTrigger = !showsDictation;
 
   return (
     <View className="gap-2 border-t border-border-subtle px-4 py-3">

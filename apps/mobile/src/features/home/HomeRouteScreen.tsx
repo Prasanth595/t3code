@@ -21,6 +21,7 @@ import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native
 import { WorkspaceEmptyDetail } from "../layout/WorkspaceEmptyDetail";
 import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
 import { checkForAppUpdateOnLaunch, startAppUpdateForegroundRecheck } from "../updates/app-updates";
+import { UpdateReadyBadge } from "../updates/UpdateReadyBadge";
 import { AndroidHomeFabLayout } from "./AndroidHomeFab";
 import { HomeScreen } from "./HomeScreen";
 import { HomeHeader } from "./HomeHeader";
@@ -306,6 +307,7 @@ export function HomeRouteScreen() {
           selectedProjectKey={selectedProjectKey}
           threads={threads}
         />
+        <UpdateReadyBadge />
       </>
     </AndroidHomeFabLayout>
   );

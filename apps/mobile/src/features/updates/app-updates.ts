@@ -62,6 +62,22 @@ export function createAppUpdateDeferral(): AppUpdateDeferral {
 
 const appUpdateDeferral = createAppUpdateDeferral();
 
+const updateReadyListeners = new Set<() => void>();
+
+function notifyUpdateReadyChange() {
+  for (const listener of Array.from(updateReadyListeners)) listener();
+}
+
+export function subscribeUpdateReady(listener: () => void): () => void {
+  updateReadyListeners.add(listener);
+  return () => updateReadyListeners.delete(listener);
+}
+
+/** A downloaded update is waiting for a restart. */
+export function isAppUpdateReady(): boolean {
+  return appUpdateDeferral.pendingInstall;
+}
+
 /** The fork APK has OTA updates off and installs new APKs instead. */
 const defaultAppUpdateClient: AppUpdateClient = forkApkUpdateClient.isEnabled
   ? forkApkUpdateClient
@@ -330,6 +346,7 @@ async function installPendingAppUpdate(
   const outcome = await installAppUpdate(client, environment, deferral, options, true);
   if (outcome === "restart-failed") {
     deferral.pendingInstall = false;
+    notifyUpdateReadyChange();
   }
 }
 
@@ -340,6 +357,7 @@ function armDeferredAppUpdateInstall(
 ): void {
   if (deferral.pendingInstall) return;
   deferral.pendingInstall = true;
+  notifyUpdateReadyChange();
   scheduleDeferredAppUpdateInstall(client, environment, deferral, true);
   environment.onForegroundStay(() => {
     void promptDeferredAppUpdateInstall(client, environment, deferral);
@@ -395,6 +413,7 @@ async function applyDeferredAppUpdateInstall(
     reportUpdateFailure(reloaded, "Downloaded, but could not restart the app.", undefined);
     deferral.installInProgress = false;
     deferral.pendingInstall = false;
+    notifyUpdateReadyChange();
   }
 }
 

@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
 import {
@@ -438,7 +439,22 @@ export function ComposerDictationStartAction(props: {
   readonly onStart: () => void;
   readonly onCancel: () => void;
 }) {
-  if (!props.isAvailable) return null;
+  const navigation = useNavigation();
+  if (!props.isAvailable) {
+    return (
+      <VoiceActionButton
+        accessibilityLabel="Set up voice input"
+        disabled={props.disabled}
+        icon="mic"
+        onPress={() =>
+          navigation.navigate("SettingsSheet", {
+            screen: "SettingsContent",
+            params: { screen: "SettingsMicrophone" },
+          })
+        }
+      />
+    );
+  }
   const openSettings = props.state.phase === "error" && props.state.errorAction === "settings";
   return (
     <VoiceActionButton
