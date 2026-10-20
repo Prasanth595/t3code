@@ -174,7 +174,10 @@ export function markdownHtmlContent(
     const replacement = htmlTagMarkdown(match[0], anchors, options);
     if (replacement === "[" && bangBefore(result, result.length))
       result = `${result.slice(0, -1)}\\!`;
-    result += replacement;
+    result +=
+      anchors.open > 0 && /[\s[]/.test(result.at(-1) ?? "")
+        ? replacement.replace(/^ /, "")
+        : replacement;
     end = match.index + match[0].length;
   }
   const text = content.slice(end);
@@ -200,7 +203,7 @@ function htmlTagMarkdown(
     return `![${alt}](${markdownDestination(src)})`;
   }
   // A blank line inside an open link label would end the paragraph before its "]".
-  const blockBreak = anchors.open === 0 ? "\n\n" : tag[1] === "/" ? " " : "";
+  const blockBreak = anchors.open === 0 ? "\n\n" : " ";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
   // A line break would end the table row, so a cell keeps its content on one line.
