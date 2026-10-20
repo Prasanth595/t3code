@@ -29,6 +29,8 @@ describe("isMarkdownFileLinkLabel", () => {
     ["./src/example.ts", "/repo/src/example.ts", true],
     ["/repo/src/example.ts", "/repo/src/example.ts", true],
     ["src/", "/home/me/project/src/", true],
+    ["patches/", "patches/", true],
+    ["patches", "patches/", true],
     ["EXAMPLE.TS", "C:/repo/src/example.ts:12", true],
     ["file name.ts", "file:///repo/file%20name.ts", true],
     ["", "/repo/src/example.ts", true],
@@ -59,6 +61,11 @@ describe("inlineCodeFilePathCandidate", () => {
     ["usr/lib/libfoo.so.1", "usr/lib/libfoo.so.1"],
     ["vendor/jquery-3.6.0.min.js", "vendor/jquery-3.6.0.min.js"],
     ["./models/glm-5.3", "./models/glm-5.3"],
+    ["patches/", null],
+    ["apps/web/src/", null],
+    ["conf.d/", null],
+    ["src/main.ts/", null],
+    ["./patches/", "./patches/"],
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -127,6 +134,11 @@ describe("parseMarkdownFileLink", () => {
     ["AGENTS.md", "AGENTS.md"],
     ["script.ts:10", "script.ts"],
     ["/tmp/clip%23one.mp4#t=2", "/tmp/clip#one.mp4"],
+    ["patches/", "patches/"],
+    ["./patches/", "./patches/"],
+    ["apps/web/src/", "apps/web/src/"],
+    ["docs/My Folder/", "docs/My Folder/"],
+    ["docs/My%20Folder/", "docs/My Folder/"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
@@ -142,6 +154,7 @@ describe("parseMarkdownFileLink", () => {
     "/chat/settings#L3",
     "/app#L1",
     "readme",
+    "patches",
     "TODO:12",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
@@ -267,6 +280,22 @@ describe("resolveMarkdownFileLinkTarget", () => {
     expect(resolveMarkdownFileLinkTarget("src/processRunner.ts:71", "/Users/julius/project")).toBe(
       "/Users/julius/project/src/processRunner.ts:71",
     );
+  });
+
+  it("resolves a relative folder with a trailing slash against cwd", () => {
+    expect(resolveMarkdownFileLinkTarget("patches/", "/repo/project")).toBe(
+      "/repo/project/patches/",
+    );
+    expect(resolveMarkdownFileLinkTarget("./patches/", "/repo/project")).toBe(
+      "/repo/project/./patches/",
+    );
+    expect(resolveMarkdownFileLinkTarget("docs/My Folder/", "/repo/project")).toBe(
+      "/repo/project/docs/My Folder/",
+    );
+    expect(resolveMarkdownFileLinkTarget("apps/web/src/", "/repo/project")).toBe(
+      "/repo/project/apps/web/src/",
+    );
+    expect(resolveMarkdownFileLinkTarget("patches", "/repo/project")).toBeNull();
   });
 
   it("does not treat filename line references as external schemes", () => {
