@@ -21,14 +21,6 @@ const generatedPreviewStreamRoot = path.join(__dirname, ".generated", "preview-s
 
 config.resolver = {
   ...config.resolver,
-  blockList: [
-    ...(Array.isArray(config.resolver?.blockList)
-      ? config.resolver.blockList
-      : config.resolver?.blockList
-        ? [config.resolver.blockList]
-        : []),
-    /[/\\]\.t3(?:[/\\]|$)/,
-  ],
   extraNodeModules: {
     ...config.resolver?.extraNodeModules,
     "@t3tools/mobile-third-party-licenses": generatedLicenseModuleRoot,
