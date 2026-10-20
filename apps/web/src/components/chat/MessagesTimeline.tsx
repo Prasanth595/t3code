@@ -517,6 +517,7 @@ interface MessagesTimelineProps {
   onManualNavigation: () => void;
   findOpen?: boolean;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
+  cancelEndPinRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
@@ -608,6 +609,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
   cancelPositionRestoreRef,
+  cancelEndPinRef,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   historyControls,
@@ -886,7 +888,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
   const followsEndRef = useRef(false);
   const endPinCancelRef = useRef<(() => void) | null>(null);
-  useEffect(() => () => endPinCancelRef.current?.(), []);
+  useEffect(() => {
+    const cancelEndPin = () => {
+      endPinCancelRef.current?.();
+      endPinCancelRef.current = null;
+    };
+    if (cancelEndPinRef) cancelEndPinRef.current = cancelEndPin;
+    return () => {
+      if (cancelEndPinRef?.current === cancelEndPin) cancelEndPinRef.current = null;
+      cancelEndPin();
+    };
+  }, [cancelEndPinRef]);
   useLayoutEffect(() => {
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;

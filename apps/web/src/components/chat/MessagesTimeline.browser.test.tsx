@@ -1350,6 +1350,48 @@ describe("MessagesTimeline scroll position", () => {
     expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "auto")).toBe(false);
   });
 
+  it("lets an explicit smooth jump cancel an active end pin", async () => {
+    const props = baseProps();
+    const cancelEndPinRef = createRef<(() => void) | null>();
+    const timeline = (entries: Entry[]) => (
+      <MessagesTimeline {...props} timelineEntries={entries} cancelEndPinRef={cancelEndPinRef} />
+    );
+    await renderElement(timeline(tallEntries));
+    const viewport = await waitForList(props);
+    const list = props.listRef.current!;
+    const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
+    const scrollTo = vi.spyOn(scrollable, "scrollTo");
+    const originalScrollToEnd = list.scrollToEnd.bind(list);
+    let jumped = false;
+    vi.spyOn(list, "scrollToEnd").mockImplementation((options) => {
+      const result = originalScrollToEnd(options);
+      if (!options?.animated && !jumped) {
+        jumped = true;
+        queueMicrotask(() => {
+          cancelEndPinRef.current?.();
+          viewport.scrollTop = 0;
+          scrollTo.mockClear();
+          void list.scrollToEnd({ animated: true });
+        });
+      }
+      return result;
+    });
+    await act(async () => {
+      viewport.scrollTop = 0;
+      roots
+        .at(-1)!
+        .render(
+          timeline([...tallEntries, ...Array.from({ length: 12 }, (_, index) => tall(index + 12))]),
+        );
+    });
+    await vi.waitFor(() => expect(jumped).toBe(true));
+    await act(async () => {
+      for (let frame = 0; frame < 5; frame += 1) await new Promise(requestAnimationFrame);
+    });
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "smooth")).toBe(true);
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "auto")).toBe(false);
+  });
+
   it("settles when earlier short replies load above long ones", async () => {
     const props = baseProps();
     const short = Array.from({ length: 80 }, (_, index) =>
