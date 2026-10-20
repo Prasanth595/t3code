@@ -43,10 +43,11 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 
-const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
+const PREVIEW_FORWARDED_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "preview.focusUrl",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
@@ -198,7 +199,7 @@ export function ReopenClosedViewShortcut() {
     // sends each command back as a menu action.
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
-      ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      ...PREVIEW_FORWARDED_COMMANDS,
     ];
     void preview
       .setForwardedShortcuts(
