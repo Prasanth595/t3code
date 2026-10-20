@@ -645,7 +645,10 @@ it.effect(
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
-      assert.deepEqual(snapshot.config.modelBenchmarks, ModelManifest.BUNDLED_MODEL_MANIFEST.benchmarks);
+      assert.deepEqual(
+        snapshot.config.modelBenchmarks,
+        ModelManifest.BUNDLED_MODEL_MANIFEST.benchmarks,
+      );
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
       const duringAck = yield* keybindings.upsertKeybindingRule({
         key: "mod+alt+y",
