@@ -1271,8 +1271,8 @@ export const make = Effect.gen(function* () {
         Effect.asVoid,
       ),
 
-    runMergeRequestAction: (input) =>
-      Effect.gen(function* () {
+    runMergeRequestAction: Effect.fn("GitLabPullRequestCli.runMergeRequestAction")(
+      function* (input) {
         // `glab mr merge` arms auto-merge and never disarms it, so the one direction the CLI has
         // no flag for is asked of GitLab directly through the same `api` passthrough the rest of
         // this module writes with.
@@ -1298,7 +1298,8 @@ export const make = Effect.gen(function* () {
           flags.push("--sha", refs.headSha);
         }
         yield* executeMr(subcommand!, ...flags);
-      }),
+      },
+    ),
 
     updateMergeRequest: (input) =>
       api({
