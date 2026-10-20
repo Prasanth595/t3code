@@ -5799,9 +5799,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         continue;
       }
-      insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
+      const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
         ensureLeadingBoundary: true,
       });
+      if (!inserted) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to add folder",
+          description:
+            pendingUserInputs.length > 0
+              ? "Finish answering the current question, then add the folder to your next message."
+              : "The composer is busy; try again once it is ready.",
+        });
+        break;
+      }
     }
     focusComposer();
   };
