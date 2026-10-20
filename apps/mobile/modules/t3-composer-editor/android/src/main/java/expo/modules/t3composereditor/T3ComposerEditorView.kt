@@ -66,7 +66,12 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       editable.getSpans(0, editable.length, ComposerChipSpan::class.java)
         .filter { it.iconUri == uri }
         .forEach {
-          editable.setSpan(it, editable.getSpanStart(it), editable.getSpanEnd(it), editable.getSpanFlags(it))
+          editable.setSpan(
+            it,
+            editable.getSpanStart(it),
+            editable.getSpanEnd(it),
+            editable.getSpanFlags(it)
+          )
         }
     }
   }

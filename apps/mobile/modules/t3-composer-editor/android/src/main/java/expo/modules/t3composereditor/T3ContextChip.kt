@@ -46,7 +46,10 @@ class T3ContextChip(
 
   val iconUri = content.iconUri
   private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-    if (content.tintsIcon) colorFilter = PorterDuffColorFilter(this@T3ContextChip.color, PorterDuff.Mode.SRC_IN)
+    if (content.tintsIcon) {
+      colorFilter =
+        PorterDuffColorFilter(this@T3ContextChip.color, PorterDuff.Mode.SRC_IN)
+    }
   }
   private val padding = density * 5
   private val iconSlot = if (iconUri.isEmpty()) 0f else em * 1.25f
@@ -74,7 +77,12 @@ class T3ContextChip(
     val baseline = -paint.fontMetrics.ascent
     canvas.drawText(text, padding + iconSlot, baseline, paint)
     if (detailText.isNotEmpty()) {
-      canvas.drawText(detailText, padding + iconSlot + paint.measureText(text), baseline, detailPaint)
+      canvas.drawText(
+        detailText,
+        padding + iconSlot + paint.measureText(text),
+        baseline,
+        detailPaint
+      )
     }
     canvas.restore()
   }

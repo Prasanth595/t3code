@@ -27,7 +27,9 @@ internal object T3ChipIcons {
       }
       pending[uri] = mutableSetOf(onLoaded)
       downloads.execute {
-        val bitmap = runCatching { URL(uri).openStream().use(BitmapFactory::decodeStream) }.getOrNull()
+        val bitmap = runCatching {
+          URL(uri).openStream().use(BitmapFactory::decodeStream)
+        }.getOrNull()
         main.post {
           val waiting = pending.remove(uri).orEmpty()
           if (bitmap != null) {
