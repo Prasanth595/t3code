@@ -492,10 +492,13 @@ it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
-describe("pull output beyond the output cap", () => {
+describe("pullCurrentBranch", () => {
   // A fast-forward that prints over 1 MB takes thousands of files, so the real pull's output is
   // padded past the cap instead.
-  const withPaddedPull = (stream: "stdout" | "stderr") =>
+  const withPaddedPull = (
+    stream: "stdout" | "stderr",
+    onPull?: (args: ReadonlyArray<string>) => void,
+  ) =>
     Effect.gen(function* () {
       const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
       const padding = new Uint8Array(1_000_001).fill(0x20);
@@ -506,6 +509,7 @@ describe("pull output beyond the output cap", () => {
             ChildProcess.isStandardCommand(command) &&
             command.args.includes("pull") &&
             command.args.includes("--ff-only");
+          if (isPull) onPull?.(command.args);
           return isPull
             ? ChildProcessSpawner.makeHandle({
                 ...handle,
@@ -534,8 +538,234 @@ describe("pull output beyond the output cap", () => {
     yield* git(updater, ["add", "remote.txt"]);
     yield* git(updater, ["commit", "-m", "remote commit"]);
     yield* git(updater, ["push", "origin", initialBranch]);
-    return { cwd, remoteHead: yield* git(updater, ["rev-parse", "HEAD"]) };
+    return {
+      cwd,
+      remote,
+      updater,
+      initialBranch,
+      remoteHead: yield* git(updater, ["rev-parse", "HEAD"]),
+    };
   });
+
+  it.effect("still fetches other branches on the first pull", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { cwd, updater, remoteHead } = yield* cloneBehindRemote;
+      yield* git(updater, ["push", "origin", "HEAD:refs/heads/other"]);
+
+      const result = yield* driver.pullCurrentBranch(cwd);
+
+      assert.equal(result.status, "pulled");
+      assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+      assert.equal(yield* git(cwd, ["rev-parse", "refs/remotes/origin/other"]), remoteHead);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each([false, true])(
+    "pulls past an unrelated lock with custom fetch mapping=%s",
+    (customMapping) =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fs = yield* FileSystem.FileSystem;
+        const { cwd, updater, initialBranch, remoteHead } = yield* cloneBehindRemote;
+        yield* git(updater, ["push", "origin", "HEAD:refs/heads/other"]);
+        const remoteName = customMapping ? "team/upstream" : "origin";
+        const refPrefix = customMapping
+          ? `refs/remotes/${remoteName}/mapped`
+          : "refs/remotes/origin";
+        if (customMapping) {
+          yield* git(cwd, ["remote", "rename", "origin", remoteName]);
+          yield* git(cwd, ["config", `remote.${remoteName}.fetch`, `+refs/heads/*:${refPrefix}/*`]);
+          yield* git(cwd, ["update-ref", `${refPrefix}/${initialBranch}`, "HEAD"]);
+        }
+        const lock = `.git/${refPrefix}/other.lock`;
+        yield* writeTextFile(cwd, lock, "");
+
+        const result = yield* driver.pullCurrentBranch(cwd);
+
+        assert.equal(result.status, "pulled");
+        assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
+        assert.equal(yield* git(cwd, ["rev-parse", `${refPrefix}/${initialBranch}`]), remoteHead);
+        assert.isTrue(yield* fs.exists(`${cwd}/${lock}`));
+        assert.equal(yield* fs.readFileString(`${cwd}/${lock}`), "");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("reports an upstream lock after the fallback without removing it", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
+      const { cwd, initialBranch } = yield* cloneBehindRemote;
+      const before = yield* git(cwd, ["rev-parse", "HEAD"]);
+      const lock = `.git/refs/remotes/origin/${initialBranch}.lock`;
+      yield* writeTextFile(cwd, lock, "");
+
+      const error = yield* Effect.flip(driver.pullCurrentBranch(cwd));
+
+      assert.include(error.detail, "could not update a local reference");
+      assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), before);
+      assert.isTrue(yield* fs.exists(`${cwd}/${lock}`));
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["branch", "HEAD"] as const)(
+    "does not retry a failed fetch if another operation moved %s",
+    (moved) =>
+      Effect.gen(function* () {
+        const fixtureDriver = yield* GitVcsDriver.GitVcsDriver;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { cwd, updater } = yield* cloneBehindRemote;
+        yield* git(updater, ["push", "origin", "HEAD:refs/heads/other"]);
+        yield* writeTextFile(cwd, ".git/refs/remotes/origin/other.lock", "");
+        let pulls = 0;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            const handle = yield* delegate.spawn(command);
+            if (!ChildProcess.isStandardCommand(command) || !command.args.includes("pull")) {
+              return handle;
+            }
+            pulls += 1;
+            return ChildProcessSpawner.makeHandle({
+              ...handle,
+              exitCode: handle.exitCode.pipe(
+                Effect.tap(() =>
+                  git(
+                    cwd,
+                    moved === "branch"
+                      ? ["checkout", "-b", "moved"]
+                      : ["commit", "--allow-empty", "-m", "concurrent commit"],
+                  ).pipe(
+                    Effect.provideService(GitVcsDriver.GitVcsDriver, fixtureDriver),
+                    Effect.orDie,
+                  ),
+                ),
+              ),
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+
+        const error = yield* Effect.flip(driver.pullCurrentBranch(cwd));
+
+        assert.include(error.detail, "could not update a local reference");
+        assert.equal(pulls, 1);
+      }).pipe(Effect.scoped, Effect.provide(layerServerConfig.pipe(Layer.provideMerge(layerTest)))),
+  );
+
+  it.effect.each(["deadline", "subscriber cancellation"] as const)(
+    "lets a background fetch finish after %s without leaving its lock behind",
+    (interruption) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const { cwd } = yield* cloneBehindRemote;
+        const lockPath = `${cwd}/.git/refs/remotes/origin/in-flight.lock`;
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const finalized = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (!ChildProcess.isStandardCommand(command) || !command.args.includes("fetch")) {
+              return yield* delegate.spawn(command);
+            }
+            // Model Git's gap between creating a lock and registering signal cleanup.
+            yield* fs.writeFileString(lockPath, "");
+            yield* Effect.addFinalizer(() => Deferred.succeed(finalized, undefined));
+            yield* Deferred.succeed(started, undefined);
+            return ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              exitCode: Deferred.await(release).pipe(
+                Effect.andThen(fs.remove(lockPath)),
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+            });
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const status = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkScoped);
+        yield* Deferred.await(started);
+
+        if (interruption === "deadline") {
+          yield* TestClock.adjust("5 seconds");
+          yield* Fiber.join(status);
+        } else {
+          yield* Fiber.interrupt(status);
+        }
+
+        assert.isFalse(yield* Deferred.isDone(finalized));
+        assert.isTrue(yield* fs.exists(lockPath));
+
+        yield* Deferred.succeed(release, undefined);
+        yield* Deferred.await(finalized);
+        assert.isFalse(yield* fs.exists(lockPath));
+      }).pipe(Effect.scoped, Effect.provide(layerServerConfig.pipe(Layer.provideMerge(layerTest)))),
+  );
+
+  it.effect("reuses a background fetch across status wait deadlines", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* makeTmpDir();
+      yield* fs.makeDirectory(`${cwd}/.git`);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const finalized = yield* Deferred.make<void>();
+      const attempts = yield* Ref.make(0);
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) return makeNonRepositoryHandle();
+          if (command.args.includes("fetch")) {
+            yield* Ref.update(attempts, (count) => count + 1);
+            yield* Deferred.succeed(started, undefined);
+            yield* Effect.addFinalizer(() => Deferred.succeed(finalized, undefined));
+            return ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              exitCode: Deferred.await(release).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            });
+          }
+          const args = command.args;
+          return makeSuccessfulHandle(
+            args.includes("--git-common-dir")
+              ? `${cwd}/.git\n`
+              : args.includes("--show-toplevel")
+                ? `${cwd}\n`
+                : args.includes("@{upstream}")
+                  ? "origin/main\n"
+                  : args[0] === "remote"
+                    ? "origin\n"
+                    : args[0] === "rev-list"
+                      ? "0\t0\n"
+                      : args.includes("refs/remotes/origin/HEAD")
+                        ? "refs/remotes/origin/main\n"
+                        : "main\n",
+          );
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const first = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(first);
+
+      yield* TestClock.adjust("15 seconds");
+      const second = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkScoped);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(second);
+
+      assert.equal(yield* Ref.get(attempts), 1);
+      assert.isFalse(yield* Deferred.isDone(finalized));
+      yield* Deferred.succeed(release, undefined);
+      yield* Deferred.await(finalized);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer))),
+    ),
+  );
 
   it.effect.each(["stdout", "stderr"] as const)(
     "reports a fast-forward whose %s passes the cap as pulled",
@@ -558,7 +788,8 @@ describe("pull output beyond the output cap", () => {
   it.effect("still fails a pull that Git rejects, whatever its output size", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const driver = yield* withPaddedPull("stderr");
+        const pulls: ReadonlyArray<string>[] = [];
+        const driver = yield* withPaddedPull("stderr", (args) => pulls.push(args));
         yield* Effect.gen(function* () {
           const { cwd } = yield* cloneBehindRemote;
           yield* writeTextFile(cwd, "local.txt", "local\n");
@@ -570,6 +801,7 @@ describe("pull output beyond the output cap", () => {
           assert.equal(error.operation, "GitVcsDriver.pullCurrentBranch.pull");
           assert.equal(error.exitCode, 128);
           assert.notInclude(error.detail, "exceeded");
+          assert.lengthOf(pulls, 1);
         }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
       }),
     ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
