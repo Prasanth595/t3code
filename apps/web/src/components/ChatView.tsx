@@ -1153,6 +1153,7 @@ export default function ChatView(props: ChatViewProps) {
   const threadDetailLoading = threadSyncPhase === "loading";
   const activeThreadLiveTokenUsage = latestProviderTurnTokenUsage(
     serverProjection?.providerTurns ?? [],
+    serverProjection,
   );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
