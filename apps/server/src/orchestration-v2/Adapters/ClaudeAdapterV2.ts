@@ -8008,10 +8008,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               const taskLists = yield* Ref.get(taskListsByNativeThread);
               const knownTaskList = taskLists.get(liveQuery.nativeThreadId);
-              // TaskList already supplies a snapshot. Mutations need Claude's persisted
-              // list once; afterward the cache also records an unavailable store.
+              const outputValue = claudeNativeToolOutputValue(output);
+              // A structured TaskList already supplies a snapshot. Anything else, including
+              // a subagent's text-only TaskList, needs Claude's persisted list once;
+              // afterward the cache also records an unavailable store.
               const storedTaskList =
-                !taskLists.has(liveQuery.nativeThreadId) && toolCall.toolName !== "TaskList"
+                !taskLists.has(liveQuery.nativeThreadId) &&
+                !(
+                  toolCall.toolName === "TaskList" &&
+                  Array.isArray(claudeTaskField(outputValue, "tasks"))
+                )
                   ? yield* readClaudeTaskList({
                       environment: adapterOptions.environment,
                       cwd: context.input.runtimePolicy.cwd,
@@ -8026,7 +8032,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   knownTaskList ?? storedTaskList ?? new Map(),
                   toolCall.toolName,
                   claudeNativeToolInputValue(toolCall.input),
-                  claudeNativeToolOutputValue(output),
+                  outputValue,
                 ) ?? storedTaskList;
               yield* Ref.set(
                 taskListsByNativeThread,

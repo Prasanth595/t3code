@@ -6001,6 +6001,36 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("recovers persisted tasks when a subagent's TaskList comes first", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const harness = yield* makeTaskToolHarness;
+      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
+      yield* fs.makeDirectory(tasksDir, { recursive: true });
+      yield* fs.writeFileString(
+        `${tasksDir}/1.json`,
+        JSON.stringify({ id: "1", subject: "Inspect", status: "pending", blockedBy: [] }),
+      );
+
+      yield* harness.startTurn();
+      yield* harness.launchSubagent("tool-parent-agent");
+      yield* harness.call(
+        { name: "TaskList", input: {}, output: { tasks: [] } },
+        { parentToolUseId: "tool-parent-agent" },
+      );
+      yield* harness.call(updateTask({ taskId: "1", status: "completed" }));
+      yield* harness.finishTurn();
+      assert.deepEqual(harness.plans().at(-1)?.steps, [
+        { id: "task-1", text: "Inspect", status: "completed" },
+      ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("does not associate structured task output with multiple tool results", () =>
     Effect.gen(function* () {
       const harness = yield* makeTaskToolHarness;
