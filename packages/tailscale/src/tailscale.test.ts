@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -296,7 +297,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("tailscale prob
       const error = yield* Fiber.join(fiber);
 
       assert.instanceOf(error, TailscaleCommandTimeoutError);
-      assert.deepEqual(yield* Effect.forEach(pids, isProcessAlive), [false, false]);
+      // SIGKILL lands asynchronously, so give the group a bounded real-time window to go.
+      const alive = yield* Effect.forEach(pids, isProcessAlive).pipe(
+        Effect.repeat({
+          until: (states) => states.every((state) => !state),
+          schedule: Schedule.spaced("20 millis"),
+          times: 100,
+        }),
+        TestClock.withLive,
+      );
+      assert.deepEqual(alive, [false, false]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
