@@ -29,7 +29,7 @@ export default function PullRequestSidePanel({
   shortcutsEnabled,
   getShortcutContext,
   onBack,
-  initialTab,
+  initialTab = "summary",
   onTabChange,
 }: PullRequestSidePanelProps) {
   const { threadRef, composerDraftTarget } = usePanelHost();
