@@ -332,7 +332,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   // Native Codex needs its adjacent host; launchers resolve their own payloads.
   const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
     function* (realExecutablePath: string) {
-      if (/^volta-shim(?:\.exe)?$/iu.test(path.basename(realExecutablePath))) return true;
+      if (/^(?:volta-shim|mise|aqua-proxy)(?:\.exe)?$/iu.test(path.basename(realExecutablePath)))
+        return true;
       if (platform === "win32") {
         if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
         for (const extension of [".bunx", ".shim"]) {

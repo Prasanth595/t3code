@@ -330,18 +330,21 @@ it.effect("uses bundled Codex compatibility when the remote manifest omits its p
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect.each(["script", "native"])(
-  "preserves the invoked name of %s version-manager launcher symlinks",
-  (kind) =>
-    Effect.gen(function* () {
-      const h = yield* makeHarness({ local: { version: "0.156.1" } });
-      const launcher = `${h.baseDir}/volta-shim`;
-      if (kind === "native") {
-        const payload = `${h.baseDir}/codex.js`;
-        yield* h.fs.rename(h.localBinaryPath, payload);
-        yield* compileNative(
-          launcher,
-          `#include <string.h>
+it.effect.each([
+  { kind: "script", name: "volta-shim" },
+  { kind: "native", name: "volta-shim" },
+  { kind: "native", name: "mise" },
+  { kind: "native", name: "aqua-proxy" },
+])("preserves the invoked name of $kind $name launcher symlinks", ({ kind, name }) =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness({ local: { version: "0.156.1" } });
+    const launcher = `${h.baseDir}/${name}`;
+    if (kind === "native") {
+      const payload = `${h.baseDir}/codex.js`;
+      yield* h.fs.rename(h.localBinaryPath, payload);
+      yield* compileNative(
+        launcher,
+        `#include <string.h>
 #include <unistd.h>
 int main(int argc, char **argv) {
   const char *name = strrchr(argv[0], '/');
@@ -350,20 +353,20 @@ int main(int argc, char **argv) {
   return 1;
 }
 `,
-        );
-      } else {
-        yield* h.fs.writeFileString(
-          launcher,
-          '#!/bin/sh\ncase "$0" in */codex) ;; *) exit 1;; esac\ncase "$1" in --version) printf "codex-cli 0.156.1\\n";; app-server) exit 0;; esac\n',
-          { mode: 0o755 },
-        );
-        yield* h.fs.remove(h.localBinaryPath);
-      }
-      yield* h.fs.symlink(launcher, h.localBinaryPath);
-      expect(yield* h.installation.start).toMatchObject({ source: "local", phase: "succeeded" });
-      expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
-      expect(h.downloads()).toBe(0);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    } else {
+      yield* h.fs.writeFileString(
+        launcher,
+        '#!/bin/sh\ncase "$0" in */codex) ;; *) exit 1;; esac\ncase "$1" in --version) printf "codex-cli 0.156.1\\n";; app-server) exit 0;; esac\n',
+        { mode: 0o755 },
+      );
+      yield* h.fs.remove(h.localBinaryPath);
+    }
+    yield* h.fs.symlink(launcher, h.localBinaryPath);
+    expect(yield* h.installation.start).toMatchObject({ source: "local", phase: "succeeded" });
+    expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
+    expect(h.downloads()).toBe(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
