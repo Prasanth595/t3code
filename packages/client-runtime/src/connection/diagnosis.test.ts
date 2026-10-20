@@ -1,5 +1,6 @@
 import {
   RelayAuthInvalidError,
+  RelayEnvironmentEndpointTimedOutError,
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
 } from "@t3tools/contracts/relay";
@@ -90,6 +91,19 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.steps.join(" ")).not.toContain("On Mac mini");
   });
 
+  it("points a relay timeout at the host, not this device", () => {
+    const failure = fromRelay(
+      new RelayEnvironmentEndpointTimedOutError({
+        code: "environment_endpoint_timed_out",
+        traceId: "trace-3",
+      }),
+    );
+    const diagnosis = diagnose(backoff(failure));
+    expect(diagnosis?.headline).toBe("Mac mini did not answer in time");
+    expect(diagnosis?.steps.join(" ")).toContain("On Mac mini");
+    expect(diagnosis?.steps.join(" ")).not.toContain("on this device");
+  });
+
   it("stops at T3 Connect when this device cannot reach the relay", () => {
     const failure = mapManagedRelayError(
       new ManagedRelayRequestFailedError({
@@ -133,6 +147,13 @@ describe("presentConnectionDiagnosis", () => {
       relayStatus: { status: "offline", endpointFailure: "tunnel_down", endpointStatus: 530 },
     });
     expect(diagnosis?.headline).toBe("Mac mini's tunnel is offline");
+    const origin = presentConnectionDiagnosis({
+      hostLabel: "Mac mini",
+      state: AVAILABLE_CONNECTION_STATE,
+      via: "direct",
+      relayStatus: { status: "offline", endpointFailure: "origin_unreachable" },
+    });
+    expect(origin?.hops.map((hop) => hop.hop)).toEqual(["device", "relay", "tunnel", "server"]);
   });
 
   it("keeps the relay health status out of a failure that has its own cause", () => {

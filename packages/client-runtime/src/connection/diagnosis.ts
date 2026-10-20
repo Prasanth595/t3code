@@ -156,7 +156,14 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
     case "origin_unreachable":
     case "invalid_response":
       return [`Open or restart T3 Code on ${host}.`, checkHost];
-    default:
+    // The relay saw these on its way to the host, so the fix is on the host.
+    case "dns":
+    case "tls":
+    case "refused":
+    case "timeout":
+    case "unknown":
+      return [`Make sure ${host} is awake and online.`, checkHost];
+    case null:
       break;
   }
   switch (located.hop) {
@@ -216,7 +223,10 @@ export function presentConnectionDiagnosis(
   const host = input.hostLabel;
   const failure = input.state.lastFailure;
   const relayPath =
-    located.hop === "relay" || located.hop === "tunnel" || (failure?.via ?? input.via) === "relay";
+    located.hop === "relay" ||
+    located.hop === "tunnel" ||
+    (failure === null && input.relayStatus?.status === "offline") ||
+    (failure?.via ?? input.via) === "relay";
   const order: ReadonlyArray<ConnectionHop> = HOP_ORDER[relayPath ? "relay" : "direct"];
   const failedIndex = order.indexOf(located.hop);
   const hops = order.map((hop, index): ConnectionDiagnosisHop => ({
