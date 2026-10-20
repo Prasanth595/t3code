@@ -95,6 +95,9 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     scopeId: CheckpointScopeId,
   }),
   Schema.Struct({
+    type: Schema.Literal("scheduled-tasks.cleanup"),
+  }),
+  Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
   /** Closes a deleted thread's preview sessions, ending their server browser tabs. */
@@ -125,6 +128,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-session.detach",
   "provider-thread.rollback",
   "checkpoint.capture",
+  "scheduled-tasks.cleanup",
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
