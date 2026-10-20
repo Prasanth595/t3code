@@ -218,6 +218,7 @@ describe("pending snapshot processing", () => {
     // Settings and route changes rerender the same coordinator instead of remounting it.
     const renderCoordinator = async () => {
       if (screen) await screen.rerender(createElement(SnapShotCoordinator));
+      // useHandleNewThread is mocked above, so nothing in the coordinator touches the router.
       else screen = await render(createElement(SnapShotCoordinator), { router: false });
     };
     return {

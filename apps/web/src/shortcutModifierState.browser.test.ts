@@ -26,6 +26,7 @@ describe("useShortcutModifierState", () => {
         onRender(useShortcutModifierState());
         return null;
       }
+      // The test counts the hook's renders, and the hook never reads a route.
       await using _screen = await render(createElement(Consumer), { router: false });
       const press = async (type: "keydown" | "keyup", key: string, shiftKey = false) => {
         await act(async () => {

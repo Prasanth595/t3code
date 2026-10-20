@@ -122,6 +122,7 @@ function setup() {
     useDesktopHostedPreviewSessions(ref.environmentId);
     return null;
   }
+  // The session hooks render nothing and never read or change the route.
   const mount = (Component: () => null = SessionSync) =>
     render(createElement(AppAtomRegistryProvider, null, createElement(Component)), {
       router: false,

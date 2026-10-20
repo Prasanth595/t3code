@@ -189,10 +189,11 @@ it.each(["direct", "gnome-extension", "kde"] as const)(
     await userEvent.click(recorder());
     await userEvent.keyboard("{Control>}{Alt>}y{/Alt}{/Control}");
     expect(bridge.checkSnapShotShortcut).toHaveBeenCalledOnce();
-    expect(container.textContent).toContain("Ready to save.");
-    expect(recorder().getAttribute("aria-label")).toBe(
-      "Record snapshot shortcut, currently Ctrl+Alt+Y",
-    );
+    // The status and label update only after the awaited shortcut check resolves.
+    await expect.poll(() => container.textContent).toContain("Ready to save.");
+    await expect
+      .poll(() => recorder().getAttribute("aria-label"))
+      .toBe("Record snapshot shortcut, currently Ctrl+Alt+Y");
     await click("Save");
     expect(settingsStore.update).toHaveBeenCalledWith({
       snapShotShortcut: expect.objectContaining({ key: "y", modKey: true, altKey: true }),

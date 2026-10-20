@@ -1,6 +1,5 @@
 import { act, render } from "../../../test/render";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
-import { useEffect } from "react";
 import { userEvent } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -22,7 +21,6 @@ function deferred<T>() {
 
 const recorded = vi.fn();
 const error = vi.fn();
-let recording = false;
 
 function Recorder(props: { allowModifierPairs?: boolean; shortcutLabel?: string }) {
   const recorder = useSnapShotShortcutRecorder({
@@ -32,9 +30,6 @@ function Recorder(props: { allowModifierPairs?: boolean; shortcutLabel?: string 
     onRecord: recorded,
     onError: error,
   });
-  useEffect(() => {
-    recording = recorder.recording;
-  });
   return recorder.input;
 }
 
@@ -42,18 +37,21 @@ function setup() {
   suppress.mockReset().mockResolvedValue(undefined);
   recorded.mockReset();
   error.mockReset();
-  recording = false;
 }
 async function renderRecorder(props: Parameters<typeof Recorder>[0] = {}) {
   const screen = await render(<Recorder {...props} />);
   const button = () =>
     screen.container.querySelector<HTMLButtonElement>("[data-keybinding-capture]")!;
+  // aria-pressed mirrors the hook's recording state, which flips once suppression resolves.
+  const expectRecording = (recording: boolean) =>
+    expect.element(screen.getByRole("button")).toHaveAttribute("aria-pressed", String(recording));
   return {
     ...screen,
     button,
+    expectRecording,
     async start() {
       await userEvent.click(button());
-      expect(recording).toBe(true);
+      await expectRecording(true);
     },
   };
 }
@@ -77,7 +75,7 @@ it("suppresses capture while recording and uses the physical key for shifted dig
     shiftKey: true,
   });
   expect(suppress).toHaveBeenLastCalledWith(false);
-  expect(recording).toBe(false);
+  await screen.expectRecording(false);
 });
 
 it("lets users replace an unrecognized desktop label without displaying guessed keys", async () => {
@@ -124,7 +122,7 @@ it.each(["Escape", "blur", "unmount"])("cancels on %s without selecting keys", a
   else await screen.unmount();
   expect(suppress).toHaveBeenLastCalledWith(false);
   expect(recorded).not.toHaveBeenCalled();
-  if (cancel !== "unmount") expect(recording).toBe(false);
+  if (cancel !== "unmount") await screen.expectRecording(false);
 });
 
 it("ignores late suppression acknowledgements after cancellation", async () => {
@@ -137,7 +135,7 @@ it("ignores late suppression acknowledgements after cancellation", async () => {
   await userEvent.click(button());
   await act(async () => button().blur());
   await act(async () => pending.resolve());
-  expect(recording).toBe(false);
+  await screen.expectRecording(false);
   expect(suppress).toHaveBeenLastCalledWith(false);
   expect(recorded).not.toHaveBeenCalled();
 });
@@ -149,7 +147,7 @@ it("reports suppression failures instead of arming the recorder", async () => {
   await using screen = await renderRecorder();
   const { button } = screen;
   await userEvent.click(button());
-  expect(recording).toBe(false);
+  await screen.expectRecording(false);
   expect(error).toHaveBeenCalledWith("Couldn't pause capture");
 });
 
@@ -162,7 +160,7 @@ it("does not record Tab, unmodified keys, or modifier keys on their own", async 
   await press("y");
   await press("{Control>}{/Control}");
   expect(recorded).not.toHaveBeenCalled();
-  expect(recording).toBe(true);
+  await screen.expectRecording(true);
   await press("{Tab}");
   expect(document.activeElement).not.toBe(button());
 });
@@ -176,7 +174,7 @@ it("rejects modifier pairs on Wayland but accepts the next key chord", async () 
   await press("{ShiftLeft>}{ShiftRight>}{/ShiftRight}{/ShiftLeft}");
   expect(recorded).not.toHaveBeenCalled();
   expect(error).toHaveBeenCalledWith(expect.stringContaining("Add a letter, number"));
-  expect(recording).toBe(true);
+  await screen.expectRecording(true);
   await press("{Control>}{Alt>}y{/Alt}{/Control}");
   expect(recorded).toHaveBeenCalledOnce();
 });
