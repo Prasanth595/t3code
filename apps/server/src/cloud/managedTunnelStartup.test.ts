@@ -206,7 +206,7 @@ describe("makeManagedTunnelRecovery", () => {
     tunnelId: "tunnel-1",
   };
 
-  it.effect("retries an unavailable relay every cooldown without growing it", () =>
+  it.effect("retries an unavailable relay every cooldown, and cools down from when it ends", () =>
     Effect.gen(function* () {
       const attemptMinutes: Array<number> = [];
       const recover = makeManagedTunnelRecovery({
@@ -221,9 +221,15 @@ describe("makeManagedTunnelRecovery", () => {
       });
       const run = yield* recover;
       const fiber = yield* Effect.forkChild(run(config), { startImmediately: true });
-      yield* TestClock.adjust("10 minutes");
+      yield* TestClock.adjust("6 minutes");
       expect(yield* Fiber.join(fiber)).toBe(true);
       expect(attemptMinutes.map(Math.round)).toEqual([0, 2, 4, 6]);
+
+      yield* TestClock.adjust("1 minute");
+      const next = yield* Effect.forkChild(run(config), { startImmediately: true });
+      yield* TestClock.adjust("10 minutes");
+      yield* Fiber.join(next);
+      expect(attemptMinutes.map(Math.round)).toEqual([0, 2, 4, 6, 10]);
     }),
   );
 });

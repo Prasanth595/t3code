@@ -187,8 +187,16 @@ export const makeManagedTunnelRecovery = Effect.fnUntraced(function* <A, E, R>(o
     });
     const wait = Duration.toMillis(cooldown) - elapsed;
     if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
-    lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
   });
+  // Measured from the end: a recovery that retried through a long relay
+  // outage must not look settled the moment it finishes.
+  const recordRecovery = Clock.currentTimeMillis.pipe(
+    Effect.tap((now) =>
+      Effect.sync(() => {
+        lastRecoveryAtMillis = now;
+      }),
+    ),
+  );
   return (config: RelayManagedEndpointRuntimeConfig) =>
     lock.withPermits(1)(
       waitForCooldown.pipe(
@@ -198,6 +206,7 @@ export const makeManagedTunnelRecovery = Effect.fnUntraced(function* <A, E, R>(o
               while: options.isRetryable,
               schedule: managedTunnelRecoveryRetrySchedule,
             }),
+            Effect.ensuring(recordRecovery),
           ),
         ),
       ),
