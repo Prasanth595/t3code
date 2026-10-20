@@ -91,5 +91,10 @@ with up to 100,000 input records. Run import again to continue a large batch.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 
+To import after setup, such as conversations you started in a terminal later,
+open Settings → General → Import from Claude Code and Codex. It shows the same
+project list for the computers selected in Settings, including projects you
+already added.
+
 You can continue without configuring agents or importing projects, or return to an earlier step
 using the setup progress bar. Navigation pauses while an import is running.
