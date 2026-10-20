@@ -245,8 +245,10 @@ omits it for a provider that offers all of them. When the target lists
 inherited mode steps down to the broadest mode the target offers.
 
 A follow-up that needs the same child's conversation goes to `childThreadId` through
-`t3_thread_send`. After the original task completes, it starts a new tracked task in that
-child thread and returns its `taskId`; the original result stays unchanged.
+`t3_thread_send`. After the original task completes, a message that starts a new run starts a
+new tracked task in that child thread and returns its `taskId`; the original result stays
+unchanged. A message sent while a run is active joins it and returns that run's `taskId`, if it
+has one.
 An independent review round that needs fresh context uses a new `delegate_task` call with
 the original brief, prior findings, responses, and unresolved objections. Track each task by
 its own `taskId` and use a distinct `clientRequestId` per round, stable across retries of
