@@ -462,13 +462,17 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const services = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(services);
+  const runPromise = Effect.runPromiseWith(services);
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
 
   const tabs = new Map<string, ServerTab>();
-  const pendingTabs = new Map<string, Promise<ServerTab>>();
-
+  const pendingTabs = new Map<
+    string | symbol,
+    { readonly owner: string | null; promise?: Promise<ServerTab> }
+  >();
   const closedPendingTabs = new Set<string>();
   const adoptedPages = new Map<string, { readonly page: Page; readonly openerTabId: string }>();
   const closedSessions = new Set<string>();
@@ -886,6 +890,7 @@ const make = Effect.gen(function* () {
     page.on("close", () => dropTab(tab, true));
     page.on("crash", () => dropTab(tab, true));
     tabs.set(key, tab);
+    pendingTabs.delete(key);
     reportLiveTabs();
     // Existing desktop and popup PDFs can start loading before interception attaches.
     if (
@@ -1177,8 +1182,7 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
-    const agentId = opener.control.agentId;
-    if (opener.closing || (agentId !== null && atTabLimit(agentId))) {
+    if (opener.closing) {
       await popup.close().catch(constVoid);
       return;
     }
@@ -1187,25 +1191,26 @@ const make = Effect.gen(function* () {
     const controller = [...opener.viewers].find(
       (viewer) => viewer.id === opener.control.controller,
     );
-    await Effect.runPromise(
-      manager.open({
-        threadId: opener.threadId,
-        ...(/^https?:/i.test(url) ? { url } : {}),
-        runtime: "server",
-        ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
-        ...(opener.control.agentId === null
-          ? {}
-          : { automationOwner: opener.control.agentId, reveal: false }),
-        beforePublish: (snapshot) =>
-          adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
-            page: popup,
-            openerTabId: opener.tabId,
-          }),
-      }),
+    await runPromise(
+      Effect.scoped(
+        openTab({
+          threadId: opener.threadId,
+          ...(/^https?:/i.test(url) ? { url } : {}),
+          runtime: "server",
+          ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
+          ...(opener.control.agentId === null
+            ? {}
+            : { automationOwner: opener.control.agentId, reveal: false }),
+          beforePublish: (snapshot) =>
+            adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
+              page: popup,
+              openerTabId: opener.tabId,
+            }),
+        }),
+      ),
     ).then(
-      (snapshot) => {
-        if (opener.control.agentId === null)
-          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+      (tab) => {
+        if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
       },
       async () => {
         await popup.close().catch(constVoid);
@@ -1216,9 +1221,11 @@ const make = Effect.gen(function* () {
   const ensureTab = (snapshot: PreviewSessionSnapshot): Promise<ServerTab> => {
     const key = tabKey(snapshot.threadId, snapshot.tabId);
     const pending = pendingTabs.get(key);
-    if (pending) return pending;
+    if (pending?.promise) return pending.promise;
     const existing = tabs.get(key);
     if (existing) return Promise.resolve(existing);
+    const launch = pending ?? { owner: snapshot.automationOwner ?? null };
+    pendingTabs.set(key, launch);
     const opening = createTab(snapshot)
       .catch((cause: unknown) => {
         runFork(
@@ -1230,10 +1237,11 @@ const make = Effect.gen(function* () {
         throw cause;
       })
       .finally(() => {
+        if (pendingTabs.get(key) !== launch) return;
         pendingTabs.delete(key);
         closedPendingTabs.delete(key);
       });
-    pendingTabs.set(key, opening);
+    launch.promise = opening;
     return opening;
   };
 
@@ -1253,16 +1261,66 @@ const make = Effect.gen(function* () {
 
   const atTabLimit = (agentSessionId: string) =>
     tabs.size + pendingTabs.size >= SERVER_TAB_LIMIT ||
-    [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length >=
+    [...tabs.values()].filter((tab) => tab.control.agentId === agentSessionId).length +
+      [...pendingTabs.values()].filter((launch) => launch.owner === agentSessionId).length >=
       AGENT_TAB_LIMIT;
 
-  const assertTabCapacity = (agentSessionId: string) => {
-    if (atTabLimit(agentSessionId))
-      throw new BrowserControlInterrupted(
-        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
-        "tabLimit",
-      );
-  };
+  const openTab = Effect.fnUntraced(function* (input: Parameters<typeof manager.open>[0]) {
+    const reservation = yield* Effect.acquireRelease(
+      Effect.gen(function* () {
+        if (input.automationOwner !== undefined && atTabLimit(input.automationOwner))
+          return yield* Effect.fail(
+            new BrowserControlInterrupted(
+              `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
+              "tabLimit",
+            ),
+          );
+        const reservation = {
+          key: Symbol() as string | symbol,
+          launch: { owner: input.automationOwner ?? null },
+        };
+        pendingTabs.set(reservation.key, reservation.launch);
+        return reservation;
+      }),
+      (reservation) =>
+        Effect.sync(() => {
+          const pending = pendingTabs.get(reservation.key);
+          // An interrupted request still occupies capacity until its launch settles.
+          if (pending === reservation.launch && !pending.promise)
+            pendingTabs.delete(reservation.key);
+        }),
+    );
+    const snapshot = yield* Effect.acquireRelease(
+      manager.open({
+        ...input,
+        beforePublish: (snapshot) => {
+          pendingTabs.delete(reservation.key);
+          reservation.key = tabKey(snapshot.threadId, snapshot.tabId);
+          pendingTabs.set(reservation.key, reservation.launch);
+          input.beforePublish?.(snapshot);
+        },
+      }),
+      (snapshot, exit) =>
+        Exit.isFailure(exit)
+          ? Effect.gen(function* () {
+              const key = tabKey(snapshot.threadId, snapshot.tabId);
+              if (pendingTabs.get(key)?.promise) closedPendingTabs.add(key);
+              const tab = tabs.get(key);
+              if (tab) dropTab(tab, false);
+              yield* manager
+                .close({
+                  threadId: ThreadId.make(snapshot.threadId),
+                  tabId: snapshot.tabId,
+                })
+                .pipe(Effect.orDie);
+            })
+          : Effect.void,
+    );
+    return yield* Effect.tryPromise({
+      try: () => ensureTab(snapshot),
+      catch: ServerBrowserPage.toOperationError,
+    });
+  });
 
   // Desktop browsing bypasses streamed viewers and server input tracking,
   // so these idle signals only apply to headless tabs.
@@ -1704,93 +1762,89 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const runOperation = async (request: PreviewAutomationRequest): Promise<unknown> => {
-    const input = request.input;
-    switch (request.operation) {
-      case "status":
-        return statusWithTitle(
-          request.tabId === undefined
-            ? latestThreadTab(request.threadId, request.agentSessionId)
-            : tabs.get(tabKey(request.threadId, request.tabId)),
-          request.agentSessionId,
-        );
-      case "open": {
-        if (!request.agentSessionId)
-          throw new BrowserControlInterrupted(
-            "The agent session is missing. Reconnect the provider.",
-          );
-        const open = input as PreviewAutomationOpenInput;
-        const url = open.url === undefined ? undefined : normalizePreviewUrl(open.url);
-        const reuse = open.reuseExistingTab ?? true;
-        if (
-          reuse &&
-          !request.tabIdExplicit &&
-          [...tabs.values()].filter(
-            (tab) =>
-              tab.threadId === request.threadId && tab.control.agentId === request.agentSessionId,
-          ).length > 1
-        )
-          throw new BrowserControlInterrupted(
-            "Multiple tabs are open. Pass tabId or reuseExistingTab=false.",
-            "tabRequired",
-          );
+  const openAgentTab = Effect.fnUntraced(function* (request: PreviewAutomationRequest) {
+    if (!request.agentSessionId)
+      return yield* Effect.fail(
+        new BrowserControlInterrupted("The agent session is missing. Reconnect the provider."),
+      );
+    const agentSessionId = request.agentSessionId;
+    const open = request.input as PreviewAutomationOpenInput;
+    const url = yield* Effect.try({
+      try: () => (open.url === undefined ? undefined : normalizePreviewUrl(open.url)),
+      catch: ServerBrowserPage.toOperationError,
+    });
+    const reuse = open.reuseExistingTab ?? true;
+    if (
+      reuse &&
+      !request.tabIdExplicit &&
+      [...tabs.values()].filter(
+        (tab) =>
+          tab.threadId === request.threadId && tab.control.agentId === request.agentSessionId,
+      ).length > 1
+    )
+      return yield* Effect.fail(
+        new BrowserControlInterrupted(
+          "Multiple tabs are open. Pass tabId or reuseExistingTab=false.",
+          "tabRequired",
+        ),
+      );
 
-        const found =
-          reuse && request.tabId !== undefined
-            ? await Effect.runPromise(
-                findTab(request.threadId, request.tabId).pipe(
-                  Effect.catchTags({
-                    ServerBrowserTabNotFoundError: () => Effect.succeed(undefined),
-                  }),
-                ),
-              )
-            : undefined;
-        if (reuse && request.tabIdExplicit && !found) {
-          const { sessions } = await Effect.runPromise(
-            manager.list({ threadId: ThreadId.make(request.threadId) }),
-          );
-          const desktop = sessions.some(
-            (session) => session.tabId === request.tabId && session.runtime !== "server",
-          );
-          throw new ServerBrowserPage.ServerBrowserOperationError(
-            desktop ? "PreviewAutomationExecutionError" : "PreviewAutomationTabNotFoundError",
-            desktop
-              ? "This tab belongs to the desktop runtime. This environment's server browser cannot control desktop tabs. Omit tabId to open a server tab instead."
-              : "The requested server preview tab does not exist.",
-          );
-        }
-        // Only an explicit tabId reuses a tab this session did not open; a tab
-        // it last read (such as the user's) is not taken over implicitly.
-        const existing =
-          found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
-            ? found
-            : undefined;
-        const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
-        const profileId = existing ? undefined : resolveOpenProfile(open.profileId);
-        if (!existing) {
-          closeIdleAgentTabs();
-          assertTabCapacity(request.agentSessionId);
-        }
-        const tab =
-          existing ??
-          (await ensureTab(
-            await Effect.runPromise(
-              manager.open({
-                threadId: request.threadId,
-                ...(url ? { url } : {}),
-                ...(profileId === undefined ? {} : { profileId }),
-                runtime: "server",
-                reveal: false,
-                automationOwner: request.agentSessionId,
-              }),
-            ),
-          ));
-        if (existing?.dialog)
-          throw new BrowserControlInterrupted(
-            "A browser dialog is pending. Read preview_status and use preview_dialog first.",
-            "dialogPending",
-          );
-        return tab.control.agent(request.agentSessionId, async () => {
+    const found =
+      reuse && request.tabId !== undefined
+        ? yield* findTab(request.threadId, request.tabId).pipe(
+            Effect.catchTags({
+              ServerBrowserTabNotFoundError: () => Effect.succeed(undefined),
+            }),
+          )
+        : undefined;
+    if (reuse && request.tabIdExplicit && !found) {
+      const { sessions } = yield* manager.list({ threadId: ThreadId.make(request.threadId) });
+      const desktop = sessions.some(
+        (session) => session.tabId === request.tabId && session.runtime !== "server",
+      );
+      return yield* Effect.fail(
+        new ServerBrowserPage.ServerBrowserOperationError(
+          desktop ? "PreviewAutomationExecutionError" : "PreviewAutomationTabNotFoundError",
+          desktop
+            ? "This tab belongs to the desktop runtime. This environment's server browser cannot control desktop tabs. Omit tabId to open a server tab instead."
+            : "The requested server preview tab does not exist.",
+        ),
+      );
+    }
+    // Only an explicit tabId reuses a tab this session did not open; a tab
+    // it last read (such as the user's) is not taken over implicitly.
+    const existing =
+      found && (request.tabIdExplicit || found.control.agentId === request.agentSessionId)
+        ? found
+        : undefined;
+    const navigationTimeout = Math.min(request.timeoutMs, NAVIGATION_TIMEOUT_MS);
+    const profileId = existing
+      ? undefined
+      : yield* Effect.try({
+          try: () => resolveOpenProfile(open.profileId),
+          catch: ServerBrowserPage.toOperationError,
+        });
+    if (!existing) closeIdleAgentTabs();
+    const tab =
+      existing ??
+      (yield* openTab({
+        threadId: request.threadId,
+        ...(url ? { url } : {}),
+        ...(profileId === undefined ? {} : { profileId }),
+        runtime: "server",
+        reveal: false,
+        automationOwner: request.agentSessionId,
+      }));
+    if (existing?.dialog)
+      return yield* Effect.fail(
+        new BrowserControlInterrupted(
+          "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+          "dialogPending",
+        ),
+      );
+    return yield* Effect.tryPromise({
+      try: () =>
+        tab.control.agent(agentSessionId, async () => {
           if (tab.dialog)
             throw new BrowserControlInterrupted(
               "A browser dialog is pending. Read preview_status and use preview_dialog first.",
@@ -1803,7 +1857,7 @@ const make = Effect.gen(function* () {
           }
           const reveal = open.open ?? open.show;
           if (reveal !== false) {
-            await Effect.runPromise(
+            await runPromise(
               manager.requestReveal({
                 threadId: tab.threadId,
                 tabId: tab.tabId,
@@ -1817,8 +1871,21 @@ const make = Effect.gen(function* () {
               .catch(constVoid);
           }
           return statusWithTitle(tab, request.agentSessionId);
-        });
-      }
+        }),
+      catch: ServerBrowserPage.toOperationError,
+    });
+  }, Effect.scoped);
+
+  const runOperation = async (request: PreviewAutomationRequest): Promise<unknown> => {
+    const input = request.input;
+    switch (request.operation) {
+      case "status":
+        return statusWithTitle(
+          request.tabId === undefined
+            ? latestThreadTab(request.threadId, request.agentSessionId)
+            : tabs.get(tabKey(request.threadId, request.tabId)),
+          request.agentSessionId,
+        );
       case "recordingStop": {
         if (
           !request.tabIdExplicit &&
@@ -2001,41 +2068,54 @@ const make = Effect.gen(function* () {
   };
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
-    Effect.tryPromise({
-      try: () => runOperation(request).finally(() => markUsed(request)),
-      catch: ServerBrowserPage.toOperationError,
-    }).pipe(
-      Effect.match({
-        onSuccess: (result) => ({ ok: true as const, result }),
-        onFailure: (error) => ({
-          ok: false as const,
-          error: {
-            _tag: error.tag,
-            message: error.message,
-            ...(error.detail === undefined ? {} : { detail: error.detail }),
-          },
+    broker.handleRequest(
+      { clientId: SERVER_HOST_CLIENT_ID, connectionId, requestId: request.requestId },
+      (request.operation === "open"
+        ? openAgentTab(request).pipe(
+            Effect.catchDefect((cause) => Effect.fail(ServerBrowserPage.toOperationError(cause))),
+          )
+        : Effect.tryPromise({
+            try: () => runOperation(request),
+            catch: ServerBrowserPage.toOperationError,
+          })
+      ).pipe(
+        Effect.ensuring(Effect.sync(() => markUsed(request))),
+        Effect.mapError(ServerBrowserPage.toOperationError),
+        Effect.match({
+          onSuccess: (result) => ({ ok: true as const, result }),
+          onFailure: (error) => ({
+            ok: false as const,
+            error: {
+              _tag: error.tag,
+              message: error.message,
+              ...(error.detail === undefined ? {} : { detail: error.detail }),
+            },
+          }),
         }),
-      }),
-      Effect.flatMap((outcome) =>
-        broker.respond({
-          clientId: SERVER_HOST_CLIENT_ID,
-          connectionId,
-          requestId: request.requestId,
-          ...outcome,
-        }),
+        Effect.flatMap((outcome) =>
+          broker.respond({
+            clientId: SERVER_HOST_CLIENT_ID,
+            connectionId,
+            requestId: request.requestId,
+            ...outcome,
+          }),
+        ),
+        Effect.ignore,
       ),
-      Effect.ignore,
     );
 
   const mirrorManagerEvent = (event: PreviewEvent) =>
     Effect.promise(async () => {
       if (event.type === "opened" && event.snapshot.runtime === "server") {
-        await ensureTab(event.snapshot).catch(constVoid);
+        // Agent opens own their launch and rollback; mirroring must not restart a canceled launch.
+        if (event.snapshot.automationOwner === undefined)
+          await ensureTab(event.snapshot).catch(constVoid);
         return;
       }
       const key = tabKey(event.threadId, event.tabId);
       const tab = tabs.get(key);
-      if (event.type === "closed" && !tab && pendingTabs.has(key)) closedPendingTabs.add(key);
+      if (event.type === "closed" && !tab && pendingTabs.get(key)?.promise)
+        closedPendingTabs.add(key);
       if (!tab) return;
       if (event.type === "closed") {
         closedSessions.add(key);

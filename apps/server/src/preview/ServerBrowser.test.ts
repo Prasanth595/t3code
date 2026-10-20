@@ -44,6 +44,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async contextFor(profileId: string, isolationKey?: string) {
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
       if (contextFailure) throw contextFailure;
+      contextStarted?.resolve();
       await contextGate?.promise;
       const context = makeContext(this.onClose);
       contexts.push(context);
@@ -202,6 +203,7 @@ function makeContext(onClose?: (context: BrowserContext) => void) {
 const contexts: ReturnType<typeof makeContext>[] = [];
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let contextStarted: PromiseWithResolvers<void> | null = null;
 let pageCopy = "";
 let keyCopy = "";
 let focusedFrame: ReturnType<typeof makeFrame> | null = null;
@@ -315,6 +317,7 @@ beforeEach(() => {
   contexts.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  contextStarted = null;
   contextFailure = null;
   pageCopy = "";
   keyCopy = "";
@@ -1559,6 +1562,205 @@ it.live("control updates replace a stalled viewer backlog in the order they happ
       );
       expect(controls[0]).toBe("you");
       expect(controls.at(-1)).not.toBe("you");
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live.each([
+  { budget: "agent", limit: 8 },
+  { budget: "server", limit: 32 },
+])("opens and popups reserve the $budget budget before session creation", ({ budget, limit }) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const open = (target = scope) =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope: target,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false },
+        });
+      for (let index = 1; index < limit - 3; index++) {
+        yield* open(budget === "agent" ? scope : asSession(`other-${Math.floor(index / 8)}`));
+      }
+
+      const sessionGate = Promise.withResolvers<void>();
+      const launchGate = (contextGate = Promise.withResolvers<void>());
+      const sessionStarted = Promise.withResolvers<void>();
+      const realOpen = manager.open;
+      const delayedOpen = vi.spyOn(manager, "open").mockImplementation((input) =>
+        Effect.promise(() => {
+          sessionStarted.resolve();
+          return sessionGate.promise;
+        }).pipe(Effect.andThen(realOpen(input))),
+      );
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          sessionGate.resolve();
+          launchGate.resolve();
+          delayedOpen.mockRestore();
+        }),
+      );
+      const events = yield* manager.subscribeEvents;
+      const first = yield* open().pipe(Effect.result, Effect.forkScoped);
+      yield* Effect.promise(() => sessionStarted.promise);
+      const popup = makeContext();
+      const newCDPSession = popup.newCDPSession;
+      popup.newCDPSession = async (target) => {
+        await launchGate.promise;
+        return newCDPSession(target);
+      };
+      contexts[0]!.page.emit("popup", popup.page);
+      const last = yield* open().pipe(Effect.result, Effect.forkScoped);
+      const overflow = yield* open().pipe(Effect.result, Effect.forkScoped);
+      // The host processes this after the opens, while manager creation is blocked.
+      const reused = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "open",
+        input: { show: false },
+      });
+      expect(reused.tabId).toBe(tabId);
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(
+        limit - 3,
+      );
+
+      sessionGate.resolve();
+      for (let count = 0; count < 3; count++) {
+        let event = yield* PubSub.take(events);
+        while (event.type !== "opened") event = yield* PubSub.take(events);
+      }
+      // The same slots must stay reserved after publication, while pages are still opening.
+      const duringLaunch = yield* open().pipe(Effect.result, Effect.forkScoped);
+      const rejectedPopup = makeContext();
+      contexts[0]!.page.emit("popup", rejectedPopup.page);
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      launchGate.resolve();
+
+      expect((yield* Fiber.join(first))._tag).toBe("Success");
+      expect((yield* Fiber.join(last))._tag).toBe("Success");
+      for (const fiber of [overflow, duringLaunch]) {
+        expect(yield* Fiber.join(fiber)).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
+        });
+      }
+      const { sessions } = yield* manager.list({ threadId: scope.thread.threadId });
+      for (const session of sessions)
+        yield* browser.attachViewer(viewerInput(session.tabId, false));
+      expect(sessions).toHaveLength(limit);
+      expect(popup.page.isClosed()).toBe(false);
+      expect(rejectedPopup.page.isClosed()).toBe(true);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toHaveLength(limit);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("failed session and browser launches release capacity, as does closing a tab", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const open = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      for (let count = 1; count < 7; count++) yield* open;
+      const failSession = vi
+        .spyOn(manager, "open")
+        .mockImplementationOnce(() => Effect.die(new Error("session creation failed")));
+      yield* Effect.addFinalizer(() => Effect.sync(() => failSession.mockRestore()));
+      expect(yield* open.pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
+      failSession.mockRestore();
+      const events = yield* manager.subscribeEvents;
+      contextFailure = new Error("Chromium launch failed");
+      expect(yield* open.pipe(Effect.result)).toMatchObject({ _tag: "Failure" });
+      let failedSession = yield* PubSub.take(events);
+      while (failedSession.type !== "opened") failedSession = yield* PubSub.take(events);
+      // A failed launch must not leave a session a viewer can relaunch past the budget.
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(7);
+      contextFailure = null;
+      expect((yield* open).available).toBe(true);
+      expect(yield* open.pipe(Effect.flip)).toMatchObject({ reason: "tabLimit" });
+      expect(
+        yield* broker
+          .invoke<PreviewAutomationStatus>({
+            scope,
+            tabId: PreviewTabId.make(failedSession.tabId),
+            operation: "open",
+            input: { show: false },
+          })
+          .pipe(Effect.flip),
+      ).toMatchObject({ _tag: "PreviewAutomationTabNotFoundError" });
+      const browser = yield* ServerBrowser.ServerBrowser;
+      expect(
+        yield* browser.attachViewer(viewerInput(failedSession.tabId, false)).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "ServerBrowserTabNotFoundError" });
+      yield* broker.invoke({ scope, tabId, operation: "close", input: {} });
+      expect((yield* open).available).toBe(true);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "status",
+        input: {},
+      });
+      expect(status.tabs).toHaveLength(8);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("an interrupted open holds capacity until launch settles and leaves no session", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const open = broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      for (let count = 1; count < 7; count++) yield* open;
+      const gate = (contextGate = Promise.withResolvers<void>());
+      const started = (contextStarted = Promise.withResolvers<void>());
+      yield* Effect.addFinalizer(() => Effect.sync(() => gate.resolve()));
+      const events = yield* manager.subscribeEvents;
+      const opening = yield* open.pipe(Effect.forkScoped);
+      let pending = yield* PubSub.take(events);
+      while (pending.type !== "opened") pending = yield* PubSub.take(events);
+      yield* Effect.promise(() => started.promise);
+      // This viewer joins the real launch promise before the request is interrupted.
+      const launchingViewer = yield* browser
+        .attachViewer(viewerInput(pending.tabId, false))
+        .pipe(Effect.result, Effect.forkScoped({ startImmediately: true }));
+      yield* Fiber.interrupt(opening);
+      // Only the canceled launch stays gated; an incorrectly admitted retry can finish.
+      contextGate = null;
+      const duringLaunch = yield* open.pipe(Effect.result);
+      gate.resolve();
+      expect(yield* Fiber.join(launchingViewer)).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ServerBrowserTabNotFoundError" },
+      });
+      expect(duringLaunch).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PreviewAutomationControlInterruptedError", reason: "tabLimit" },
+      });
+      // Attaching must not resurrect the interrupted request's session.
+      const attached = yield* browser
+        .attachViewer(viewerInput(pending.tabId, false))
+        .pipe(Effect.result);
+      expect(attached).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ServerBrowserTabNotFoundError" },
+      });
+      expect((yield* manager.list({ threadId: scope.thread.threadId })).sessions).toHaveLength(7);
+      expect((yield* open).available).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
 );
