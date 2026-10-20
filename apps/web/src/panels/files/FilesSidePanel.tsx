@@ -132,6 +132,7 @@ interface FilesSidePanelProps {
   relativePath: string | null;
   attachment?: ChatFileAttachment;
   availableEditors: ReadonlyArray<EditorId>;
+  openInShortcutEnabled: boolean;
   revealLine: number | null;
   revealRequestId: number;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
@@ -257,6 +258,7 @@ function WorkspaceBrowserPreview(props: {
   return (
     <BrowserDocumentFrame
       src={`${assetUrl.url}${revisionSuffix}`}
+      documentKey={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}:${props.workspaceMutationId}`}
       title={props.title}
       pdf={isPdfPreviewFile(props.absolutePath)}
     />
@@ -977,6 +979,7 @@ export default function FilesSidePanel({
   relativePath: requestedPath,
   attachment,
   availableEditors,
+  openInShortcutEnabled,
   revealLine,
   revealRequestId,
   onNavigateFolder,
@@ -1239,7 +1242,9 @@ export default function FilesSidePanel({
               environmentId={environmentId}
               keybindings={keybindings}
               availableEditors={availableEditors}
+              enableShortcut={openInShortcutEnabled}
               openInCwd={absolutePath}
+              openInCwdIsFile={file.isFile}
               compact
               revealFileManager={revealsInFileManager}
             />
