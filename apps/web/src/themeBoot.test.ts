@@ -146,6 +146,69 @@ const CHARCOAL_DARK_ONLY = {
 };
 
 describe("index.html boot script", () => {
+  it.each([false, true])(
+    "restores a published palette at boot and runtime after reload (saved override: %s)",
+    async (hasSavedOverride) => {
+      const storage: Record<string, string> = {
+        [THEME_STORAGE_KEY]: AURORA_DUAL.id,
+        [THEME_APPEARANCE_MODE_STORAGE_KEY]: "system",
+        ...(hasSavedOverride
+          ? {
+              [CUSTOM_THEMES_STORAGE_KEY]: JSON.stringify([
+                { ...CHARCOAL_DARK_ONLY, id: AURORA_DUAL.id },
+              ]),
+            }
+          : {}),
+      };
+      vi.stubGlobal("window", {
+        localStorage: {
+          getItem: (key: string) => storage[key] ?? null,
+          setItem: (key: string, value: string) => {
+            storage[key] = value;
+          },
+        },
+      });
+      vi.resetModules();
+      try {
+        const session = await import("./themePalette");
+        session.setEnvironmentThemes([
+          {
+            ...AURORA_DUAL,
+            appearance: "light",
+            colors: { ...session.getDefaultThemeColors("light"), ...AURORA_DUAL.colors },
+            variants: {
+              dark: {
+                ...session.getDefaultThemeColors("dark"),
+                ...AURORA_DUAL.variants.dark,
+              },
+            },
+          },
+        ]);
+
+        vi.resetModules();
+        const runtime = await import("./themePalette");
+        const boot = runBootScript({ storage, prefersDark: true });
+        const definition = runtime.getThemeDefinition(AURORA_DUAL.id);
+        const expectedCanvas = hasSavedOverride
+          ? CHARCOAL_DARK_ONLY.colors.canvas
+          : AURORA_DUAL.variants.dark.canvas;
+
+        expect(boot.themeId).toBe(AURORA_DUAL.id);
+        expect(boot.isDark).toBe(true);
+        expect(boot.bootVariables["--boot-background"]).toBe(expectedCanvas);
+        expect(runtime.isKnownThemePreference(AURORA_DUAL.id)).toBe(true);
+        expect(runtime.resolveThemeAppearance(AURORA_DUAL.id, true, true)).toBe("dark");
+        expect(definition).not.toBeNull();
+        expect(runtime.getThemeColorsForMode(definition!, "dark")?.canvas).toBe(
+          toCanonicalThemeColor(boot.bootVariables["--boot-background"]!),
+        );
+      } finally {
+        vi.unstubAllGlobals();
+        vi.resetModules();
+      }
+    },
+  );
+
   const parityCases: ReadonlyArray<{
     name: string;
     storage: Record<string, string>;

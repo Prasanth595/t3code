@@ -25,6 +25,8 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { isConnectedWithConfig } from "../components/settings/scopedSettings";
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { isHostedStaticApp } from "../hostedPairing";
+import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { environmentAtomList } from "./environmentAtomList";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
@@ -173,9 +175,23 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
+/**
+ * Only the primary environment supplies palettes. Null means its published
+ * set is still unknown; an empty set authoritatively clears the reload cache.
+ */
 export const primaryServerEnvironmentThemesAtom = Atom.make(
-  (get): ReadonlyArray<EnvironmentTheme> =>
-    get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,
+  (get): ReadonlyArray<EnvironmentTheme> | null => {
+    if (get(primaryEnvironmentIdAtom) === null) {
+      // The catalog discovers the primary asynchronously unless this host disables it.
+      return isLocalEnvironmentDisabled() || isHostedStaticApp() ? EMPTY_ENVIRONMENT_THEMES : null;
+    }
+    const config = get(primaryServerConfigAtom);
+    if (config === null) return null;
+    return (
+      config.environmentThemes ??
+      (config.environment.capabilities.environmentThemes === true ? null : EMPTY_ENVIRONMENT_THEMES)
+    );
+  },
 ).pipe(Atom.withLabel("web-primary-server-environment-themes"));
 
 /** Providers for views that do not show `checkedAt`; see {@link reuseProvidersIgnoringCheckedAt}. */

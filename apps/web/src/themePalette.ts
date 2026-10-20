@@ -33,6 +33,7 @@ export const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
 export const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
 export const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
 export const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+export const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
 
 const LEGACY_T3_CHAT_DARK_THEME_ID = "t3-chat-dark";
 
@@ -55,11 +56,10 @@ export type ThemeFile = Readonly<{
   managed?: boolean;
 }>;
 
-/**
- * The environment's palettes are not saved: they are republished by the server
- * on every change and would go stale the moment the machine's theme moved on.
- */
-let environmentThemeDefinitions: ReadonlyArray<ThemeDefinition> = [];
+// Cache complete palettes so boot and runtime can resolve the selection before
+// server config arrives. The first snapshot replaces them, including an empty
+// set. Reuse custom-theme listeners so existing consumers observe that change.
+let environmentThemeDefinitions: ReadonlyArray<ThemeDefinition> | null = null;
 
 const customThemeListeners = new Set<() => void>();
 type CustomThemeLibrarySnapshot =
@@ -240,7 +240,20 @@ export function getCustomThemes(): ReadonlyArray<ThemeDefinition> {
   return snapshot.status === "ready" ? snapshot.themes : EMPTY_CUSTOM_THEMES;
 }
 
+function readCachedEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(ENVIRONMENT_THEMES_STORAGE_KEY) ?? "null",
+    );
+    return Array.isArray(parsed) ? parseStoredThemes(parsed) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
+  environmentThemeDefinitions ??= readCachedEnvironmentThemes();
   return environmentThemeDefinitions;
 }
 
@@ -250,8 +263,13 @@ export function getEnvironmentThemes(): ReadonlyArray<ThemeDefinition> {
  * kind of wasted work users of this product notice.
  */
 export function setEnvironmentThemes(themes: ReadonlyArray<ThemeDefinition>): boolean {
-  if (Equal.equals(environmentThemeDefinitions, themes)) return false;
+  if (Equal.equals(getEnvironmentThemes(), themes)) return false;
   environmentThemeDefinitions = themes;
+  try {
+    window.localStorage.setItem(ENVIRONMENT_THEMES_STORAGE_KEY, JSON.stringify(themes));
+  } catch {
+    // The cache only speeds up the next boot; the server republishes anyway.
+  }
   notifyCustomThemeListeners();
   return true;
 }
@@ -1013,7 +1031,9 @@ export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | nu
   return (
     BUILT_IN_THEME_DEFINITIONS.find((definition) => definition.id === themeId) ??
     getCustomThemes().find((definition) => definition.id === themeId) ??
-    environmentThemeDefinitions.find((definition) => definition.id === themeId) ??
+    // Resolved last so a theme the user saved always wins over one the
+    // machine happens to publish under the same id.
+    getEnvironmentThemes().find((definition) => definition.id === themeId) ??
     null
   );
 }

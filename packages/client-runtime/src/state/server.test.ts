@@ -428,7 +428,7 @@ describe("server state projection", () => {
     expect(result.latestEvent.type).toBe("settingsUpdated");
   });
 
-  it("carries published environment themes in and out of the projected snapshot", () => {
+  it("distinguishes unknown themes from an authoritative empty set across reconnect", () => {
     const snapshot = applyServerConfigProjection(Option.none(), {
       version: 1,
       type: "snapshot",
@@ -456,7 +456,10 @@ describe("server state projection", () => {
       type: "environmentThemesUpdated",
       payload: { themes: [] },
     });
-    expect(Option.getOrThrow(unpublished).config.environmentThemes).toBeUndefined();
+    expect(Option.getOrThrow(snapshot).config.environmentThemes).toBeUndefined();
+    expect(Option.getOrThrow(unpublished).config.environmentThemes).toEqual([]);
+    const afterReconnect = applyServerConfigProjection(unpublished, snapshotEvent(CONFIG));
+    expect(Option.getOrThrow(afterReconnect).config.environmentThemes).toEqual([]);
   });
 
   it("keeps published themes across a reconnect snapshot", () => {
