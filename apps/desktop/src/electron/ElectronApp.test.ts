@@ -92,6 +92,7 @@ describe("ElectronApp", () => {
     autoUpdaterOnMock.mockClear();
     autoUpdaterRemoveListenerMock.mockClear();
     exitMock.mockClear();
+    getSystemLocaleMock.mockReset();
     onMock.mockClear();
     quitMock.mockClear();
     relaunchMock.mockClear();
@@ -118,8 +119,11 @@ describe("ElectronApp", () => {
   it.effect("reads the OS locale through the service", () =>
     Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
+      const systemLocale = yield* electronApp.systemLocale.pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+      );
 
-      assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
+      assert.strictEqual(systemLocale, "en-GB");
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 
@@ -127,8 +131,11 @@ describe("ElectronApp", () => {
     Effect.gen(function* () {
       getSystemLocaleMock.mockImplementationOnce(() => "en_GB");
       const electronApp = yield* ElectronApp.ElectronApp;
+      const systemLocale = yield* electronApp.systemLocale.pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+      );
 
-      assert.strictEqual(yield* electronApp.systemLocale, "en-GB");
+      assert.strictEqual(systemLocale, "en-GB");
     }).pipe(Effect.provide(ElectronApp.layer)),
   );
 
