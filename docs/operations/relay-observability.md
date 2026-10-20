@@ -150,7 +150,9 @@ account limit.
 **Tunnel cleanup stopped / tunnel deletions failing.** Warnings for the five-minute reaper that deletes
 idle Cloudflare tunnels. "Stopped" counts sweeps that finished, so it also fires when every sweep
 fails; a sweep fails when listing tunnels does, usually behind Cloudflare 429s. Idle tunnels are
-billed until the reaper catches up, which the "Idle tunnels in Cloudflare" chart shows. For failed
+billed until the reaper catches up, which the "Idle tunnels in Cloudflare" chart shows. A failed
+sweep records no counts, so while sweeps fail the chart stops at the last good one; check the tunnel
+list in the Cloudflare dashboard for current numbers. For failed
 deletions, read the relay's "Failed to delete an inactive managed tunnel" warnings. To pause cleanup,
 see [Managed tunnel cleanup rollout](release.md#managed-tunnel-cleanup-rollout).
 
