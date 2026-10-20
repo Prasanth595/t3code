@@ -120,14 +120,34 @@ export interface PassWorld {
    * ledger: `runner/stop.ts` `takeStopRequest`.
    */
   readonly takeStopRequest: (run: RunId) => Effect.Effect<StopRequestOutcome, LedgerError>;
-  /** The time limit: `runner/building.ts` `timeLimit`. */
-  readonly timeLimit: (repo: Repo, run: RunId) => Effect.Effect<LimitOutcome, BuildingError>;
+  /**
+   * The time limit: `runner/building.ts` `timeLimit`. This and every other step of a run take
+   * `base`, the base its launch recorded (`RunInfo.base`), so the step is built for the run's base
+   * without reading the ledger again for it.
+   */
+  readonly timeLimit: (
+    repo: Repo,
+    run: RunId,
+    base: string | null,
+  ) => Effect.Effect<LimitOutcome, BuildingError>;
   /** The text watch: `watch`. */
-  readonly watch: (repo: Repo, run: RunId) => Effect.Effect<WatchOutcome, BuildingError>;
+  readonly watch: (
+    repo: Repo,
+    run: RunId,
+    base: string | null,
+  ) => Effect.Effect<WatchOutcome, BuildingError>;
   /** The instructors' comments and edits of the issue body, sent to the session: `forward`. */
-  readonly forward: (repo: Repo, run: RunId) => Effect.Effect<ForwardOutcome, BuildingError>;
+  readonly forward: (
+    repo: Repo,
+    run: RunId,
+    base: string | null,
+  ) => Effect.Effect<ForwardOutcome, BuildingError>;
   /** The session's result: `advance`. */
-  readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
+  readonly advance: (
+    repo: Repo,
+    run: RunId,
+    base: string | null,
+  ) => Effect.Effect<AdvanceOutcome, BuildingError>;
   /**
    * The newest sign of T3 trouble in the machine log within the last ten minutes (a failed `t3`
    * preflight or an `error` of kind `t3`), as its text; null for none. Read once a pass, and only
@@ -142,6 +162,7 @@ export interface PassWorld {
   readonly interrupted: (
     repo: Repo,
     run: RunId,
+    base: string | null,
     evidence: Evidence,
   ) => Effect.Effect<InterruptOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
@@ -160,7 +181,11 @@ export interface PassWorld {
    * The instructors' feedback on a `pr-open` run's pull request and issue, acted on at most once
    * every ten minutes per run: `runner/feedback.ts`. A run it acts on is not gated this pass.
    */
-  readonly feedback: (repo: Repo, run: RunId) => Effect.Effect<FeedbackStep, FeedbackError>;
+  readonly feedback: (
+    repo: Repo,
+    run: RunId,
+    base: string | null,
+  ) => Effect.Effect<FeedbackStep, FeedbackError>;
   /**
    * What a `pr-open` run's last recorded pass ran against, when the pass can compare it with
    * GitHub before it starts the gate; null for a run the gate has more to do for:
@@ -824,7 +849,7 @@ const decideInterruptions = (
     for (const { info, repo, what } of ended) {
       const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
       const why = endedAs(what);
-      const decided = yield* Effect.result(world.interrupted(repo, info.id, evidence));
+      const decided = yield* Effect.result(world.interrupted(repo, info.id, info.base, evidence));
       if (decided._tag === "Failure") {
         pass.failed(notes, "interrupted", "advance", decided.failure);
       } else {
@@ -952,7 +977,7 @@ const actedOnFeedback = (
 ): Effect.Effect<boolean> =>
   Effect.gen(function* () {
     const run = runIdToString(info.id);
-    const stepped = yield* Effect.result(world.feedback(repo, info.id));
+    const stepped = yield* Effect.result(world.feedback(repo, info.id, info.base));
     if (stepped._tag === "Failure") {
       pass.failed(notes, "feedback", "forward", stepped.failure);
       return false;
@@ -1057,7 +1082,7 @@ const withinLimit = (
   pass: Pass,
 ): Effect.Effect<boolean> =>
   Effect.gen(function* () {
-    const outcome = yield* Effect.result(world.timeLimit(repo, info.id));
+    const outcome = yield* Effect.result(world.timeLimit(repo, info.id, info.base));
     if (outcome._tag === "Failure") {
       pass.failed(notes, "time limit", "pass", outcome.failure);
       return false;
@@ -1132,11 +1157,11 @@ const followBuilding = (
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const watched = yield* Effect.result(world.watch(repo, info.id));
+    const watched = yield* Effect.result(world.watch(repo, info.id, info.base));
     if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
     if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
     let sent = false;
-    const forwarded = yield* Effect.result(world.forward(repo, info.id));
+    const forwarded = yield* Effect.result(world.forward(repo, info.id, info.base));
     if (forwarded._tag === "Failure") {
       pass.failed(notes, "forward", "forward", forwarded.failure);
       if (errorKind(forwarded.failure) === "ledger") return;
@@ -1178,7 +1203,7 @@ const advanceRun = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const run = runIdToString(info.id);
-    const advanced = yield* Effect.result(world.advance(repo, info.id));
+    const advanced = yield* Effect.result(world.advance(repo, info.id, info.base));
     // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
     if (advanced._tag === "Failure")
       return pass.failed(notes, "advance", "advance", advanced.failure);

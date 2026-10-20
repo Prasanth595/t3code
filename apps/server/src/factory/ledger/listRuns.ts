@@ -43,6 +43,11 @@ export interface RunInfo {
    * done and waits for the gate. False for a file that cannot be read.
    */
   readonly prReported: boolean;
+  /**
+   * The base branch the run's launch recorded (`Seen.base`): what the pass hands each step of the
+   * run, so no step reads the ledger again for it. Null for none, or for a file that cannot be read.
+   */
+  readonly base: string | null;
 }
 
 /**
@@ -61,7 +66,15 @@ export const holdsSlot = (run: RunInfo): boolean =>
  */
 export const runInfoOf = (id: RunId, seen: Seen | null): RunInfo =>
   seen === null
-    ? { id, state: null, unreadable: true, confirmed: false, session: false, prReported: false }
+    ? {
+        id,
+        state: null,
+        unreadable: true,
+        confirmed: false,
+        session: false,
+        prReported: false,
+        base: null,
+      }
     : {
         id,
         state: seen.state,
@@ -69,6 +82,7 @@ export const runInfoOf = (id: RunId, seen: Seen | null): RunInfo =>
         confirmed: seen.approvedAt !== null || seen.threadId !== null,
         session: seen.threadId !== null || seen.launchSent,
         prReported: seen.prReported,
+        base: seen.base,
       };
 
 /** One run file as the scanner read it. `read` is null for a file that could not be read. */

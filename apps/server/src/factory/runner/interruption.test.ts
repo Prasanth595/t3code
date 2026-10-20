@@ -56,7 +56,7 @@ import {
 } from "./building.ts";
 import { launchMessage, type ResumeFrom } from "./messages.ts";
 import { readProgress } from "./progress.ts";
-import { projectForRun } from "./run.ts";
+import { runProject } from "./run.ts";
 import { resume, start } from "./start.ts";
 
 const tempDir = useTempDirs();
@@ -1468,7 +1468,7 @@ describe("interrupted: a thread that is gone", () => {
       const repoProject = rig.ctx.project;
       rig.ctx = {
         ...rig.ctx,
-        project: yield* projectForRun(rig.dataDir, repoProject, rig.run),
+        project: runProject(repoProject, readProgress(readRun(rig.dataDir, rig.run).entries).base),
         repoProject,
       };
       assert.strictEqual(rig.ctx.project.base, "feature/x");

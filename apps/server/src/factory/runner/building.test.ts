@@ -882,7 +882,10 @@ describe("advance: done", () => {
         ...rig,
         ctx: {
           ...rig.ctx,
-          project: runProject(rig.ctx.project, readProgress(readRun(rig.dataDir, rig.run).entries)),
+          project: runProject(
+            rig.ctx.project,
+            readProgress(readRun(rig.dataDir, rig.run).entries).base,
+          ),
         },
       });
       const bound = forRun(rigFor(onFeature));

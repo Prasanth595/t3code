@@ -75,7 +75,7 @@ import {
   prepareOutputTail,
   prepareSessionText,
 } from "./messages.ts";
-import { applyActions, progressFrom, projectForRun, runProject, type Progress } from "./run.ts";
+import { applyActions, progressFrom, runProject, type Progress } from "./run.ts";
 import { readProgress, type Moved } from "./progress.ts";
 
 const tempDir = useTempDirs();
@@ -5750,7 +5750,10 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
   it.effect("gates against that base's tip, and a move of main does not re-gate", () =>
     Effect.gen(function* () {
       const rig = rigFor(onFeature);
-      rig.project = yield* projectForRun(rig.dataDir, rig.project, rig.run);
+      rig.project = runProject(
+        rig.project,
+        readProgress(readRun(rig.dataDir, rig.run).entries).base,
+      );
       assert.strictEqual(rig.project.base, "feature/x");
       rig.gh.pr = { ...defaultPr(), baseRef: "feature/x" };
       rig.gh.tips = { main: MOVED, "feature/x": BASE };
@@ -5788,9 +5791,48 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
     }),
   );
 
+  it.effect(
+    "a failed re-gate relaunches on that base, records it, and gates the fix against it",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor(onFeature);
+        rig.project = runProject(
+          rig.project,
+          readProgress(readRun(rig.dataDir, rig.run).entries).base,
+        );
+        rig.gh.pr = { ...defaultPr(), baseRef: "feature/x" };
+        rig.gh.tips = { main: BASE, "feature/x": BASE };
+        setRun(rig, "completed", 1);
+        assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        // The run's base moves and the commands fail on it: a new session fixes the branch.
+        rig.gh.tips["feature/x"] = MOVED;
+        passThenFail(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
+        assert.deepStrictEqual(
+          eventsOf(rig, "session_launched").map((l) => (l.data as { base: string }).base),
+          ["feature/x", "feature/x"],
+        );
+        assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).base, "feature/x");
+        // The fix is gated against the run's base, not the project's.
+        rig.ws.script = (_, commands) => passing(commands);
+        setRun(rig, "completed", 2);
+        assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.ok(rig.gh.calls.includes("branchTip feature/x"), rig.gh.calls.join("\n"));
+        assert.ok(!rig.gh.calls.includes("branchTip main"), rig.gh.calls.join("\n"));
+        assert.deepStrictEqual(yield* lastPass(rig.dataDir, rig.run), {
+          pr: 12,
+          head: HEAD,
+          base: MOVED,
+          baseBranch: "feature/x",
+        });
+      }),
+  );
+
   it("a run with no base on its launch line keeps the project's base", () => {
     const project = projectConfig();
-    const seen = readProgress([]);
-    assert.strictEqual(runProject(project, seen), project);
+    assert.strictEqual(runProject(project, null), project);
   });
 });

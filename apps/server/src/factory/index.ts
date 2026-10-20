@@ -90,7 +90,7 @@ import {
   type GateStepError,
 } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import { projectForRun, runProject } from "./runner/run.ts";
+import { runProject } from "./runner/run.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
 import * as Events from "./t3/events.ts";
@@ -462,7 +462,6 @@ export const liveWorld = (
       ...(gateRemoteBase !== undefined && { remoteBase: gateRemoteBase }),
     },
   });
-  const projectFor = (repo: Repo, run: RunId) => projectForRun(dataDir, repo.project, run);
   const recordError = (run: RunId, step: CauseStep, kind: ErrorKind, message: string) =>
     ledger(() => {
       const out = Ledger.open(dataDir, run, { clock });
@@ -494,7 +493,7 @@ export const liveWorld = (
         GateStepError
       > = Effect.gen(function* () {
         const seen = yield* ledger(() => readProgress(readRun(dataDir, run).entries));
-        const context = gateContext(repo, runProject(repo.project, seen));
+        const context = gateContext(repo, runProject(repo.project, seen.base));
         const state = seen.state;
         if (state === "pr-open") {
           const regated = yield* regate(context, run);
@@ -616,30 +615,19 @@ export const liveWorld = (
     start: (repo: Repo, issue: number) => start(startContext(repo), issue),
     resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
     takeStopRequest: (run) => takeStopRequest(dataDir, run, clock),
-    timeLimit: (repo, run) =>
-      Effect.flatMap(projectFor(repo, run), (project) =>
-        timeLimit(buildingContext(repo, project), run),
-      ),
-    watch: (repo, run) =>
-      Effect.flatMap(projectFor(repo, run), (project) =>
-        watch(buildingContext(repo, project), run),
-      ),
-    forward: (repo, run) =>
-      Effect.flatMap(projectFor(repo, run), (project) =>
-        forward(buildingContext(repo, project), run),
-      ),
-    advance: (repo, run) =>
-      Effect.flatMap(projectFor(repo, run), (project) =>
-        advance(interruptContext(repo, project), run),
-      ),
+    timeLimit: (repo, run, base) =>
+      timeLimit(buildingContext(repo, runProject(repo.project, base)), run),
+    watch: (repo, run, base) => watch(buildingContext(repo, runProject(repo.project, base)), run),
+    forward: (repo, run, base) =>
+      forward(buildingContext(repo, runProject(repo.project, base)), run),
+    advance: (repo, run, base) =>
+      advance(interruptContext(repo, runProject(repo.project, base)), run),
     t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
     t3Starts: () => ledger(() => serverStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
     t3Stops: () =>
       ledger(() => serverStopsForStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
-    interrupted: (repo, run, evidence) =>
-      Effect.flatMap(projectFor(repo, run), (project) =>
-        interrupted(interruptContext(repo, project), run, evidence),
-      ),
+    interrupted: (repo, run, base, evidence) =>
+      interrupted(interruptContext(repo, runProject(repo.project, base)), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
     hasPendingGateSend: (run) =>
@@ -666,8 +654,7 @@ export const liveWorld = (
           Effect.mapError(asPassError("tracker")),
         ),
     gate: startGate,
-    feedback: (repo, run) =>
-      Effect.flatMap(projectFor(repo, run), (project) => feedback(gateContext(repo, project), run)),
+    feedback: (repo, run, base) => feedback(gateContext(repo, runProject(repo.project, base)), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
     nowMs: clock,

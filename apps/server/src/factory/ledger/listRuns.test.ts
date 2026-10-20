@@ -78,6 +78,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       },
       {
         id: rid(3),
@@ -86,6 +87,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       },
       {
         id: rid(4),
@@ -94,6 +96,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -116,6 +119,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       },
       {
         id: rid(6),
@@ -124,6 +128,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -163,6 +168,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -178,6 +184,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -198,6 +205,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       },
       {
         id: rid(1, "rawphp/softfac", 2),
@@ -206,6 +214,7 @@ describe("listUnfinishedRuns", () => {
         confirmed: true,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -296,6 +305,7 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
     expect(fullReads()).toContain(open);
@@ -339,6 +349,7 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -359,6 +370,7 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
     expect(fullReads()).toContain(path);
@@ -387,6 +399,7 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -414,6 +427,7 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
       confirmed: false,
       session: false,
       prReported: false,
+      base: null,
     };
     expect(listUnfinishedRuns(dataDir)).toEqual([
       { id: rid(1), ...unfinished },
@@ -433,6 +447,7 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
         confirmed: false,
         session: false,
         prReported: false,
+        base: null,
       },
     ]);
   });
@@ -459,6 +474,7 @@ describe("holdsSlot", () => {
     confirmed,
     session: false,
     prReported: false,
+    base: null,
   });
 
   it("every confirmed unfinished run holds a slot but one waiting in pr-open", () => {
@@ -815,6 +831,7 @@ describe("the run scanner", () => {
       confirmed: true,
       session: false,
       prReported: false,
+      base: null,
     });
     expect(runInfoOf(rid(1), null)).toEqual({
       id: rid(1),
@@ -823,6 +840,7 @@ describe("the run scanner", () => {
       confirmed: false,
       session: false,
       prReported: false,
+      base: null,
     });
   });
 });
