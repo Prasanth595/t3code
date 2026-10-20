@@ -1504,15 +1504,17 @@ describe("MessagesTimeline scroll position", () => {
 
   it("restores a manual reading position after reopening and switching threads", async () => {
     const props = baseProps();
-    function Chat() {
+    function Chat({ routeThreadKey = props.routeThreadKey }: { routeThreadKey?: string }) {
       const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
       // The chat view stops following the live edge when the reader scrolls.
       return (
         <div className="contents" onWheelCapture={() => setLiveFollowEnabled(false)}>
           <MessagesTimeline
             {...props}
+            routeThreadKey={routeThreadKey}
             timelineEntries={tallEntries}
             liveFollowEnabled={liveFollowEnabled}
+            onManualNavigation={() => setLiveFollowEnabled(false)}
           />
         </div>
       );
@@ -1532,9 +1534,7 @@ describe("MessagesTimeline scroll position", () => {
       scrollOffset: offset,
     });
 
-    const timeline = (routeThreadKey: string) => (
-      <MessagesTimeline {...props} routeThreadKey={routeThreadKey} timelineEntries={tallEntries} />
-    );
+    const timeline = (routeThreadKey: string) => <Chat routeThreadKey={routeThreadKey} />;
     await using screen = await renderElement(timeline(props.routeThreadKey));
     const reopenedViewport = await waitForList(props);
     await vi.waitFor(() =>
