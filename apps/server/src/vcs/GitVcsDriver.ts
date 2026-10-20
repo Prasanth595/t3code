@@ -33,6 +33,7 @@ import {
   type VcsStatusResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makeGitVcsDriverCore,
@@ -50,6 +51,7 @@ export interface ExecuteGitInput {
   readonly env?: NodeJS.ProcessEnv;
   readonly allowNonZeroExit?: boolean;
   readonly timeoutMs?: number | null;
+  readonly forceKillAfterMs?: number;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
   /**
@@ -560,7 +562,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,
       },
-    ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
+    ).pipe(
+      Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
+      Effect.catchIf(isMissingExecutable, () => Effect.succeed(false)),
+    );
 
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
