@@ -580,13 +580,20 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
     const path = yield* Path.Path;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-prune-" });
     const versionsDir = path.join(baseDir, "runtime", "versions");
-    const install = Effect.fn(function* (version: string, complete = true) {
+    const now = Duration.toMillis(Duration.days(1));
+    yield* TestClock.setTime(now);
+    const install = Effect.fn(function* (
+      version: string,
+      completed: "long ago" | "just now" | "never" = "long ago",
+    ) {
       const directory = path.join(versionsDir, version);
       yield* fs.makeDirectory(directory, { recursive: true });
       yield* fs.writeFileString(path.join(directory, "t3"), "");
-      if (complete) {
-        yield* fs.writeFileString(path.join(directory, ".install-complete"), `${version}\n`);
-      }
+      if (completed === "never") return;
+      const sentinel = path.join(directory, ".install-complete");
+      yield* fs.writeFileString(sentinel, `${version}\n`);
+      const at = completed === "just now" ? now : 0;
+      yield* fs.utimes(sentinel, at, at);
     });
     for (const version of versions) yield* install(version);
     return { baseDir, versionsDir, install };
@@ -608,10 +615,12 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "2.0.0",
         "2.1.0",
       ]);
-      yield* install("1.0.1", false);
-      yield* install(".staging-abc", false);
+      // A downgrade another process installed but has not pointed anything at yet.
+      yield* install("0.5.0", "just now");
+      yield* install("1.0.1", "never");
+      yield* install(".staging-abc", "never");
       yield* install(".pruned-0.8.0");
-      yield* install("other", false);
+      yield* install("other", "never");
       yield* fs.symlink(path.join(versionsDir, "other"), path.join(versionsDir, "0.9.0"));
       const binDir = path.join(baseDir, "bin");
       const customBinDir = path.join(baseDir, "custom-bin");
@@ -648,8 +657,9 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       );
 
       // 1.2.0 is the default launcher, 1.2.5 a recorded one, 1.3.0 running, 1.3.5 in the unit,
-      // 1.4.0 active, 1.5.0 the rolled-back target, 2.0.0 the caller's and 2.1.0 newer.
-      assert.deepEqual(removed.toSorted(), ["0.8.0", "1.0.0", "1.1.0"]);
+      // 1.4.0 active, 1.5.0 the rolled-back target, 2.0.0 the caller's, 0.5.0 just installed.
+      // Being newer than the caller's version does not keep 2.1.0.
+      assert.deepEqual(removed.toSorted(), ["0.8.0", "1.0.0", "1.1.0", "2.1.0"]);
       // The launcher found on PATH is remembered for a service that cannot see it.
       assert.equal(
         yield* fs.readFileString(path.join(baseDir, "runtime", "launchers")),
@@ -657,6 +667,7 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       );
       assert.deepEqual((yield* fs.readDirectory(versionsDir)).toSorted(), [
         ".staging-abc",
+        "0.5.0",
         "0.9.0",
         "1.0.1",
         "1.2.0",
@@ -666,9 +677,32 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "1.4.0",
         "1.5.0",
         "2.0.0",
-        "2.1.0",
         "other",
       ]);
+    }),
+  );
+
+  it.effect("matches a Windows shim whatever its casing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir, versionsDir } = yield* setup(["1.0.0", "1.1.0"]);
+      const shim = path.join(baseDir, "t3.cmd");
+      yield* fs.writeFileString(
+        shim,
+        `@echo off\r\n"${path.join(versionsDir, "1.0.0", "t3.exe").toUpperCase()}" %*`,
+      );
+      yield* fs.writeFileString(path.join(baseDir, "runtime", "launchers"), `${shim}\n`);
+
+      const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["2.0.0"] }).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          lsofRunner("C:\\Windows\\explorer.exe\n"),
+        ),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+      assert.deepEqual(removed, ["1.1.0"]);
     }),
   );
 

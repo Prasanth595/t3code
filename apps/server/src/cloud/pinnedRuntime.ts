@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -22,12 +23,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProcessRunner from "../processRunner.ts";
-import {
-  compareExactServiceVersions,
-  isExactServiceVersion,
-  parseServiceState,
-  SERVICE_STATE_FILE,
-} from "./serviceProtocol.ts";
+import { isExactServiceVersion, parseServiceState, SERVICE_STATE_FILE } from "./serviceProtocol.ts";
 
 const PINNED_RUNTIME_DIR = "runtime";
 const PINNED_RUNTIME_INSTALL_TIMEOUT = Duration.minutes(10);
@@ -375,6 +371,12 @@ export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =
 
 const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
 /**
+ * Another process may have just published a runtime it has not yet pointed anything at: an
+ * update, a downgrade, or the install script between unpacking and linking. The install lock only
+ * covers this process, so recently completed runtimes are left for a later prune.
+ */
+const PINNED_RUNTIME_PRUNE_GRACE = Duration.hours(1);
+/**
  * One `t3` launcher path per line, appended by the install scripts and by any prune that finds a
  * launcher on PATH. A service does not see the installer's `T3CODE_INSTALL_BIN_DIR` or the
  * interactive PATH, so this is how it finds a custom one, including installs that predate the file.
@@ -509,15 +511,26 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
       .map((entry) => path.join(versionsDir, entry)),
   );
 
+  const settledBefore =
+    (yield* Clock.currentTimeMillis) - Duration.toMillis(PINNED_RUNTIME_PRUNE_GRACE);
   const completed: Array<string> = [];
   for (const version of entries) {
     if (!isExactServiceVersion(version)) continue;
     const versionDir = path.join(versionsDir, version);
+    const sentinelPath = path.join(versionDir, ".install-complete");
     const isLink = yield* fs.readLink(versionDir).pipe(Effect.isSuccess);
-    const sentinel = yield* fs
-      .readFileString(path.join(versionDir, ".install-complete"))
-      .pipe(Effect.option);
-    if (!isLink && Option.isSome(sentinel) && sentinel.value.trim() === version) {
+    const sentinel = yield* fs.readFileString(sentinelPath).pipe(Effect.option);
+    const completedAt = yield* fs.stat(sentinelPath).pipe(
+      Effect.map((info) => Option.getOrUndefined(info.mtime)?.getTime()),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (
+      !isLink &&
+      Option.isSome(sentinel) &&
+      sentinel.value.trim() === version &&
+      completedAt !== undefined &&
+      completedAt < settledBefore
+    ) {
       completed.push(version);
     }
   }
@@ -546,25 +559,26 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
   const executables = yield* runningExecutables();
   // Without a process list, a runtime in use would look unused.
   if (Option.isNone(executables)) return pruned;
+  const platform = yield* HostProcess.Platform;
+  // Windows paths are case-insensitive, and shims and process lists need not agree on case.
+  const foldCase = (value: string) => (platform === "win32" ? value.toLowerCase() : value);
   const references = [
     executables.value,
     ...(yield* shellLauncherTargets(input.baseDir)),
     ...input.references,
-  ];
+  ].map(foldCase);
   // Process executables are resolved, so they name the real path of a symlinked T3 home.
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
-  const exactKeep = input.keep.filter(isExactServiceVersion);
 
   for (const version of completed) {
     const versionDir = path.join(versionsDir, version);
-    const prefixes = [versionDir, path.join(realVersionsDir, version)].map((dir) => dir + path.sep);
+    const prefixes = [versionDir, path.join(realVersionsDir, version)].map((dir) =>
+      foldCase(dir + path.sep),
+    );
     if (
       keep.has(version) ||
-      // Another process may be installing a newer runtime, so only versions older than every
-      // kept one go.
-      !exactKeep.every((kept) => compareExactServiceVersions(version, kept) < 0) ||
       references.some((reference) => prefixes.some((prefix) => reference.includes(prefix)))
     ) {
       continue;
@@ -588,7 +602,7 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
  * completed runtimes nothing can start again and keeps: the caller's versions, everything the
  * service state references (active, rollback, pending), and runtimes that a running process
  * executes, a `t3` launcher points at, or `references` (such as the service unit) name, plus
- * anything newer than the caller's versions. Staging directories, symlinks, and unexpected entries
+ * anything published within the last hour. Staging directories, symlinks, and unexpected entries
  * are never touched. Returns the versions removed.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
