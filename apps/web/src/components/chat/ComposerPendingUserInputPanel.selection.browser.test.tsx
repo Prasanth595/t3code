@@ -79,9 +79,7 @@ function selectContents(element: Element) {
 }
 
 function textElement(selector: string, text: string) {
-  return [...container.querySelectorAll(selector)].find((element) =>
-    element.textContent?.includes(text),
-  );
+  return [...container.querySelectorAll(selector)].find((node) => node.textContent?.includes(text));
 }
 
 it("keeps question copy selectable and ignores a click that finishes a selection", async () => {

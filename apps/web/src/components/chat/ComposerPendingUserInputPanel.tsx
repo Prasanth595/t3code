@@ -132,9 +132,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         autoAdvanceTimerRef.current = null;
       }
     };
-    if (disabled || activeQuestion?.id === undefined) clearAutoAdvance();
+    if (responseDisabled || activeQuestion?.id === undefined) clearAutoAdvance();
     return clearAutoAdvance;
-  }, [activeQuestion?.id, disabled]);
+  }, [activeQuestion?.id, responseDisabled]);
 
   const handleOptionSelection = (questionId: string, optionValue: string) => {
     if (responseDisabled) return;
