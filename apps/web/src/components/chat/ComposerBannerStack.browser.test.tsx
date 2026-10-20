@@ -76,6 +76,9 @@ it("keeps only the usage limit attached while an active goal waits in the collap
     );
   const limit = page.getByText("Usage limit reached", { exact: true });
   const goal = page.getByText("Goal active", { exact: true });
+  // The mouse is shared page state. Left over the stack, it expands the stack on
+  // hover and hides the peek before the click below can reach it.
+  await userEvent.hover(limit);
 
   expect(visibleBanners()).toHaveLength(1);
   await expect.element(limit).toBeVisible();
