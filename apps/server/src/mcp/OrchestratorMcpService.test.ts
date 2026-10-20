@@ -2699,7 +2699,7 @@ describe("OrchestratorMcpService.waitForThread", () => {
           threadId,
           runId: null,
           status: "idle",
-          timedOut: true,
+          timedOut: false,
         });
         assert.deepStrictEqual(yield* Ref.get(requestedTimeouts), [50_000, 5_000]);
       }).pipe(
@@ -2715,7 +2715,7 @@ describe("OrchestratorMcpService.waitForThread", () => {
                     Ref.update(requestedTimeouts, (timeouts) => [
                       ...timeouts,
                       input.timeoutMs,
-                    ]).pipe(Effect.as({ threadId, run: null, timedOut: true })),
+                    ]).pipe(Effect.as({ threadId, run: null, timedOut: false })),
                 }),
                 ServerSettings.layerTest(),
                 Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
