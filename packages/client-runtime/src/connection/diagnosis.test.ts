@@ -135,6 +135,19 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.headline).toBe("Mac mini's tunnel is offline");
   });
 
+  it("keeps the relay health status out of a failure that has its own cause", () => {
+    const failure = mapRemoteEnvironmentError(
+      new RemoteEnvironmentAuthFetchError({ message: "Failed to fetch", cause: new TypeError() }),
+    );
+    const diagnosis = presentConnectionDiagnosis({
+      hostLabel: "Mac mini",
+      state: backoff(failure),
+      via: "direct",
+      relayStatus: { status: "offline", endpointFailure: "tunnel_down", endpointStatus: 530 },
+    });
+    expect(diagnosis?.facts.map(([label]) => label)).not.toContain("HTTP status");
+  });
+
   it("has nothing to say when nothing failed", () => {
     expect(diagnose(AVAILABLE_CONNECTION_STATE)).toBeNull();
   });

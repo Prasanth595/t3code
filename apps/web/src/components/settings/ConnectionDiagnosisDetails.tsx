@@ -41,7 +41,9 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
           hostLabel: environment.label,
           state,
           via: relayOnly ? "relay" : "direct",
-          relayStatus: Option.getOrNull(relayStatus ?? Option.none()),
+          relayStatus: hasRelayRoute(environment.entry)
+            ? Option.getOrNull(relayStatus ?? Option.none())
+            : null,
           clientVersion: APP_VERSION,
           serverVersion: environment.serverConfig?.environment.serverVersion,
         })

@@ -225,7 +225,8 @@ export function presentConnectionDiagnosis(
     result: index < failedIndex ? "ok" : index === failedIndex ? "failed" : "unchecked",
   }));
 
-  const httpStatus = failure?.httpStatus ?? input.relayStatus?.endpointStatus;
+  // The relay health check only explains the state when no attempt has failed yet.
+  const httpStatus = failure !== null ? failure.httpStatus : input.relayStatus?.endpointStatus;
   const facts: Array<readonly [string, string]> = [];
   const add = (label: string, value: string | number | null | undefined) => {
     if (value !== null && value !== undefined && value !== "") facts.push([label, String(value)]);
