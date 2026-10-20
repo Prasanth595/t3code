@@ -1173,6 +1173,9 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           "Task",
           "TeamCreate",
           "Teammate",
+          "SendMessage",
+          "Workflow",
+          "RemoteTrigger",
         ]);
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
