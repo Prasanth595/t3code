@@ -58,6 +58,7 @@ const RawMergeRequestSchema = Schema.Struct({
   merged_at: Schema.optional(Schema.NullOr(Schema.String)),
   closed_at: Schema.optional(Schema.NullOr(Schema.String)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
+  assignees: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
   labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
   // A string, and "1000+" past GitLab's counting limit, so it is parsed rather than decoded.
   changes_count: Schema.optional(Schema.NullOr(Schema.String)),
@@ -188,6 +189,7 @@ export interface GitLabMergeRequestListItem {
   readonly updatedAt: string;
   readonly reviewRequestLogins: ReadonlyArray<string>;
   readonly labels: ReadonlyArray<PullRequestLabel>;
+  readonly assignees?: ReadonlyArray<PullRequestActor>;
 }
 
 export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
@@ -199,6 +201,11 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly viewerCanMerge: boolean;
   readonly reviewerIds: ReadonlyArray<number>;
+  /**
+   * The assignees with the ids GitLab writes the set back with. The candidate list leads with
+   * them too, since one page of project users need not reach them.
+   */
+  readonly assigneeUsers: ReadonlyArray<PullRequestActor & { readonly id: number }>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
   /**
@@ -315,6 +322,10 @@ function toListItem(
       return login === null ? [] : [login];
     }),
     labels: toLabels(raw.labels),
+    assignees: (raw.assignees ?? []).flatMap((assignee) => {
+      const actor = toActor(assignee);
+      return actor === null ? [] : [actor];
+    }),
   };
 }
 
@@ -340,6 +351,10 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
     ),
+    assigneeUsers: (raw.assignees ?? []).flatMap((assignee) => {
+      const actor = toActor(assignee);
+      return actor === null || assignee.id === undefined ? [] : [{ ...actor, id: assignee.id }];
+    }),
     ...(autoMerge === undefined ? {} : { autoMergeEnabled: autoMerge }),
     ...(autoMerge === true && raw.squash_on_merge === true
       ? { autoMergeMethod: "squash" as const }
