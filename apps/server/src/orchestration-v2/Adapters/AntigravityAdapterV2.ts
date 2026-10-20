@@ -6,6 +6,7 @@ import {
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -79,6 +80,7 @@ export interface AntigravityAdapterV2Options {
   readonly onSessionEvent?: AcpAdapterV2Flavor["onSessionEvent"];
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
+  readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
 }
 
 /**
@@ -123,12 +125,16 @@ export function makeAntigravityAcpAdapterFlavor(
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
+      const platform = yield* HostProcess.Platform;
       const runtime = yield* options
         .withProcess(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
             clientFileSystem: true,
+            ownDetachedProcessGroup: true,
+            ownDescendantProcessGroups: platform === "linux",
+            processGroupPlatform: platform,
             additionalDirectories: [options.host.paths.attachmentsDir],
           }),
         )
@@ -162,6 +168,14 @@ export function makeAntigravityAcpAdapterFlavor(
     // without the replay and is what the official client does.
     preferResumeSession: true,
     subagentsIdleOnTurnCompletion: true,
+    restartRuntimeOnEveryInterrupt: true,
+    terminateRuntimeProcessGroupOnInterrupt: true,
+    // Commands can outlive end_turn; retain Stop until their terminal updates arrive.
+    deferFinalizeForBackgroundWork: true,
+    extractBackgroundTaskId: (toolCall) =>
+      toolCall.kind === "execute" && toolCall.status !== undefined && toolCall.status !== "pending"
+        ? toolCall.toolCallId
+        : undefined,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,
@@ -235,5 +249,6 @@ export const makeAntigravityAdapterV2 = Effect.fn("makeAntigravityAdapterV2")(fu
     ...(options.continuationRequests === undefined
       ? {}
       : { continuationRequests: options.continuationRequests }),
+    ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
 });
