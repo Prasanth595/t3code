@@ -63,7 +63,7 @@ beforeEach(async () => {
     root.render(
       <HtmlRenderDialog
         src="https://environment.test/page.html"
-        title="Diagram"
+        htmlRender={{ attachmentId: "html", title: "Diagram", height: 400 }}
         onClose={onClose}
       />,
     ),
@@ -98,6 +98,58 @@ it("zooms the loaded page within bounds and resets without reloading it", async 
   expect(document.querySelector("iframe")).toBe(frame);
   expect(frame.src).toBe(src);
   expect(frame.getAttribute("sandbox")).toBe("allow-scripts allow-forms");
+});
+
+async function reportHeight(frame: HTMLIFrameElement, height: number) {
+  await act(() => {
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        source: frame.contentWindow,
+        data: { jsonrpc: "2.0", method: "ui/notifications/size-changed", params: { height } },
+      }),
+    );
+  });
+}
+
+function scrollingCard(frame: HTMLIFrameElement) {
+  let element = frame.parentElement;
+  while (element && getComputedStyle(element).overflowY !== "auto") element = element.parentElement;
+  return element!;
+}
+
+it("caps the page near the width it was written for on a wide screen", async () => {
+  await page.viewport(1920, 1080);
+  const card = scrollingCard(document.querySelector("iframe")!);
+  expect(card.getBoundingClientRect().width).toBe(1176);
+});
+
+it("fits the card to the page and scrolls only the card", async () => {
+  await page.viewport(1280, 800);
+  const frame = document.querySelector("iframe")!;
+  const card = scrollingCard(frame);
+  await reportHeight(frame, 300);
+  expect(frame.getBoundingClientRect().height).toBe(300);
+  expect(card.getBoundingClientRect().height).toBe(332);
+  await reportHeight(frame, 5000);
+  expect(frame.getBoundingClientRect().height).toBe(5000);
+  expect(card.clientHeight).toBeLessThan(800);
+  expect(card.scrollHeight).toBeGreaterThan(card.clientHeight);
+});
+
+it("zooms by reflowing the page across the card instead of overflowing it", async () => {
+  await page.viewport(1280, 800);
+  const frame = document.querySelector("iframe")!;
+  const card = scrollingCard(frame);
+  await reportHeight(frame, 300);
+  const contentWidth = card.clientWidth - 32;
+  for (const zoomStep of ["Zoom in", "Zoom in", "Zoom in", "Zoom in"]) await click(zoomStep);
+  expect(frame.getBoundingClientRect().width).toBeCloseTo(contentWidth, 0);
+  expect(frame.getBoundingClientRect().height).toBe(600);
+  expect(card.scrollWidth).toBe(card.clientWidth);
+  await click("Reset zoom");
+  for (const zoomStep of ["Zoom out", "Zoom out"]) await click(zoomStep);
+  expect(frame.getBoundingClientRect().width).toBeCloseTo(contentWidth, 0);
+  expect(frame.getBoundingClientRect().height).toBe(150);
 });
 
 it("closes with the close button or Escape", async () => {
