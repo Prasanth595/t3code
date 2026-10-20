@@ -731,7 +731,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     PullRequestFiles: createNativeStackScreen({
       screen: PullRequestFilesSheet,
       options: {
-        ...(Platform.OS === "ios" ? SHEET_SOLID_HEADER_OPTIONS : undefined),
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.6, 0.92],
         sheetGrabberVisible: true,
@@ -757,7 +757,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       options: {
         ...(Platform.OS === "android"
           ? { presentation: "fullScreenModal" as const }
-          : { ...SHEET_SOLID_HEADER_OPTIONS, ...FORM_SHEET_PRESENTATION_OPTIONS }),
+          : { ...SHEET_GLASS_HEADER_OPTIONS, ...FORM_SHEET_PRESENTATION_OPTIONS }),
         sheetAllowedDetents: Platform.OS === "android" ? undefined : [0.75, 0.92],
         sheetGrabberVisible: Platform.OS !== "android",
       },
@@ -765,7 +765,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
     PullRequestReview: createNativeStackScreen({
       screen: PullRequestReviewSheet,
       options: {
-        ...(Platform.OS === "ios" ? SHEET_SOLID_HEADER_OPTIONS : undefined),
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.75, 0.92],
         sheetGrabberVisible: true,
@@ -900,7 +900,7 @@ const RootStackConfig = createWorkspaceStackNavigator({
       screen: GitCommitSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/commit`,
       options: {
-        ...(Platform.OS === "ios" ? SHEET_SOLID_HEADER_OPTIONS : undefined),
+        ...(Platform.OS === "ios" ? SHEET_GLASS_HEADER_OPTIONS : undefined),
         ...FORM_SHEET_PRESENTATION_OPTIONS,
         sheetAllowedDetents: [0.8, 0.92],
         sheetGrabberVisible: true,
