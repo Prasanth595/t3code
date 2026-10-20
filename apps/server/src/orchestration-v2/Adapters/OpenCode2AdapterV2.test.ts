@@ -4097,7 +4097,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ],
         gate,
       );
-      const failed = { ...retrying, class: "usage_limit", retryable: null };
+      const failed = { ...retrying, class: "usage_limit" as const, retryable: null };
       const lastRetry = { attempt: 2, maxAttempts: null, retryDelayMs: 4_000 };
       const rows = errorRows(seen);
       assert.deepEqual(
