@@ -176,19 +176,21 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     SubscriptionRef.get(snapshot).pipe(
       Effect.map((value) => visibleSnapshot(value, ownerSessionId)),
     );
-  const publishFlow = (flow: AuthFlow, state: ProviderAuthState) =>
-    Effect.gen(function* () {
-      const changed = state.phase !== flow.state.phase ? flow.phaseChanged : undefined;
-      if (changed) {
-        const deadline = (yield* Clock.currentTimeMillis) + AUTH_PROGRESS_TIMEOUT_MS;
-        const phaseChanged = yield* Deferred.make<void>();
-        flow.progressDeadlineMillis = deadline;
-        flow.phaseChanged = phaseChanged;
-      }
-      flow.state = state;
-      if (changed) yield* Deferred.succeed(changed, undefined);
-      yield* SubscriptionRef.set(snapshot, { ownerSessionId: flow.ownerSessionId, state });
-    });
+  const publishFlow = Effect.fn("AntigravityAuth.publishFlow")(function* (
+    flow: AuthFlow,
+    state: ProviderAuthState,
+  ) {
+    const changed = state.phase !== flow.state.phase ? flow.phaseChanged : undefined;
+    if (changed) {
+      const deadline = (yield* Clock.currentTimeMillis) + AUTH_PROGRESS_TIMEOUT_MS;
+      const phaseChanged = yield* Deferred.make<void>();
+      flow.progressDeadlineMillis = deadline;
+      flow.phaseChanged = phaseChanged;
+    }
+    flow.state = state;
+    if (changed) yield* Deferred.succeed(changed, undefined);
+    yield* SubscriptionRef.set(snapshot, { ownerSessionId: flow.ownerSessionId, state });
+  });
   const stopOwnedProcesses = Effect.suspend(() =>
     Effect.forEach(
       Array.from(processes),
@@ -289,66 +291,68 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       ),
     );
 
-  const progressDeadline = (flow: AuthFlow) =>
-    Effect.gen(function* () {
-      while (true) {
-        const changed = flow.phaseChanged;
-        const deadline = flow.progressDeadlineMillis;
-        if (flow.state.phase === "waiting") {
-          yield* Deferred.await(changed);
-          continue;
-        }
-        const now = yield* Clock.currentTimeMillis;
-        if (flow.phaseChanged !== changed) continue;
-        if (now >= deadline) return yield* authTimeout(flow);
-        yield* Deferred.await(changed).pipe(
-          Effect.timeoutOrElse({
-            duration: deadline - now,
-            orElse: () =>
-              flow.phaseChanged === changed ? Effect.fail(authTimeout(flow)) : Effect.void,
-          }),
-        );
+  const progressDeadline = Effect.fn("AntigravityAuth.progressDeadline")(function* (
+    flow: AuthFlow,
+  ) {
+    while (true) {
+      const changed = flow.phaseChanged;
+      const deadline = flow.progressDeadlineMillis;
+      if (flow.state.phase === "waiting") {
+        yield* Deferred.await(changed);
+        continue;
       }
-    });
-
-  const runSignIn = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
-    progressDeadline(flow).pipe(
-      Effect.raceFirst(
-        Effect.gen(function* () {
-          yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
-          if ((yield* Clock.currentTimeMillis) >= flow.progressDeadlineMillis) {
-            return yield* authTimeout(flow);
-          }
-          const runtime = yield* options.makeRuntime({
-            onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
-          });
-          const started = yield* runtime.start();
-          yield* lock.withPermits(1)(
-            Effect.gen(function* () {
-              if (activeFlow !== flow) return;
-              flow.pending = undefined;
-              yield* publishFlow(flow, {
-                ...flow.state,
-                phase: "verifying",
-                authorizationUrl: null,
-                message: "Checking Antigravity access and models.",
-              });
-            }),
-          );
-          yield* options.onAuthenticated(started, runtime);
+      const now = yield* Clock.currentTimeMillis;
+      if (flow.phaseChanged !== changed) continue;
+      if (now >= deadline) return yield* authTimeout(flow);
+      yield* Deferred.await(changed).pipe(
+        Effect.timeoutOrElse({
+          duration: deadline - now,
+          orElse: () =>
+            flow.phaseChanged === changed ? Effect.fail(authTimeout(flow)) : Effect.void,
         }),
+      );
+    }
+  });
+
+  const runSignIn = Effect.fn("AntigravityAuth.runSignIn")(
+    function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
+      yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
+      if ((yield* Clock.currentTimeMillis) >= flow.progressDeadlineMillis) {
+        return yield* authTimeout(flow);
+      }
+      const runtime = yield* options.makeRuntime({
+        onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
+      });
+      const started = yield* runtime.start();
+      yield* lock.withPermits(1)(
+        Effect.gen(function* () {
+          if (activeFlow !== flow) return;
+          flow.pending = undefined;
+          yield* publishFlow(flow, {
+            ...flow.state,
+            phase: "verifying",
+            authorizationUrl: null,
+            message: "Checking Antigravity access and models.",
+          });
+        }),
+      );
+      yield* options.onAuthenticated(started, runtime);
+    },
+    (effect, flow) =>
+      progressDeadline(flow).pipe(
+        Effect.raceFirst(effect),
+        Effect.timeoutOrElse({
+          duration: AUTH_TIMEOUT_MS,
+          orElse: () => Effect.fail(authTimeout(flow)),
+        }),
+        Effect.onError(() =>
+          flow.forwarding ? Fiber.interrupt(flow.forwarding).pipe(Effect.asVoid) : Effect.void,
+        ),
+        Effect.scoped,
+        Effect.exit,
+        Effect.flatMap((result) => finishFlow(flow, result)),
       ),
-      Effect.timeoutOrElse({
-        duration: AUTH_TIMEOUT_MS,
-        orElse: () => Effect.fail(authTimeout(flow)),
-      }),
-      Effect.onError(() =>
-        flow.forwarding ? Fiber.interrupt(flow.forwarding).pipe(Effect.asVoid) : Effect.void,
-      ),
-      Effect.scoped,
-      Effect.exit,
-      Effect.flatMap((result) => finishFlow(flow, result)),
-    );
+  );
 
   const stopFlow = (flow: AuthFlow, phase: "cancelled" | "failed", message: string) =>
     Effect.uninterruptible(
@@ -380,18 +384,21 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       }),
     );
 
-  const requireFlow = (ownerSessionId: string, flowId: string, name: string) =>
-    Effect.gen(function* () {
-      const flow = activeFlow;
-      if (!flow || flow.id !== flowId || flow.ownerSessionId !== ownerSessionId) {
-        return yield* setupError(name, "This sign-in is no longer active in this client.");
-      }
-      const now = yield* Clock.currentTimeMillis;
-      if (now >= flow.expiresAtMillis) {
-        return yield* setupError(name, "Google sign-in expired. Start sign-in again.");
-      }
-      return flow;
-    });
+  const requireFlow = Effect.fn("AntigravityAuth.requireFlow")(function* (
+    ownerSessionId: string,
+    flowId: string,
+    name: string,
+  ) {
+    const flow = activeFlow;
+    if (!flow || flow.id !== flowId || flow.ownerSessionId !== ownerSessionId) {
+      return yield* setupError(name, "This sign-in is no longer active in this client.");
+    }
+    const now = yield* Clock.currentTimeMillis;
+    if (now >= flow.expiresAtMillis) {
+      return yield* setupError(name, "Google sign-in expired. Start sign-in again.");
+    }
+    return flow;
+  });
 
   const controller: ProviderAuthController = {
     start: (ownerSessionId, stopSessions = Effect.void) =>
