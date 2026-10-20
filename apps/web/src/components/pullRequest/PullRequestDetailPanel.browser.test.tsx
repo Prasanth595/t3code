@@ -549,6 +549,7 @@ it("restores the selected PR tab when switching threads and remounting the right
   const otherThread = { ...threadRef, threadId: ThreadId.make("thread-2") };
   useRightPanelStore.getState().openPullRequest(threadRef, surface);
   useRightPanelStore.getState().openPullRequest(otherThread, surface);
+  const codeTab = () => page.getByRole("button", { name: "Expand all files", exact: true });
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   document.body.append(container);
@@ -607,11 +608,11 @@ it("restores the selected PR tab when switching threads and remounting the right
   await show(threadRef);
   await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
   await tab("Code").click();
-  await expect.element(page.getByTestId("code-scroller")).toBeVisible();
+  await expect.element(codeTab()).toBeVisible();
   await show(otherThread);
   await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
   await show(threadRef);
-  await expect.element(page.getByTestId("code-scroller")).toBeVisible();
+  await expect.element(codeTab()).toBeVisible();
 
   useRightPanelStore
     .getState()
@@ -620,12 +621,12 @@ it("restores the selected PR tab when switching threads and remounting the right
   await expect.element(page.getByTestId("summary-scroller")).toBeVisible();
   useRightPanelStore.getState().openPullRequest(threadRef, surface);
   await show(threadRef);
-  await expect.element(page.getByTestId("code-scroller")).toBeVisible();
+  await expect.element(codeTab()).toBeVisible();
 
   await act(async () => root.render(null));
   useRightPanelStore.getState().openPullRequest(threadRef, { ...surface, url: detail.url });
   await show(threadRef);
-  await expect.element(page.getByTestId("code-scroller")).toBeVisible();
+  await expect.element(codeTab()).toBeVisible();
   await tab("Summary").click();
   await show(otherThread);
   await show(threadRef);
