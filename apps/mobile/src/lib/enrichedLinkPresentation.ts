@@ -12,7 +12,10 @@ import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.t
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
-import { threadPullRequestKeyOf } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestKeyOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 
 export function enrichedContextLinkPresentation(
   href: string,
@@ -40,7 +43,7 @@ export interface PullRequestChipState {
 
 export function pullRequestChipStates(links: ReadonlyArray<ThreadPullRequestLink>) {
   const newest = new Map<string, NonNullable<ThreadPullRequestLink["snapshot"]>>();
-  for (const link of links) {
+  for (const link of visibleThreadPullRequests(links)) {
     if (link.snapshot === null) continue;
     const key = threadPullRequestKeyOf(link);
     const known = newest.get(key);

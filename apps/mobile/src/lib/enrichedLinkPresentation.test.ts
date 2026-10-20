@@ -78,12 +78,16 @@ describe("Enriched link presentation", () => {
   });
 
   it("takes each pull request's state from its most recently synced link", () => {
-    const link = (state: "open" | "merged", syncedAt: string): ThreadPullRequestLink => ({
+    const link = (
+      state: "open" | "merged",
+      syncedAt: string,
+      source: ThreadPullRequestLink["source"] = "manual",
+    ): ThreadPullRequestLink => ({
       host: "github.com",
       repository: "Example/Repo",
       number: 7,
       url: "https://github.com/Example/Repo/pull/7",
-      source: "manual",
+      source,
       linkedAt: "2026-10-01T00:00:00.000Z",
       snapshot: {
         state,
@@ -109,5 +113,13 @@ describe("Enriched link presentation", () => {
         )?.icon,
       ).toEqual({ kind: "chip", name: "git-merge" });
     }
+    const unlinked = link("merged", "2026-10-03T00:00:00.000Z", "stack-dismissed");
+    expect(
+      enrichedChatLinkPresentation(
+        "https://github.com/example/repo/pull/7",
+        pullRequestChipStates([stale, unlinked]),
+      )?.icon,
+    ).toEqual({ kind: "chip", name: "git-pull-request-arrow" });
+    expect(pullRequestChipStates([unlinked]).size).toBe(0);
   });
 });
