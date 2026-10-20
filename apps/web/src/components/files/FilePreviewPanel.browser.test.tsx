@@ -299,7 +299,7 @@ vi.mock(import("~/browser/previewRuntime"), async (original) => ({
 }));
 vi.mock(import("~/hooks/useTheme"), async (original) => ({
   ...(await original()),
-  useTheme: () => ({ resolvedTheme: "dark" }),
+  useTheme: (() => ({ resolvedTheme: "dark" })) as never,
 }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
 // Highlighting workers are unrelated to the choice between a read error and cached text.
