@@ -380,6 +380,20 @@ it.effect("re-reads origin remote status after cache TTL expiry and bypassed inv
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("treats a repository's only non-origin remote as its primary remote", () =>
+  Effect.gen(function* () {
+    const driver = yield* GitVcsDriver.GitVcsDriver;
+    const cwd = yield* makeTmpDir();
+    const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+    yield* initRepoWithCommit(cwd);
+    yield* git(remote, ["init", "--bare"]);
+    yield* git(cwd, ["remote", "add", "github", remote]);
+
+    assert.equal((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote, true);
+    assert.equal((yield* driver.listRefs({ cwd, refresh: true })).hasPrimaryRemote, true);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("coalesces concurrent ref pages into one repository snapshot", () =>
   Effect.scoped(
     Effect.gen(function* () {

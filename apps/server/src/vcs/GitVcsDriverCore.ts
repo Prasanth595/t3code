@@ -93,7 +93,7 @@ const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
-const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
+const STATUS_PRIMARY_REMOTE_EXISTS_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -1421,23 +1421,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
-  const originExistsCache = yield* Cache.makeWith(
+  const primaryRemoteExistsCache = yield* Cache.makeWith(
     (gitCommonDir: string) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fetchCwd =
           path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
         return yield* executeGit(
-          "GitVcsDriver.statusDetails.originExists",
+          "GitVcsDriver.statusDetails.primaryRemoteExists",
           fetchCwd,
-          ["--git-dir", gitCommonDir, "remote", "get-url", "origin"],
+          ["--git-dir", gitCommonDir, "remote"],
           { allowNonZeroExit: true },
-        ).pipe(Effect.map((result) => result.exitCode === 0));
+        ).pipe(
+          Effect.map(
+            (result) =>
+              result.exitCode === 0 && parseRemoteNamesInGitOrder(result.stdout).length > 0,
+          ),
+        );
       }),
     {
       capacity: 2_048,
       timeToLive: Exit.match({
-        onSuccess: () => STATUS_ORIGIN_EXISTS_CACHE_TTL,
+        onSuccess: () => STATUS_PRIMARY_REMOTE_EXISTS_CACHE_TTL,
         onFailure: () => Duration.zero,
       }),
     },
@@ -1449,7 +1454,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       const cacheKey = repositoryPaths?.gitCommonDir ?? normalizeRepositoryPathsCacheKey(cwd);
       yield* Cache.invalidate(defaultBranchCache, cacheKey);
-      yield* Cache.invalidate(originExistsCache, cacheKey);
+      yield* Cache.invalidate(primaryRemoteExistsCache, cacheKey);
     },
   );
 
@@ -2058,8 +2063,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
           : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),
         statusCacheKey
-          ? Cache.get(originExistsCache, statusCacheKey).pipe(Effect.orElseSucceed(() => false))
-          : originRemoteExists(cwd).pipe(Effect.orElseSucceed(() => false)),
+          ? Cache.get(primaryRemoteExistsCache, statusCacheKey).pipe(
+              Effect.orElseSucceed(() => false),
+            )
+          : listRemoteNames(cwd).pipe(
+              Effect.map((remoteNames) => remoteNames.length > 0),
+              Effect.orElseSucceed(() => false),
+            ),
       ],
       { concurrency: "unbounded" },
     );
@@ -3357,7 +3367,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       localBranches: localBranches.toSorted(byRecencyThenName).map(({ ref }) => ref),
       remoteBranches: remoteBranches.toSorted(byRecencyThenName).map(({ ref }) => ref),
-      hasPrimaryRemote: remoteNames.includes("origin"),
+      hasPrimaryRemote: remoteNames.length > 0,
     } satisfies GitRefsSnapshot;
   });
 
