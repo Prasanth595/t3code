@@ -172,7 +172,11 @@ export const MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER = Duration.seconds(30);
  * Runs one recovery per request, one at a time: waits out the current
  * cooldown, then calls the relay, retrying it while it stays unavailable.
  */
-export const makeManagedTunnelRecovery = Effect.fnUntraced(function* <A, E, R>(options: {
+export const makeManagedTunnelRecovery = Effect.fn("ManagedTunnelRecovery.make")(function* <
+  A,
+  E,
+  R,
+>(options: {
   readonly recover: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<A, E, R>;
   readonly isRetryable: (error: E) => boolean;
 }) {
