@@ -1,4 +1,4 @@
-import type { PullRequestRef } from "@t3tools/contracts";
+import type { PullRequestDetailTab, PullRequestRef } from "@t3tools/contracts";
 
 import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "~/components/pullRequest/PullRequestGhosts";
@@ -11,6 +11,8 @@ import { usePanelHost } from "../panelHost";
 
 interface PullRequestSidePanelProps {
   reference: PullRequestRef;
+  initialTab?: PullRequestDetailTab;
+  onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
   context: "page" | "thread";
   /** True only while this surface is the visible, active tab. */
   shortcutsEnabled: boolean;
@@ -27,6 +29,8 @@ export default function PullRequestSidePanel({
   shortcutsEnabled,
   getShortcutContext,
   onBack,
+  initialTab,
+  onTabChange,
 }: PullRequestSidePanelProps) {
   const { threadRef, composerDraftTarget } = usePanelHost();
   const serverConfig = useEnvironment(threadRef.environmentId)?.serverConfig ?? null;
@@ -56,6 +60,8 @@ export default function PullRequestSidePanel({
       reference={reference}
       context={context}
       composerDraftTarget={composerDraftTarget}
+      initialTab={initialTab}
+      onTabChange={onTabChange}
       onBack={onBack}
     />
   );
