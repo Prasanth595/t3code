@@ -72,7 +72,10 @@ import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2SupersededInterrupt,
 } from "@t3tools/shared/orchestrationV2Timeline";
-import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  deriveBlockedOnThreadWait,
+  derivePendingBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1056,6 +1059,7 @@ type ShellThreadRow = {
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
   readonly active_run_id: string | null;
+  readonly active_run_status: string | null;
   readonly activity_run_status: string | null;
   readonly activity_run_started_at: string | null;
   readonly last_error: string | null;
@@ -1339,8 +1343,9 @@ function withLocalVisibleTurnItems(
 
 function renumberVisibleTurnItems(
   rows: ReadonlyArray<Omit<OrchestrationV2ProjectedTurnItem, "position">>,
+  offset = 0,
 ): Array<OrchestrationV2ProjectedTurnItem> {
-  return rows.map((row, position) => ({ ...row, position }));
+  return rows.map((row, position) => ({ ...row, position: position + offset }));
 }
 
 function makeForkMarkerTurnItem(input: {
@@ -1428,16 +1433,23 @@ function visibleTurnItemsThroughRun(input: {
 function buildVisibleTurnItems(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly sourceProjection: OrchestrationV2ThreadProjection | null;
+  readonly inheritedRowCount?: number;
 }): Array<OrchestrationV2ProjectedTurnItem> {
   const forkedFrom = input.projection.thread.forkedFrom;
-  if (forkedFrom?.type !== "run" || input.sourceProjection === null) {
+  if (
+    forkedFrom?.type !== "run" ||
+    (input.sourceProjection === null && input.inheritedRowCount === undefined)
+  ) {
     return localVisibleTurnItems(input.projection);
   }
 
-  const inherited = visibleTurnItemsThroughRun({
-    sourceProjection: input.sourceProjection,
-    sourceRunId: forkedFrom.runId,
-  });
+  const inherited =
+    input.sourceProjection === null
+      ? []
+      : visibleTurnItemsThroughRun({
+          sourceProjection: input.sourceProjection,
+          sourceRunId: forkedFrom.runId,
+        });
   const markerItem = makeForkMarkerTurnItem({
     targetProjection: input.projection,
     sourceThreadId: forkedFrom.threadId,
@@ -1450,16 +1462,19 @@ function buildVisibleTurnItems(input: {
     item: row.item,
   }));
 
-  return renumberVisibleTurnItems([
-    ...inherited,
-    {
-      visibility: "synthetic",
-      sourceThreadId: forkedFrom.threadId,
-      sourceItemId: markerItem.id,
-      item: markerItem,
-    },
-    ...local,
-  ]);
+  return renumberVisibleTurnItems(
+    [
+      ...inherited,
+      {
+        visibility: "synthetic",
+        sourceThreadId: forkedFrom.threadId,
+        sourceItemId: markerItem.id,
+        item: markerItem,
+      },
+      ...local,
+    ],
+    input.inheritedRowCount ?? 0,
+  );
 }
 
 function pendingRuntimeRequestSummary(
@@ -1584,6 +1599,7 @@ export function threadShellFromProjection(
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
     activeRunId: activeRun?.id ?? null,
+    blockedOnThreadWait: deriveBlockedOnThreadWait({ activeRun, turnItems: projection.turnItems }),
     activityRunStatus: activityRun?.status ?? null,
     activityRunStartedAt:
       activityRun === null ? null : orchestrationV2RunWorkStartedAt(activityRun),
@@ -1682,6 +1698,7 @@ type ShellThreadState = {
   readonly latestRunStartedAt: DateTime.Utc | null;
   readonly latestRunCompletedAt: DateTime.Utc | null;
   readonly activeRunId: RunId | null;
+  readonly blockedOnThreadWait: boolean;
   readonly activityRunStatus: ShellActivityRunStatus | null;
   readonly activityRunStartedAt: DateTime.Utc | null;
   readonly lastError: string | null;
@@ -1834,6 +1851,7 @@ function shellFromState(input: {
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
     activeRunId: input.state.activeRunId,
+    blockedOnThreadWait: input.state.blockedOnThreadWait,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
     status: input.state.latestRunStatus,
@@ -2779,47 +2797,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
       );
 
-    const readCanonicalProjection = Effect.fn("ProjectionStore.readCanonicalProjection")(
-      function* (
-        threadId: ThreadId,
-        window?: {
-          readonly rowLimit: number;
-          readonly userTurnLimit?: number | undefined;
-          readonly anchorItemId?: TurnItemId | undefined;
-          readonly requiredRunId?: RunId | undefined;
-          readonly suppressLocal?: boolean | undefined;
-        },
-        fields?: ReadonlyArray<ProjectionRecordField>,
-        filter?: ProjectionRecordFilter,
-      ) {
-        const threadRows = yield* sql<PayloadRow>`
-          SELECT payload_json
-          FROM orchestration_v2_projection_threads
-          WHERE thread_id = ${threadId}
-          LIMIT 1
-        `;
-        const threadRow = threadRows[0];
-        if (!threadRow) {
-          return yield* new ProjectionStoreThreadNotFoundError({ threadId });
-        }
-
-        const boundedTurnItemRows =
-          (fields !== undefined && !fields.includes("turnItems")) ||
-          (window === undefined &&
-            matchesNothing(filter?.turnItemTypes, filter?.turnItemStatuses, filter?.turnItemRunIds))
-            ? []
-            : window === undefined
-              ? yield* sql<PayloadRow>`
-                SELECT payload_json
-                FROM orchestration_v2_projection_turn_items
-                WHERE thread_id = ${threadId}
-                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
-                  ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
-                  ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
-                  ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
-                ORDER BY ordinal ASC, turn_item_id ASC
-              `
-              : yield* sql<PayloadRow>`
+    // Share selection so counting discarded ancestry preserves payload-read positions.
+    const retainedWindowRows = (
+      threadId: ThreadId,
+      window: {
+        readonly rowLimit: number;
+        readonly userTurnLimit?: number | undefined;
+        readonly anchorItemId?: TurnItemId | undefined;
+        readonly requiredRunId?: RunId | undefined;
+      },
+    ) => sql`
                 WITH eligible AS NOT MATERIALIZED (
                   SELECT item.rowid AS item_rowid, item.payload_json, item.ordinal, item.turn_item_id,
                     item.run_id, item.node_id, item.type
@@ -2984,6 +2971,50 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ) AS latest
                   ORDER BY ordinal ASC, turn_item_id ASC
                 )
+              `;
+
+    const readCanonicalProjection = Effect.fn("ProjectionStore.readCanonicalProjection")(
+      function* (
+        threadId: ThreadId,
+        window?: {
+          readonly rowLimit: number;
+          readonly userTurnLimit?: number | undefined;
+          readonly anchorItemId?: TurnItemId | undefined;
+          readonly requiredRunId?: RunId | undefined;
+          readonly suppressLocal?: boolean | undefined;
+        },
+        fields?: ReadonlyArray<ProjectionRecordField>,
+        filter?: ProjectionRecordFilter,
+      ) {
+        const threadRows = yield* sql<PayloadRow>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_threads
+          WHERE thread_id = ${threadId}
+          LIMIT 1
+        `;
+        const threadRow = threadRows[0];
+        if (!threadRow) {
+          return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+        }
+
+        const boundedTurnItemRows =
+          (fields !== undefined && !fields.includes("turnItems")) ||
+          (window === undefined &&
+            matchesNothing(filter?.turnItemTypes, filter?.turnItemStatuses, filter?.turnItemRunIds))
+            ? []
+            : window === undefined
+              ? yield* sql<PayloadRow>`
+                SELECT payload_json
+                FROM orchestration_v2_projection_turn_items
+                WHERE thread_id = ${threadId}
+                  ${filter?.turnItemTypes === undefined ? sql`` : sql`AND type IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemTypes)}))`}
+                  ${filter?.turnItemStatuses === undefined ? sql`` : sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemStatuses)}))`}
+                  ${filter?.turnItemRunId === undefined ? sql`` : sql`AND run_id = ${filter.turnItemRunId}`}
+                  ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
+                ORDER BY ordinal ASC, turn_item_id ASC
+              `
+              : yield* sql<PayloadRow>`
+                ${retainedWindowRows(threadId, window)}
                 -- CROSS JOIN keeps the sorted IDs as the outer loop, so SQLite
                 -- skips sorting again once the payloads are attached. Carry the
                 -- rowid through selection to avoid a second string-key index lookup.
@@ -3591,6 +3622,45 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     : { historyAnchor }),
                 };
               });
+
+        // Filled local pages need only the inherited count for cursor positions.
+        // Run-forked parents still need the recursive read to include their ancestry.
+        if (
+          window?.userTurnLimit !== undefined &&
+          window.historyAnchor === undefined &&
+          seenThreadIds.size === 0 &&
+          sourceWindow !== undefined &&
+          activeLocalTurnItems(projection).filter((row) => isThreadHistoryUserTurn(row.item))
+            .length >= Math.max(window.userTurnLimit, THREAD_HISTORY_PAGE_POLICY.maxUserTurns)
+        ) {
+          const counted = yield* sql<{ readonly inherited_rows: number | null }>`
+            ${retainedWindowRows(forkedFrom.threadId, {
+              ...sourceWindow,
+              rowLimit: sourceWindow.suppressLocal ? 0 : sourceWindow.rowLimit,
+            })}
+            SELECT CASE
+              WHEN json_extract(source.payload_json, '$.forkedFrom.type') = 'run' THEN NULL
+              WHEN NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runs
+                WHERE thread_id = source.thread_id AND run_id = ${forkedFrom.runId}
+              ) THEN 0
+              ELSE (SELECT COUNT(*) FROM retained)
+            END AS inherited_rows
+            FROM orchestration_v2_projection_threads AS source
+            WHERE source.thread_id = ${forkedFrom.threadId}
+          `;
+          const inheritedRowCount = counted[0]?.inherited_rows ?? null;
+          if (inheritedRowCount !== null) {
+            return {
+              ...projection,
+              visibleTurnItems: buildVisibleTurnItems({
+                projection,
+                sourceProjection: null,
+                inheritedRowCount,
+              }),
+            };
+          }
+        }
 
         const sourceProjection = yield* readProjection(
           forkedFrom.threadId,
@@ -5502,14 +5572,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
-              (
-                SELECT r.run_id
-                FROM orchestration_v2_projection_runs r
-                WHERE r.thread_id = t.thread_id
-                  AND r.status IN ('preparing', 'starting', 'running')
-                ORDER BY r.ordinal DESC, r.run_id DESC
-                LIMIT 1
-              ) AS active_run_id,
+              active.run_id AS active_run_id,
+              active.status AS active_run_status,
               (
                 SELECT r.status
                 FROM orchestration_v2_projection_runs r
@@ -5634,6 +5698,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND i.run_id IS NULL
               ) AS runless_item_count
             FROM orchestration_v2_projection_threads t
+            LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
+              SELECT r.run_id
+              FROM orchestration_v2_projection_runs r
+              WHERE r.thread_id = t.thread_id
+                AND r.status IN ('preparing', 'starting', 'running')
+              ORDER BY r.ordinal DESC, r.run_id DESC
+              LIMIT 1
+            )
             -- The newest run not waiting in a held queue, matching latestUnheldRun.
             LEFT JOIN orchestration_v2_projection_runs presented ON presented.run_id = (
               SELECT candidate.run_id
@@ -5717,34 +5789,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id IN ${sql.in(threadIds)}
           `;
 
-    const selectShellPendingTurnItemRows = (threadIds?: ReadonlyArray<ThreadId>) =>
-      threadIds === undefined
-        ? sql<ShellPendingTurnItemRow>`
-            SELECT i.thread_id, i.payload_json, p.provider_instance_id AS owning_provider_instance_id
-            FROM orchestration_v2_projection_turn_items i
-            LEFT JOIN orchestration_v2_projection_provider_threads p
-              ON p.provider_thread_id = i.provider_thread_id
-            LEFT JOIN orchestration_v2_projection_runs r
-              ON r.run_id = i.run_id
-            WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
-              AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
-              -- A rolled-back run's items are abandoned, not pending. Without
-              -- this the shell reports Waiting for work no one will finish,
-              -- matching the item_count query's exclusion above.
-              AND (i.run_id IS NULL OR r.status <> 'rolled_back')
-          `
-        : sql<ShellPendingTurnItemRow>`
-            SELECT i.thread_id, i.payload_json, p.provider_instance_id AS owning_provider_instance_id
-            FROM orchestration_v2_projection_turn_items i
-            LEFT JOIN orchestration_v2_projection_provider_threads p
-              ON p.provider_thread_id = i.provider_thread_id
-            LEFT JOIN orchestration_v2_projection_runs r
-              ON r.run_id = i.run_id
-            WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
-              AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
-              AND (i.run_id IS NULL OR r.status <> 'rolled_back')
-              AND i.thread_id IN ${sql.in(threadIds)}
-          `;
+    const selectShellPendingTurnItemRows = (
+      threadIds?: ReadonlyArray<ThreadId>,
+      activeRunIds: ReadonlyArray<string> = [],
+    ) => sql<ShellPendingTurnItemRow>`
+      SELECT i.thread_id, i.payload_json, p.provider_instance_id AS owning_provider_instance_id
+      FROM orchestration_v2_projection_turn_items i
+      LEFT JOIN orchestration_v2_projection_provider_threads p
+        ON p.provider_thread_id = i.provider_thread_id
+      LEFT JOIN orchestration_v2_projection_runs r
+        ON r.run_id = i.run_id
+      WHERE i.type IN ('command_execution', 'dynamic_tool', 'subagent')
+        AND i.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
+        AND (i.run_id IS NULL OR r.status <> 'rolled_back')
+        ${threadIds === undefined ? sql`` : sql`AND i.thread_id IN ${sql.in(threadIds)}`}
+      ${
+        activeRunIds.length === 0
+          ? sql``
+          : sql`
+        -- Preserve the pending-item partial index; read other work only from running runs.
+        UNION ALL
+        SELECT i.thread_id, i.payload_json, NULL AS owning_provider_instance_id
+        FROM orchestration_v2_projection_turn_items i
+        WHERE i.run_id IN ${sql.in(activeRunIds)}
+          AND i.type IN ('file_change', 'file_search', 'web_search', 'compaction')
+          AND i.status IN ('running', 'waiting')
+      `
+      }
+    `;
 
     const runMapsByThreadId = (input: {
       readonly runRows: ReadonlyArray<ShellRunRow>;
@@ -6074,6 +6146,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
+          blockedOnThreadWait: deriveBlockedOnThreadWait({
+            activeRun:
+              row.active_run_id === null || row.active_run_status !== "running"
+                ? null
+                : { id: RunId.make(row.active_run_id), status: "running" },
+            turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
+          }),
           activityRunStartedAt:
             row.activity_run_started_at === null
               ? null
@@ -6160,7 +6239,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           AND aggregate_kind = 'thread'
       `,
           readForThreadIds(selectShellProviderThreadRows),
-          readForThreadIds(selectShellPendingTurnItemRows),
+          readForThreadIds((ids) =>
+            selectShellPendingTurnItemRows(
+              ids,
+              threadRows.flatMap((row) =>
+                row.active_run_id !== null && row.active_run_status === "running"
+                  ? [row.active_run_id]
+                  : [],
+              ),
+            ),
+          ),
         ]);
       return {
         targetThreadIds,
@@ -6266,7 +6354,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? Effect.succeed([] as ReadonlyArray<ShellRunItemCountRow>)
                   : selectShellRunItemCounts(forkSourceIds),
                 selectShellProviderThreadRows(threadIds),
-                selectShellPendingTurnItemRows(threadIds),
+                selectShellPendingTurnItemRows(
+                  threadIds,
+                  [...rowsByThreadId.values()].flatMap((row) =>
+                    row.active_run_id !== null && row.active_run_status === "running"
+                      ? [row.active_run_id]
+                      : [],
+                  ),
+                ),
               ]);
             const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
               runRows,
