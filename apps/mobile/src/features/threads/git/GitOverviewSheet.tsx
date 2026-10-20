@@ -1,12 +1,13 @@
 import * as Dialog from "../../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
+import { useOpenIssue } from "../../issues/useOpenIssue";
 import {
   type GitActionRequestInput,
   buildMenuItems,
   getGitActionDisabledReason,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, threadIssueKeyOf } from "@t3tools/contracts";
 import {
   CommonActions,
   StackActions,
@@ -77,6 +78,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
+  const openIssue = useOpenIssue({ replace: presentation === "sheet" });
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
   const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
@@ -321,6 +323,36 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
               surfaceClassName="text-grouped-card"
               openPullRequest={openPullRequest}
               actions={linkedPrActions}
+            />
+          ))}
+        </ListSection>
+      ) : null}
+
+      {selectedThread?.issues?.length ? (
+        <ListSection title="Linked issues">
+          {selectedThread.issues.map((link) => (
+            <ListRow
+              key={threadIssueKeyOf(link)}
+              icon={
+                link.snapshot?.state.category === "closed"
+                  ? "checkmark.circle"
+                  : "circle.inset.filled"
+              }
+              label={`${link.snapshot?.displayKey ?? link.key} ${link.snapshot?.title ?? "Issue"}`}
+              description={`${link.scope} · ${link.snapshot?.state.name ?? "Status pending"}`}
+              onPress={() =>
+                openIssue({
+                  environmentId,
+                  projectId: link.projectId,
+                  tracker: link.tracker,
+                  host: link.host,
+                  scope: link.scope,
+                  key: link.key,
+                  ...(link.connectionId !== undefined ? { connectionId: link.connectionId } : {}),
+                  originalURL: link.url,
+                  ...(link.snapshot ? { displayKey: link.snapshot.displayKey } : {}),
+                })
+              }
             />
           ))}
         </ListSection>

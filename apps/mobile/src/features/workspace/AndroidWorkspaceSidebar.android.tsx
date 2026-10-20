@@ -5,18 +5,20 @@ import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilte
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { IssuesScreen } from "../issues/IssuesScreen";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 
 export function AndroidWorkspaceSidebar(props: {
   readonly children: ReactNode;
   readonly onRequestVisibility: () => void;
   readonly selectedPullRequestKey: string | null;
+  readonly selectedIssueKey: string | null;
 }) {
   const workspace = useWorkspaceTabs()!;
   const context = useMemo(() => ({ ...workspace, bottomClearance: 16 }), [workspace]);
   return (
     <WorkspaceTabPanes
-      tabs={["threads", "pullRequests"]}
+      tabs={["threads", "pullRequests", "issues"]}
       selected={workspace.state.selectedTab}
       renderTab={(tab) =>
         tab === "threads" ? (
@@ -27,10 +29,14 @@ export function AndroidWorkspaceSidebar(props: {
               <View className="flex-1 bg-header">
                 <PullRequestToolbar onRequestVisibility={props.onRequestVisibility} />
                 <ScreenContent insetHorizontal>
-                  <PullRequestsScreen
-                    sidebar
-                    selectedPullRequestKey={props.selectedPullRequestKey}
-                  />
+                  {tab === "pullRequests" ? (
+                    <PullRequestsScreen
+                      sidebar
+                      selectedPullRequestKey={props.selectedPullRequestKey}
+                    />
+                  ) : (
+                    <IssuesScreen sidebar selectedIssueKey={props.selectedIssueKey} />
+                  )}
                 </ScreenContent>
               </View>
             </PullRequestFilterMenuProvider>

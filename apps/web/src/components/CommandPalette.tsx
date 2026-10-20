@@ -215,6 +215,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
+import { openLinkThreadIssueDialog } from "./threadIssue/LinkThreadIssueDialog";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
 import { toggleThemeEditorForTheme } from "./settings/themeEditorStore";
@@ -253,6 +254,8 @@ import {
 import type { Project } from "../types";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
+import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
+import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
@@ -784,6 +787,10 @@ function OpenCommandPaletteDialog(props: {
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
+  );
+  const canLinkIssue = useEnvironmentScope(
+    activeThread?.environmentId ?? null,
+    AuthOrchestrationOperateScope,
   );
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
@@ -1743,6 +1750,32 @@ function OpenCommandPaletteDialog(props: {
     }
   }
 
+  if (activeThread !== null && activeThreadServerConfig?.environment.capabilities.issues === true) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:link-issue",
+      searchTerms: ["link", "issue", "ticket", "linear", "jira", "attach"],
+      title: "Link issue to thread",
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      disabled: !canLinkIssue,
+      ...(canLinkIssue ? {} : { description: "This connection can't change thread links." }),
+      run: async () => {
+        openLinkThreadIssueDialog(threadRef);
+      },
+    });
+    actionItems.push({
+      kind: "action",
+      value: "action:open-thread-issues",
+      searchTerms: ["issues", "linked", "tickets"],
+      title: "Show linked issues",
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        useRightPanelStore.getState().open(threadRef, "issues");
+      },
+    });
+  }
+
   if (activeThread !== null) {
     const thread = activeThread;
     actionItems.push({
@@ -2015,6 +2048,23 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+      },
+    });
+  }
+
+  if (
+    environments.some(
+      (environment) => environment.serverConfig?.environment.capabilities.issues === true,
+    )
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:issues",
+      searchTerms: ["issues", "issue", "bugs", "tracker", "github", "triage"],
+      title: "Open issues",
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/issues", search: readIssueListPreferences() });
       },
     });
   }

@@ -24,14 +24,14 @@ import {
   useWorkspaceTabs,
 } from "./WorkspaceTabsContext";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
-import { WORKSPACE_DOCK, workspaceToolbarHeight } from "./workspace-tabs-state";
+import {
+  WORKSPACE_DOCK,
+  WORKSPACE_TAB_PRESENTATION,
+  workspaceToolbarHeight,
+} from "./workspace-tabs-state";
+import { IssuesScreen } from "../issues/IssuesScreen";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useSidebarWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
-
-const TAB_TITLES = {
-  threads: "Threads",
-  pullRequests: "Pull requests",
-};
 
 function WorkspaceRootTitle(props: {
   readonly maxWidth: number;
@@ -42,7 +42,9 @@ function WorkspaceRootTitle(props: {
     <View style={{ width: props.maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
         brand={
-          <CompactBrandTitle accessibilityLabel={`T3 Code, ${TAB_TITLES[state.selectedTab]}`} />
+          <CompactBrandTitle
+            accessibilityLabel={`T3 Code, ${WORKSPACE_TAB_PRESENTATION[state.selectedTab].title}`}
+          />
         }
         maxWidth={props.maxWidth}
         onPress={props.onOpenEnvironments}
@@ -108,7 +110,7 @@ function WorkspaceRootContent() {
           <NativeStackScreenOptions
             optionsVersion={[state.selectedTab, state.selectionRevision, width, sidebarNavigation]}
             options={{
-              title: TAB_TITLES[state.selectedTab],
+              title: WORKSPACE_TAB_PRESENTATION[state.selectedTab].title,
               headerShown: true,
               unstable_headerLeftItems: () => [],
               headerTitle: renderHeaderTitle,
@@ -121,8 +123,7 @@ function WorkspaceRootContent() {
             titleContent={renderHeaderTitle()}
             actions={[
               {
-                accessibilityLabel:
-                  state.selectedTab === "threads" ? "Search threads" : "Search pull requests",
+                accessibilityLabel: WORKSPACE_TAB_PRESENTATION[state.selectedTab].search,
                 icon: "magnifyingglass",
                 onPress: () => {
                   dispatchHardwareKeyboardCommand("focusSearch");
@@ -142,7 +143,13 @@ function WorkspaceRootContent() {
         )}
         {sidebarPicker ? <WorkspaceSidebarTabs /> : null}
         <SafeAreaInsetsContext value={sidebarPicker ? { ...insets, top: 0 } : insets}>
-          {state.selectedTab === "threads" ? <HomeRouteScreen /> : <PullRequestsScreen />}
+          {state.selectedTab === "threads" ? (
+            <HomeRouteScreen />
+          ) : state.selectedTab === "pullRequests" ? (
+            <PullRequestsScreen />
+          ) : (
+            <IssuesScreen />
+          )}
         </SafeAreaInsetsContext>
         <WorkspaceToolbar
           sidebar={sidebarNavigation}

@@ -7,6 +7,7 @@ import {
   ThreadId,
   type PullRequestDetailView,
   type ScopedThreadRef,
+  type ServerConfig,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -379,6 +380,52 @@ async function runAction(action: string) {
   await page.getByRole("button", { name: action, exact: true }).click();
 }
 
+it("keeps a panel tab for the same surface and resets it between environments", async () => {
+  setup();
+  useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+  try {
+    for (const environmentId of ["env-1", "env-2"]) {
+      useRightPanelStore.getState().openPullRequest(threadRef, {
+        ...surface,
+        host: "github.com",
+        environmentId,
+      });
+    }
+    const surfaces = Object.values(useRightPanelStore.getState().byThreadKey)[0]!.surfaces.filter(
+      (entry) => entry.kind === "pull-request",
+    );
+    expect(surfaces).toHaveLength(2);
+    expect(surfaces[0]!.id).not.toBe(surfaces[1]!.id);
+    const panel = (entry: (typeof surfaces)[number]) => (
+      <PullRequestDetailPanel
+        key={entry.id}
+        environmentId={EnvironmentId.make(entry.environmentId!)}
+        reference={detail}
+        context="thread"
+        threadRef={threadRef}
+        shortcutsEnabled={false}
+        getShortcutContext={shortcutContext}
+      />
+    );
+    await using screen = await renderUi(panel(surfaces[0]!), { container: panelContainer() });
+    await tab("Code").click();
+    await expect
+      .element(page.getByRole("button", { name: "Expand all files", exact: true }))
+      .toBeInTheDocument();
+    await screen.rerender(panel(surfaces[0]!));
+    await expect
+      .element(page.getByRole("button", { name: "Expand all files", exact: true }))
+      .toBeInTheDocument();
+    await screen.rerender(panel(surfaces[1]!));
+    await expect
+      .element(page.getByRole("button", { name: "Expand all files", exact: true }))
+      .not.toBeInTheDocument();
+    await expect.element(page.getByTestId("summary-scroller")).toBeInTheDocument();
+  } finally {
+    useRightPanelStore.setState(useRightPanelStore.getInitialState(), true);
+  }
+});
+
 describe.each([
   ["own PR, a lower layer of the thread's stack", stackThread, threadRef],
   ["another PR beside the current thread", unrelatedThread, threadRef],
@@ -576,6 +623,18 @@ it("restores the selected PR tab when switching threads and remounting the right
         activeSurfaceId={selected?.id ?? null}
         threadRef={ref}
         environmentId={ref.environmentId}
+        environmentById={
+          new Map([
+            [
+              ref.environmentId,
+              {
+                serverConfig: {
+                  environment: { capabilities: { pullRequests: true } },
+                } as ServerConfig,
+              },
+            ],
+          ])
+        }
         visible
         composerDraftTarget={ref}
         keybindings={[]}
@@ -596,8 +655,6 @@ it("restores the selected PR tab when switching threads and remounting the right
           onCloseTerminal: () => {},
         }}
         pullRequest={{
-          capabilityKnown: true,
-          supported: true,
           projectId: detail.projectId,
           pullRequests: [],
           linkedPullRequest: null,

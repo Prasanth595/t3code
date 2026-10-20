@@ -18,6 +18,7 @@ import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from ".
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { LinkThreadIssueDialogHost } from "../components/threadIssue/LinkThreadIssueDialog";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -188,6 +189,7 @@ function RootRouteView() {
           <FontAppearanceSync />
           <ProviderAuthCallbackCoordinator />
           <CustomSnoozeDialogHost />
+          <LinkThreadIssueDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -243,6 +245,7 @@ function RootRouteView() {
           <ReopenClosedViewShortcut />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
+          <LinkThreadIssueDialogHost />
           <SlowRpcRequestToastCoordinator />
           <HostFreezeToastCoordinator />
           <PermissionUpdateNotice />

@@ -4,7 +4,7 @@ import type {
   NativeStackNavigationOptions,
   NativeStackNavigationProp,
 } from "@react-navigation/native-stack";
-import { use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { isValidElement, use, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 import type { ColorValue } from "react-native";
 
@@ -77,6 +77,9 @@ function optionsSignature(value: unknown, seen = new WeakSet<object>()): string 
       const object = value as object;
       if (seen.has(object)) return "[circular]";
       seen.add(object);
+      if (isValidElement(value)) {
+        return `element:${optionsSignature([value.type, value.key, value.props], seen)}`;
+      }
       if (Array.isArray(value)) {
         return `[${value.map((entry) => optionsSignature(entry, seen)).join(",")}]`;
       }

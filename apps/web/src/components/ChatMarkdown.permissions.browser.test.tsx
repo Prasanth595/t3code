@@ -74,6 +74,7 @@ vi.mock(import("../state/server"), async (original) => {
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
   readThreadShell: (() => ({ linkedPullRequest: state.linkedPullRequest })) as never,
+  useThreadShell: (() => ({ projectId: linkedPullRequest.projectId })) as never,
   useProjects: (() => [
     { id: linkedPullRequest.projectId, environmentId: threadRef.environmentId },
   ]) as never,

@@ -7,6 +7,7 @@ import {
 } from "../features/workspace/android-workspace-tabs";
 import {
   androidWorkspaceNavigationState,
+  androidWorkspaceDestinationAnimation,
   parentThreadIsBelow,
   resetAndroidWorkspace,
   returnToAndroidWorkspaceList,
@@ -37,6 +38,8 @@ const options = {
     "PullRequest",
     "PullRequestFile",
     "PullRequestReviewers",
+    "Issue",
+    "IssueCompose",
     "SettingsSheet",
   ],
   routeParamList: {},
@@ -54,6 +57,18 @@ const pullRequest = {
     repository: "owner/repository",
     number: 42,
     host: "github.com",
+  },
+} as const;
+
+const issue = {
+  name: "Issue",
+  params: {
+    environmentId: "environment-a",
+    projectId: "project-a",
+    tracker: "linear",
+    host: "linear.app",
+    scope: "ENG",
+    key: "ENG-7",
   },
 } as const;
 
@@ -266,6 +281,40 @@ describe("Android workspace navigation", () => {
     expect(state.index).toBe(0);
   });
 
+  it("keeps issue detail identity scoped to its account", () => {
+    const first = select(legacyHistory(), {
+      ...issue,
+      params: { ...issue.params, connectionId: "CaseSensitive" },
+    });
+    const withSheet = apply(
+      first,
+      StackActions.push("IssueCompose", {
+        ...issue.params,
+        connectionId: "CaseSensitive",
+        mode: "comment",
+      }),
+    );
+    const same = select(withSheet, {
+      ...issue,
+      params: { ...issue.params, connectionId: "CaseSensitive" },
+    });
+    expect(same.routes[1]?.key).toBe(first.routes[1]?.key);
+    expect(names(same)).toEqual(["Home", "Issue"]);
+    expect(
+      select(same, {
+        ...issue,
+        params: { ...issue.params, connectionId: "CaseSensitive", key: "ENG-8" },
+      }).routes[1]?.key,
+    ).not.toBe(same.routes[1]?.key);
+    const other = select(first, {
+      ...issue,
+      params: { ...issue.params, connectionId: "casesensitive" },
+    });
+    expect(other.routes[1]?.key).not.toBe(first.routes[1]?.key);
+    expect(names(other)).toEqual(["Home", "Issue"]);
+    expect(names(select(other, pullRequest))).toEqual(["Home", "PullRequest"]);
+  });
+
   it("resets the root stack when a nested Settings stack has focus", () => {
     const root = apply(router.getInitialState(options), StackActions.push("SettingsSheet"));
     const settings = router.getInitialState({
@@ -308,6 +357,12 @@ describe("Android workspace navigation", () => {
     expect(action?.target).toBe(root.key);
     expect(names(apply(root, action!))).toEqual(["Home", "Thread"]);
   });
+});
+
+it("uses the shared split detail transition for issues without changing compact navigation", () => {
+  expect(androidWorkspaceDestinationAnimation("Issue", true)).toBe("none");
+  expect(androidWorkspaceDestinationAnimation("Issue", false)).toBeUndefined();
+  expect(androidWorkspaceDestinationAnimation("IssueCompose", true)).toBeUndefined();
 });
 
 describe("Android Settings tab", () => {

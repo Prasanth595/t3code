@@ -9,6 +9,8 @@ import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSi
 import { HomeRouteScreen } from "../home/HomeRouteScreen";
 import { PullRequestFilterMenuProvider } from "../pull-requests/PullRequestFilterMenuContext";
 import { PullRequestsScreen } from "../pull-requests/PullRequestsScreen";
+import { IssuesScreen } from "../issues/IssuesScreen";
+import { WORKSPACE_TAB_PRESENTATION } from "./workspace-tabs-state";
 import { PullRequestToolbar } from "../pull-requests/PullRequestToolbar.android";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { AndroidWorkspaceNavigation } from "./AndroidWorkspaceNavigation";
@@ -16,7 +18,7 @@ import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { WorkspaceTabPanes } from "./WorkspaceTabPanes";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
-const TABS: readonly WorkspaceTab[] = ["threads", "pullRequests"];
+const TABS: readonly WorkspaceTab[] = ["threads", "pullRequests", "issues"];
 
 export function WorkspaceRootScreen() {
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -43,11 +45,15 @@ export function WorkspaceRootScreen() {
           ) : (
             <>
               <NativeStackScreenOptions options={{ headerShown: false }} />
-              <AndroidScreenHeader title="Pull requests" />
+              <AndroidScreenHeader title={WORKSPACE_TAB_PRESENTATION[tab].title} />
               <View className="flex-1 items-center justify-center px-10">
                 <EmptyState
-                  title="Select a pull request"
-                  detail="Choose a pull request from the sidebar to review it."
+                  title={tab === "issues" ? "Select an issue" : "Select a pull request"}
+                  detail={
+                    tab === "issues"
+                      ? "Choose an issue from the sidebar to read it."
+                      : "Choose a pull request from the sidebar to review it."
+                  }
                   variant="plain"
                 />
               </View>
@@ -73,7 +79,7 @@ export function WorkspaceRootScreen() {
                 <PullRequestFilterMenuProvider>
                   <PullRequestToolbar />
                   <ScreenContent>
-                    <PullRequestsScreen />
+                    {tab === "pullRequests" ? <PullRequestsScreen /> : <IssuesScreen />}
                   </ScreenContent>
                 </PullRequestFilterMenuProvider>
               )

@@ -130,8 +130,14 @@ const imageUrl = `data:image/svg+xml,${encodeURIComponent(
 )}`;
 
 function addFiles(paths: string[]) {
+  const stack = new DisposableStack();
   state.entries = paths.map((path) => ({ path, kind: "file" }));
-  for (const path of paths) state.assets.set(path, Atom.make<AssetResult>(AsyncResult.initial()));
+  for (const path of paths) {
+    const atom = Atom.make<AssetResult>(AsyncResult.initial());
+    state.assets.set(path, atom);
+    stack.defer(appAtomRegistry.mount(atom));
+  }
+  return stack;
 }
 
 function fileRow(path: string) {
@@ -164,7 +170,7 @@ async function expectPreview(row: HTMLElement) {
 it("loads previews asynchronously and only acquires offscreen images after scrolling", async () => {
   using _env = setup();
   const paths = Array.from({ length: 40 }, (_, index) => `icons/icon-${index}.svg`);
-  addFiles(paths);
+  using _files = addFiles(paths);
   await using screen = await renderPicker();
   const first = fileRow("icons/icon-0.svg");
   const last = fileRow("icons/icon-39.svg");
@@ -199,7 +205,7 @@ it("loads previews asynchronously and only acquires offscreen images after scrol
 it("loads without IntersectionObserver and recovers a failed image when its URL changes", async () => {
   using _env = setup();
   using _observer = stubGlobal("IntersectionObserver", undefined);
-  addFiles(["icons/logo.svg"]);
+  using _files = addFiles(["icons/logo.svg"]);
   await using _screen = await renderPicker();
   const row = fileRow("icons/logo.svg");
 
@@ -226,7 +232,7 @@ it("keeps denied previews selectable with their file icon", async () => {
   using _env = setup();
   using _observer = stubGlobal("IntersectionObserver", undefined);
   state.canReadFiles = false;
-  addFiles(["icons/private.svg"]);
+  using _files = addFiles(["icons/private.svg"]);
   await using screen = await renderPicker();
   const row = fileRow("icons/private.svg");
 
@@ -240,7 +246,7 @@ it("keeps denied previews selectable with their file icon", async () => {
 it("keeps the file icon until the image load is acknowledged", async () => {
   using _env = setup();
   using _observer = stubGlobal("IntersectionObserver", undefined);
-  addFiles(["icons/loading.svg"]);
+  using _files = addFiles(["icons/loading.svg"]);
   await using _screen = await renderPicker();
   const row = fileRow("icons/loading.svg");
   // Hold the load notification so a fast data URL has the same UI state as a slow request.

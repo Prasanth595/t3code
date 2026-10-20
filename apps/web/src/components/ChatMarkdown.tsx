@@ -126,7 +126,11 @@ import {
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
-import { markdownImageGallery, markdownImageItems } from "./chat/markdownImageGallery";
+import {
+  linkedMediaItem,
+  markdownImageGallery,
+  markdownImageItems,
+} from "./chat/markdownImageGallery";
 import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
 import { resolveProtocolRelativeMediaUrl } from "./media/mediaContent";
@@ -197,6 +201,7 @@ import {
   type RemoteOpenMode,
 } from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
+import { useOpenIssueLink, type IssueLinkContext } from "../lib/openIssueLink";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -248,6 +253,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
+  issueLinkContext?: IssueLinkContext | undefined;
   pullRequestPanelRef?: ScopedThreadRef | undefined;
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
@@ -1574,6 +1580,44 @@ function ChatMarkdownVideo(props: {
   );
 }
 
+function linearMediaUrl(source: string): string | null {
+  const url = URL.parse(source);
+  return url !== null &&
+    url.protocol === "https:" &&
+    url.hostname === "uploads.linear.app" &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === ""
+    ? source
+    : null;
+}
+
+export function linearMediaAsset(
+  context: IssueLinkContext | undefined,
+  source: string,
+): {
+  environmentId: EnvironmentId;
+  resource: Extract<AssetResource, { _tag: "linear-media" }>;
+} | null {
+  const url = linearMediaUrl(source);
+  if (
+    url === null ||
+    context?.tracker !== "linear" ||
+    context.scope === undefined ||
+    context.key === undefined
+  )
+    return null;
+  const { environmentId, ...issue } = context;
+  return {
+    environmentId,
+    resource: {
+      _tag: "linear-media",
+      issue: { ...issue, scope: context.scope, key: context.key },
+      url,
+    },
+  };
+}
+
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
@@ -1584,6 +1628,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         | "workspace-file"
         | "media-file"
         | "github-media"
+        | "linear-media"
         | "tool-output-image";
     }
   >;
@@ -2371,6 +2416,7 @@ function useChatMarkdownState({
   cwd,
   threadRef,
   pullRequestPanelRef,
+  issueLinkContext,
   environmentId: explicitEnvironmentId,
   onTaskListChange,
   isStreaming = false,
@@ -2507,8 +2553,11 @@ function useChatMarkdownState({
       },
     );
   };
-  const { pullRequestsEnabled, availableEditors, revealInFileManagerLabel } = useAtomValue(
+  const { availableEditors, revealInFileManagerLabel } = useAtomValue(
     markdownServerConfigFieldsAtom(environmentId),
+  );
+  const { pullRequestsEnabled } = useAtomValue(
+    markdownServerConfigFieldsAtom(explicitEnvironmentId ?? environmentId),
   );
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
@@ -2595,6 +2644,7 @@ function useChatMarkdownState({
     );
   };
   const openChangeRequestLink = useOpenChangeRequestLink(threadRef, pullRequestPanelRef);
+  const openIssueLink = useOpenIssueLink(threadRef, pullRequestPanelRef, issueLinkContext);
   const openDeferredMarkdownLink = useOpenLink(threadRef);
   // Subscribed rather than read at click time: the anchor has to decide
   // synchronously whether to intercept its `_blank`, and a subscription is what
@@ -2817,9 +2867,11 @@ function useChatMarkdownState({
     cwd,
     diffThemeName,
     environmentId,
+    explicitEnvironmentId,
     expandMedia,
     fileLinkChip,
     githubMedia,
+    issueLinkContext,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -2834,6 +2886,7 @@ function useChatMarkdownState({
     onUseArtifactTemplate,
     onRunShellCommand,
     openChangeRequestLink,
+    openIssueLink,
     openDeferredMarkdownLink,
     openExternalLinkInPreview,
     openMarkdownMedia,
@@ -2979,11 +3032,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
       canOperatePreview,
       cwd,
       environmentId,
+      expandMedia,
+      explicitEnvironmentId,
       imageBaseDir,
+      issueLinkContext,
       markdownFileLinkMetaByHref,
       threadRef,
       openMarkdownMedia,
       openChangeRequestLink,
+      openIssueLink,
       openDeferredMarkdownLink,
       linkTargetPreference,
       openExternalLinkInPreview,
@@ -3037,9 +3094,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const confirmBeforeOpen = pullRequestAutolink === "reference";
       const pullRequestCandidateUrl =
         confirmBeforeOpen && href ? pullRequestCandidateUrlFromReferenceAutolink(href) : href;
+      const pullRequestEnvironmentId = explicitEnvironmentId ?? environmentId;
       const pullRequestPreviewTarget = pullRequestCandidateUrl
         ? resolvePullRequestPreviewTarget({
-            environmentId,
+            environmentId: pullRequestEnvironmentId,
             projects,
             pullRequestsEnabled,
             url: pullRequestCandidateUrl,
@@ -3050,9 +3108,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const canOpenInPreview =
         canOperatePreview && Boolean(threadRef && isPreviewAvailableFor(threadRef.environmentId));
       const linkChildren = <MarkdownLinkContext value>{children}</MarkdownLinkContext>;
+      const linkedAsset = href ? linearMediaAsset(issueLinkContext, href) : null;
       const link = (
         <a
           {...props}
+          data-linear-media={linkedAsset ? JSON.stringify(linkedAsset) : undefined}
           className={cn(props.className, pullRequestAutolink === "commit" && "font-mono")}
           data-markdown-copy={pullRequestCopy}
           data-markdown-image-link={!hasText || undefined}
@@ -3077,6 +3137,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ) {
               event.preventDefault();
               event.stopPropagation();
+              if (linkedAsset) {
+                const image =
+                  event.target instanceof HTMLImageElement
+                    ? event.target
+                    : event.currentTarget.querySelector("img");
+                const registered = image ? markdownImageItems.get(image) : undefined;
+                const selected = linkedMediaItem(linkedAsset, href, registered?.name ?? "image");
+                expandMedia(
+                  image && selected.type !== "video"
+                    ? markdownImageGallery(image, selected)
+                    : { images: [selected], index: 0 },
+                );
+                return;
+              }
               openMarkdownMedia(
                 href,
                 undefined,
@@ -3088,7 +3162,13 @@ const CHAT_MARKDOWN_COMPONENTS = {
             }
             if (
               !href ||
-              openChangeRequestLink(event, href, undefined, environmentId ?? undefined)
+              openChangeRequestLink(
+                event,
+                href,
+                undefined,
+                pullRequestEnvironmentId ?? undefined,
+              ) ||
+              openIssueLink(event, href, explicitEnvironmentId ?? environmentId ?? undefined)
             ) {
               return;
             }
@@ -3211,7 +3291,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
                 },
                 targetUrl,
                 undefined,
-                environmentId ?? undefined,
+                pullRequestEnvironmentId ?? undefined,
               )
             }
             onOpenFallback={openDeferredMarkdownLink}
@@ -3282,6 +3362,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       environmentId,
       githubMedia,
       imageBaseDir,
+      issueLinkContext,
       threadRef,
       workspaceMutationId,
       renderContextReference,
@@ -3312,6 +3393,26 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
+    const linearAsset = directUri === null ? null : linearMediaAsset(issueLinkContext, directUri);
+    if (linearAsset !== null) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={linearAsset.environmentId}
+          resource={linearAsset.resource}
+          alt={altText}
+          kind={kind}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          className={className}
+          style={authoredSizeStyle}
+          imageProps={imageProps}
+          srcFragment={markdownImageSourceFragment(classifiedSrc)}
+          originalUrl={linearAsset.resource.url}
+          framed={false}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
     const githubMediaUrl =
       directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
     if (

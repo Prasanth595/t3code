@@ -2,7 +2,8 @@ import type { CommonActions, NavigationState } from "@react-navigation/native";
 
 export type AndroidWorkspaceDestination =
   | { readonly name: "Thread"; readonly params: ReactNavigation.RootParamList["Thread"] }
-  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] };
+  | { readonly name: "PullRequest"; readonly params: ReactNavigation.RootParamList["PullRequest"] }
+  | { readonly name: "Issue"; readonly params: ReactNavigation.RootParamList["Issue"] };
 
 export type AndroidWorkspaceResetAction = ReturnType<typeof CommonActions.reset> & {
   readonly target: string;
@@ -37,7 +38,9 @@ export function androidWorkspaceNavigationState(
   const identity =
     destination.name === "Thread"
       ? ["environmentId", "threadId"]
-      : ["environmentId", "projectId", "repository", "number", "host"];
+      : destination.name === "Issue"
+        ? ["environmentId", "projectId", "tracker", "host", "scope", "key", "connectionId"]
+        : ["environmentId", "projectId", "repository", "number", "host"];
   const params = destination.params as Readonly<Record<string, unknown>>;
   const existing = state.routes.findLast((route) => {
     if (route.name !== destination.name) return false;
@@ -104,7 +107,8 @@ export function returnToAndroidWorkspaceList(
 // In the split view these destinations swap the detail pane beside the sidebar instead of
 // stacking over Home, so the default slide-in would show a layer that is not there.
 export function androidWorkspaceDestinationAnimation(routeName: string, usesSplitView: boolean) {
-  return usesSplitView && (routeName === "Thread" || routeName === "PullRequest")
+  return usesSplitView &&
+    (routeName === "Thread" || routeName === "PullRequest" || routeName === "Issue")
     ? ("none" as const)
     : undefined;
 }

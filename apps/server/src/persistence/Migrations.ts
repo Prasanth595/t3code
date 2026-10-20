@@ -69,6 +69,10 @@ import Migration0063 from "./Migrations/063_DropUnusedV1Projections.ts";
 import Migration0064 from "./Migrations/064_CanonicalizeThreadPullRequestLinks.ts";
 import Migration0065 from "./Migrations/065_CodexUsageNativeTurnIndex.ts";
 import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts";
+import Migration0067 from "./Migrations/063_IssueTrackerBindings.ts";
+import Migration0068 from "./Migrations/064_IssueTrackerBindingHost.ts";
+import Migration0069 from "./Migrations/065_IssueTrackerAccounts.ts";
+import Migration0070 from "./Migrations/066_IssueAccountStorage.ts";
 
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -138,6 +142,10 @@ export const migrationEntries = [
   [64, "CanonicalizeThreadPullRequestLinks", Migration0064],
   [65, "CodexUsageNativeTurnIndex", Migration0065],
   [66, "RepairClientSettlementTimestamps", Migration0066],
+  [67, "IssueTrackerBindings", Migration0067],
+  [68, "IssueTrackerBindingHost", Migration0068],
+  [69, "IssueTrackerAccounts", Migration0069],
+  [70, "IssueAccountStorage", Migration0070],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -191,6 +199,76 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   });
 });
 
+const reconcileIssueMigrations = Effect.fn("reconcileIssueMigrations")(function* (
+  throughId?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const tables = yield* sql`
+        SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+      `;
+      if (tables.length === 0) return [];
+      const history = yield* sql<{ readonly migration_id: number; readonly name: string }>`
+        SELECT migration_id, name FROM effect_sql_migrations
+        WHERE migration_id >= 63 ORDER BY migration_id
+      `;
+      const firstIssueId = history.find((row) => row.name === "IssueTrackerBindings")?.migration_id;
+      if (firstIssueId !== 63 && firstIssueId !== 65) {
+        return [];
+      }
+      const targetIssueId = throughId !== undefined && throughId < 66 ? 65 : 67;
+      if (firstIssueId >= targetIssueId || throughId === 65) return [];
+      const issueHistory = history.filter((row) => row.migration_id >= firstIssueId);
+      const expected = [
+        "IssueTrackerBindings",
+        "IssueTrackerBindingHost",
+        "IssueTrackerAccounts",
+        "IssueAccountStorage",
+      ];
+      if (
+        !issueHistory.every(
+          (row, index) => row.migration_id === firstIssueId + index && row.name === expected[index],
+        )
+      ) {
+        return yield* new Migrator.MigrationError({
+          kind: "BadState",
+          message: "Cannot upgrade Issues preview with unexpected later migrations.",
+        });
+      }
+      yield* assertV2MigrationsCanRun(firstIssueId - 1);
+      const missing = migrationEntries.filter(([id]) => id >= firstIssueId && id < targetIssueId);
+      if (firstIssueId === 63) {
+        yield* Migration0063;
+        yield* Migration0064.pipe(
+          Effect.catchTags({
+            SchemaError: (cause) =>
+              Effect.fail(
+                new Migrator.MigrationError({
+                  kind: "Failed",
+                  message: 'Migration "64_CanonicalizeThreadPullRequestLinks" failed',
+                  cause,
+                }),
+              ),
+          }),
+        );
+      }
+      if (targetIssueId === 67) {
+        yield* Migration0065;
+        yield* Migration0066;
+      }
+      for (const row of issueHistory.toReversed()) {
+        yield* sql`UPDATE effect_sql_migrations SET migration_id = ${row.migration_id + targetIssueId - firstIssueId}
+          WHERE migration_id = ${row.migration_id} AND name = ${row.name}`;
+      }
+      for (const [id, name] of missing) {
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
+      }
+      return missing.map(([id, name]) => [id, name] as const);
+    }),
+  );
+});
+
 const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
@@ -203,11 +281,16 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+  const issueMigrations =
+    toMigrationInclusive === undefined || toMigrationInclusive >= 64
+      ? yield* reconcileIssueMigrations(toMigrationInclusive)
+      : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const executedMigrations = [
     ...previewMigrations,
+    ...issueMigrations,
     ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
   ];
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);

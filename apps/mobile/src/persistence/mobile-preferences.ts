@@ -7,6 +7,9 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
+  IssueInvolvement,
+  IssueTrackerKind,
+  IssueListState,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -47,8 +50,22 @@ const PullRequestListPreferences = Schema.Struct({
 });
 export type PullRequestListPreferences = typeof PullRequestListPreferences.Type;
 
+const IssueListFilters = Schema.Struct({
+  environmentId: Schema.NullOr(Schema.String),
+  state: IssueListState,
+  involvement: IssueInvolvement,
+  host: Schema.optional(Schema.String),
+  tracker: Schema.optional(IssueTrackerKind),
+  connectionId: Schema.optional(Schema.String),
+  accountEnvironmentId: Schema.optional(Schema.String),
+  projectId: Schema.optional(Schema.String),
+  projectEnvironmentId: Schema.optional(Schema.String),
+});
+export type IssueListFilters = typeof IssueListFilters.Type;
+
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
+const isIssueListFilters = Schema.is(IssueListFilters);
 
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
@@ -85,6 +102,7 @@ export interface Preferences {
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
+  readonly issueListFilters?: IssueListFilters;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -155,6 +173,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
+    issueListFilters?: IssueListFilters;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -281,6 +300,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;
+  }
+  if (isIssueListFilters(parsed.issueListFilters)) {
+    preferences.issueListFilters = parsed.issueListFilters;
   }
   return preferences;
 }

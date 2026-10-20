@@ -11,6 +11,7 @@ import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-con
 import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
+import { WORKSPACE_TAB_PRESENTATION } from "./workspace-tabs-state";
 import { useSidebarWorkspaceTabs } from "./useSystemWorkspaceTabBar";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 import { useMobileNavigationTheme } from "../../lib/useMobileNavigationTheme";
@@ -89,8 +90,7 @@ export function WorkspaceToolbar(props: {
                   obscureBackground: false,
                   placement: NATIVE_LIQUID_GLASS_SUPPORTED ? "integratedButton" : "stacked",
                   allowToolbarIntegration: NATIVE_LIQUID_GLASS_SUPPORTED,
-                  placeholder:
-                    selectedTab === "pullRequests" ? "Search pull requests" : "Search threads",
+                  placeholder: WORKSPACE_TAB_PRESENTATION[selectedTab].search,
                   cancelButtonText: "✕",
                   onFocus: () =>
                     tab.searchMode === "resting"
@@ -126,9 +126,7 @@ export function WorkspaceToolbar(props: {
         />
         {NATIVE_LIQUID_GLASS_SUPPORTED ? null : (
           <Toolbar.Button
-            accessibilityLabel={
-              selectedTab === "pullRequests" ? "Search pull requests" : "Search threads"
-            }
+            accessibilityLabel={WORKSPACE_TAB_PRESENTATION[selectedTab].search}
             icon="magnifyingglass"
             onPress={focusSearch}
           />
@@ -151,6 +149,15 @@ export function WorkspaceToolbar(props: {
             icon={{ type: "image", source: PULL_REQUEST_ICON, tinted: true }}
             tintColor={selectedTab === "pullRequests" ? selectedTint : undefined}
             onPress={() => selectTab("pullRequests")}
+          />
+        ) : null}
+        {sidebarTabs === "toolbar" ? (
+          <Toolbar.Button
+            identifier="workspace-tab-issues"
+            accessibilityLabel="Issues"
+            icon="circle.inset.filled"
+            tintColor={selectedTab === "issues" ? selectedTint : undefined}
+            onPress={() => selectTab("issues")}
           />
         ) : null}
         {nativeToolbarCompose ? <Toolbar.Spacer flexible /> : null}

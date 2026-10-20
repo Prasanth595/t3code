@@ -25,6 +25,7 @@ import { View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import { selectedIssueKey as displayedIssueKey } from "../issues/issueSelection";
 import { WorkspaceTabsProvider } from "../workspace/WorkspaceTabsContext";
 import { WorkspaceNativeTabs } from "../workspace/WorkspaceNativeTabs.ios";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
@@ -63,6 +64,7 @@ function ColumnScreen(props: {
   readonly primary?: boolean;
   readonly selectedThreadKey?: string | null;
   readonly selectedPullRequestKey?: string | null;
+  readonly selectedIssueKey?: string | null;
   readonly sidebarFilter?: NativeStackHeaderItemMenu;
   readonly onDismiss: (routeKey: string) => void;
   readonly navigation: ViewProps["navigation"];
@@ -74,9 +76,10 @@ function ColumnScreen(props: {
         ? {
             selectedThreadKey: props.selectedThreadKey ?? null,
             selectedPullRequestKey: props.selectedPullRequestKey ?? null,
+            selectedIssueKey: props.selectedIssueKey ?? null,
           }
         : null,
-    [props.primary, props.selectedThreadKey, props.selectedPullRequestKey],
+    [props.primary, props.selectedThreadKey, props.selectedPullRequestKey, props.selectedIssueKey],
   );
   const key = descriptor.route.key;
   return (
@@ -150,6 +153,10 @@ function WorkspaceColumns(
     typeof pullRequestParams.number === "number"
       ? `${pullRequestParams.environmentId}:${pullRequestParams.host}:${pullRequestParams.repository}:${pullRequestParams.number}`
       : null;
+  const selectedIssueKey = displayedIssueKey({
+    routes: props.detail,
+    index: props.detail.length - 1,
+  });
   const selectedThreadKey =
     threadParams &&
     "environmentId" in threadParams &&
@@ -210,6 +217,7 @@ function WorkspaceColumns(
             primary
             selectedThreadKey={selectedThreadKey}
             selectedPullRequestKey={selectedPullRequestKey}
+            selectedIssueKey={selectedIssueKey}
             onDismiss={handleNativeDismiss}
             navigation={props.navigation}
           />

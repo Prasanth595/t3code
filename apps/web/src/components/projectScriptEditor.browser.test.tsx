@@ -120,7 +120,8 @@ describe("project action editor save lifecycle", () => {
       await using screen = await render(null);
       const save = deferredSave();
       onSubmit.mockReturnValue(save.promise);
-      await open(screen, request("build"));
+      const originalRequest = request("build", "Original request error");
+      await open(screen, originalRequest);
       await act(async () => submit());
 
       await open(screen, request("test", "New request error"));
@@ -134,6 +135,9 @@ describe("project action editor save lifecycle", () => {
       expect(messages()).not.toContain("Old save error");
       expect(saveButton().disabled).toBe(false);
       expect(onClose).not.toHaveBeenCalled();
+
+      await open(screen, originalRequest);
+      expect(messages()).toContain("Original request error");
     },
   );
 

@@ -9,7 +9,10 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Migrator from "effect/sql/Migrator";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
+import { migrationEntries, runMigrations } from "./Migrations.ts";
 import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
@@ -17,7 +20,7 @@ const lockHolderSource = `
 const { DatabaseSync } = require("node:sqlite");
 const db = new DatabaseSync(process.argv[1]);
 db.exec("BEGIN IMMEDIATE");
-process.stdout.write("locked\\n");
+require("node:fs").writeSync(1, "locked\\n");
 setTimeout(() => {
   db.exec("COMMIT");
   db.close();
@@ -54,6 +57,69 @@ it.effect("waits out a concurrent writer instead of failing with SQLITE_BUSY", (
     assert.deepEqual([...rows], [{ id: 1 }]);
   }).pipe(
     Effect.provide(SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer))),
+    Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
+  );
+});
+
+it.effect("upgrades an Issues preview file and keeps account bindings after reopening", () => {
+  const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-issues-upgrade-"));
+  const dbPath = NodePath.join(tempDir, "state.sqlite");
+
+  return Effect.gen(function* () {
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 62 });
+      yield* Migrator.make({})({
+        loader: Migrator.fromRecord(
+          Object.fromEntries(
+            migrationEntries
+              .filter(([id]) => id >= 67)
+              .map(([id, name, migration]) => [`${id - 4}_${name}`, migration]),
+          ),
+        ),
+      });
+      yield* sql`INSERT INTO issue_tracker_accounts
+        VALUES ('linear', 'Account', 'linear.app', 'native-account')`;
+      yield* sql`INSERT INTO issue_tracker_bindings
+        (project_id, tracker, native_tracker, scope, host, connection_id, updated_at)
+        VALUES ('project', ${JSON.stringify({ tracker: "linear", connectionId: "Account" })},
+          'linear', 'acme/ENG', 'linear.app', 'Account', '2026-10-15T00:00:00Z')`;
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+
+    for (let open = 0; open < 2; open++) {
+      yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        assert.deepStrictEqual(yield* runMigrations(), []);
+        assert.deepStrictEqual(yield* sql`SELECT * FROM issue_tracker_accounts`, [
+          {
+            tracker: "linear",
+            connection_id: "Account",
+            host: "linear.app",
+            account_id: "native-account",
+          },
+        ]);
+        assert.deepStrictEqual(
+          yield* sql`SELECT connection_id, scope FROM issue_tracker_bindings`,
+          [
+            {
+              connection_id: "Account",
+              scope: "acme/ENG",
+            },
+          ],
+        );
+        assert.deepStrictEqual(yield* sql`PRAGMA foreign_key_check`, []);
+        assert.deepStrictEqual(
+          yield* sql`SELECT migration_id, name FROM effect_sql_migrations
+          WHERE migration_id = 70`,
+          [{ migration_id: 70, name: "IssueAccountStorage" }],
+        );
+      }).pipe(
+        Effect.provide(
+          SqlitePersistence.layerFromPath(dbPath).pipe(Layer.provide(NodeServices.layer)),
+        ),
+      );
+    }
+  }).pipe(
     Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
   );
 });

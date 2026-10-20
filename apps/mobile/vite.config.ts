@@ -4,11 +4,17 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",
+  "src/features/issues/IssueCandidatesScreen.test.tsx",
+  "src/features/issues/IssueComposeSheet.test.tsx",
+  "src/features/issues/IssueCreateSheet.test.tsx",
+  "src/features/issues/IssueRouteScreen.test.tsx",
+  "src/features/issues/useIssueList.test.ts",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/threads/use-visible-second-clock.test.tsx",
   "src/features/threads/useThreadHeaderOptions.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
+  "src/native/useOpenIssueLink.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
 ];
 

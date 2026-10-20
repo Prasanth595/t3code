@@ -1,5 +1,5 @@
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
-import { act } from "react";
+import { act, createContext, use } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
@@ -98,3 +98,34 @@ it.each(["left", "right", "bottom"] as const)(
     expect(harness.openedDocuments).toEqual(["first/guide.pdf"]);
   },
 );
+
+it("renders a custom loading item without reading its React owner's context internals", () => {
+  const context = createContext({
+    get options(): unknown {
+      throw new Error("Couldn't find a LinkingContext context.");
+    },
+  });
+  function LoadingToolbar(props: { readonly label: string }) {
+    use(context);
+    return (
+      <NativeHeaderToolbar placement="right">
+        <NativeHeaderToolbar.Custom>
+          <span>{props.label}</span>
+        </NativeHeaderToolbar.Custom>
+      </NativeHeaderToolbar>
+    );
+  }
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  expect(() => act(() => root!.render(<LoadingToolbar label="Connecting" />))).not.toThrow();
+  expect(harness.renderedItems).toMatchObject([
+    { type: "custom", element: { props: { children: "Connecting" } } },
+  ]);
+  const applied = harness.setOptionsCalls;
+  act(() => root!.render(<LoadingToolbar label="Connecting" />));
+  expect(harness.setOptionsCalls).toBe(applied);
+  act(() => root!.render(<LoadingToolbar label="Connected" />));
+  expect(harness.renderedItems).toMatchObject([
+    { type: "custom", element: { props: { children: "Connected" } } },
+  ]);
+});

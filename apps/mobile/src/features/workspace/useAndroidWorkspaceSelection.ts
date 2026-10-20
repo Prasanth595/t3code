@@ -18,7 +18,12 @@ export function useAndroidWorkspaceSelection() {
       Keyboard.dismiss();
       dispatch?.({
         type: "select",
-        tab: destination.name === "Thread" ? "threads" : "pullRequests",
+        tab:
+          destination.name === "Thread"
+            ? "threads"
+            : destination.name === "Issue"
+              ? "issues"
+              : "pullRequests",
       });
       resetAndroidWorkspace(navigation, destination, reviewers);
     },

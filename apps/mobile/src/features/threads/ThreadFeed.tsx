@@ -1,6 +1,6 @@
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useOpenIssueLink } from "../../native/useOpenIssueLink";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkCustomization } from "../../native/useEnrichedLinkVariants";
@@ -1671,7 +1671,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const workflowOpening = useWorkflowOpening(props.environmentId, props.threadId);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
-  const openPullRequest = useOpenPullRequest();
+  const openLink = useOpenIssueLink();
   const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1864,7 +1864,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         );
         return;
       }
-      void openPullRequest(presentation.href);
+      void openLink(presentation.href);
     }
   };
   const resolveImageSource = useMarkdownImageSource({

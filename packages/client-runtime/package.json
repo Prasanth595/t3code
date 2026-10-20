@@ -207,6 +207,10 @@
       "types": "./src/state/providerInstanceDisplay.ts",
       "default": "./src/state/providerInstanceDisplay.ts"
     },
+    "./state/issues": {
+      "types": "./src/state/issues.ts",
+      "default": "./src/state/issues.ts"
+    },
     "./state/pull-requests": {
       "types": "./src/state/pullRequests.ts",
       "default": "./src/state/pullRequests.ts"
@@ -258,6 +262,10 @@
     "./state/shell": {
       "types": "./src/state/shell.ts",
       "default": "./src/state/shell.ts"
+    },
+    "./state/issue-trackers": {
+      "types": "./src/state/issueTrackers.ts",
+      "default": "./src/state/issueTrackers.ts"
     },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
@@ -430,6 +438,14 @@
     "./pull-request-query": {
       "types": "./src/pullRequestQuery.ts",
       "default": "./src/pullRequestQuery.ts"
+    },
+    "./issue-form": {
+      "types": "./src/issue-form.ts",
+      "default": "./src/issue-form.ts"
+    },
+    "./issue-pages": {
+      "types": "./src/issue-pages.ts",
+      "default": "./src/issue-pages.ts"
     }
   },
   "scripts": {
@@ -437,6 +453,7 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@effect/atom-react": "catalog:",
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
@@ -448,10 +465,12 @@
     "@t3tools/source-control-github": "workspace:*",
     "@t3tools/source-control-gitlab": "workspace:*",
     "effect": "catalog:",
+    "react": "catalog:",
     "three": "0.180.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/react": "catalog:",
     "@types/three": "0.180.0",
     "vite-plus": "catalog:"
   }
