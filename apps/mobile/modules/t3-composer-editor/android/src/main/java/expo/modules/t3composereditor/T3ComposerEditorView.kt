@@ -61,7 +61,6 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private var contentInsetVertical = 0
   private var tokensJson = "[]"
   private var tokens: List<ComposerToken> = emptyList()
-  private var chipTheme = ComposerChipTheme.default()
   private var autoCorrect = true
   private var spellCheck = true
   private var nativeEventCount = 0
@@ -241,17 +240,6 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       } else {
         applySelectionTheme(parseColor(theme.optString("selection"), editor.currentTextColor))
       }
-      chipTheme = ComposerChipTheme(
-        chipBackground = parseColor(theme.optString("chipBackground"), chipTheme.chipBackground),
-        chipBorder = parseColor(theme.optString("chipBorder"), chipTheme.chipBorder),
-        chipText = parseColor(theme.optString("chipText"), chipTheme.chipText),
-        skillBackground = parseColor(
-          theme.optString("skillBackground"),
-          chipTheme.skillBackground,
-        ),
-        skillBorder = parseColor(theme.optString("skillBorder"), chipTheme.skillBorder),
-        skillText = parseColor(theme.optString("skillText"), chipTheme.skillText),
-      )
       applyTokenSpans()
     } catch (_: Exception) {
     }
@@ -457,15 +445,12 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
           T3ContextChip(
             content = T3ContextChip.Content(
               label = token.label,
-              symbol = token.symbol,
-              detail = token.detail
+              detail = token.detail,
+              icon = T3ChipIcons.load(context, token.iconUri, ::applyTokenSpans),
+              tintsIcon = token.tintsIcon
             ),
-            fontSize = editor.textSize * 0.8f,
-            colors = T3ContextChip.Colors(
-              accent = T3ContextChip.color(token.accent, chipTheme.chipText),
-              foreground = chipTheme.chipText,
-              border = chipTheme.chipBorder
-            ),
+            fontSize = editor.textSize,
+            color = T3ContextChip.color(token.accent, editor.currentTextColor),
             maximumWidth = (
               editor.width.takeIf {
                 it > 0
@@ -508,30 +493,11 @@ private data class ComposerToken(
   val label: String,
   val detail: String,
   val accent: String,
-  val symbol: String,
+  val iconUri: String,
+  val tintsIcon: Boolean,
   val start: Int,
   val end: Int
 )
-
-private data class ComposerChipTheme(
-  val chipBackground: Int,
-  val chipBorder: Int,
-  val chipText: Int,
-  val skillBackground: Int,
-  val skillBorder: Int,
-  val skillText: Int
-) {
-  companion object {
-    fun default() = ComposerChipTheme(
-      chipBackground = Color.rgb(238, 240, 243),
-      chipBorder = Color.rgb(210, 214, 220),
-      chipText = Color.rgb(35, 39, 45),
-      skillBackground = Color.rgb(233, 239, 255),
-      skillBorder = Color.rgb(185, 200, 245),
-      skillText = Color.rgb(45, 72, 155),
-    )
-  }
-}
 
 private class ComposerChipSpan(
   private val chip: T3ContextChip
@@ -581,7 +547,8 @@ private fun parseTokens(value: String): List<ComposerToken> = try {
       label = token.optString("label"),
       detail = token.optString("detail"),
       accent = token.optString("accent"),
-      symbol = token.optString("symbol", "doc"),
+      iconUri = if (token.isNull("iconUri")) "" else token.optString("iconUri"),
+      tintsIcon = token.optBoolean("tintsIcon"),
       start = token.optInt("start"),
       end = token.optInt("end"),
     )
