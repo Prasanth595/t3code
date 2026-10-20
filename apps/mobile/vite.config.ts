@@ -4,6 +4,7 @@ import "vite-plus/test/config";
 const reactTests = [
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/home/home-route-visibility.test.tsx",
+  "src/features/keyboard/keyboardControllerState.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
   "src/features/threads/use-visible-second-clock.test.tsx",
