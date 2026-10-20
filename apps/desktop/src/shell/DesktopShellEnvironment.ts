@@ -6,6 +6,7 @@ import {
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -68,7 +69,7 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    // Reuses the installation result; false leaves server hydration enabled.
+    // False leaves server hydration enabled; failed POSIX captures can be retried.
     readonly installIntoProcess: Effect.Effect<boolean>;
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
@@ -396,29 +397,36 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<
-    void,
+    boolean,
     never,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   > {
     const fileSystem = yield* FileSystem.FileSystem;
     const shellEnvironment: EnvironmentPatch = {};
 
-    for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
+    let preferredShellPrepared = false;
+    for (const [index, shell] of listLoginShellCandidates(
+      config.platform,
+      config.env.SHELL,
+    ).entries()) {
       Object.assign(
         shellEnvironment,
         yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
       );
-      if (shellEnvironment.PATH) break;
+      if (Option.isSome(trimNonEmpty(shellEnvironment.PATH))) {
+        preferredShellPrepared = index === 0;
+        break;
+      }
     }
 
     const launchctlPath =
       config.platform === "darwin" && !shellEnvironment.PATH
         ? yield* readLaunchctlPath
         : Option.none<string>();
-    const mergedPath = mergePaths(config.platform, [
-      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
-      readEnvPath(config.env),
-    ]);
+    const capturedPath = trimNonEmpty(shellEnvironment.PATH).pipe(
+      Option.orElse(() => launchctlPath),
+    );
+    const mergedPath = mergePaths(config.platform, [capturedPath, readEnvPath(config.env)]);
 
     if (Option.isSome(mergedPath)) {
       config.env.PATH = mergedPath.value;
@@ -503,6 +511,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
     }
+    return preferredShellPrepared;
   },
 );
 
@@ -517,7 +526,7 @@ const installShellEnvironment = (
     return installWindowsEnvironment(config);
   }
   if (config.platform === "darwin" || config.platform === "linux") {
-    return installPosixEnvironment(config).pipe(Effect.as(true));
+    return installPosixEnvironment(config);
   }
   return Effect.succeed(false);
 };
@@ -528,7 +537,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const installIntoProcess: DesktopShellEnvironment["Service"]["installIntoProcess"] =
-    yield* Effect.cached(
+    yield* Effect.cachedWithTTL(
       installShellEnvironment({
         env: process.env,
         platform: environment.platform,
@@ -537,6 +546,10 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
       ),
+      (exit) =>
+        environment.platform === "win32" || (Exit.isSuccess(exit) && exit.value)
+          ? Duration.infinity
+          : Duration.zero,
     );
 
   return DesktopShellEnvironment.of({ installIntoProcess });
