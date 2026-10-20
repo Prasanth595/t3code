@@ -709,7 +709,10 @@ describe("PullRequestSyncReactor", () => {
           summary: (input) =>
             Ref.get(avatarUrl).pipe(
               Effect.map((avatarUrl) =>
-                makeSummary(input, { author: { login: "octocat", name: null, avatarUrl } }),
+                makeSummary(input, {
+                  updatedAt: NOW,
+                  author: { login: "octocat", name: null, avatarUrl },
+                }),
               ),
             ),
         });
