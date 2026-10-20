@@ -30,6 +30,7 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 export function latestProviderTurnTokenUsage(
   turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>,
   projection?: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers"> | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage"> | null,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
   let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
   for (const { tokenUsage } of turns) {
@@ -39,7 +40,7 @@ export function latestProviderTurnTokenUsage(
       latest = tokenUsage;
     }
   }
-  if (latest !== null || projection == null) return latest;
+  if (latest !== null || projection == null || providerThread?.contextUsage != null) return latest;
   const forkedFrom = projection.thread.forkedFrom;
   if (forkedFrom?.type !== "run") return null;
   return (

@@ -178,6 +178,29 @@ describe("latestProviderTurnTokenUsage", () => {
     expect(latestProviderTurnTokenUsage([{ tokenUsage }], forkProjection())).toEqual(tokenUsage);
   });
 
+  it.each([0, 42_000])(
+    "prefers target provider-thread usage of %d tokens over inherited usage",
+    (usedTokens) => {
+      const providerThread = {
+        contextUsage: {
+          usedTokens,
+          maxTokens: 200_000,
+          cost: { amount: 0.42, currency: "USD" },
+        },
+        updatedAt: DateTime.makeUnsafe("2026-10-19T12:10:00.000Z"),
+      };
+      const usage = latestProviderTurnTokenUsage([], forkProjection(), providerThread);
+      const snapshot = deriveLatestContextWindowSnapshot([], usage, providerThread);
+
+      expect(snapshot).toMatchObject({
+        usedTokens,
+        maxTokens: 200_000,
+        cost: { amount: 0.42, currency: "USD" },
+        updatedAt: "2026-10-19T12:10:00.000Z",
+      });
+    },
+  );
+
   it("keeps the fallback after a native fork is consumed", () => {
     const projection = forkProjection();
     const transfer = projection.contextTransfers[0]!;
