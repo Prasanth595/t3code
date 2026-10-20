@@ -84,7 +84,7 @@ const WebhookMaxDeliveryAgeMinutes = Schema.Int.check(
 });
 
 export function isWebhookDedupeTemplate(template: string): boolean {
-  const placeholders = /\{\{\s*(?:(?:body|headers|query)(?:\.[^{}\s]+)*|request)\s*\}\}/g;
+  const placeholders = /\{\{\s*(?:(?:body|headers|query)(?:\.[^{}.\s]+)*|request)\s*\}\}/g;
   const matches = [...template.matchAll(placeholders)];
   const remainder = template.replace(placeholders, "");
   return matches.length > 0 && !remainder.includes("{{") && !remainder.includes("}}");

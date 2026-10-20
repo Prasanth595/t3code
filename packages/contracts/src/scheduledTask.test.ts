@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
 import {
+  isWebhookDedupeTemplate,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ScheduledTaskListWebhookDeliveriesResult,
   ScheduledTaskSchedule,
@@ -13,6 +14,20 @@ const decodeSchedule = Schema.decodeUnknownSync(ScheduledTaskSchedule);
 const decodeUpsertSchedule = Schema.decodeUnknownSync(ScheduledTaskUpsertSchedule);
 const decodeDeliverySummary = Schema.decodeSync(ScheduledTaskWebhookDeliverySummary);
 const decodeDeliveryList = Schema.decodeUnknownSync(ScheduledTaskListWebhookDeliveriesResult);
+
+it("rejects a long unterminated dotted dedupe key without excessive backtracking", () => {
+  const template = "{{body." + "a.".repeat(5000) + "x";
+  const startedAt = performance.now();
+  const valid = isWebhookDedupeTemplate(template);
+  const elapsedMs = performance.now() - startedAt;
+  expect(valid).toBe(false);
+  expect(elapsedMs).toBeLessThan(50);
+  for (const field of ["replayKey", "coalesceKey"]) {
+    expect(() =>
+      decodeUpsertSchedule({ type: "webhook", dedupe: { [field]: template } }),
+    ).toThrow();
+  }
+});
 
 it.each(["duplicate", "coalesced", "future_outcome"])("decodes delivery outcome %s", (outcome) => {
   expect(
