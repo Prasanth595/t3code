@@ -243,3 +243,27 @@ it("keeps denied previews selectable with their file icon", async () => {
   expect(state.createUrl).not.toHaveBeenCalled();
   expect(onSelect).toHaveBeenCalledWith("icons/private.svg");
 });
+
+it("keeps the file icon until the image load is acknowledged", async () => {
+  vi.stubGlobal("IntersectionObserver", undefined);
+  addFiles(["icons/loading.svg"]);
+  await renderPicker();
+  const row = fileRow("icons/loading.svg");
+  // Hold the load notification so a fast data URL has the same UI state as a slow request.
+  const holdLoad = (event: Event) => {
+    if (event.target instanceof HTMLImageElement && row.contains(event.target)) {
+      event.stopImmediatePropagation();
+    }
+  };
+  document.addEventListener("load", holdLoad, true);
+  try {
+    await publishUrl("icons/loading.svg", imageUrl);
+    await expect.poll(() => row.querySelector("img")?.naturalWidth).toBe(8);
+    expect(row.querySelector("svg")).not.toBeNull();
+    document.removeEventListener("load", holdLoad, true);
+    await publishUrl("icons/loading.svg", `${imageUrl}#loaded`);
+    await expectPreview(row);
+  } finally {
+    document.removeEventListener("load", holdLoad, true);
+  }
+});

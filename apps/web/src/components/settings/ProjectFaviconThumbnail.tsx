@@ -11,6 +11,7 @@ export function ProjectFaviconThumbnail(props: {
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const [inView, setInView] = useState(() => typeof IntersectionObserver === "undefined");
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
 
   // Asset URLs require a server request, so defer acquisition until the row is visible.
@@ -30,20 +31,24 @@ export function ProjectFaviconThumbnail(props: {
   );
   const url = state._tag === "Success" ? state.url : null;
 
+  const showImage = url !== null && failedUrl !== url;
+  const imageLoaded = showImage && loadedUrl === url;
+
   return (
-    <span ref={ref} className="flex size-8 shrink-0 items-center justify-center">
-      {url && failedUrl !== url ? (
+    <span ref={ref} className="relative flex size-8 shrink-0 items-center justify-center">
+      {!imageLoaded ? props.fallback : null}
+      {showImage ? (
         <img
+          key={url}
           alt=""
-          className="max-h-8 max-w-8 rounded-sm object-contain"
+          className={`absolute max-h-8 max-w-8 rounded-sm object-contain${imageLoaded ? "" : " invisible"}`}
           decoding="async"
           loading="lazy"
           onError={() => setFailedUrl(url)}
+          onLoad={() => setLoadedUrl(url)}
           src={url}
         />
-      ) : (
-        props.fallback
-      )}
+      ) : null}
     </span>
   );
 }
