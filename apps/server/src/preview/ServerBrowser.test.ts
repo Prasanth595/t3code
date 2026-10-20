@@ -1535,6 +1535,54 @@ it.live("a file picker closes when its page is replaced by a new document", () =
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a file picker closes when its page is replaced while control changes hands", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const first = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* first.input({ type: "takeControl" });
+      const current = Promise.withResolvers<boolean>();
+      const probeStarted = Promise.withResolvers<void>();
+      let probeCount = 0;
+      page.emit("filechooser", {
+        isMultiple: () => false,
+        element: () => ({
+          getAttribute: async () => "",
+          evaluate: () => {
+            probeCount++;
+            if (probeCount === 1) return Promise.resolve(true);
+            probeStarted.resolve();
+            return current.promise;
+          },
+        }),
+        setFiles: vi.fn(async (_files: unknown) => {}),
+      });
+      let offered = yield* Queue.take(first.output);
+      while (offered._tag !== "fileChooser") offered = yield* Queue.take(first.output);
+
+      page.emit("domcontentloaded");
+      yield* Effect.promise(() => probeStarted.promise);
+      const second = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* first.input({ type: "releaseControl" });
+      yield* second.input({ type: "takeControl" });
+      let reoffered = yield* Queue.take(second.output);
+      while (reoffered._tag !== "fileChooser") reoffered = yield* Queue.take(second.output);
+      current.resolve(false);
+      let closed = yield* Queue.take(second.output);
+      while (closed._tag !== "fileChooserClosed") closed = yield* Queue.take(second.output);
+      expect(closed.id).toBe(reoffered.id);
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.fileChooser).toBeNull();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a file picker is not offered after its document changes while reading accept", () =>
   Effect.scoped(
     Effect.gen(function* () {

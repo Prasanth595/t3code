@@ -806,7 +806,7 @@ const make = Effect.gen(function* () {
       const open = tab.fileChooser;
       if (open) {
         void isFileChooserCurrent(open.chooser).then((current) => {
-          if (!current && tab.fileChooser === open) closeFileChooser(tab);
+          if (!current && tab.fileChooser?.chooser === open.chooser) closeFileChooser(tab);
         });
       }
     });
