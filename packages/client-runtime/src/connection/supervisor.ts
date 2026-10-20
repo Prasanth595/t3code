@@ -699,7 +699,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // each route that reaches synchronizing adds its own snapshot budget, so
       // a route that fails late does not eat the next route's time.
       Effect.gen(function* () {
-        const routeCount = connectionRoutes(yield* Ref.get(currentEntry)).length;
+        const latestEntry = yield* Ref.get(currentEntry);
+        // SSH preparation can wait on an interactive password prompt, which
+        // has its own lifetime. Timing it out here would abandon a prompt the
+        // desktop still holds and queue another one behind it.
+        if (latestEntry.target._tag === "SshConnectionTarget") {
+          yield* SubscriptionRef.changes(prepared).pipe(
+            Stream.filter(Option.isSome),
+            Stream.take(1),
+            Stream.runDrain,
+          );
+        }
+        const routeCount = connectionRoutes(latestEntry).length;
         const startedAt = yield* Clock.monotonicTimeNanos;
         const setup = Duration.toNanosUnsafe(Duration.times(establishmentTimeout, routeCount));
         while (true) {

@@ -31,6 +31,7 @@ import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type ConnectionAttemptError,
   type ConnectionTarget,
   type NetworkStatus,
@@ -64,6 +65,16 @@ const TARGET_ENTRY: ConnectionCatalogEntry = {
 
 const RELAY_ENTRY: ConnectionCatalogEntry = {
   target: RELAY_TARGET,
+  profile: Option.none(),
+  enabled: true,
+};
+
+const SSH_ENTRY: ConnectionCatalogEntry = {
+  target: new SshConnectionTarget({
+    environmentId: TARGET.environmentId,
+    label: TARGET.label,
+    connectionId: "ssh:devbox",
+  }),
   profile: Option.none(),
   enabled: true,
 };
@@ -588,6 +599,41 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment did not respond during connection setup.",
         },
       });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("waits for an SSH password prompt instead of timing out setup", () =>
+    Effect.gen(function* () {
+      const password = yield* Deferred.make<void>();
+      const harness = yield* makeHarness({
+        prepare: () => Deferred.await(password).pipe(Effect.as(PREPARED_CONNECTION)),
+        ready: () => Effect.never,
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(SSH_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.stage === "preparing",
+      );
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
+        phase: "connecting",
+        stage: "preparing",
+        attempt: 1,
+      });
+
+      yield* Deferred.succeed(password, undefined);
+      yield* awaitState(supervisor.state, (state) => state.stage === "synchronizing");
+      // The usual setup and snapshot budget starts once the prompt is answered.
+      yield* TestClock.adjust("90 seconds");
+      const retrying = yield* eventuallyState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      expect(retrying.lastFailure).toMatchObject({ reason: "timeout" });
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

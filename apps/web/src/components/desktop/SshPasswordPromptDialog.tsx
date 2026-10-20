@@ -31,6 +31,13 @@ function getPromptErrorMessage(error: unknown): string {
     : message;
 }
 
+function withoutRequest(
+  queue: readonly DesktopSshPasswordPromptRequest[],
+  requestId: string,
+): readonly DesktopSshPasswordPromptRequest[] {
+  return queue.filter((queued) => queued.requestId !== requestId);
+}
+
 export function SshPasswordPromptDialog() {
   const [queue, setQueue] = useState<readonly DesktopSshPasswordPromptRequest[]>([]);
   const currentRequest = queue[0] ?? null;
@@ -41,9 +48,20 @@ export function SshPasswordPromptDialog() {
       return;
     }
 
-    return bridge.onSshPasswordPrompt((request) => {
-      setQueue((currentQueue) => [...currentQueue, request]);
+    const unsubscribePrompt = bridge.onSshPasswordPrompt((request) => {
+      setQueue((currentQueue) =>
+        currentQueue.some((queued) => queued.requestId === request.requestId)
+          ? currentQueue
+          : [...currentQueue, request],
+      );
     });
+    const unsubscribeSettled = bridge.onSshPasswordPromptSettled?.((requestId) => {
+      setQueue((currentQueue) => withoutRequest(currentQueue, requestId));
+    });
+    return () => {
+      unsubscribePrompt();
+      unsubscribeSettled?.();
+    };
   }, []);
 
   if (!currentRequest) {
@@ -55,9 +73,7 @@ export function SshPasswordPromptDialog() {
       key={currentRequest.requestId}
       request={currentRequest}
       onRemove={(requestId) => {
-        setQueue((currentQueue) =>
-          currentQueue[0]?.requestId === requestId ? currentQueue.slice(1) : currentQueue,
-        );
+        setQueue((currentQueue) => withoutRequest(currentQueue, requestId));
       }}
     />
   );

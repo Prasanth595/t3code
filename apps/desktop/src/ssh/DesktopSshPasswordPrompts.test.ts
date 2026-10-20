@@ -8,7 +8,10 @@ import * as TestClock from "effect/testing/TestClock";
 import type * as Electron from "electron";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { SSH_PASSWORD_PROMPT_CHANNEL } from "../ipc/channels.ts";
+import {
+  SSH_PASSWORD_PROMPT_CHANNEL,
+  SSH_PASSWORD_PROMPT_SETTLED_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 interface SentMessage {
@@ -163,6 +166,61 @@ describe("DesktopSshPasswordPrompts", () => {
       const error = yield* Fiber.join(fiber).pipe(Effect.flip);
       assert.instanceOf(error, DesktopSshPasswordPrompts.DesktopSshPromptTimedOutError);
       assert.equal(error.destination, "devbox");
+    }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
+  });
+
+  it.effect.each(["answered", "cancelled", "timed out"] as const)(
+    "tells the renderer when a prompt is %s",
+    (ending) => {
+      const testWindow = makeTestWindow();
+
+      return Effect.gen(function* () {
+        const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+        const fiber = yield* prompts
+          .request({ destination: "devbox", username: null, prompt: "Password:", attempt: 1 })
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        const request = testWindow.sentMessages[0]?.args[0] as { readonly requestId: string };
+
+        if (ending === "timed out") {
+          yield* TestClock.adjust(Duration.millis(1_000));
+        } else {
+          yield* prompts.resolve({
+            requestId: request.requestId,
+            password: ending === "answered" ? "secret" : null,
+          });
+        }
+        yield* Fiber.await(fiber);
+
+        assert.deepEqual(testWindow.sentMessages[1], {
+          channel: SSH_PASSWORD_PROMPT_SETTLED_CHANNEL,
+          args: [{ requestId: request.requestId }],
+        });
+      }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
+    },
+  );
+
+  it.effect("tells the renderer when the connection attempt stops waiting", () => {
+    const testWindow = makeTestWindow();
+
+    return Effect.gen(function* () {
+      const prompts = yield* DesktopSshPasswordPrompts.DesktopSshPasswordPrompts;
+      const fiber = yield* prompts
+        .request({ destination: "devbox", username: null, prompt: "Password:", attempt: 1 })
+        .pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      const request = testWindow.sentMessages[0]?.args[0] as { readonly requestId: string };
+
+      yield* Fiber.interrupt(fiber);
+
+      assert.deepEqual(testWindow.sentMessages[1], {
+        channel: SSH_PASSWORD_PROMPT_SETTLED_CHANNEL,
+        args: [{ requestId: request.requestId }],
+      });
+      const resolveError = yield* prompts
+        .resolve({ requestId: request.requestId, password: "secret" })
+        .pipe(Effect.flip);
+      assert.instanceOf(resolveError, DesktopSshPasswordPrompts.DesktopSshPromptExpiredError);
     }).pipe(Effect.provide(layer(testWindow.window)), Effect.scoped);
   });
 
