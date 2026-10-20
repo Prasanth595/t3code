@@ -1,6 +1,5 @@
 package expo.modules.t3composereditor
 
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -24,7 +23,7 @@ class T3ContextChip(
   data class Content(
     val label: String,
     val detail: String = "",
-    val icon: Bitmap? = null,
+    val iconUri: String = "",
     val tintsIcon: Boolean = false
   )
 
@@ -45,12 +44,12 @@ class T3ContextChip(
   private val detailText = if (content.detail.isEmpty()) "" else " ${content.detail}"
   private val detailWidth = if (detailText.isEmpty()) 0f else detailPaint.measureText(detailText)
 
-  private val icon = content.icon
+  val iconUri = content.iconUri
   private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
     if (content.tintsIcon) colorFilter = PorterDuffColorFilter(this@T3ContextChip.color, PorterDuff.Mode.SRC_IN)
   }
   private val padding = density * 5
-  private val iconSlot = if (icon == null) 0f else em * 1.25f
+  private val iconSlot = if (iconUri.isEmpty()) 0f else em * 1.25f
   val width = ceil(
     min(
       maximumWidth.coerceAtLeast(em * 3),
@@ -68,7 +67,7 @@ class T3ContextChip(
   fun draw(canvas: Canvas, x: Float, y: Float) {
     canvas.save()
     canvas.translate(x, y)
-    icon?.let {
+    T3ChipIcons.cached(iconUri)?.let {
       val top = (height - em) / 2
       canvas.drawBitmap(it, null, RectF(padding, top, padding + em, top + em), iconPaint)
     }

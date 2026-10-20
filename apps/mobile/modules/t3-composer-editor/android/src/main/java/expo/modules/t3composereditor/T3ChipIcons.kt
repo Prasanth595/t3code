@@ -11,11 +11,13 @@ import java.util.concurrent.Executors
 
 internal object T3ChipIcons {
   private val images = HashMap<String, Bitmap>()
-  private val pending = HashMap<String, MutableSet<() -> Unit>>()
+  private val pending = HashMap<String, MutableSet<(String) -> Unit>>()
   private val downloads = Executors.newSingleThreadExecutor()
   private val main = Handler(Looper.getMainLooper())
 
-  fun load(context: Context, uri: String, onLoaded: () -> Unit): Bitmap? {
+  fun cached(uri: String): Bitmap? = images[uri]
+
+  fun load(context: Context, uri: String, onLoaded: (String) -> Unit): Bitmap? {
     if (uri.isEmpty()) return null
     images[uri]?.let { return it }
     if (uri.startsWith("http://") || uri.startsWith("https://")) {
@@ -30,7 +32,7 @@ internal object T3ChipIcons {
           val waiting = pending.remove(uri).orEmpty()
           if (bitmap != null) {
             images[uri] = bitmap
-            waiting.forEach { it() }
+            waiting.forEach { it(uri) }
           }
         }
       }
