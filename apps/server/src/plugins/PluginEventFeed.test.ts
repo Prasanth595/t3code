@@ -6,7 +6,7 @@ import {
   PluginCatalogError,
   type PluginCatalogSnapshot,
   type PluginEventDeliveryState,
-  type PluginInstallationId,
+  PluginInstallationId,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -311,6 +311,21 @@ const withStores = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
 
 it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
   describe("delivery", () => {
+    it.effect("forgets a persisted cursor absent from the first catalog snapshot", () =>
+      withStores(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const installationId = PluginInstallationId.make("removed-before-startup");
+          yield* sql`INSERT INTO plugin_event_cursors (installation_id, acknowledged_sequence) VALUES (${installationId}, 0)`;
+          const scope = yield* Scope.make();
+          const { receipts } = yield* startServer(scope);
+          yield* next(receipts, "Forgotten", installationId);
+          expect(yield* storedCursor(installationId)).toBeUndefined();
+          yield* Scope.close(scope, Exit.void);
+        }),
+      ),
+    );
+
     it.effect("delivers finished turns once, in order, and keeps the cursor across a restart", () =>
       withStores(
         Effect.gen(function* () {
