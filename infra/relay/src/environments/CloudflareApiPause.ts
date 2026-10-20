@@ -8,6 +8,19 @@ import { relayUpstreamApiPauses } from "../persistence/schema.ts";
 
 const CLOUDFLARE_API = "cloudflare";
 
+// Every SqlClient's transaction connection lives under a key with this prefix.
+// Matching by key name instead of `db.$client.transactionService` because the
+// relay's database is an alchemy proxy, whose properties are proxies too, not
+// the real key.
+const SQL_TRANSACTION_KEY_PREFIX = "effect/sql/SqlClient/TransactionConnection/";
+
+const withoutSqlTransaction = (context: Context.Context<never>): Context.Context<never> =>
+  Context.makeUnsafe(
+    new Map(
+      Array.from(context.mapUnsafe).filter(([key]) => !key.startsWith(SQL_TRANSACTION_KEY_PREFIX)),
+    ),
+  );
+
 /**
  * Cloudflare's API rate limit is per account, so a 429 seen by any isolate
  * applies to all of them. Both operations fail open: a pause that cannot be
@@ -30,7 +43,7 @@ export class CloudflareApiPause extends Context.Service<
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const outsideTransaction = <A, E>(effect: Effect.Effect<A, E>) =>
-    Effect.updateContext(effect, Context.omit(db.$client.transactionService)<never>);
+    Effect.updateContext(effect, withoutSqlTransaction);
 
   return CloudflareApiPause.of({
     pausedUntilMillis: db

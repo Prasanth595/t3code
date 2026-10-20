@@ -1,13 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as RelayDb from "../db.ts";
 import * as CloudflareApiPause from "./CloudflareApiPause.ts";
 
-const TransactionConnection = Context.Service<unknown>("test/TransactionConnection");
+const TransactionConnection = SqlClient.TransactionConnection(7);
+
+// Like the Worker's alchemy database proxy: every property read returns
+// another proxy, never the client's real transaction key.
+const lazyProxy = (): unknown => new Proxy(() => {}, { get: () => lazyProxy() });
 
 // Records whether each statement would have joined the ambient transaction.
 function makeFakeDb(joinedTransaction: Array<boolean>) {
@@ -19,7 +23,7 @@ function makeFakeDb(joinedTransaction: Array<boolean>) {
       Effect.as(result),
     );
   return {
-    $client: { transactionService: TransactionConnection },
+    $client: lazyProxy(),
     select: () => ({
       from: () => ({ where: () => ({ limit: () => statement([{ pausedUntilMs: 42 }]) }) }),
     }),
@@ -33,7 +37,12 @@ describe("CloudflareApiPause", () => {
     return Effect.gen(function* () {
       const pause = yield* CloudflareApiPause.CloudflareApiPause;
       const inTransaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-        effect.pipe(Effect.provideService(TransactionConnection, "transaction-connection"));
+        effect.pipe(
+          Effect.provideService(TransactionConnection, [
+            {} as never,
+            0,
+          ] as unknown as SqlClient.TransactionConnection.Service),
+        );
 
       expect(yield* inTransaction(pause.pausedUntilMillis)).toBe(42);
       yield* inTransaction(pause.pauseUntil(1_000));
