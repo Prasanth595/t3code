@@ -1324,6 +1324,32 @@ describe("MessagesTimeline scroll position", () => {
     return props.listRef.current!.getScrollableNode()!;
   }
 
+  it("does not interrupt a smooth jump when following is re-enabled without new rows", async () => {
+    const props = baseProps();
+    const timeline = (following: boolean) => (
+      <MessagesTimeline {...props} timelineEntries={tallEntries} liveFollowEnabled={following} />
+    );
+    await renderElement(timeline(false));
+    const viewport = await waitForList(props);
+    await act(async () => {
+      viewport.scrollTop = 0;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
+    const scrollTo = vi.spyOn(scrollable, "scrollTo");
+
+    await act(async () => roots.at(-1)!.render(timeline(true)));
+    await act(async () => {
+      void props.listRef.current!.scrollToEnd({ animated: true });
+      for (let frame = 0; frame < 5; frame += 1) {
+        await new Promise(requestAnimationFrame);
+      }
+    });
+
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "smooth")).toBe(true);
+    expect(scrollTo.mock.calls.some(([options]) => options?.behavior === "auto")).toBe(false);
+  });
+
   it("settles when earlier short replies load above long ones", async () => {
     const props = baseProps();
     const short = Array.from({ length: 80 }, (_, index) =>

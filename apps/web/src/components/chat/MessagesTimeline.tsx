@@ -1429,9 +1429,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // Rows that land on a followed thread (a reply that finished while it was in the
   // background) can grow the content past what LegendList keeps following. Check once
   // the rows have laid out; smooth following during a stream moves the view itself.
+  const endPinRowsRef = useRef(rows);
   useEffect(() => {
+    const rowsChanged = endPinRowsRef.current !== rows;
+    endPinRowsRef.current = rows;
     const list = listRef.current;
-    if (!list || !followsEnd || followsEndSmoothly || restoringThreadPosition) return;
+    if (!rowsChanged || !list || !followsEnd || followsEndSmoothly || restoringThreadPosition)
+      return;
     let second: number | null = null;
     const first = requestAnimationFrame(() => {
       second = requestAnimationFrame(() => {
@@ -1445,7 +1449,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       cancelAnimationFrame(first);
       if (second !== null) cancelAnimationFrame(second);
     };
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Added or changed rows are the trigger.
   }, [followsEnd, followsEndSmoothly, listRef, restoringThreadPosition, rows]);
 
   useThreadFindNavigation({
