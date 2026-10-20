@@ -464,9 +464,13 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
   return (pause: CloudflareApiPause.CloudflareApiPause["Service"]) => {
     const recordRateLimit = (cause: unknown) =>
       Effect.gen(function* () {
-        const until = (yield* Clock.currentTimeMillis) + cloudflareRateLimitPauseMillis(cause);
+        const pauseMillis = cloudflareRateLimitPauseMillis(cause);
+        const until = (yield* Clock.currentTimeMillis) + pauseMillis;
         pausedUntilMillis = Math.max(pausedUntilMillis, until);
-        yield* Effect.annotateCurrentSpan({ "relay.cloudflare.rate_limited": true });
+        yield* Effect.annotateCurrentSpan({
+          "relay.cloudflare.rate_limited": true,
+          "relay.cloudflare.pause_ms": pauseMillis,
+        });
         yield* pause.pauseUntil(until);
       });
     return <A, E>(
@@ -478,8 +482,12 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
           checkedAtMillis = now;
           pausedUntilMillis = Math.max(pausedUntilMillis, yield* pause.pausedUntilMillis);
         }
+        // A paused call never reaches Cloudflare, so it leaves no 429 behind.
+        // Its own span keeps a storm visible to the rate-limit monitors.
         if (now < pausedUntilMillis) {
-          return yield* new CloudflareApiPaused({ retryAfterMillis: pausedUntilMillis - now });
+          return yield* new CloudflareApiPaused({ retryAfterMillis: pausedUntilMillis - now }).pipe(
+            Effect.withSpan("relay.cloudflare_api_pause.rejected"),
+          );
         }
         return yield* call.pipe(
           Effect.provideService(CloudflareRetry.Retry, withoutRateLimitRetries),

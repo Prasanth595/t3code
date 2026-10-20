@@ -114,9 +114,9 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     severity: "page",
     name: "T3 Connect relay: Cloudflare API rate limited",
     description:
-      "Cloudflare API 429s per 10 min from tunnel and DNS provisioning. Sustained at this level, links and recoveries stall. Peak before #16810: 1,286; during it: ~11k.",
+      "Cloudflare API 429s, plus calls the relay refused while paused after one, per 10 min. Sustained at this level, links and recoveries stall. Peak 429s before #16810: 1,286; during it: ~11k.",
     query: (dataset) =>
-      `['${dataset}']\n| where ${CLOUDFLARE_API} and ${STATUS} == 429\n| summarize rate_limited = count()`,
+      `['${dataset}']\n| where (${CLOUDFLARE_API} and ${STATUS} == 429) or name == "relay.cloudflare_api_pause.rejected"\n| summarize rate_limited = count()`,
     operator: "AboveOrEqual",
     threshold: 500,
     rangeMinutes: 10,
@@ -140,9 +140,9 @@ const relayMonitors: ReadonlyArray<RelayMonitor> = [
     severity: "warn",
     name: "T3 Connect relay: Cloudflare API near its limit",
     description:
-      "Any sustained Cloudflare API 429s. These bursts ran for days before #16810; raise the account limit or cut call volume before they grow.",
+      "Any sustained Cloudflare API 429s or paused calls. 429 bursts ran for days before #16810; raise the account limit or cut call volume before they grow.",
     query: (dataset) =>
-      `['${dataset}']\n| where ${CLOUDFLARE_API} and ${STATUS} == 429\n| summarize rate_limited = count()`,
+      `['${dataset}']\n| where (${CLOUDFLARE_API} and ${STATUS} == 429) or name == "relay.cloudflare_api_pause.rejected"\n| summarize rate_limited = count()`,
     operator: "AboveOrEqual",
     threshold: 20,
     rangeMinutes: 10,
