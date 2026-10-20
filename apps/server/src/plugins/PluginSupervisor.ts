@@ -708,7 +708,22 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       stdio: ["ignore", "ignore", "pipe", "overlapped"],
       windowsHide: true,
     });
-    const channel = childProcess.stdio[PLUGIN_IPC_FD] as NodeStream.Duplex;
+    const spawned: { child?: Child } = {};
+    // spawn can return without stdio on EMFILE/ENFILE and emit error next tick.
+    // Listen before inspecting the IPC channel, including on the early failure path.
+    childProcess.on("error", (error) => {
+      if (spawned.child === undefined) return;
+      spawned.child.killReason ??= `could not start: ${error.message}`;
+      if (childProcess.pid === undefined) onExit(null, null);
+    });
+    const channel = childProcess.stdio?.[PLUGIN_IPC_FD] as NodeStream.Duplex | undefined;
+    if (channel === undefined || channel === null) {
+      if (childProcess.pid !== undefined) childProcess.kill();
+      return yield* new PluginUnavailableError({
+        pluginId: entry.pluginId,
+        reason: "could not open the plugin IPC channel.",
+      });
+    }
     const child: Child = {
       pluginId: entry.pluginId,
       process: childProcess,
@@ -730,6 +745,7 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       replies: Semaphore.makeUnsafe(1),
       backedUp: false,
     };
+    spawned.child = child;
     // Stream errors follow the child's death; its exit carries the outcome. A
     // child that drops fd 3 but lives on is killed when a call cannot settle.
     channel.on("error", () => {});
@@ -769,10 +785,6 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       Queue.offerUnsafe(queue, { _tag: "Exited", code, signal });
     };
     childProcess.on("exit", onExit);
-    childProcess.on("error", (error) => {
-      child.killReason ??= `could not start: ${error.message}`;
-      if (childProcess.pid === undefined) onExit(null, null);
-    });
 
     yield* Effect.gen(function* () {
       let exit: { readonly code: number | null; readonly signal: string | null } | undefined;

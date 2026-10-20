@@ -11,6 +11,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -32,6 +33,7 @@ import {
   pluginSettingForm,
   pluginSettingRows,
   pluginSettingsStream,
+  type PluginSettingsView,
 } from "./pluginSettings.ts";
 
 const TARGET = new PrimaryConnectionTarget({
@@ -89,6 +91,85 @@ const failureTag = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
     : undefined;
 
 describe("plugin settings on the wire", () => {
+  it.effect("never subscribes a replacement session using the previous server's capability", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkedCalls: Array<{ readonly method: string; readonly input: unknown }> = [];
+        const replacementCalls: typeof checkedCalls = [];
+        const checked = recordingSession(
+          { repositoryIdentity: true, pluginSettings: true },
+          checkedCalls,
+        );
+        const replacement = recordingSession({ repositoryIdentity: true }, replacementCalls);
+        const supervisor = yield* makeSupervisor(checked);
+        const replacementRef = yield* SubscriptionRef.make(Option.some(replacement));
+        let reads = 0;
+        // The outer stream has observed `checked`; the RPC path's next session read
+        // sees the replacement before its capability notification is handled.
+        const racingSupervisor = {
+          ...supervisor,
+          get session() {
+            return reads++ === 0 ? supervisor.session : replacementRef;
+          },
+        };
+        const view = yield* pluginSettingsStream(INSTALLATION_ID).pipe(
+          Stream.runHead,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, racingSupervisor),
+        );
+        expect(Option.getOrThrow(view)).toEqual({ _tag: "available", values: VALUES });
+        expect(checkedCalls).toEqual([
+          {
+            method: WS_METHODS.pluginsSettingsSubscribe,
+            input: { installationId: INSTALLATION_ID },
+          },
+        ]);
+        expect(replacementCalls).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("rechecks capabilities and resumes settings after reconnecting", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
+        const unsupportedCalls: typeof calls = [];
+        const reconnectedCalls: typeof calls = [];
+        const supervisor = yield* makeSupervisor(
+          recordingSession({ repositoryIdentity: true, pluginSettings: true }, calls),
+        );
+        const frames = yield* Queue.unbounded<PluginSettingsView>();
+        yield* pluginSettingsStream(INSTALLATION_ID).pipe(
+          Stream.runForEach((view) => Queue.offer(frames, view)),
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkScoped,
+        );
+        expect(yield* Queue.take(frames)).toEqual({ _tag: "available", values: VALUES });
+        yield* SubscriptionRef.set(
+          supervisor.session,
+          Option.some(recordingSession({ repositoryIdentity: true }, unsupportedCalls)),
+        );
+        expect(yield* Queue.take(frames)).toEqual({ _tag: "unsupported" });
+        expect(unsupportedCalls).toEqual([]);
+        yield* SubscriptionRef.set(supervisor.session, Option.none());
+        yield* SubscriptionRef.set(
+          supervisor.session,
+          Option.some(
+            recordingSession({ repositoryIdentity: true, pluginSettings: true }, reconnectedCalls),
+          ),
+        );
+        expect(yield* Queue.take(frames)).toEqual({ _tag: "available", values: VALUES });
+        expect(calls).toEqual([
+          {
+            method: WS_METHODS.pluginsSettingsSubscribe,
+            input: { installationId: INSTALLATION_ID },
+          },
+        ]);
+        expect(reconnectedCalls).toEqual(calls);
+        expect(unsupportedCalls).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("calls only a server that announces plugin settings", () =>
     Effect.scoped(
       Effect.gen(function* () {

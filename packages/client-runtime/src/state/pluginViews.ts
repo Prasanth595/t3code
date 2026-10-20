@@ -56,7 +56,7 @@ export const pluginViewsStream = Stream.unwrap(
                 session.initialConfig.pipe(
                   Effect.map((config) =>
                     supportsPluginViews(config.environment.capabilities)
-                      ? subscribe(WS_METHODS.pluginViewsSubscribe, {}).pipe(
+                      ? subscribe(WS_METHODS.pluginViewsSubscribe, {}, { session }).pipe(
                           Stream.map((snapshot): PluginViewsView => ({
                             _tag: "available",
                             views: snapshot.views,
