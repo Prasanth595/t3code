@@ -316,7 +316,7 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const installationId = PluginInstallationId.make("removed-before-startup");
-          yield* sql`INSERT INTO plugin_event_cursors (installation_id, acknowledged_sequence) VALUES (${installationId}, 0)`;
+          yield* sql`INSERT INTO plugin_event_cursors (installation_id, acknowledged_sequence, updated_at) VALUES (${installationId}, 0, '2026-10-20T00:00:00Z')`;
           const scope = yield* Scope.make();
           const observed = yield* Deferred.make<void>();
           const { receipts } = yield* startServer(scope, {}, { catalog: observedAfter(observed) });
