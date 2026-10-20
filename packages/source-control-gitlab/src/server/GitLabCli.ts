@@ -391,6 +391,10 @@ function normalizeRepositoryCloneUrls(
   };
 }
 
+function remoteHost(remote: string): string | undefined {
+  return (URL.parse(remote)?.hostname ?? /^[^@/\s]+@([^:/\s]+):/u.exec(remote)?.[1])?.toLowerCase();
+}
+
 function webServerIdentity(url: URL): string {
   return `${url.hostname}:${url.port || (url.protocol === "http:" ? "80" : "443")}`;
 }
@@ -569,9 +573,7 @@ export const make = Effect.gen(function* () {
         pastedUrl?.protocol === "http:" || pastedUrl?.protocol === "https:" ? pastedUrl : null;
       const requestedHost = webUrl
         ? webServerIdentity(webUrl)
-        : (
-            pastedUrl?.hostname ?? /^[^@/\s]+@([^:/\s]+):/u.exec(input.repository.trim())?.[1]
-          )?.toLowerCase();
+        : remoteHost(input.repository.trim());
       const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
       let projectPath = urlPath ?? input.repository;
 
@@ -610,10 +612,12 @@ export const make = Effect.gen(function* () {
       );
       const urls = normalizeRepositoryCloneUrls(raw);
       const resolvedUrl = URL.parse(urls.url);
-      const resolvedHost =
-        webUrl && resolvedUrl
+      // GitLab can serve SSH from a different host than its web UI.
+      const resolvedHost = webUrl
+        ? resolvedUrl
           ? webServerIdentity(resolvedUrl)
-          : (resolvedUrl?.hostname ?? urls.url);
+          : urls.url
+        : (remoteHost(urls.sshUrl) ?? urls.sshUrl);
       if (requestedHost && requestedHost !== resolvedHost) {
         return yield* new GitLabRepositoryHostMismatchError({
           command: "glab",

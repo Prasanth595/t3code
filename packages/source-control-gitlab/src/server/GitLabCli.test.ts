@@ -249,6 +249,27 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("resolves an SSH remote served from a different host than the web UI", () =>
+    Effect.gen(function* () {
+      const sshProject = { ...project, ssh_url_to_repo: "git@ssh.example.com:gitlab/team/app.git" };
+      mockedRun.mockImplementation((input) =>
+        Effect.succeed(
+          processOutput(
+            input.args[0] === "config" ? "example.com:8443/gitlab\n" : JSON.stringify(sshProject),
+          ),
+        ),
+      );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: sshProject.ssh_url_to_repo,
+      });
+
+      assert.strictEqual(result.sshUrl, sshProject.ssh_url_to_repo);
+    }),
+  );
+
   it.effect.each([
     "https://other.example.com:8443/gitlab/team/app",
     "https://example.com:9443/gitlab/team/app",
