@@ -62,6 +62,7 @@ describe("getChangeRequest base freshness", () => {
     reviewers: [],
     checks: [],
     viewerCanMerge: true,
+    reviewerIds: [],
     reviewerUsers: [],
   };
 

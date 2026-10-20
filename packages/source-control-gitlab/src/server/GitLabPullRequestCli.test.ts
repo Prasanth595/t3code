@@ -1004,6 +1004,27 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("keeps a reviewer it cannot show when writing the set back", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 3, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReviewerRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        reviewers: [{ id: "9" }],
+        requested: true,
+      });
+
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [3, 9] });
+    }),
+  );
+
   it.effect("takes a reviewer out of the set rather than clearing it", () =>
     Effect.gen(function* () {
       mockedExecute

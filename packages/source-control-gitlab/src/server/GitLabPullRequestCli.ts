@@ -1268,7 +1268,7 @@ export const make = Effect.gen(function* () {
           // GitLab has no endpoint that adds or removes one reviewer: `reviewer_ids` replaces the
           // whole set, so the set that is already there is read first and the change applied to
           // it.
-          const ids = new Set(mergeRequest.reviewerUsers.map((reviewer) => reviewer.id));
+          const ids = new Set(mergeRequest.reviewerIds);
           for (const reviewer of input.reviewers) {
             const id = Number(reviewer.id);
             if (!Number.isSafeInteger(id) || id <= 0) continue;

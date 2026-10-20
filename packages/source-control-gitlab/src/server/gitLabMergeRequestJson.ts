@@ -198,10 +198,9 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly viewerCanMerge: boolean;
-  /**
-   * The reviewers with the ids GitLab writes the set back with. The candidate list leads with
-   * them too, since one page of project users need not reach them.
-   */
+  /** Every reviewer id, even one without a username to show, since writes replace the set. */
+  readonly reviewerIds: ReadonlyArray<number>;
+  /** The candidate list leads with these, since one page of project users need not reach them. */
   readonly reviewerUsers: ReadonlyArray<PullRequestActor & { readonly id: number }>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -341,6 +340,9 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     }),
     checks: toChecks(raw),
     viewerCanMerge: raw.user?.can_merge !== false,
+    reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
+      reviewer.id === undefined ? [] : [reviewer.id],
+    ),
     reviewerUsers: (raw.reviewers ?? []).flatMap((reviewer) => {
       const actor = toActor(reviewer);
       return actor === null || reviewer.id === undefined ? [] : [{ ...actor, id: reviewer.id }];
