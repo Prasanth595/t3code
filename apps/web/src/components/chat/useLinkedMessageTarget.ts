@@ -13,6 +13,16 @@ const LINKED_MESSAGE_TOP_MARGIN = 24;
 /** Index scrolling starts from estimates; stop correcting after about two seconds. */
 const MAX_SETTLE_FRAMES = 120;
 
+// Keep the deferred getter outside the hook: React Compiler cannot lower object getters.
+function scrollToCurrentOffset(list: LegendListRef, scrollNode: HTMLElement) {
+  return list.scrollToOffset({
+    get offset() {
+      return scrollNode.scrollTop;
+    },
+    animated: false,
+  });
+}
+
 /**
  * Opens the timeline at a linked message: loads history through it, unfolds what hides it, and
  * scrolls it to the top. A scroll, key, or click from the user ends the navigation at any step.
@@ -125,16 +135,11 @@ export function useLinkedMessageTarget({
     if (key === null || !viewport) return;
     const cancel = () => {
       finishTarget(key);
-      const scrollNode = listRef.current?.getScrollableNode();
+      const list = listRef.current;
+      const scrollNode = list?.getScrollableNode();
       // Supersede a queued list scroll before the user's gesture runs. Legend may defer this
       // call too, so it reads the user's position when it executes.
-      if (scrollNode instanceof HTMLElement)
-        void listRef.current?.scrollToOffset({
-          get offset() {
-            return scrollNode.scrollTop;
-          },
-          animated: false,
-        });
+      if (list && scrollNode instanceof HTMLElement) void scrollToCurrentOffset(list, scrollNode);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -176,7 +181,8 @@ export function useLinkedMessageTarget({
     const settle = () => {
       frame = null;
       if (stopped) return;
-      if (++frames > MAX_SETTLE_FRAMES) {
+      frames += 1;
+      if (frames > MAX_SETTLE_FRAMES) {
         finish();
         return;
       }
@@ -202,12 +208,15 @@ export function useLinkedMessageTarget({
         void list.scrollToOffset({ offset, animated: false }).then(() => {
           if (!stopped) frame = requestAnimationFrame(settle);
         });
-      } else if (++stableFrames >= 2) {
-        finish();
-        // ChatView's thread-open effect can run after the opt-out at the start.
-        onManualNavigation();
       } else {
-        frame = requestAnimationFrame(settle);
+        stableFrames += 1;
+        if (stableFrames >= 2) {
+          finish();
+          // ChatView's thread-open effect can run after the opt-out at the start.
+          onManualNavigation();
+        } else {
+          frame = requestAnimationFrame(settle);
+        }
       }
     };
     const index = list.getState().indexByKey(rowId);

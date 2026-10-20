@@ -133,6 +133,43 @@ it("waits for live synchronization before failing a cached missing target", asyn
   expect(onHandled).toHaveBeenCalledTimes(1);
 });
 
+it("preserves the user's later scroll when the list defers cancellation", async () => {
+  const pendingScrolls: (() => void)[] = [];
+  const list = {
+    getScrollableNode: () => viewport,
+    scrollToOffset: (options: { offset: number }) =>
+      new Promise<void>((resolve) => {
+        pendingScrolls.push(() => {
+          viewport.scrollTop = options.offset;
+          resolve();
+        });
+      }),
+  };
+  const controls = {
+    historyCursor: "page-1",
+    hasMoreHistory: true,
+    loading: true,
+    error: null,
+    onLoadEarlier: vi.fn(),
+  };
+  viewport.scrollTop = 40;
+  await act(() =>
+    root.render(
+      <Harness
+        controls={controls}
+        overrides={{ listRef: { current: list as unknown as LegendListRef } }}
+      />,
+    ),
+  );
+  await act(() => viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true })));
+  viewport.scrollTop = 90;
+  expect(pendingScrolls).toHaveLength(1);
+  await act(() => pendingScrolls.shift()?.());
+  expect(viewport.scrollTop).toBe(90);
+  expect(container.textContent).toBe("finished");
+  expect(onHandled.mock.calls).toEqual([[request.key]]);
+});
+
 it("finishes a measured target once after live sync and reports its handled activation", async () => {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
