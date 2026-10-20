@@ -60,6 +60,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  isAgentOpenedThread,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
   type ThreadId,
@@ -70,6 +71,7 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
+  BotIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -1034,6 +1036,12 @@ function SidebarThreadTooltip({
             </div>
           </div>
         ) : null}
+        {isAgentOpenedThread(thread.source) ? (
+          <div className="flex min-w-0 items-center gap-2">
+            <BotIcon className="size-3 shrink-0 stroke-muted-foreground" />
+            <div className="min-w-0 truncate text-foreground/75">Opened by an agent</div>
+          </div>
+        ) : null}
         {previousProviderNames.length > 0 ? (
           <div className="flex min-w-0 items-center gap-2">
             <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
@@ -1978,6 +1986,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
   });
 
+  const rowLabel = isAgentOpenedThread(thread.source)
+    ? `${accessibility.label}, Opened by an agent`
+    : accessibility.label;
+
   const title =
     isRenaming && canOperateThread ? (
       <input
@@ -2071,6 +2083,14 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
     </Tooltip>
   ) : null;
+  const agentOpenedIndicator = isAgentOpenedThread(thread.source) ? (
+    <BotIcon
+      aria-label="Opened by an agent"
+      role="img"
+      data-testid={`sidebar-agent-opened-${thread.id}`}
+      className="size-3 shrink-0 text-muted-foreground/65"
+    />
+  ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
@@ -2124,7 +2144,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 ref={rowRef}
                 role="button"
                 tabIndex={0}
-                aria-label={accessibility.label}
+                aria-label={rowLabel}
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
@@ -2148,6 +2168,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </span>
             {draftIndicator}
             {title}
+            {agentOpenedIndicator}
             {pinIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
@@ -2283,7 +2304,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ref={rowRef}
               role="button"
               tabIndex={0}
-              aria-label={accessibility.label}
+              aria-label={rowLabel}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
@@ -2314,6 +2335,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span className="flex-1" />
               )}
+              {agentOpenedIndicator}
               {pinIndicator}
               {/* Reserve both states' widths so revealing actions cannot move the pin or Woke label. */}
               {sortable?.isDragging ? (

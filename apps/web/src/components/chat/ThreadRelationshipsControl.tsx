@@ -20,6 +20,7 @@ import {
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
+  resolveThreadOpener,
   type ThreadRelationshipEdge,
   type ThreadRelationshipWalkRow,
 } from "@t3tools/client-runtime/state/thread-relationships";
@@ -72,6 +73,8 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
+  THREAD_DETAILS_PANEL_ICON_CLASS,
+  THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
@@ -157,6 +160,35 @@ function ThreadLineageGroup(props: {
         </ThreadLineageRowList>
       ) : null}
     </div>
+  );
+}
+
+function ThreadOpenerRow(props: {
+  readonly openerTitle: string | null;
+  readonly onOpen: (() => void) | null;
+}) {
+  const content = (
+    <>
+      <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+      <span className="min-w-0 flex-1 truncate text-left text-sm leading-4">
+        <span className="font-normal text-muted-foreground">Opened by </span>
+        <span className="font-medium text-foreground/85">{props.openerTitle ?? "an agent"}</span>
+      </span>
+    </>
+  );
+  return (
+    <li className="group flex h-8 items-center rounded-lg" data-thread-opener>
+      {props.onOpen ? (
+        <ThreadDetailsControl size="sm" variant="ghost" part="row" onClick={props.onOpen}>
+          {content}
+          <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+        </ThreadDetailsControl>
+      ) : (
+        <span className={`flex items-center ${THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS}`}>
+          {content}
+        </span>
+      )}
+    </li>
   );
 }
 
@@ -302,6 +334,9 @@ export function ThreadRelationshipsPanel(props: {
       ? row
       : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
   });
+  const opener = currentThread ? resolveThreadOpener(currentThread) : null;
+  const openerShell = opener?.threadId ? graph.nodes.get(opener.threadId)?.thread : null;
+  const openerThread = openerShell?.deletedAt === null ? openerShell : null;
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
 
@@ -328,7 +363,7 @@ export function ThreadRelationshipsPanel(props: {
       (agent) => agent.childThreadId === null && agent.status === "running",
     ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (relationshipRows.length === 0 && runningCount === 0 && opener === null) {
     return null;
   }
 
@@ -432,6 +467,14 @@ export function ThreadRelationshipsPanel(props: {
         ) : null
       }
     >
+      {opener ? (
+        <ul aria-label="Opened by" className="m-0 list-none p-0">
+          <ThreadOpenerRow
+            openerTitle={openerThread?.title ?? null}
+            onOpen={openerThread ? () => openThread(openerThread.id) : null}
+          />
+        </ul>
+      ) : null}
       {groups.map((group) => (
         <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
           {(visibleRows) =>

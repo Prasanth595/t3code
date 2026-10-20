@@ -1,4 +1,5 @@
 import {
+  isAgentOpenedThread,
   isOrchestrationV2WorkActive,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -40,6 +41,14 @@ export function resolveMergeBackTargetThreadId(
   return projection.thread.forkedFrom?.type === "run"
     ? projection.thread.forkedFrom.threadId
     : projection.thread.lineage.parentThreadId;
+}
+
+/** Older servers and agents outside a T3 thread may not identify the opener. */
+export function resolveThreadOpener(
+  thread: Pick<OrchestrationV2ThreadShell, "createdBy" | "lineage" | "openedByThreadId">,
+): { readonly threadId: ThreadId | null } | null {
+  if (!isAgentOpenedThread(thread)) return null;
+  return { threadId: thread.openedByThreadId ?? null };
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {

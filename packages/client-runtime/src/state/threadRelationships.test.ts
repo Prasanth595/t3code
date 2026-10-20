@@ -8,11 +8,31 @@ import {
   orderWebThreadLineageRows,
   relatedThreadIds,
   resolveMergeBackTargetThreadId,
+  resolveThreadOpener,
   walkThreadRelationships,
   threadRelationshipRowStatus,
 } from "./threadRelationships.ts";
 
 describe("thread relationships", () => {
+  it.each([
+    ["agent", null, ThreadId.make("opener"), { threadId: ThreadId.make("opener") }],
+    ["agent", null, undefined, { threadId: null }],
+    ["user", null, undefined, null],
+    ["agent", "subagent", undefined, null],
+    ["agent", "fork", undefined, null],
+  ] as const)(
+    "resolves the opener of a %s thread with relationship %s",
+    (createdBy, relationshipToParent, openedByThreadId, expected) => {
+      expect(
+        resolveThreadOpener({
+          createdBy,
+          lineage: { parentThreadId: null, relationshipToParent, rootThreadId: ThreadId.make("t") },
+          openedByThreadId,
+        }),
+      ).toEqual(expected);
+    },
+  );
+
   it.each([
     ["running", "completed"],
     ["completed", "running"],

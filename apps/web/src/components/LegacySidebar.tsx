@@ -4,6 +4,7 @@ import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  BotIcon,
   ChevronRightIcon,
   FolderPlusIcon,
   Globe2Icon,
@@ -47,6 +48,7 @@ import {
   AuthPreviewOperateScope,
   type ContextMenuItem,
   type EnvironmentId,
+  isAgentOpenedThread,
   ProjectId,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
@@ -750,6 +752,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <TooltipPopup side="top">{thread.title}</TooltipPopup>
             </Tooltip>
           )}
+          {isAgentOpenedThread(thread.source) ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    aria-label="Opened by an agent"
+                    role="img"
+                    className="inline-flex shrink-0 text-muted-foreground/65"
+                  />
+                }
+              >
+                <BotIcon aria-hidden className="size-3" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">Opened by an agent</TooltipPopup>
+            </Tooltip>
+          ) : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
           {canOperatePreview && discoveredPorts.length > 0 && (

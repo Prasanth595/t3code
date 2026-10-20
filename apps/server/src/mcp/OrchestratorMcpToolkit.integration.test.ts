@@ -2295,6 +2295,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(emptyProjection.thread).toMatchObject({
               createdBy: "agent",
               creationSource: "mcp",
+              openedByThreadId: parentThreadId,
             });
             expect(emptyProjection.thread.forkedFrom).toBeNull();
             expect(emptyProjection.runs).toEqual([]);

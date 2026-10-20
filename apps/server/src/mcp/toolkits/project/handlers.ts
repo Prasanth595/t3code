@@ -152,6 +152,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   attachments,
                 },
               }),
+          ...(caller === undefined ? {} : { openedByThreadId: caller.id }),
           createdBy: "agent",
           creationSource: "mcp",
         }).pipe(
