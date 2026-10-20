@@ -123,7 +123,17 @@ describe("buildTraitsTriggerDisplay", () => {
         primarySelectDescriptorId: CONTEXT_WINDOW.id,
         ultrathinkPromptControlled: false,
       }),
-    ).toEqual({ label: "1M · High Fast · Thinking On" });
+    ).toEqual({ label: "1M · High Fast" });
+  });
+
+  it("shows Thinking Off as the deviation but drops Thinking On", () => {
+    const thinking = (currentValue: boolean) =>
+      ({ id: "thinking", label: "Thinking", type: "boolean", currentValue }) as const;
+    expect(display([thinking(true), fastModeDescriptor(true)])).toEqual({ label: "Fast" });
+    expect(display([thinking(false), fastModeDescriptor(true)])).toEqual({
+      label: "Thinking Off · Fast",
+    });
+    expect(display([thinking(true)])).toEqual({ label: "" });
   });
 
   it.each([true, false])("keeps boolean thinking %s independent of Fast", (currentValue) => {
@@ -133,12 +143,14 @@ describe("buildTraitsTriggerDisplay", () => {
       type: "boolean" as const,
       currentValue,
     };
-    const label = `Thinking ${currentValue ? "On" : "Off"}`;
-    expect(display([thinking, fastModeDescriptor(true)])).toEqual({ label: `${label} · Fast` });
-    expect(display([thinking, { ...EFFORT, id: "reasoning" }, fastModeDescriptor(true)])).toEqual({
-      label: `${label} · High Fast`,
+    const label = currentValue ? null : "Thinking Off";
+    expect(display([thinking, fastModeDescriptor(true)])).toEqual({
+      label: label === null ? "Fast" : `${label} · Fast`,
     });
-    expect(display([thinking, fastModeDescriptor(false)])).toEqual({ label });
+    expect(display([thinking, { ...EFFORT, id: "reasoning" }, fastModeDescriptor(true)])).toEqual({
+      label: label === null ? "High Fast" : `${label} · High Fast`,
+    });
+    expect(display([thinking, fastModeDescriptor(false)])).toEqual({ label: label ?? "Normal" });
   });
 
   it("keeps speed separate when there is no reasoning descriptor", () => {
@@ -213,9 +225,9 @@ describe("buildTraitsTriggerDisplay", () => {
       id: "thinking",
       label: "Thinking",
       type: "boolean",
-      currentValue: true,
+      currentValue: false,
     };
-    expect(display([EFFORT, thinking])).toEqual({ label: "High · Thinking On" });
+    expect(display([EFFORT, thinking])).toEqual({ label: "High · Thinking Off" });
   });
 
   it("falls back to a text label when fast mode is the only trait", () => {

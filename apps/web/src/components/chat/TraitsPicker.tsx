@@ -576,6 +576,12 @@ export function buildTraitsTriggerDisplay(input: {
       fastModeFallbackLabel = speedLabel ?? "Normal";
       continue;
     }
+    // Thinking on is the resting state, so only Off claims pill space.
+    if (descriptor.id === "thinking" && descriptor.type === "boolean") {
+      if (descriptor.currentValue !== false) continue;
+      labels.push("Thinking Off");
+      continue;
+    }
     if (
       input.provider === "codex" &&
       descriptor.id === "serviceTier" &&
