@@ -1,0 +1,272 @@
+{
+  "delegatedLaunchRoutes": [
+    {
+      "fallback": [
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "codex",
+        "model": "gpt-6.1-sol"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "codex-alt",
+        "model": "gpt-6.1-sol"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "claudeAgent",
+        "model": "claude-opus-4-7"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "claudeAgent",
+        "model": "claude-sonnet-4-6"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "claudeAgent",
+        "model": "claude-haiku-4-5"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-sonnet-4-6"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "copilot",
+        "model": "claude-sonnet-4-6"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-haiku-4-5"
+        },
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "copilot",
+        "model": "claude-haiku-4-5"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "copilot",
+        "model": "claude-opus-4-7"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "kimi",
+        "model": "kimi-k2.5"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "opencode",
+        "model": "kimi-for-coding/kimi-k2.5"
+      }
+    },
+    {
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6.1-sol"
+        },
+        {
+          "instanceId": "claudeAgent",
+          "model": "claude-opus-4-7"
+        },
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ],
+      "from": {
+        "instanceId": "gemini",
+        "model": "gemini-3-pro"
+      }
+    },
+    {
+      "from": {
+        "instanceId": "codex",
+        "model": "gpt-6-astra"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex-alt",
+          "model": "gpt-6-astra"
+        }
+      ]
+    },
+    {
+      "from": {
+        "instanceId": "codex-alt",
+        "model": "gpt-6-astra"
+      },
+      "fallback": [
+        {
+          "instanceId": "codex",
+          "model": "gpt-6-astra"
+        }
+      ]
+    }
+  ]
+}

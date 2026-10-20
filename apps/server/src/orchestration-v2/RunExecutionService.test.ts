@@ -4871,6 +4871,7 @@ function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
+    readonly onLaunchQuotaFailure?: () => Effect.Effect<boolean>;
     readonly keepEventStreamOpen?: boolean;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
@@ -4983,6 +4984,9 @@ function runBackgroundItemScenario(
           : {
               loadInheritedBackgroundTurnItems: options.loadInheritedBackgroundTurnItems,
             }),
+        ...(options?.onLaunchQuotaFailure
+          ? { onLaunchQuotaFailure: options.onLaunchQuotaFailure }
+          : {}),
         providerTurnOrdinal: 1,
         message: {
           messageId: MessageId.make(`message:${key}:user`),
@@ -5080,5 +5084,61 @@ it.effect("releases ingestion after idle subagent rows and items settle", () =>
       "turn_item:idle",
       "root-finalized",
     ]);
+  }),
+);
+
+it.effect("routes a first-request quota terminal without publishing failed child state", () =>
+  Effect.gen(function* () {
+    let recovered = 0;
+    const observed = yield* runBackgroundItemScenario(
+      "launch-quota",
+      (ids) => {
+        const terminal = rootTerminalEvent(ids, "failed");
+        return terminal.type === "turn.terminal" && terminal.status === "failed"
+          ? [{ ...terminal, failure: { ...terminal.failure, class: "usage_limit" } }]
+          : [];
+      },
+      {
+        onLaunchQuotaFailure: () =>
+          Effect.sync(() => {
+            recovered++;
+            return true;
+          }),
+      },
+    );
+    assert.equal(recovered, 1);
+    assert.notInclude(observed, "root-finalized");
+  }),
+);
+
+it.effect("preserves non-quota failures and refuses quota replay after tool execution", () =>
+  Effect.gen(function* () {
+    let recovered = 0;
+    const options = {
+      onLaunchQuotaFailure: () =>
+        Effect.sync(() => {
+          recovered++;
+          return true;
+        }),
+    };
+    yield* runBackgroundItemScenario(
+      "launch-other-error",
+      (ids) => [rootTerminalEvent(ids, "failed")],
+      options,
+    );
+    yield* runBackgroundItemScenario(
+      "launch-after-work",
+      (ids) => {
+        const terminal = rootTerminalEvent(ids, "failed");
+        return [
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          ...(terminal.type === "turn.terminal" && terminal.status === "failed"
+            ? [{ ...terminal, failure: { ...terminal.failure, class: "usage_limit" as const } }]
+            : []),
+        ];
+      },
+      options,
+    );
+    assert.equal(recovered, 0);
   }),
 );

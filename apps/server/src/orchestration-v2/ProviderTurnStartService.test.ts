@@ -1,3 +1,4 @@
+import * as AdmissionTestkit from "./ProviderTurnStartService.testkit.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
@@ -64,6 +65,7 @@ const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
+    AdmissionTestkit.layer,
   );
 
 /** Starts a run on a thread whose worktree folder is missing, with routing reads failing after. */

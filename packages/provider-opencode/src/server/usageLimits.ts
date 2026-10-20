@@ -178,3 +178,97 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     ),
   );
 });
+
+const KimiWindow = Schema.Struct({
+  used_ratio: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  reset_time: Schema.DateTimeUtcFromString,
+});
+const KimiUsageResponse = Schema.Struct({
+  usages: Schema.Struct({
+    limit_5h: KimiWindow,
+    limit_month_total: KimiWindow,
+    limit_month_code: KimiWindow,
+  }),
+});
+
+const decodeKimiAuthFile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ "kimi-for-coding": Schema.optionalKey(Schema.Unknown) })),
+);
+
+/** Uses the same local OpenCode auth overlay; remote servers cannot bind to it. */
+export const readKimiUsageLimits = Effect.fn("readKimiUsageLimits")(function* (input: {
+  readonly enabled: boolean;
+  readonly serverUrl: string;
+  readonly environment: NodeJS.ProcessEnv;
+}) {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+  if (!input.enabled || input.serverUrl.trim()) return unsupported;
+  return yield* Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const env = input.environment;
+    const dataHome =
+      env.XDG_DATA_HOME ||
+      path.join(
+        env.HOME || env.USERPROFILE || (yield* HostProcess.HomeDirectory),
+        ".local",
+        "share",
+      );
+    const text =
+      env.OPENCODE_AUTH_CONTENT ||
+      (yield* fs.readFileString(path.join(dataHome, "opencode", "auth.json")).pipe(
+        Effect.catchTags({
+          PlatformError: (error) =>
+            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+        }),
+      ));
+    const auth = yield* decodeKimiAuthFile(text);
+    const apiAuth = decodeApiAuth(auth["kimi-for-coding"]);
+    if (auth["kimi-for-coding"] !== undefined && Option.isNone(apiAuth)) return unsupported;
+    const key = (Option.isSome(apiAuth) ? apiAuth.value.key : env.KIMI_API_KEY)?.trim();
+    if (!key) return unsupported;
+    const client = yield* HttpClient.HttpClient;
+    const body = yield* client
+      .execute(
+        HttpClientRequest.get("https://api.kimi.com/coding/v1/usages").pipe(
+          HttpClientRequest.bearerToken(key),
+        ),
+      )
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(KimiUsageResponse)),
+      );
+    const windows: Array<ServerProviderUsageWindow> = [
+      {
+        id: "limit_5h",
+        kind: "session",
+        label: "Kimi · Session",
+        usedPercent: body.usages.limit_5h.used_ratio * 100,
+        resetsAt: DateTime.formatIso(body.usages.limit_5h.reset_time),
+      },
+      {
+        id: "limit_month_total",
+        kind: "monthly",
+        label: "Kimi · Monthly total",
+        usedPercent: body.usages.limit_month_total.used_ratio * 100,
+        resetsAt: DateTime.formatIso(body.usages.limit_month_total.reset_time),
+      },
+      {
+        id: "limit_month_code",
+        kind: "monthly",
+        label: "Kimi · Monthly code",
+        usedPercent: body.usages.limit_month_code.used_ratio * 100,
+        resetsAt: DateTime.formatIso(body.usages.limit_month_code.reset_time),
+      },
+    ];
+    const crypto = yield* Crypto.Crypto;
+    const credentialFingerprint = yield* crypto
+      .digest("SHA-256", new TextEncoder().encode(`kimi\0${key}`))
+      .pipe(Effect.map(Hex.encode), Effect.orDie);
+    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint };
+  }).pipe(
+    Effect.timeout("5 seconds"),
+    Effect.orElseSucceed(() => makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })),
+  );
+});

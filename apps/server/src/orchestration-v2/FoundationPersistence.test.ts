@@ -1,3 +1,6 @@
+import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
+import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ServerSettings from "../serverSettings.ts";
@@ -61,6 +64,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./ProviderRuntimeRecoveryService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
+const isWaitingForCapacity = Schema.is(DelegatedLaunchAdmission.WaitingForDelegatedCapacity);
 const isLiveStreamBufferError = Schema.is(LiveStreamBufferError);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
@@ -3642,4 +3646,246 @@ it.effect.each(["events", "receipts"] as const)(
         assert.deepEqual(retained, [{ id: "pending" }]);
       }).pipe(Effect.provide(maintenanceLayer));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "persists capacity waiting through projection rebuild, replays the accepted request, and cancels before probing",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:capacity-persistence");
+      const runId = RunId.make("run:capacity-persistence");
+      const attemptId = RunAttemptId.make("attempt:capacity-persistence");
+      const providerThreadId = ProviderThreadId.make("provider-thread:capacity-persistence");
+      const commandId = CommandId.make("client-request:capacity-persistence");
+      const thread = makeThread(threadId, now);
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:capacity-persistence"),
+        rootNodeId: null,
+        activeAttemptId: attemptId,
+        status: "starting",
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+        delegatedTaskId: NodeId.make("task:capacity-persistence"),
+      };
+      const receipt = {
+        commandId,
+        commandType: "delegated_task.request",
+        acceptedAt: now,
+        threadId,
+        events: [
+          threadCreatedEvent({ id: "event:capacity:thread", thread, now }),
+          {
+            id: EventId.make("event:capacity:run"),
+            type: "run.created" as const,
+            threadId,
+            occurredAt: now,
+            payload: run,
+          },
+          {
+            id: EventId.make("event:capacity:attempt"),
+            type: "run-attempt.updated" as const,
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: attemptId,
+              runId,
+              attemptOrdinal: 1,
+              rootNodeId: NodeId.make("node:capacity"),
+              providerInstanceId,
+              providerThreadId,
+              providerTurnId: null,
+              reason: "initial" as const,
+              status: "pending" as const,
+              startedAt: null,
+              completedAt: null,
+            },
+          },
+          {
+            id: EventId.make("event:capacity:provider-thread"),
+            type: "provider-thread.updated" as const,
+            threadId,
+            occurredAt: now,
+            payload: {
+              id: providerThreadId,
+              driver: providerDriver,
+              providerInstanceId,
+              providerSessionId: ProviderSessionId.make("session:capacity"),
+              appThreadId: threadId,
+              ownerNodeId: null,
+              nativeThreadRef: null,
+              nativeConversationHeadRef: null,
+              status: "not_loaded" as const,
+              firstRunOrdinal: 1,
+              lastRunOrdinal: 1,
+              handoffIds: [],
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+        effects: [],
+      };
+      assert.isTrue((yield* sink.commitCommand(receipt)).committed);
+      let probes = 0;
+      let providerStarts = 0;
+      const instance = {
+        instanceId: providerInstanceId,
+        driverKind: providerDriver,
+        enabled: true,
+        snapshot: {
+          refresh: Effect.sync(() => {
+            probes++;
+            return {
+              instanceId: providerInstanceId,
+              driver: providerDriver,
+              enabled: true,
+              installed: true,
+              version: null,
+              status: "ready" as const,
+              auth: { status: "authenticated" as const, email: "test@example.com" },
+              checkedAt: DateTime.formatIso(now),
+              usageLimits: {
+                checkedAt: DateTime.formatIso(now),
+                windows: [
+                  { id: "primary", kind: "session" as const, label: "Session", usedPercent: 100 },
+                  { id: "secondary", kind: "weekly" as const, label: "Weekly", usedPercent: 0 },
+                ],
+              },
+              models: [
+                {
+                  slug: modelSelection.model,
+                  name: modelSelection.model,
+                  isCustom: false,
+                  capabilities: null,
+                },
+              ],
+              slashCommands: [],
+              skills: [],
+            };
+          }),
+        },
+      } as unknown as ProviderInstance;
+      const admissionLayer = DelegatedLaunchAdmission.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest(),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(instance),
+            }),
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const admission = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+        const result = yield* admission.prepare(threadId, runId, 0).pipe(
+          Effect.andThen(() =>
+            Effect.sync(() => {
+              providerStarts++;
+            }),
+          ),
+          Effect.flip,
+        );
+        assert.isTrue(isWaitingForCapacity(result));
+        const waiting = (yield* store.getTurnStartContext(threadId, runId)).runs[0]!;
+        assert.equal(waiting.status, "starting");
+        assert.equal(waiting.capacityWait?.reason, "exhausted");
+        yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+        const restored = (yield* store.getTurnStartContext(threadId, runId)).runs;
+        assert.lengthOf(restored, 1);
+        assert.deepEqual(restored[0]?.capacityWait, waiting.capacityWait);
+        // Replayed clientRequestId is answered by the receipt, even after capacity changes.
+        assert.isFalse((yield* sink.commitCommand(receipt)).committed);
+        assert.equal(probes, 1);
+        assert.equal(providerStarts, 0);
+        const nextGeneration = {
+          ...waiting,
+          delegatedLaunch: {
+            ...waiting.delegatedLaunch!,
+            generation: 1,
+            admittedDomains: ["codex:account:test@example.com"],
+          },
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:generation"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: nextGeneration,
+            },
+          ],
+        });
+        assert.isFalse(yield* admission.prepare(threadId, runId, 0));
+        assert.equal(probes, 1);
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:running"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...nextGeneration, status: "running" },
+            },
+          ],
+        });
+        assert.isTrue(yield* admission.recover(threadId, runId, 1));
+        const recovered = (yield* store.getTurnStartContext(threadId, runId)).runs[0]!;
+        assert.equal(recovered.delegatedLaunch?.generation, 2);
+        assert.deepEqual(recovered.delegatedLaunch?.blockedDomains, [
+          "codex:account:test@example.com",
+        ]);
+        assert.isFalse(yield* admission.recover(threadId, runId, 1));
+        const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+          CommandId.make(`capacity-race:${runId}:2`),
+        );
+        assert.lengthOf(
+          effects.filter((e) => e.request.type === "provider-turn.start"),
+          1,
+        );
+        assert.isFalse(yield* admission.prepare(threadId, runId, 1));
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:running-after-race"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...recovered, status: "running" },
+            },
+          ],
+        });
+        yield* admission.markStarted(threadId, runId);
+        assert.isTrue(
+          (yield* store.getTurnStartContext(threadId, runId)).runs[0]?.delegatedLaunch?.complete,
+        );
+        assert.isFalse(yield* admission.recover(threadId, runId, 2));
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("event:capacity:cancel"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...waiting, status: "cancelled", completedAt: now },
+            },
+          ],
+        });
+        assert.isFalse(yield* admission.prepare(threadId, runId, 0));
+        assert.equal(probes, 1);
+      }).pipe(Effect.provide(admissionLayer));
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
 );

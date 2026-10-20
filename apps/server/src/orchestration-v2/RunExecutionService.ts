@@ -1,3 +1,4 @@
+import { isLaunchQuotaFailure } from "./DelegatedLaunchAdmission.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -572,6 +573,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly onLaunchWorkStarted?: () => Effect.Effect<void, RunExecutionStartError>;
+  readonly onLaunchQuotaFailure?: () => Effect.Effect<boolean, RunExecutionStartError>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -1238,6 +1241,10 @@ export const layer: Layer.Layer<
         const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
         // Held text writes nothing, so its item would take a position only
         // when finally written, behind every item that began after it.
+        // A quota terminal is retryable only before the provider has produced
+        // content, requested input, or executed a tool. Administrative lifecycle
+        // events alone do not mean the first request did useful work.
+        let launchDidWork = false;
         const reservedHeldTurnItemIds = new Set<TurnItemId>();
         const providerEventFiber = yield* eventSubscription.events.pipe(
           Stream.mapEffect((event) =>
@@ -1318,6 +1325,34 @@ export const layer: Layer.Layer<
           Stream.tap(({ event, accepted }) =>
             Effect.gen(function* () {
               if (!accepted) return;
+              const quotaErrorItem =
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "error" &&
+                event.turnItem.failure.class === "usage_limit";
+              if (!launchDidWork && input.onLaunchQuotaFailure && quotaErrorItem) return;
+              if (
+                event.type === "turn.terminal" &&
+                event.status === "failed" &&
+                event.failure?.class === "usage_limit" &&
+                !launchDidWork &&
+                input.onLaunchQuotaFailure &&
+                (yield* input.onLaunchQuotaFailure())
+              ) {
+                yield* Ref.set(terminalEvent, event);
+                yield* Ref.set(rootTerminalSeen, true);
+                yield* Ref.set(rootRunFinalized, true);
+                return;
+              }
+              if (
+                !launchDidWork &&
+                ((event.type === "turn_item.updated" && event.turnItem.type !== "error") ||
+                  event.type === "runtime_request.updated" ||
+                  event.type === "subagent.updated" ||
+                  event.type === "plan.updated")
+              ) {
+                launchDidWork = true;
+                yield* input.onLaunchWorkStarted?.() ?? Effect.void;
+              }
               let storedEventCount = 0;
               const deliveredEvent = filterAssistantEvent(
                 event,
@@ -1581,52 +1616,64 @@ export const layer: Layer.Layer<
             ),
           ),
           Effect.catchCause((cause) =>
-            Effect.logError("orchestration V2 provider turn start failed", {
-              runId: input.run.id,
-              cause,
-            }).pipe(
-              Effect.andThen(Fiber.interrupt(providerEventFiber)),
-              Effect.andThen(Ref.get(latestProviderThread)),
-              Effect.flatMap((providerThread) =>
-                Ref.get(latestTurnItemOrdinal).pipe(
-                  Effect.flatMap((latestItemOrdinal) =>
-                    Ref.get(openRunOwnedSubagents).pipe(
-                      Effect.flatMap((openSubagents) =>
-                        writeFinalRunEvents({
-                          run: input.run,
-                          rootNode: input.rootNode,
-                          checkpointScope: input.checkpointScope,
-                          providerThread,
-                          attempt: input.attempt,
-                          writeIfRunCurrent: {
-                            activeAttemptId: input.attempt.id,
-                            expectedStatus: "running",
-                          },
-                          openRunOwnedSubagents: openSubagents,
-                          terminal: makeFailedTerminalEvent(
-                            makeProviderFailure({
-                              cause: Cause.squash(cause),
-                              class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
-                            }),
-                            latestItemOrdinal + 1,
-                          ),
-                          failureItemPersisted: false,
-                          refreshAfterTurn,
-                        }),
+            Effect.gen(function* () {
+              if (
+                !launchDidWork &&
+                input.onLaunchQuotaFailure &&
+                isLaunchQuotaFailure(Cause.squash(cause)) &&
+                (yield* input.onLaunchQuotaFailure())
+              ) {
+                yield* Ref.set(rootRunFinalized, true);
+                yield* Fiber.interrupt(providerEventFiber);
+                return;
+              }
+              return yield* Effect.logError("orchestration V2 provider turn start failed", {
+                runId: input.run.id,
+                cause,
+              }).pipe(
+                Effect.andThen(Fiber.interrupt(providerEventFiber)),
+                Effect.andThen(Ref.get(latestProviderThread)),
+                Effect.flatMap((providerThread) =>
+                  Ref.get(latestTurnItemOrdinal).pipe(
+                    Effect.flatMap((latestItemOrdinal) =>
+                      Ref.get(openRunOwnedSubagents).pipe(
+                        Effect.flatMap((openSubagents) =>
+                          writeFinalRunEvents({
+                            run: input.run,
+                            rootNode: input.rootNode,
+                            checkpointScope: input.checkpointScope,
+                            providerThread,
+                            attempt: input.attempt,
+                            writeIfRunCurrent: {
+                              activeAttemptId: input.attempt.id,
+                              expectedStatus: "running",
+                            },
+                            openRunOwnedSubagents: openSubagents,
+                            terminal: makeFailedTerminalEvent(
+                              makeProviderFailure({
+                                cause: Cause.squash(cause),
+                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                              }),
+                              latestItemOrdinal + 1,
+                            ),
+                            failureItemPersisted: false,
+                            refreshAfterTurn,
+                          }),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              Effect.mapError(
-                (writeCause) =>
-                  new RunExecutionStartError({
-                    commandId: input.commandId,
-                    runId: input.run.id,
-                    cause: { start: cause, write: writeCause },
-                  }),
-              ),
-            ),
+                Effect.mapError(
+                  (writeCause) =>
+                    new RunExecutionStartError({
+                      commandId: input.commandId,
+                      runId: input.run.id,
+                      cause: { start: cause, write: writeCause },
+                    }),
+                ),
+              );
+            }),
           ),
         );
       }),

@@ -320,9 +320,8 @@ export const CodexDriver: ProviderDriver<
               }),
           ),
           // The windows just changed; re-probe so the snapshot says so. A
-          // failed probe republishes the pre-redemption limits rather than
-          // marking them failed, so "confirmed" means `checkedAt` moved past
-          // what was published before the redemption started.
+          // failed probe retains the old bars with an unavailable marker, so
+          // confirmation needs both a successful probe and a newer checkedAt.
           Effect.tap((outcome) =>
             Effect.gen(function* () {
               const before = (yield* snapshot.getSnapshot).usageLimits?.checkedAt;

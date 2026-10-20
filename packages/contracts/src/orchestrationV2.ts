@@ -553,6 +553,23 @@ export const OrchestrationV2Run = Schema.Struct({
   contextHandoffId: Schema.NullOr(ContextHandoffId),
   restartContinuationOfRunId: Schema.optional(RunId),
   delegatedTaskId: Schema.optional(NodeId),
+  delegatedLaunch: Schema.optional(
+    Schema.Struct({
+      complete: Schema.optional(Schema.Boolean),
+      requested: ModelSelection,
+      blockedDomains: Schema.Array(Schema.String),
+      admittedDomains: Schema.Array(Schema.String),
+      generation: NonNegativeInt,
+      blockedUntil: IsoDateTime,
+    }),
+  ),
+  capacityWait: Schema.optional(
+    Schema.Struct({
+      reason: Schema.Literals(["exhausted", "unverified"]),
+      checkedAt: IsoDateTime,
+      retryAt: IsoDateTime,
+    }),
+  ),
   workStartedAt: Schema.optional(Schema.DateTimeUtc),
   restartCancelledBackgroundWork: Schema.optional(
     Schema.Array(OrchestrationV2RestartCancelledBackgroundWork),
@@ -711,6 +728,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
+  capacityWait: OrchestrationV2Run.fields.capacityWait,
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
   status: Schema.Literals([
