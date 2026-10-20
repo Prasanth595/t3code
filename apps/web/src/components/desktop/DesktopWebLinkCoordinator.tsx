@@ -1,7 +1,7 @@
-import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
@@ -11,8 +11,10 @@ import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
+import { useClientSettings } from "../../hooks/useSettings";
 import { useOpenChangeRequestLink } from "../../lib/openPullRequestLink";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
@@ -29,6 +31,18 @@ const externalClick = {
   metaKey: false,
   ctrlKey: false,
 };
+
+/** Resolves once every reachable environment has reported its projects or settled offline. */
+function projectsSettled(): Promise<void> {
+  if (appAtomRegistry.get(allReachableShellsLiveAtom)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const unsubscribe = appAtomRegistry.subscribe(allReachableShellsLiveAtom, (settled) => {
+      if (!settled) return;
+      unsubscribe();
+      resolve();
+    });
+  });
+}
 
 /**
  * HTML files are served by this machine's environment, so only its threads can
@@ -58,7 +72,7 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
-  const projectsSettled = useAtomValue(allReachableShellsLiveAtom);
+  const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const openChangeRequest = useOpenChangeRequestLink();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const openThread = useNewThreadHandler();
@@ -70,14 +84,10 @@ export function DesktopWebLinkCoordinator() {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(primaryEnvironment?.environmentId ?? null);
   const queueRef = useRef(Promise.resolve());
   const webLinks = window.desktopBridge?.webLinks;
-  // The desktop process holds links until the renderer is ready. A PR link resolves against
-  // the project list, and a connected server publishes its config before its project snapshot,
-  // so stay not-ready until every reachable environment has reported its projects.
   const ready =
     webLinks !== undefined &&
     primaryEnvironment?.connection.phase === "connected" &&
-    primaryEnvironment.serverConfig !== null &&
-    projectsSettled;
+    primaryEnvironment.serverConfig !== null;
 
   const reportFailure = (url: string, description = url) =>
     toastManager.add(
@@ -139,12 +149,23 @@ export function DesktopWebLinkCoordinator() {
     }
   });
 
+  const receiveLink = useEffectEvent((url: string) => {
+    // A connected server publishes its config before its project snapshot, so a PR link
+    // delivered at launch would miss its project and fall through to the browser. Hold PR
+    // links, and only those, until discovery settles; an ordinary link never waits for it.
+    const hold =
+      openPullRequestsInApp && parseChangeRequestUrl(url) !== null
+        ? projectsSettled()
+        : Promise.resolve();
+    void hold.then(() => {
+      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
+    });
+  });
+
   useEffect(() => {
     if (!ready || webLinks === undefined) return;
     let subscribed = true;
-    const unsubscribe = webLinks.onOpen((url) => {
-      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
-    });
+    const unsubscribe = webLinks.onOpen(receiveLink);
     queueMicrotask(() => {
       if (subscribed) void webLinks.setReady(true).catch(() => undefined);
     });
