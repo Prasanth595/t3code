@@ -80,17 +80,23 @@ export function ProjectChipIconRasterizer() {
   return pending.map((tile) => <GlyphCapture key={tile.key} tile={tile} />);
 }
 
+function captureTile(svg: Svg, tile: PendingTile) {
+  try {
+    svg.toDataURL(
+      (base64?: string) => finish(tile, base64),
+      Platform.OS === "ios" ? { width: TILE_SIZE, height: TILE_SIZE } : undefined,
+    );
+  } catch {
+    finish(tile, undefined);
+  }
+}
+
 function GlyphCapture(props: { readonly tile: PendingTile }) {
   const started = useRef(false);
   const capture = (svg: Svg | null) => {
     if (!svg || started.current) return;
     started.current = true;
-    requestAnimationFrame(() =>
-      svg.toDataURL(
-        (base64?: string) => finish(props.tile, base64),
-        Platform.OS === "ios" ? { width: TILE_SIZE, height: TILE_SIZE } : undefined,
-      ),
-    );
+    requestAnimationFrame(() => captureTile(svg, props.tile));
   };
   return (
     <View
