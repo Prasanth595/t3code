@@ -1,6 +1,10 @@
 import * as NodeNet from "node:net";
 
-import { type EnvironmentConnectReachability, formatConnectReachable } from "@t3tools/contracts";
+import {
+  connectReachabilityHelpUrl,
+  type EnvironmentConnectReachability,
+  formatConnectReachable,
+} from "@t3tools/contracts";
 import { readTailscaleExitNode, type TailscaleExitNode } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -154,6 +158,7 @@ export function formatReachabilityFailure(result: Unreachable): string {
     `  ${result.reason}`,
     ...(result.hint ? [`  ${result.hint}`] : []),
     `  Fix: ${result.fix}`,
+    `  More info: ${connectReachabilityHelpUrl(result.cause)}`,
   ].join("\n");
 }
 

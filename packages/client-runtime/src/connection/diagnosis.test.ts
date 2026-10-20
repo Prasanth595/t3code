@@ -69,6 +69,14 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.steps.join(" ")).toContain("Tailscale exit node on Mac mini");
     expect(diagnosis?.facts).toContainEqual(["HTTP status", "530"]);
     expect(diagnosis?.facts).toContainEqual(["Trace ID", "trace-1"]);
+    expect(diagnosis?.moreInfoUrl).toMatch(
+      /t3-connect-troubleshooting\.md#the-hosts-tunnel-is-offline$/,
+    );
+  });
+
+  it("links the guide only for T3 Connect routes", () => {
+    const failure = credentialMissingError("direct-1");
+    expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toBeNull();
   });
 
   it("tells a working tunnel apart from T3 Code not answering", () => {

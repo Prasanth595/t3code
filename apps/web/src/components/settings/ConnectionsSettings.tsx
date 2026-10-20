@@ -42,6 +42,7 @@ import {
   type DesktopServerExposureState,
   type DesktopWslState,
   type EnvironmentId,
+  connectReachabilityHelpUrl,
   formatConnectReachable,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -1861,7 +1862,15 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       <span className="block text-destructive">
         {[reachability.reason, reachability.hint, `Fix: ${reachability.fix}`]
           .filter(Boolean)
-          .join(" ")}
+          .join(" ")}{" "}
+        <a
+          href={connectReachabilityHelpUrl(reachability.cause)}
+          target="_blank"
+          rel="noreferrer"
+          className="underline underline-offset-2"
+        >
+          More info
+        </a>
       </span>
     ) : null;
 

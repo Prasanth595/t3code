@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off - reads the user guide to check its anchors.
+import * as NodeFS from "node:fs";
+
+import { T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -35,6 +39,7 @@ describe("classifyReachability", () => {
         "  Cloudflare's tunnel port (7844) times out from this machine.",
         '  Tailscale exit node "home-pi" is on. Traffic to Cloudflare goes through it.',
         "  Fix: tailscale set --exit-node=   (or allow outbound 7844 on that network)",
+        "  More info: https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#port-7844-is-blocked-on-the-host",
       ].join("\n"),
     );
   });
@@ -110,5 +115,26 @@ describe("classifyReachability", () => {
     expect(
       classifyReachability(facts({ managedTunnelConfigured: false, connector: null }), checkedAt),
     ).toMatchObject({ cause: "not_linked" });
+  });
+});
+
+describe("T3 Connect troubleshooting links", () => {
+  it("each section names a heading in the user guide", () => {
+    const guide = NodeFS.readFileSync(
+      new URL("../../../../docs/user/t3-connect-troubleshooting.md", import.meta.url),
+      "utf8",
+    );
+    // GitHub's heading anchors: lowercase, drop punctuation, spaces become hyphens.
+    const anchors = new Set(
+      [...guide.matchAll(/^#{2,3} (.+)$/gm)].map(([, heading]) =>
+        heading!
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N} _-]/gu, "")
+          .replace(/ /g, "-"),
+      ),
+    );
+    for (const section of T3_CONNECT_TROUBLESHOOTING_SECTIONS) {
+      expect(anchors, section).toContain(section);
+    }
   });
 });
