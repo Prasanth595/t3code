@@ -563,79 +563,78 @@ export const make = Effect.gen(function* () {
           ),
         ),
       ),
-    getRepositoryCloneUrls: (input) =>
-      Effect.gen(function* () {
-        const pastedUrl = URL.parse(input.repository.trim());
-        const webUrl =
-          pastedUrl?.protocol === "http:" || pastedUrl?.protocol === "https:" ? pastedUrl : null;
-        const requestedHost = webUrl
-          ? webServerIdentity(webUrl)
-          : (
-              pastedUrl?.hostname ?? /^[^@/\s]+@([^:/\s]+):/u.exec(input.repository.trim())?.[1]
-            )?.toLowerCase();
-        const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
-        let projectPath = urlPath ?? input.repository;
+    getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function* (input) {
+      const pastedUrl = URL.parse(input.repository.trim());
+      const webUrl =
+        pastedUrl?.protocol === "http:" || pastedUrl?.protocol === "https:" ? pastedUrl : null;
+      const requestedHost = webUrl
+        ? webServerIdentity(webUrl)
+        : (
+            pastedUrl?.hostname ?? /^[^@/\s]+@([^:/\s]+):/u.exec(input.repository.trim())?.[1]
+          )?.toLowerCase();
+      const urlPath = SourceControlProvider.repositoryPathFromRemoteUrl(input.repository);
+      let projectPath = urlPath ?? input.repository;
 
-        if (webUrl && urlPath !== null) {
-          const glabHost = yield* execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
-            Effect.map((result) => result.stdout.trim()),
-            Effect.orElseSucceed(() => ""),
-          );
-          const configuredUrl = URL.parse(
-            glabHost.includes("://") ? glabHost : `${webUrl.protocol}//${glabHost}`,
-          );
-          if (configuredUrl && webServerIdentity(configuredUrl) === requestedHost) {
-            // Install roots belong to web URLs; SSH paths already name the full namespace.
-            const root = configuredUrl.pathname.replace(/^\/+|\/+$/gu, "");
-            if (root && projectPath.startsWith(`${root}/`)) {
-              projectPath = projectPath.slice(root.length + 1);
-            }
+      if (webUrl && urlPath !== null) {
+        const glabHost = yield* execute({ cwd: input.cwd, args: ["config", "get", "host"] }).pipe(
+          Effect.map((result) => result.stdout.trim()),
+          Effect.orElseSucceed(() => ""),
+        );
+        const configuredUrl = URL.parse(
+          glabHost.includes("://") ? glabHost : `${webUrl.protocol}//${glabHost}`,
+        );
+        if (configuredUrl && webServerIdentity(configuredUrl) === requestedHost) {
+          // Install roots belong to web URLs; SSH paths already name the full namespace.
+          const root = configuredUrl.pathname.replace(/^\/+|\/+$/gu, "");
+          if (root && projectPath.startsWith(`${root}/`)) {
+            projectPath = projectPath.slice(root.length + 1);
           }
         }
+      }
 
-        const result = yield* execute({
+      const result = yield* execute({
+        cwd: input.cwd,
+        args: ["api", `projects/${encodeURIComponent(projectPath)}`],
+      });
+      const raw = yield* decodeGitLabRepositoryCloneUrls(result.stdout.trim()).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitLabRepositoryDecodeError({
+              operation: "getRepositoryCloneUrls",
+              command: "glab",
+              cwd: input.cwd,
+              repository: input.repository,
+              cause,
+            }),
+        ),
+      );
+      const urls = normalizeRepositoryCloneUrls(raw);
+      const resolvedUrl = URL.parse(urls.url);
+      const resolvedHost =
+        webUrl && resolvedUrl
+          ? webServerIdentity(resolvedUrl)
+          : (resolvedUrl?.hostname ?? urls.url);
+      if (requestedHost && requestedHost !== resolvedHost) {
+        return yield* new GitLabRepositoryHostMismatchError({
+          command: "glab",
           cwd: input.cwd,
-          args: ["api", `projects/${encodeURIComponent(projectPath)}`],
+          operation: "getRepositoryCloneUrls",
+          requestedHost,
+          resolvedHost,
         });
-        const raw = yield* decodeGitLabRepositoryCloneUrls(result.stdout.trim()).pipe(
-          Effect.mapError(
-            (cause) =>
-              new GitLabRepositoryDecodeError({
-                operation: "getRepositoryCloneUrls",
-                command: "glab",
-                cwd: input.cwd,
-                repository: input.repository,
-                cause,
-              }),
-          ),
-        );
-        const urls = normalizeRepositoryCloneUrls(raw);
-        const resolvedUrl = URL.parse(urls.url);
-        const resolvedHost =
-          webUrl && resolvedUrl
-            ? webServerIdentity(resolvedUrl)
-            : (resolvedUrl?.hostname ?? urls.url);
-        if (requestedHost && requestedHost !== resolvedHost) {
-          return yield* new GitLabRepositoryHostMismatchError({
-            command: "glab",
-            cwd: input.cwd,
-            operation: "getRepositoryCloneUrls",
-            requestedHost,
-            resolvedHost,
-          });
-        }
-        const resolvedPath = SourceControlProvider.repositoryPathFromRemoteUrl(urls.url) ?? "";
-        if (webUrl && urlPath !== null && urlPath.toLowerCase() !== resolvedPath.toLowerCase()) {
-          return yield* new GitLabRepositoryPathMismatchError({
-            command: "glab",
-            cwd: input.cwd,
-            operation: "getRepositoryCloneUrls",
-            requestedPath: urlPath,
-            resolvedPath,
-          });
-        }
-        return urls;
-      }),
+      }
+      const resolvedPath = SourceControlProvider.repositoryPathFromRemoteUrl(urls.url) ?? "";
+      if (webUrl && urlPath !== null && urlPath.toLowerCase() !== resolvedPath.toLowerCase()) {
+        return yield* new GitLabRepositoryPathMismatchError({
+          command: "glab",
+          cwd: input.cwd,
+          operation: "getRepositoryCloneUrls",
+          requestedPath: urlPath,
+          resolvedPath,
+        });
+      }
+      return urls;
+    }),
     createRepository: (input) => {
       const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
       const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
