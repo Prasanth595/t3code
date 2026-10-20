@@ -714,16 +714,16 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const task = parent.subagents[0]!;
       yield* sink.write({
         events: [
-          { id: firstTaskId, result: testCase.first },
-          { id: secondTaskId, result: testCase.second },
-        ].map(({ id, result }) => ({
+          { id: firstTaskId, result: testCase.first, status: "failed" as const },
+          { id: secondTaskId, result: testCase.second, status: "cancelled" as const },
+        ].map(({ id, result, status }) => ({
           id: EventId.make(`event:inline-budget:${id}`),
           type: "subagent.updated" as const,
           threadId,
           runId,
           nodeId: id,
           occurredAt: now,
-          payload: { ...task, id, result },
+          payload: { ...task, id, result, status, title: "Inspect regression" },
         })),
       });
       yield* orchestrator.dispatch({
@@ -747,6 +747,10 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
       assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
       const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
+      assert.include(
+        message.text,
+        `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
+      );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.equal(

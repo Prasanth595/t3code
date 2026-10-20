@@ -600,15 +600,16 @@ function delegatedCompletionWakeDetail(
   return taskIds
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
+      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
       if (task?.result != null) {
-        const detail = `Delegated task ${taskId}${task.title === null ? "" : ` (${task.title})`} [${task.status}]:\n${task.result}`;
+        const detail = `${label}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);
         if (bytes <= remainingBytes) {
           remainingBytes -= bytes;
           return detail;
         }
       }
-      return `Delegated task ${taskId} reached a terminal state. Use task_status with taskId ${taskId} to read the result.`;
+      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
     })
     .join("\n\n");
 }
