@@ -48,7 +48,6 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type FilesystemBrowseResult,
-  type ProjectId,
   type SourceControlDiscoveryResult,
   SourceControlProviderKind,
   type SourceControlRepositoryInfo,
@@ -433,16 +432,10 @@ function useEnvironmentLookups() {
 
 function useProjectLookups() {
   const projects = useProjects();
-  const projectCwdById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.workspaceRoot]),
-  );
   const projectByKey = new Map(
     projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
   );
-  const projectTitleById = new Map<ProjectId, string>(
-    projects.map((project) => [project.id, project.title]),
-  );
-  return { projectCwdById, projectByKey, projectTitleById };
+  return { projectByKey };
 }
 
 const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({
@@ -1013,7 +1006,7 @@ function OpenCommandPaletteDialog(props: {
     return ensureBrowseDirectoryPath(baseDirectory);
   };
 
-  const { projectCwdById, projectByKey, projectTitleById } = useProjectLookups();
+  const { projectByKey } = useProjectLookups();
 
   const activeThreadId = activeThread?.id;
   const supportsThreadFind =
@@ -1025,9 +1018,11 @@ function OpenCommandPaletteDialog(props: {
   const scratchTargetEnvironmentId = scratchEnvironmentId(
     currentProjectEnvironmentId ?? primaryEnvironmentId,
   );
-  const currentProjectCwd = currentProjectId
-    ? (projectCwdById.get(currentProjectId) ?? null)
-    : null;
+  const currentProject =
+    currentProjectEnvironmentId && currentProjectId
+      ? projectByKey.get(`${currentProjectEnvironmentId}:${currentProjectId}`)
+      : undefined;
+  const currentProjectCwd = currentProject?.workspaceRoot ?? null;
   const currentProjectCwdForBrowse =
     browseEnvironmentId && currentProjectEnvironmentId === browseEnvironmentId
       ? currentProjectCwd
@@ -1246,8 +1241,8 @@ function OpenCommandPaletteDialog(props: {
 
   const allThreadItems = buildThreadActionItems({
     threads,
-    ...(activeThreadId ? { activeThreadId } : {}),
-    projectTitleById,
+    ...(activeThread ? { activeThread } : {}),
+    projectByKey,
     sortOrder: clientSettings.sidebarThreadSortOrder,
     icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
     renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
@@ -1276,7 +1271,9 @@ function OpenCommandPaletteDialog(props: {
           }
           branch={thread.branch}
           worktreePath={thread.worktreePath}
-          isCurrent={thread.id === activeThreadId}
+          isCurrent={
+            thread.id === activeThreadId && thread.environmentId === activeThread?.environmentId
+          }
           driverKind={providerEntry?.driverKind ?? null}
           providerDisplayName={
             thread.runtime?.providerName ?? providerEntry?.displayName ?? modelInstanceId
@@ -1599,7 +1596,8 @@ function OpenCommandPaletteDialog(props: {
   if (projects.length > 0) {
     const activeProjectTitle =
       projectPickerEntries.find((entry) => entry.isPreferred)?.group.displayName ??
-      (currentProjectId ? (projectTitleById.get(currentProjectId) ?? null) : null);
+      currentProject?.title ??
+      null;
 
     if (activeProjectTitle) {
       actionItems.push({

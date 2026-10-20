@@ -358,8 +358,8 @@ export type BuildThreadActionItemsThread = Pick<
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
   threads: ReadonlyArray<TThread>;
-  activeThreadId?: Thread["id"];
-  projectTitleById: ReadonlyMap<Project["id"], string>;
+  activeThread?: Pick<Thread, "environmentId" | "id">;
+  projectByKey: ReadonlyMap<string, Pick<Project, "title">>;
   sortOrder: SidebarThreadSortOrder;
   icon: ReactNode;
   renderLeadingContent?: (thread: TThread) => ReactNode;
@@ -377,7 +377,9 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     input.limit === undefined ? sortedThreads : sortedThreads.slice(0, input.limit);
 
   return visibleThreads.map((thread) => {
-    const projectTitle = input.projectTitleById.get(thread.projectId);
+    const projectTitle = input.projectByKey.get(
+      `${thread.environmentId}:${thread.projectId}`,
+    )?.title;
     const descriptionParts: string[] = [];
 
     if (projectTitle) {
@@ -386,7 +388,10 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     if (thread.branch) {
       descriptionParts.push(`#${thread.branch}`);
     }
-    if (thread.id === input.activeThreadId) {
+    if (
+      thread.id === input.activeThread?.id &&
+      thread.environmentId === input.activeThread.environmentId
+    ) {
       descriptionParts.push("Current thread");
     }
 
@@ -400,7 +405,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     return Object.assign(
       {
         kind: "action" as const,
-        value: `thread:${thread.id}`,
+        value: `thread:${thread.environmentId}:${thread.id}`,
         searchTerms: [
           thread.title,
           ...threadPullRequestSearchTerms(thread),
