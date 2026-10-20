@@ -67,13 +67,16 @@ const layerServerSettingsWithSecrets = () =>
     ),
   );
 
-// Runs the service's reads of settings.json through `aroundRead`, so a test can tell when the
-// watcher has reloaded the file, or hold a reload open.
-const layerServerSettingsAroundReads = (
-  aroundRead: (
-    read: Effect.Effect<string, PlatformError.PlatformError>,
-  ) => Effect.Effect<string, PlatformError.PlatformError>,
-) =>
+type SettingsFileHook = <A>(
+  access: Effect.Effect<A, PlatformError.PlatformError>,
+) => Effect.Effect<A, PlatformError.PlatformError>;
+
+// Runs the service's reads of settings.json, and the renames that replace it, through hooks, so
+// a test can tell when the watcher has reloaded the file or hold a reload open.
+const layerServerSettingsAroundFile = (hooks: {
+  readonly read?: SettingsFileHook;
+  readonly replace?: SettingsFileHook;
+}) =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(
@@ -81,13 +84,20 @@ const layerServerSettingsAroundReads = (
         FileSystem.FileSystem,
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
           const { settingsPath } = yield* ServerConfig.ServerConfig;
+          const read = hooks.read ?? ((access) => access);
+          const replace = hooks.replace ?? ((access) => access);
           return FileSystem.FileSystem.of({
             ...fs,
-            readFileString: (path, encoding) =>
-              path === settingsPath
-                ? aroundRead(fs.readFileString(path, encoding))
-                : fs.readFileString(path, encoding),
+            readFileString: (filePath, encoding) =>
+              filePath === settingsPath
+                ? read(fs.readFileString(filePath, encoding))
+                : fs.readFileString(filePath, encoding),
+            rename: (oldPath, newPath) =>
+              path.resolve(newPath) === path.resolve(settingsPath)
+                ? replace(fs.rename(oldPath, newPath))
+                : fs.rename(oldPath, newPath),
           });
         }),
       ),
@@ -103,9 +113,9 @@ const layerServerSettingsAroundReads = (
   );
 
 const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
-  layerServerSettingsAroundReads((read) =>
-    read.pipe(Effect.ensuring(Queue.offer(reads, undefined))),
-  );
+  layerServerSettingsAroundFile({
+    read: (access) => access.pipe(Effect.ensuring(Queue.offer(reads, undefined))),
+  });
 
 const usageScript = {
   id: "usage",
@@ -512,7 +522,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(TestClock.withLive),
   );
 
-  it.effect("serves the last good settings while a reload of an invalid file is in flight", () =>
+  it.effect("serves the last good settings to a read made during a reload of an invalid file", () =>
     Effect.gen(function* () {
       const started = yield* Queue.unbounded<void>();
       const reloads = yield* Latch.make(true);
@@ -528,21 +538,81 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           yield* reloads.close;
           yield* fs.writeFileString(config.settingsPath, `{ "responseStreamingMode": `);
           yield* Queue.take(started).pipe(Effect.timeout("2 seconds"));
-          const during = yield* service.getSettings.pipe(Effect.timeout("2 seconds"));
+          const during = yield* Effect.forkChild(service.getSettings, { startImmediately: true });
           yield* reloads.open;
 
-          assert.equal(during.responseStreamingMode, "turn");
+          assert.equal((yield* Fiber.join(during)).responseStreamingMode, "turn");
           const after = yield* service.withSettingsSnapshot(Effect.succeed);
           assert.equal(after.responseStreamingMode, "turn");
         }),
       ).pipe(
         Effect.provide(
-          layerServerSettingsAroundReads((read) =>
-            Queue.offer(started, undefined).pipe(
-              Effect.andThen(reloads.await),
-              Effect.andThen(read),
-            ),
-          ),
+          layerServerSettingsAroundFile({
+            read: (access) =>
+              Queue.offer(started, undefined).pipe(
+                Effect.andThen(reloads.await),
+                Effect.andThen(access),
+              ),
+          }),
+        ),
+      );
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("never pairs a key from a reload with the settings it replaces", () =>
+    Effect.gen(function* () {
+      const reads = yield* Queue.unbounded<void>();
+      const replacing = yield* Queue.unbounded<void>();
+      const replaces = yield* Latch.make(true);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const opencode = ProviderInstanceId.make("opencode");
+          const withServer = (serverUrl: string, serverPassword: string) =>
+            JSON.stringify({
+              providerInstances: {
+                opencode: { driver: "opencode", config: { serverUrl, serverPassword } },
+              },
+            });
+          yield* fs.writeFileString(
+            config.settingsPath,
+            withServer("http://127.0.0.1:4096", "first-password"),
+          );
+          // Startup moves the password into the secret store and rewrites the file, which the
+          // watcher then reloads.
+          yield* service.start;
+          yield* Queue.take(reads);
+          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+          yield* service.withSettingsSnapshot(() => Effect.void);
+          yield* Queue.clear(replacing);
+
+          // The reload moves the new password into the store before it rewrites the file.
+          yield* replaces.close;
+          yield* fs.writeFileString(
+            config.settingsPath,
+            withServer("http://127.0.0.1:4097", "second-password"),
+          );
+          yield* Queue.take(replacing).pipe(Effect.timeout("2 seconds"));
+          const during = yield* Effect.forkChild(service.getSettings, { startImmediately: true });
+          yield* replaces.open;
+
+          assert.deepInclude((yield* Fiber.join(during)).providerInstances[opencode]?.config, {
+            serverUrl: "http://127.0.0.1:4097",
+            serverPassword: "second-password",
+          });
+        }),
+      ).pipe(
+        Effect.provide(
+          layerServerSettingsAroundFile({
+            read: (access) => access.pipe(Effect.ensuring(Queue.offer(reads, undefined))),
+            replace: (access) =>
+              Queue.offer(replacing, undefined).pipe(
+                Effect.andThen(replaces.await),
+                Effect.andThen(access),
+              ),
+          }),
         ),
       );
     }).pipe(TestClock.withLive),
