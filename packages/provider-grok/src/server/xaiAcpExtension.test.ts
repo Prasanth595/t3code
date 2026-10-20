@@ -664,6 +664,68 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
+  it("completes structured command TaskOutput ids without treating them as subagents", () => {
+    // Oracle: BackgroundTaskStarted and TaskOutput from the Grok hang incident.
+    const toolCall: AcpToolCallState = {
+      toolCallId: "call-poll",
+      title: "get_command_or_subagent_output",
+      status: "completed",
+      data: {
+        rawInput: {
+          variant: "TaskOutput",
+          task_ids: ["call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29"],
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          Result: {
+            task_id: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+            status: "completed",
+            exit_code: 0,
+            output: "done",
+          },
+        },
+      },
+    };
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      {
+        taskId: "call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29",
+        status: "completed",
+        appendOutput: "done",
+      },
+    ]);
+    expect(extractXAiAcpSubagentUpdate(toolCall)).toBeUndefined();
+  });
+
+  it.each(["", "   "])("ignores an empty structured task id %j", (taskId) => {
+    // An empty result is not a completion identity, even with a terminal status.
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-empty-poll",
+        status: "completed",
+        data: {
+          rawOutput: { type: "TaskOutput", Result: { task_id: taskId, status: "completed" } },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps command ids in free-text task headers UUID-only", () => {
+    // Only structured ids are trusted; prose must retain the existing UUID contract.
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-text-poll",
+        title: "get_command_or_subagent_output",
+        status: "completed",
+        data: {
+          rawOutput: {
+            type: "Text",
+            text: "=== Task call-7c835a60-7bf5-4284-a5c7-cf42a4212ece-29 ===\nStatus: completed\n=== Output ===\ndone",
+          },
+        },
+      }),
+    ).toEqual([]);
+  });
+
   it("hydrates monitor completion from a standalone TaskOutput frame without rawInput", () => {
     // Post-settle shape observed live (2026-07-12): the final
     // get_command_or_subagent_output update carries only rawOutput; the frame
