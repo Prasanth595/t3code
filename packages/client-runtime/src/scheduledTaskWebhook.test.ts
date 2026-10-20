@@ -2,7 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   parseMaxDeliveryAge,
+  emptyWebhookFilterDraft,
   parseWebhookFilterDrafts,
+  removeWebhookFilterDraft,
   webhookFilterDrafts,
   webhookFilterDraftsChanged,
 } from "./scheduledTaskWebhook.ts";
@@ -26,24 +28,25 @@ describe("webhook filter drafts", () => {
       { path: "query.source", op: "exists" },
     ] as const;
     const drafts = webhookFilterDrafts(filters);
-    expect(drafts[1]).toEqual({ path: "body.action", op: "in", value: "opened, reopened" });
+    expect(drafts[1]).toMatchObject({ path: "body.action", op: "in", value: "opened, reopened" });
     expect(parseWebhookFilterDrafts(drafts)).toEqual({ filters });
   });
 
   it("names the first row the server would refuse", () => {
     expect(
       parseWebhookFilterDrafts([
-        { path: "body.action", op: "equals", value: "opened" },
-        { path: "body.action", op: "in", value: " , " },
-        { path: "", op: "exists", value: "" },
+        { id: "f1", path: "body.action", op: "equals", value: "opened" },
+        { id: "f2", path: "body.action", op: "in", value: " , " },
+        { id: "f3", path: "", op: "exists", value: "" },
       ]),
     ).toEqual({
       error: "Filter 2 needs a path under body, headers or query, and at least one value.",
     });
-    expect(parseWebhookFilterDrafts([{ path: " ", op: "exists", value: "" }])).toEqual({
+    expect(parseWebhookFilterDrafts([{ id: "f1", path: " ", op: "exists", value: "" }])).toEqual({
       error: "Filter 1 needs a path under body, headers or query.",
     });
-    const seventeen = Array.from({ length: 17 }, () => ({
+    const seventeen = Array.from({ length: 17 }, (_, index) => ({
+      id: `f${index}`,
       path: "body.action",
       op: "exists" as const,
       value: "",
@@ -57,5 +60,15 @@ describe("webhook filter drafts", () => {
     expect(webhookFilterDraftsChanged(saved, [])).toBe(true);
     expect(webhookFilterDraftsChanged(saved, [{ ...saved[0]!, value: "closed" }])).toBe(true);
     expect(webhookFilterDraftsChanged([], [])).toBe(false);
+  });
+
+  it("removing the first row keeps the second row's id", () => {
+    const drafts = [
+      ...webhookFilterDrafts([{ path: "body.action", op: "equals", value: "opened" }]),
+      emptyWebhookFilterDraft(),
+    ];
+    expect(new Set(drafts.map((draft) => draft.id)).size).toBe(2);
+    const remaining = removeWebhookFilterDraft(drafts, drafts[0]!.id);
+    expect(remaining.map((draft) => draft.id)).toEqual([drafts[1]!.id]);
   });
 });

@@ -179,7 +179,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     [...draft.schedule.weekdays].sort((a, b) => a - b),
     draft.schedule.intervalMinutes,
     draft.schedule.maxDeliveryAgeMinutes,
-    draft.schedule.filters,
+    draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,

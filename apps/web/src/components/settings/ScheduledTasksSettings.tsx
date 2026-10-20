@@ -28,8 +28,9 @@ import type {
 } from "@t3tools/contracts";
 import {
   DEFAULT_WEBHOOK_PROMPT,
-  EMPTY_WEBHOOK_FILTER_DRAFT,
+  emptyWebhookFilterDraft,
   parseWebhookFilterDrafts,
+  removeWebhookFilterDraft,
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
@@ -179,7 +180,7 @@ function WebhookFiltersField({
           variant="outline"
           size="sm"
           disabled={filters.length >= MAX_WEBHOOK_FILTERS}
-          onClick={() => onChange([...filters, EMPTY_WEBHOOK_FILTER_DRAFT])}
+          onClick={() => onChange([...filters, emptyWebhookFilterDraft()])}
         >
           <PlusIcon />
           Add filter
@@ -187,23 +188,23 @@ function WebhookFiltersField({
       </div>
       {filters.map((filter, index) => (
         // Always stacked: the dialog stays narrow on wide windows, so a single line
-        // would cut off typical paths and values.
-        // Rows have no identity of their own; removing one re-renders the rest in order.
-        // oxlint-disable-next-line react/no-array-index-key
-        <div key={index} className="space-y-2 pt-1">
+        // would cut off typical paths and values. The grid wrappers size each control
+        // without restyling it; a grid item stretches to its minmax(0, 1fr) track.
+        <div key={filter.id} className="space-y-2 pt-1">
           <div className="flex items-center gap-2">
-            <Input
-              aria-label={`Filter ${index + 1} path`}
-              className="min-w-0 flex-1"
-              placeholder="body.action"
-              value={filter.path}
-              onChange={(event) => update(index, { path: event.target.value })}
-            />
+            <div className="grid min-w-0 flex-1 grid-cols-1">
+              <Input
+                aria-label={`Filter ${index + 1} path`}
+                placeholder="body.action"
+                value={filter.path}
+                onChange={(event) => update(index, { path: event.target.value })}
+              />
+            </div>
             <Button
               variant="ghost"
               size="icon-sm"
               aria-label={`Remove filter ${index + 1}`}
-              onClick={() => onChange(filters.filter((_, at) => at !== index))}
+              onClick={() => onChange(removeWebhookFilterDraft(filters, filter.id))}
             >
               <Trash2Icon />
             </Button>
@@ -216,15 +217,13 @@ function WebhookFiltersField({
                 if (known) update(index, { op: known.op });
               }}
             >
-              <SelectTrigger
-                size="sm"
-                className="w-44 shrink-0"
-                aria-label={`Filter ${index + 1} test`}
-              >
-                <SelectValue>
-                  {WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label}
-                </SelectValue>
-              </SelectTrigger>
+              <div className="grid w-44 shrink-0 grid-cols-1">
+                <SelectTrigger size="sm" aria-label={`Filter ${index + 1} test`}>
+                  <SelectValue>
+                    {WEBHOOK_FILTER_OPS.find((option) => option.op === filter.op)?.label}
+                  </SelectValue>
+                </SelectTrigger>
+              </div>
               <SelectPopup>
                 {WEBHOOK_FILTER_OPS.map((option) => (
                   <SelectItem key={option.op} value={option.op}>
@@ -234,13 +233,14 @@ function WebhookFiltersField({
               </SelectPopup>
             </Select>
             {filter.op === "exists" ? null : (
-              <Input
-                aria-label={`Filter ${index + 1} value`}
-                className="min-w-0 flex-1"
-                placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
-                value={filter.value}
-                onChange={(event) => update(index, { value: event.target.value })}
-              />
+              <div className="grid min-w-0 flex-1 grid-cols-1">
+                <Input
+                  aria-label={`Filter ${index + 1} value`}
+                  placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
+                  value={filter.value}
+                  onChange={(event) => update(index, { value: event.target.value })}
+                />
+              </div>
             )}
           </div>
         </div>

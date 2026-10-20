@@ -237,7 +237,10 @@ describe("webhook scheduled tasks", () => {
     // Removing every row is a change, so it clears the stored filters.
     expect(scheduleFromDraft({ ...draft, filters: [] })).toMatchObject({ filters: [] });
     expect(
-      scheduleFromDraft({ ...draft, filters: [{ path: "body.action", op: "in", value: " , " }] }),
+      scheduleFromDraft({
+        ...draft,
+        filters: [{ id: "f1", path: "body.action", op: "in", value: " , " }],
+      }),
     ).toBeNull();
   });
 });

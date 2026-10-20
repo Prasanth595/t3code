@@ -79,7 +79,7 @@ describe("scheduleDraftForTask", () => {
       filters: filters.slice(1),
     });
     expect(
-      scheduleFromDraft({ ...draft, filters: [{ path: "", op: "exists", value: "" }] }),
+      scheduleFromDraft({ ...draft, filters: [{ id: "f1", path: "", op: "exists", value: "" }] }),
     ).toBeNull();
   });
 });

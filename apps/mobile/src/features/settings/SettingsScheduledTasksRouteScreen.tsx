@@ -25,9 +25,10 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   DEFAULT_WEBHOOK_PROMPT,
-  EMPTY_WEBHOOK_FILTER_DRAFT,
+  emptyWebhookFilterDraft,
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
+  removeWebhookFilterDraft,
   WEBHOOK_FILTER_OPS,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
@@ -239,9 +240,7 @@ function WebhookFilterRows(props: {
   return (
     <>
       {props.filters.map((filter, index) => (
-        // Rows have no identity of their own; removing one re-renders the rest in order.
-        // oxlint-disable-next-line react/no-array-index-key
-        <View key={index}>
+        <View key={filter.id}>
           <View className="flex-row items-center gap-3 border-t border-border-subtle px-4 pt-3">
             <Text className="min-w-0 flex-1 text-sm text-foreground-muted">Filter {index + 1}</Text>
             <Pressable
@@ -249,7 +248,7 @@ function WebhookFilterRows(props: {
               accessibilityLabel={`Remove filter ${index + 1}`}
               disabled={props.disabled}
               hitSlop={8}
-              onPress={() => props.onChange(props.filters.filter((_, at) => at !== index))}
+              onPress={() => props.onChange(removeWebhookFilterDraft(props.filters, filter.id))}
               className="active:opacity-70"
             >
               <SymbolView name="trash" size={16} tintColorClassName="accent-danger-foreground" />
@@ -290,7 +289,7 @@ function WebhookFilterRows(props: {
         <Pressable
           accessibilityRole="button"
           disabled={props.disabled}
-          onPress={() => props.onChange([...props.filters, EMPTY_WEBHOOK_FILTER_DRAFT])}
+          onPress={() => props.onChange([...props.filters, emptyWebhookFilterDraft()])}
           className="min-h-14 flex-row items-center gap-3 border-t border-border-subtle px-4 py-3 active:opacity-70"
         >
           <Text className="min-w-0 flex-1 text-lg text-foreground">Add filter</Text>

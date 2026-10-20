@@ -23,6 +23,8 @@ export function parseMaxDeliveryAge(value: string): number | null | undefined {
  * lossless because list values can't contain commas; `exists` ignores the value.
  */
 export interface WebhookFilterDraft {
+  /** Stable row identity for the form; never sent to the server. */
+  readonly id: string;
   readonly path: string;
   readonly op: ScheduledTaskWebhookFilterOp;
   readonly value: string;
@@ -39,16 +41,26 @@ export const WEBHOOK_FILTER_OPS: ReadonlyArray<{
   { op: "exists", label: "exists" },
 ];
 
-export const EMPTY_WEBHOOK_FILTER_DRAFT: WebhookFilterDraft = {
-  path: "",
-  op: "equals",
-  value: "",
-};
+let lastWebhookFilterDraftId = 0;
+const nextWebhookFilterDraftId = () => `filter-${++lastWebhookFilterDraftId}`;
+
+export function emptyWebhookFilterDraft(): WebhookFilterDraft {
+  return { id: nextWebhookFilterDraftId(), path: "", op: "equals", value: "" };
+}
+
+/** By id, so a removed row's identity never passes to the row after it. */
+export function removeWebhookFilterDraft(
+  drafts: ReadonlyArray<WebhookFilterDraft>,
+  id: string,
+): ReadonlyArray<WebhookFilterDraft> {
+  return drafts.filter((draft) => draft.id !== id);
+}
 
 export function webhookFilterDrafts(
   filters: ReadonlyArray<ScheduledTaskWebhookFilter> | undefined,
 ): ReadonlyArray<WebhookFilterDraft> {
   return (filters ?? []).map((filter) => ({
+    id: nextWebhookFilterDraftId(),
     path: filter.path,
     op: filter.op,
     value:
