@@ -79,6 +79,26 @@ describe("compileClaudeModelSelection", () => {
     ).toEqual({ alwaysThinkingEnabled: false });
   });
 
+  it("defaults custom models to thinking on and 200k, with a reversible 1M choice", () => {
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, ["glm-flash"]);
+    for (const options of [[], [{ id: "contextWindow", value: "200k" }]]) {
+      expect(compileClaudeModelSelection(selection("glm-flash", options), catalog)).toMatchObject({
+        apiModelId: "glm-flash",
+        effort: "high",
+        settings: { alwaysThinkingEnabled: true },
+      });
+    }
+    expect(
+      compileClaudeModelSelection(
+        selection("glm-flash", [{ id: "contextWindow", value: "1m" }]),
+        catalog,
+      ),
+    ).toMatchObject({
+      apiModelId: "glm-flash[1m]",
+      settings: { alwaysThinkingEnabled: true },
+    });
+  });
+
   it("compiles 1M, effort, and thinking for a bare custom model", () => {
     const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, ["glm-flash"]);
     expect(
