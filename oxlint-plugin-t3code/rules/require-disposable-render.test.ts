@@ -1,4 +1,4 @@
-import { describe } from "@effect/vitest";
+import { assert, describe } from "@effect/vitest";
 
 import { createOxlintRuleHarness } from "../test/utils.ts";
 
@@ -50,6 +50,7 @@ describe("t3code/require-disposable-render", () => {
       "  });",
       "});",
     ].join("\n"),
+    (output) => assert.match(output, /Do not wrap userEvent in React's act/),
   );
   browserTest.invalid(
     "rejects importing lifecycle hooks from the test runner",
