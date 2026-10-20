@@ -107,6 +107,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
           endpointFailure === "origin_unreachable" || endpointFailure === "invalid_response"
             ? "server"
             : "tunnel",
+        via: "relay",
         ...(endpointFailure ? { failureCause: endpointFailure } : {}),
         ...(error.endpointStatus ? { httpStatus: error.endpointStatus } : {}),
       });
@@ -179,12 +180,15 @@ export function mapRemoteEnvironmentError(
   // Over T3 Connect the relay already reached the host, so a request that never
   // arrives was blocked between this device and the tunnel.
   const unreachableHop = connectionMethod === "relay" ? "tunnel" : "server";
+  const via = connectionMethod === "relay" ? "relay" : "direct";
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
         detail: "The environment credential is invalid.",
         traceId: error.traceId,
+        hop: "server",
+        via,
       });
     case "EnvironmentScopeRequiredError":
     case "EnvironmentOperationForbiddenError":
@@ -192,42 +196,54 @@ export function mapRemoteEnvironmentError(
         reason: "permission",
         detail: "The environment credential does not grant the required access.",
         traceId: error.traceId,
+        hop: "server",
+        via,
       });
     case "EnvironmentRequestInvalidError":
       return new ConnectionBlockedError({
         reason: "configuration",
         detail: "The environment rejected the authentication request.",
         traceId: error.traceId,
+        hop: "server",
+        via,
       });
     case "EnvironmentResourceNotFoundError":
       return new ConnectionBlockedError({
         reason: "configuration",
         detail: "The environment endpoint could not be found.",
         traceId: error.traceId,
+        hop: "server",
+        via,
       });
     case "RemoteEnvironmentAuthTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
         detail: `${error.message}${networkHint}`,
         hop: unreachableHop,
+        via,
       });
     case "RemoteEnvironmentAuthFetchError":
       return new ConnectionTransientError({
         reason: "network",
         detail: `${error.message}${networkHint}`,
         hop: unreachableHop,
+        via,
       });
     case "EnvironmentInternalError":
       return new ConnectionTransientError({
         reason: "remote-unavailable",
         detail: "The environment could not authorize the connection.",
         traceId: error.traceId,
+        hop: "server",
+        via,
       });
     case "RemoteEnvironmentAuthInvalidJsonError":
     case "RemoteEnvironmentAuthUndeclaredStatusError":
       return new ConnectionTransientError({
         reason: "remote-unavailable",
         detail: error.message,
+        hop: "server",
+        via,
       });
   }
 }
@@ -246,6 +262,7 @@ export function mapRemoteDpopEnvironmentError(
       detail: dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),
       traceId: error.traceId,
       hop: "server",
+      via: "relay",
       ...(error.dpopFailureReason === "time_window" ? { failureCause: "clock_skew" } : {}),
     });
   }

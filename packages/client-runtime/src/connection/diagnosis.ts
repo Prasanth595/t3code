@@ -27,7 +27,7 @@ export interface ConnectionDiagnosis {
 export interface ConnectionDiagnosisInput {
   readonly hostLabel: string;
   readonly state: SupervisorConnectionState;
-  /** Whether the failing attempt went through T3 Connect or straight to the host. */
+  /** The environment's usual route, used when the failure does not name one. */
   readonly via: "relay" | "direct";
   /** The relay's last health check, which can name a cause before any connect attempt. */
   readonly relayStatus?: Pick<
@@ -64,7 +64,8 @@ function locate(input: ConnectionDiagnosisInput): Located | null {
       failure.reason === "network" ||
       failure.reason === "timeout" ||
       failure.reason === "transport";
-    return { hop: unreachable && input.via === "relay" ? "tunnel" : "server", cause: null };
+    const via = failure.via ?? input.via;
+    return { hop: unreachable && via === "relay" ? "tunnel" : "server", cause: null };
   }
   const status = input.relayStatus;
   if (status?.status !== "offline") return null;
@@ -214,7 +215,8 @@ export function presentConnectionDiagnosis(
   if (located === null) return null;
   const host = input.hostLabel;
   const failure = input.state.lastFailure;
-  const relayPath = input.via === "relay" || located.hop === "relay" || located.hop === "tunnel";
+  const relayPath =
+    located.hop === "relay" || located.hop === "tunnel" || (failure?.via ?? input.via) === "relay";
   const order: ReadonlyArray<ConnectionHop> = HOP_ORDER[relayPath ? "relay" : "direct"];
   const failedIndex = order.indexOf(located.hop);
   const hops = order.map((hop, index): ConnectionDiagnosisHop => ({
@@ -237,7 +239,7 @@ export function presentConnectionDiagnosis(
       ? null
       : DateTime.formatIso(DateTime.makeUnsafe(input.state.retryAt)),
   );
-  add("Route", input.via === "relay" ? "T3 Connect" : "Direct");
+  add("Route", relayPath ? "T3 Connect" : "Direct");
   add("App version", input.clientVersion);
   add("Host version", input.serverVersion);
   add("Error", failure?.detail);

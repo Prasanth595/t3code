@@ -70,7 +70,12 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
       "Tunnel works, but T3 Code on Mac mini did not answer",
     );
-    expect(results(backoff(unavailable("origin_unreachable")))?.at(-1)).toBe("server:failed");
+    expect(results(backoff(unavailable("origin_unreachable")), "direct")).toEqual([
+      "device:ok",
+      "relay:ok",
+      "tunnel:ok",
+      "server:failed",
+    ]);
   });
 
   it("blames this device when it cannot reach a tunnel the relay already reached", () => {
@@ -78,8 +83,10 @@ describe("presentConnectionDiagnosis", () => {
       new RemoteEnvironmentAuthFetchError({ message: "Failed to fetch", cause: new TypeError() }),
       "relay",
     );
-    const diagnosis = diagnose(backoff(failure));
+    // A learned LAN route makes the environment's usual route direct; the failure still names the relay.
+    const diagnosis = diagnose(backoff(failure), "direct");
     expect(diagnosis?.headline).toBe("This device can't reach Mac mini's tunnel");
+    expect(diagnosis?.hops).toHaveLength(4);
     expect(diagnosis?.steps.join(" ")).not.toContain("On Mac mini");
   });
 
