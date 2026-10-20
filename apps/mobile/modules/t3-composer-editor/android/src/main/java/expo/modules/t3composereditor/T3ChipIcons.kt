@@ -11,7 +11,7 @@ import java.util.concurrent.Executors
 
 internal object T3ChipIcons {
   private val images = HashMap<String, Bitmap>()
-  private val pending = HashMap<String, MutableList<() -> Unit>>()
+  private val pending = HashMap<String, MutableSet<() -> Unit>>()
   private val downloads = Executors.newSingleThreadExecutor()
   private val main = Handler(Looper.getMainLooper())
 
@@ -23,7 +23,7 @@ internal object T3ChipIcons {
         it.add(onLoaded)
         return null
       }
-      pending[uri] = mutableListOf(onLoaded)
+      pending[uri] = mutableSetOf(onLoaded)
       downloads.execute {
         val bitmap = runCatching { URL(uri).openStream().use(BitmapFactory::decodeStream) }.getOrNull()
         main.post {

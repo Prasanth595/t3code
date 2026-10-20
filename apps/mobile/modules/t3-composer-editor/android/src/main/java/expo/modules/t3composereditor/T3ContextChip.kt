@@ -47,7 +47,7 @@ class T3ContextChip(
 
   private val icon = content.icon
   private val iconPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
-    if (content.tintsIcon) colorFilter = PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN)
+    if (content.tintsIcon) colorFilter = PorterDuffColorFilter(this@T3ContextChip.color, PorterDuff.Mode.SRC_IN)
   }
   private val padding = density * 5
   private val iconSlot = if (icon == null) 0f else em * 1.25f

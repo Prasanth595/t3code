@@ -61,6 +61,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   private var contentInsetVertical = 0
   private var tokensJson = "[]"
   private var tokens: List<ComposerToken> = emptyList()
+  private val reapplyTokenSpans: () -> Unit = { applyTokenSpans() }
   private var autoCorrect = true
   private var spellCheck = true
   private var nativeEventCount = 0
@@ -446,7 +447,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
             content = T3ContextChip.Content(
               label = token.label,
               detail = token.detail,
-              icon = T3ChipIcons.load(context, token.iconUri, ::applyTokenSpans),
+              icon = T3ChipIcons.load(context, token.iconUri, reapplyTokenSpans),
               tintsIcon = token.tintsIcon
             ),
             fontSize = editor.textSize,
