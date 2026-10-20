@@ -26,6 +26,7 @@ import {
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
+  parseLegacyServiceState,
   parseServiceState,
   serviceStateActiveVersion,
   serviceStateHasPendingUpdate,
@@ -478,6 +479,15 @@ export class BootServiceUpdatePendingError extends Schema.TaggedError<BootServic
   }
 }
 
+export class BootServiceMigrationRequiredError extends Schema.TaggedError<BootServiceMigrationRequiredError>()(
+  "BootServiceMigrationRequiredError",
+  {},
+) {
+  override get message(): string {
+    return "Cannot defer an install for legacy service state. Rerun `t3 update --yes` or run `t3 service install` to replace and restart the service.";
+  }
+}
+
 export class BootServiceDowngradeRefusedError extends Schema.TaggedError<BootServiceDowngradeRefusedError>()(
   "BootServiceDowngradeRefusedError",
   {
@@ -496,6 +506,7 @@ export type BootServiceError =
   | BootServiceInstallError
   | BootServicePrerequisiteError
   | BootServiceUpdatePendingError
+  | BootServiceMigrationRequiredError
   | BootServiceDowngradeRefusedError;
 
 export interface BootServiceStatus {
@@ -740,6 +751,20 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
+    const start = options?.start !== false;
+    // A deferred install cannot stop a launcher that may be adopting this state.
+    if (
+      !start &&
+      (yield* fs
+        .exists(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
+    ) {
+      const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
+      if (Option.isSome(previousStateText) && parseLegacyServiceState(previousStateText.value)) {
+        return yield* new BootServiceMigrationRequiredError();
+      }
+    }
+
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -803,12 +828,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    // With start=false the service keeps running while its files change. The
-    // launcher reads the state file once at startup and the unit only matters
-    // on the next start, so that is safe as long as the launcher is not in the
-    // middle of a remote update, which is the one time it writes the state file
-    // itself.
-    const start = options?.start !== false;
     if (installed && start && runningInsideService && manager.kind === "systemd") {
       // Stopping the unit from inside it kills this process before the start.
       // A transient unit runs the same install from outside, stop first, so it
@@ -831,6 +850,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ]);
       return { ...plan, handedOff: true };
     }
+    // A started install stops the launcher before replacing its state. A
+    // deferred install rechecks after preparation, which can overlap startup
+    // migration or a remote update.
     if (installed && start) {
       yield* runSteps(manager.stop);
     }
@@ -839,6 +861,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       if (installed) {
         const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
         if (Option.isSome(previousStateText)) {
+          if (!start && parseLegacyServiceState(previousStateText.value)) {
+            return yield* new BootServiceMigrationRequiredError();
+          }
           if (serviceStateHasPendingUpdate(previousStateText.value)) {
             return yield* new BootServiceUpdatePendingError();
           }
