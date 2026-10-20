@@ -77,16 +77,19 @@ export class HtmlRenderViewportHeightError extends Schema.TaggedError<HtmlRender
 }
 
 // Only stylesheets and style attributes are checked, so page text that mentions
-// a unit passes. An unclosed tag or quote runs to the end of the page, which
-// keeps both patterns linear on hostile input.
+// a unit passes; comments match first so their contents are skipped. Scripts
+// are still checked, since markup they insert applies. An unclosed comment,
+// tag, or quote runs to the end of the page, which keeps both patterns linear
+// on hostile input.
 const CSS_SOURCE =
-  /<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$))/gi;
+  /<!--[\s\S]*?(?:-->|$)|<style\b[^>]*(?:>|$)([\s\S]*?)(?:<\/style\s*>|$)|\sstyle\s*=\s*(?:"([^"]*)(?:"|$)|'([^']*)(?:'|$)|([^\s>]+))/gi;
 // The lookbehind skips base64 runs, such as an inlined image that happens to contain "1vh".
 const VIEWPORT_HEIGHT_UNIT = /(?<![\w.+/])(?:\d+(?:\.\d+)?|\.\d+)[sld]?vh(?![\w-])/i;
 
 const rejectViewportHeight = (html: string) => {
-  for (const [, sheet, doubleQuoted, singleQuoted] of html.matchAll(CSS_SOURCE)) {
-    const found = VIEWPORT_HEIGHT_UNIT.exec(sheet ?? doubleQuoted ?? singleQuoted ?? "")?.[0];
+  for (const [, sheet, doubleQuoted, singleQuoted, unquoted] of html.matchAll(CSS_SOURCE)) {
+    const css = sheet ?? doubleQuoted ?? singleQuoted ?? unquoted ?? "";
+    const found = VIEWPORT_HEIGHT_UNIT.exec(css)?.[0];
     if (found !== undefined) return Effect.fail(new HtmlRenderViewportHeightError({ found }));
   }
   return Effect.void;
