@@ -20,7 +20,7 @@ import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { ProcessRunner, type ProcessRunInput, type ProcessRunOutput } from "../processRunner.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -65,10 +65,12 @@ const layerTest = ThreadManagementService.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const output = (overrides: Partial<ProcessRunOutput>): ProcessRunOutput => ({
+const output = (
+  overrides: Partial<ProcessRunner.ProcessRunOutput>,
+): ProcessRunner.ProcessRunOutput => ({
   stdout: "",
   stderr: "",
-  code: 0 as ProcessRunOutput["code"],
+  code: 0 as ProcessRunner.ProcessRunOutput["code"],
   timedOut: false,
   stdoutTruncated: false,
   stderrTruncated: false,
@@ -78,9 +80,9 @@ const output = (overrides: Partial<ProcessRunOutput>): ProcessRunOutput => ({
 });
 
 /** A process runner that answers with `next()` and records each run. */
-const fakeRunner = (next: () => ProcessRunOutput) => {
-  const calls: Array<ProcessRunInput> = [];
-  const layer = Layer.succeed(ProcessRunner, {
+const fakeRunner = (next: () => ProcessRunner.ProcessRunOutput) => {
+  const calls: Array<ProcessRunner.ProcessRunInput> = [];
+  const layer = Layer.succeed(ProcessRunner.ProcessRunner, {
     run: (input) =>
       Effect.sync(() => {
         calls.push(input);
@@ -351,7 +353,7 @@ it.effect("wakes on new output, waits out a busy thread, and ends after repeated
     yield* startWatch(threadId, runId, "command-watch:a", "gh api discussion");
     yield* finishRuns(threadId);
 
-    let next = output({ code: 1 as ProcessRunOutput["code"] });
+    let next = output({ code: 1 as ProcessRunner.ProcessRunOutput["code"] });
     const runner = fakeRunner(() => next);
     yield* Effect.gen(function* () {
       const reactor = yield* CommandWatchReactor.make;
@@ -386,7 +388,7 @@ it.effect("wakes on new output, waits out a busy thread, and ends after repeated
       assert.lengthOf(runner.calls, 2);
 
       yield* finishRuns(threadId);
-      next = output({ code: 2 as ProcessRunOutput["code"], stderr: "boom" });
+      next = output({ code: 2 as ProcessRunner.ProcessRunOutput["code"], stderr: "boom" });
       for (let attempt = 0; attempt < 8; attempt++) {
         yield* TestClock.adjust("10 minutes");
         yield* look;
@@ -451,7 +453,7 @@ it.effect("keeps a watch whose final wake failed to write on an active thread", 
     yield* finishRuns(threadId);
 
     const runner = fakeRunner(() =>
-      output({ code: 2 as ProcessRunOutput["code"], stderr: "boom" }),
+      output({ code: 2 as ProcessRunner.ProcessRunOutput["code"], stderr: "boom" }),
     );
     let failNextWake = true;
     const layerFlakyWrite = Layer.effect(
@@ -496,7 +498,7 @@ it.effect("stopping a watch interrupts its run without waiting for the next look
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const interrupted = yield* Deferred.make<void>();
-    const layerRunner = Layer.succeed(ProcessRunner, {
+    const layerRunner = Layer.succeed(ProcessRunner.ProcessRunner, {
       run: () =>
         Deferred.succeed(started, undefined).pipe(
           Effect.andThen(Effect.never),
@@ -536,7 +538,7 @@ it.effect("runs the most overdue watch first, so a slow one cannot starve the ot
     yield* startWatch(threadId, runId, "command-watch:b", "second");
     yield* finishRuns(threadId);
 
-    const runner = fakeRunner(() => output({ code: 1 as ProcessRunOutput["code"] }));
+    const runner = fakeRunner(() => output({ code: 1 as ProcessRunner.ProcessRunOutput["code"] }));
     yield* Effect.gen(function* () {
       const reactor = yield* CommandWatchReactor.make;
       const look = reactor.sweep.pipe(Effect.andThen(reactor.awaitRuns));
