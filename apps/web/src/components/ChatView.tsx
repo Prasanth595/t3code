@@ -553,10 +553,14 @@ import { ServerUpdateAction, serverUpdateStageLabel } from "./ServerUpdateAction
 import { useAutoBalanceUpdateBanner } from "./chat/useAutoBalanceUpdateBanner";
 import { ComposerServerUpdateIcon } from "./chat/ComposerServerUpdateStatus";
 import {
+  buildVersionMismatchDismissalKey,
   dismissServerUpdateFailure,
+  dismissVersionMismatch,
   isServerUpdateFailureDismissed,
+  isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
   resolveServerSelfUpdateCapability,
+  serverUpdateGuidance,
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
@@ -2126,6 +2130,10 @@ export default function ChatView(props: ChatViewProps) {
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
     ) ?? null;
+  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
+    activeEnvironment: activeEnvironmentOption,
+    canPickEnvironment: hasMultipleEnvironments,
+  });
   const openPullRequestDialog = (reference?: string) => {
     if (!canCheckoutPullRequestIntoThread) {
       return;
@@ -2276,6 +2284,18 @@ export default function ChatView(props: ChatViewProps) {
     : EMPTY_AUTO_UPDATE_ENVIRONMENTS;
   const autoBalanceUpdateBanner = useAutoBalanceUpdateBanner(autoUpdateEnvironments);
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
+  const versionMismatchDismissKey =
+    versionMismatch && activeThread
+      ? buildVersionMismatchDismissalKey(activeThread.environmentId, versionMismatch)
+      : null;
+  const [dismissedVersionMismatchKey, setDismissedVersionMismatchKey] = useState<string | null>(
+    null,
+  );
+  const versionMismatchDismissed =
+    versionMismatchDismissKey === dismissedVersionMismatchKey ||
+    isVersionMismatchDismissed(versionMismatchDismissKey);
+  const showVersionMismatchBanner =
+    versionMismatch !== null && versionMismatchDismissKey !== null && !versionMismatchDismissed;
   const hasMultipleRegisteredEnvironments = environments.length > 1;
   const versionMismatchServerLabel =
     hasMultipleRegisteredEnvironments && activeThread
@@ -2295,30 +2315,6 @@ export default function ChatView(props: ChatViewProps) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
-  const activeServerUpdate =
-    !automaticEnvironment &&
-    serverUpdateEnvironmentId &&
-    versionMismatch &&
-    serverUpdateState.status === "idle"
-      ? {
-          environmentId: serverUpdateEnvironmentId,
-          serverLabel:
-            activeEnvironmentOption?.label ??
-            serverConfig?.environment.label ??
-            versionMismatchServerLabel,
-          serverVersion: versionMismatch.serverVersion,
-          targetVersion: versionMismatch.clientVersion,
-          selfUpdate: versionMismatchSelfUpdate,
-          installation: versionMismatchInstallation,
-          desktopAppUpdate: versionMismatchDesktopAppUpdate,
-          threadContinuation: versionMismatchThreadContinuation,
-        }
-      : null;
-  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
-    serverUpdateAvailable: activeServerUpdate !== null,
-  });
   const systemComposerBannerItems = (() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -2377,8 +2373,9 @@ export default function ChatView(props: ChatViewProps) {
     if (
       !automaticEnvironment &&
       serverUpdateEnvironmentId &&
-      serverUpdateState.status !== "idle" &&
-      !serverUpdateFailureDismissed
+      (serverUpdateState.status === "idle"
+        ? showVersionMismatchBanner
+        : !serverUpdateFailureDismissed)
     ) {
       const updateInProgress = serverUpdateState.status === "running";
       const updateFailed = serverUpdateState.status === "failed";
@@ -2387,11 +2384,39 @@ export default function ChatView(props: ChatViewProps) {
         variant: updateFailed ? "error" : "default",
         priority: updateInProgress ? "urgent" : "notice",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
-        title: `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`,
+        title:
+          updateInProgress || updateFailed ? (
+            `${updateFailed ? "Could not update" : "Updating"} ${versionMismatchServerLabel}`
+          ) : versionMismatch ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    className="block max-w-full cursor-help truncate rounded-sm text-left"
+                  >
+                    Server update available
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">
+                {versionMismatchServerLabel} {versionMismatch.serverVersion}{" "}
+                <span aria-hidden="true">→</span> {versionMismatch.clientVersion}
+              </TooltipPopup>
+            </Tooltip>
+          ) : (
+            "Server update available"
+          ),
         description:
           serverUpdateState.status === "failed"
             ? serverUpdateState.message
-            : serverUpdateStageLabel(serverUpdateState.stage),
+            : serverUpdateState.status === "running"
+              ? serverUpdateStageLabel(serverUpdateState.stage)
+              : versionMismatchSelfUpdate !== null &&
+                  (versionMismatchSelfUpdate !== "desktop-managed" ||
+                    !versionMismatchDesktopAppUpdate)
+                ? serverUpdateGuidance(versionMismatchSelfUpdate)
+                : undefined,
         actions: updateInProgress ? (
           disconnectAction
         ) : !versionMismatch ||
@@ -2409,15 +2434,19 @@ export default function ChatView(props: ChatViewProps) {
             variant="ghost"
           />
         ),
-        ...(updateFailed
-          ? {
+        ...(updateInProgress || (!updateFailed && !versionMismatchDismissKey)
+          ? {}
+          : {
               dismissLabel: "Dismiss update notice",
               onDismiss: () => {
-                dismissServerUpdateFailure(serverUpdateState);
-                setDismissedServerUpdateState(serverUpdateState);
+                if (updateFailed) {
+                  dismissServerUpdateFailure(serverUpdateState);
+                  setDismissedServerUpdateState(serverUpdateState);
+                }
+                dismissVersionMismatch(versionMismatchDismissKey);
+                setDismissedVersionMismatchKey(versionMismatchDismissKey);
               },
-            }
-          : {}),
+            }),
       });
     }
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
@@ -3159,7 +3188,6 @@ export default function ChatView(props: ChatViewProps) {
     hasActiveProject: activeProject !== null && !showProviderSubagentBar,
     isGitRepo,
     showEnvironmentIndicator: showComposerEnvironmentIndicator,
-    serverUpdateAvailable: activeServerUpdate !== null,
     hostsRestingComposerControls: routeKind === "server",
   });
   const showComposerContextStrip = shouldShowComposerContextStrip({
@@ -3168,7 +3196,6 @@ export default function ChatView(props: ChatViewProps) {
     hasActiveProject: activeProject !== null && !showProviderSubagentBar,
     isGitRepo,
     showEnvironmentIndicator: showComposerEnvironmentIndicator,
-    serverUpdateAvailable: activeServerUpdate !== null,
     hostsRestingComposerControls: routeKind === "server" && restingComposerControlsVisible,
   });
   const mountComposerModelStrip =
@@ -8630,7 +8657,6 @@ export default function ChatView(props: ChatViewProps) {
                                 availableEnvironments={logicalProjectEnvironments}
                                 composerControlsHostRef={setRestingComposerControlsHost}
                                 contextStripVisible={showComposerContextStrip}
-                                serverUpdate={activeServerUpdate}
                               />
                             </div>
                           )}
