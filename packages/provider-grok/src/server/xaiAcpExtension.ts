@@ -838,6 +838,13 @@ export function extractXAiAcpSubagentUpdate(
   const output = xAiToolOutputText(toolCall);
 
   if (isXAiGetSubagentOutputTool(toolCall, rawInput)) {
+    const structuredTaskId = structuredTaskIdFromGetOutputTool(toolCall);
+    if (
+      structuredTaskId !== undefined &&
+      !new RegExp(`^${XAI_UUID_RE}$`, "i").test(structuredTaskId)
+    ) {
+      return undefined;
+    }
     const taskIds = taskIdsFromGetOutputTool(toolCall, rawInput);
     const childSessionId =
       resultTaskIdFromGetOutputTool(toolCall, output) ??
