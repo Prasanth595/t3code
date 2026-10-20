@@ -388,8 +388,22 @@ export const make = Effect.gen(function* () {
 
           const bytesToRead = Math.min(stat.size, PROJECT_READ_FILE_MAX_BYTES);
           const buffer = Buffer.alloc(bytesToRead);
-          const { bytesRead } = yield* Effect.tryPromise({
-            try: () => handle.read(buffer, 0, bytesToRead, 0),
+          const bytesRead = yield* Effect.tryPromise({
+            // A read can return fewer bytes than asked; only 0 means end of file.
+            try: async () => {
+              let offset = 0;
+              while (offset < bytesToRead) {
+                const { bytesRead } = await handle.read(
+                  buffer,
+                  offset,
+                  bytesToRead - offset,
+                  offset,
+                );
+                if (bytesRead === 0) break;
+                offset += bytesRead;
+              }
+              return offset;
+            },
             catch: (cause) =>
               new WorkspaceFileSystemOperationError({
                 workspaceRoot: input.cwd,
@@ -401,6 +415,26 @@ export const make = Effect.gen(function* () {
               }),
           });
           const fileBytes = buffer.subarray(0, bytesRead);
+          const result = {
+            relativePath: target.relativePath,
+            byteLength: stat.size,
+            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
+          };
+          if (input.encoding === "base64") {
+            // A copy must carry every byte the size promises, so a file that
+            // shrank mid-read fails instead of arriving short.
+            if (bytesRead < bytesToRead) {
+              return yield* new WorkspaceFileSystemOperationError({
+                workspaceRoot: input.cwd,
+                relativePath: input.relativePath,
+                resolvedPath: realTargetPath,
+                operationPath: realTargetPath,
+                operation: "read",
+                cause: new Error(`File ended after ${bytesRead} of ${bytesToRead} bytes.`),
+              });
+            }
+            return { ...result, contents: fileBytes.toString("base64") };
+          }
           if (fileBytes.includes(0)) {
             return yield* new WorkspaceBinaryFileError({
               workspaceRoot: input.cwd,
@@ -409,12 +443,7 @@ export const make = Effect.gen(function* () {
             });
           }
 
-          return {
-            relativePath: target.relativePath,
-            contents: new TextDecoder("utf-8").decode(fileBytes),
-            byteLength: stat.size,
-            truncated: stat.size > PROJECT_READ_FILE_MAX_BYTES,
-          };
+          return { ...result, contents: new TextDecoder("utf-8").decode(fileBytes) };
         }),
       (handle) =>
         handle === null
@@ -544,13 +573,17 @@ export const make = Effect.gen(function* () {
     yield* Effect.tryPromise({
       // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
       try: () =>
-        NodeFSP.writeFile(realTargetPath, input.contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
+        NodeFSP.writeFile(
+          realTargetPath,
+          input.encoding === "base64" ? Buffer.from(input.contents, "base64") : input.contents,
+          {
+            flag:
+              NodeFS.constants.O_WRONLY |
+              NodeFS.constants.O_CREAT |
+              NodeFS.constants.O_TRUNC |
+              (NodeFS.constants.O_NOFOLLOW ?? 0),
+          },
+        ),
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
