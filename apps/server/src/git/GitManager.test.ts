@@ -7229,6 +7229,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const firstHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
       yield* runGit(repoDir, ["checkout", "main"]);
 
+      const git = yield* GitVcsDriver.GitVcsDriver;
       const provider = yield* GitLabSourceControlProvider.make.pipe(
         Effect.provide(
           Layer.mock(GitLabCli.GitLabCli)({
@@ -7243,6 +7244,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               }),
           }),
         ),
+        Effect.provide(TestSourceControlHost.layer({ git: { execute: git.execute } })),
       );
       const { manager } = yield* makeManager({ sourceControlProvider: provider });
       const input = { cwd: repoDir, reference: "90", mode: "worktree" } as const;
