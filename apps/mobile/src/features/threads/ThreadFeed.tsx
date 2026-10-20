@@ -1381,12 +1381,10 @@ function renderFeedEntry(
               <MessageCopyButton
                 text={presentation.text}
                 isPrompt
-                messageLink={
-                  persistedMessageLink(
-                    { environmentId: props.environmentId, threadId: props.threadId },
-                    message,
-                  )
-                }
+                messageLink={persistedMessageLink(
+                  { environmentId: props.environmentId, threadId: props.threadId },
+                  message,
+                )}
                 onCopy={
                   message.context
                     ? () =>
