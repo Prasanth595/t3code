@@ -88,6 +88,8 @@ export class ExpoApiError extends Schema.TaggedError<ExpoApiError>()("ExpoApiErr
    * answer, a server error, an answer that did not decode) it may have run.
    */
   rejected: Schema.optional(Schema.Boolean),
+  /** The HTTP status Expo answered with, when it answered. */
+  status: Schema.optional(Schema.Int),
 }) {
   override get message(): string {
     return `Expo could not ${this.operation}${this.detail ? `: ${this.detail}` : "."}`;
@@ -203,7 +205,12 @@ const toExpoApiError = (
   const scrub = (text: string) =>
     text.replaceAll(secret, "[redacted]").replaceAll(token, "[redacted]").slice(0, 300);
   const failure = (detail: string) =>
-    new ExpoApiError({ operation, detail: scrub(detail), rejected });
+    new ExpoApiError({
+      operation,
+      detail: scrub(detail),
+      rejected,
+      ...(status !== undefined ? { status } : {}),
+    });
   if (status === 401 || status === 403) {
     const what = credential.source === "eas-login" ? "eas login session" : "access token";
     return failure(`the ${what} was rejected (HTTP ${status})`);
