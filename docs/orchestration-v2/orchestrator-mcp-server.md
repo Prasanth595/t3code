@@ -198,6 +198,19 @@ Returns:
 Unavailable providers include model-visible constraints such as missing V2
 adapter support, disabled state, missing executable, or missing authentication.
 
+### Mission-admitted delegation
+
+`delegate_task` accepts `mission: {missionId, taskId, attemptKey:
+{attemptNumber, operation}}`, where `operation` is `read`, `test`, or `write`.
+The attempt key uses the canonical admission identity; a client request id
+cannot authorize another attempt. Omit `mission` for ordinary delegation.
+
+Mission calls stay denied before creating a worktree or child when trusted
+admission authority is unavailable. Canonical task scopes and provider
+attestations now survive the B-02c contracts, but their trusted facts producer
+and request binding are not wired at this entry point (B-02d). A selector or
+caller-supplied authority does not bypass that refusal.
+
 ### `delegate_task`
 
 Creates a T3-owned child thread and immediately dispatches the supplied task
