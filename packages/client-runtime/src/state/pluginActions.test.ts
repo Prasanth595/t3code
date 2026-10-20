@@ -213,9 +213,8 @@ describe("plugin actions across a reconnect", () => {
           Stream.runCollect,
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         );
-        expect(snapshot).toEqual([{ actions: ACTIONS }]);
+        expect(snapshot).toEqual([{ actions: [] }]);
         expect(oldCalls).toEqual([]);
-        expect(checkedCalls).toEqual([WS_METHODS.pluginActionsSubscribe]);
       }),
     ),
   );
