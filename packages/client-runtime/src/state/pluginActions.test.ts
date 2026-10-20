@@ -187,6 +187,38 @@ describe("plugin actions on an older server", () => {
 });
 
 describe("plugin actions across a reconnect", () => {
+  it.effect("pins a subscription to the session whose capability it checked", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { sessionRef, supervisor } = yield* makeEnvironment({ pluginActions: true });
+        const oldCalls: Array<string> = [];
+        const checkedCalls: Array<string> = [];
+        const replacement = makeSession({ repositoryIdentity: true }, oldCalls);
+        const checked = makeSession(
+          { pluginActions: true },
+          checkedCalls,
+          Stream.succeed({ actions: ACTIONS }),
+        );
+        yield* SubscriptionRef.set(
+          sessionRef,
+          Option.some({
+            ...checked,
+            initialConfig: checked.initialConfig.pipe(
+              Effect.tap(() => SubscriptionRef.set(sessionRef, Option.some(replacement))),
+            ),
+          }),
+        );
+        const snapshot = yield* pluginActionsStream.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        expect(snapshot).toEqual([{ actions: [] }]);
+        expect(oldCalls).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("follow the server the environment is connected to now", () =>
     Effect.scoped(
       Effect.gen(function* () {
