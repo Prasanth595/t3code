@@ -124,13 +124,19 @@ describe("HtmlRender", () => {
   it.effect("rejects viewport height units, which make the fitted frame grow without end", () =>
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;
-      for (const css of ["min-height:100vh", "height: calc(100dvh - 2rem)", "top:.5svh"]) {
-        const error = yield* htmlRender.prepare(`<style>main{${css}}</style>`).pipe(Effect.flip);
+      for (const page of [
+        "<style>main{min-height:100vh}</style>",
+        "<style media=screen>main{height: calc(100dvh - 2rem)}",
+        "<div style='top:.5svh'></div>",
+      ]) {
+        const error = yield* htmlRender.prepare(page).pipe(Effect.flip);
         expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
       }
       yield* htmlRender.prepare(
         '<style>main{width:100vw;height:320px}</style><img src="data:image/png;base64,AB1vh+2vh/3vhC">',
       );
+      yield* htmlRender.prepare("<p>Avoid 100vh here.</p><script>const unit = '100vh';</script>");
+      yield* htmlRender.prepare(`<style>${"1".repeat(200_000)}vx</style>`);
     }).pipe(Effect.provide(layerTest)),
   );
 
