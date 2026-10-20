@@ -6337,11 +6337,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
       );
 
-    const getThreadsWithCommandWatches: ProjectionStoreV2Shape["getThreadsWithCommandWatches"] = (
-      threadId,
-    ) =>
-      Effect.gen(function* () {
-        const rows = yield* sql<PayloadRow & { readonly busy: number }>`
+    const getThreadsWithCommandWatches: ProjectionStoreV2Shape["getThreadsWithCommandWatches"] =
+      Effect.fn("ProjectionStore.getThreadsWithCommandWatches")(
+        function* (threadId) {
+          const rows = yield* sql<PayloadRow & { readonly busy: number }>`
           SELECT t.payload_json, EXISTS (
             SELECT 1 FROM orchestration_v2_projection_runs active
             WHERE active.thread_id = t.thread_id
@@ -6353,12 +6352,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND json_array_length(t.payload_json, '$.commandWatches') > 0
           ORDER BY t.updated_at ASC, t.thread_id ASC
         `;
-        return yield* Effect.forEach(rows, (row) =>
-          decodeThreadPayload(row.payload_json).pipe(
-            Effect.map((thread) => commandWatchThreadOf(thread, row.busy !== 0)),
-          ),
-        );
-      }).pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
+          return yield* Effect.forEach(rows, (row) =>
+            decodeThreadPayload(row.payload_json).pipe(
+              Effect.map((thread) => commandWatchThreadOf(thread, row.busy !== 0)),
+            ),
+          );
+        },
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
 
     const getThreadWorktreePaths: ProjectionStoreV2Shape["getThreadWorktreePaths"] = (options) =>
       sql<{ readonly thread_id: string; readonly worktree_path: string }>`

@@ -115,26 +115,25 @@ export const make = Effect.gen(function* () {
   let watchesChanged = true;
   let nextScanAt = 0;
 
-  const record = (
+  const record = Effect.fn("CommandWatchReactor.record")(function* (
     threadId: ThreadId,
     watch: ThreadCommandWatch,
     next: ThreadCommandWatch | null,
     wake?: { readonly text: string; readonly notification: OrchestrationV2Notification },
-  ) =>
-    Effect.gen(function* () {
-      const uuid = yield* crypto.randomUUIDv4();
-      yield* engine.dispatch({
-        type: "thread.command-watch.sync",
-        commandId: CommandId.make(`server:command-watch:${threadId}:${uuid}`),
-        threadId,
-        watchId: watch.id,
-        startedAt: watch.startedAt,
-        watch: next,
-        ...(wake === undefined
-          ? {}
-          : { wake: { ...wake, messageId: MessageId.make(`message:command-watch:${uuid}`) } }),
-      });
+  ) {
+    const uuid = yield* crypto.randomUUIDv4();
+    yield* engine.dispatch({
+      type: "thread.command-watch.sync",
+      commandId: CommandId.make(`server:command-watch:${threadId}:${uuid}`),
+      threadId,
+      watchId: watch.id,
+      startedAt: watch.startedAt,
+      watch: next,
+      ...(wake === undefined
+        ? {}
+        : { wake: { ...wake, messageId: MessageId.make(`message:command-watch:${uuid}`) } }),
     });
+  });
 
   // A watch whose thread no longer takes wakes still ends. Any other failure, such as a failed
   // write, keeps the watch, so the next run reports the same outcome instead of losing it.
