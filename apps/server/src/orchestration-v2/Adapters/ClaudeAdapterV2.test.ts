@@ -2738,6 +2738,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "subagent.updated" }>
         >();
+      const providerThreadReceipts =
+        yield* Queue.unbounded<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
+        >();
       const systemNoticeReceipts =
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
@@ -2865,6 +2869,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             if (event.type === "subagent.updated") {
               yield* Queue.offer(subagentReceipts, event);
             }
+            if (event.type === "provider_thread.updated") {
+              yield* Queue.offer(providerThreadReceipts, event);
+            }
             if (event.type === "turn.terminal") {
               yield* Queue.offer(terminalReceipts, event);
             }
@@ -2913,6 +2920,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         events,
         terminalReceipts,
         subagentReceipts,
+        providerThreadReceipts,
         systemNoticeReceipts,
         runtimeRequestReceipts,
         planReceipts,
@@ -11742,6 +11750,457 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             : [],
         );
         assert.deepEqual(retryStatuses, ["running"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("settles an idle-launched subagent discovered during a later user turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const taskId = "task-idle-launch-late-discovery";
+        const toolUseId = "toolu-idle-launch-late-discovery";
+        const startTurn = (ordinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: DateTime.makeUnsafe(0),
+              attemptId: RunAttemptId.make(`attempt-idle-discovery-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Continue work.",
+              attachments: [],
+            }),
+          );
+        yield* startTurn(1);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000004101",
+            result: "Initial turn finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId,
+            toolUseId,
+            uuid: "00000000-0000-4000-8000-000000004102",
+          }),
+        );
+        yield* startTurn(2);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: taskId,
+            tool_use_id: toolUseId,
+            description: "Checking the result.",
+            uuid: "00000000-0000-4000-8000-000000004103",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000004104",
+            result: "User turn finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId,
+            toolUseId,
+            summary: "Audit finished.",
+            uuid: "00000000-0000-4000-8000-000000004105",
+          }),
+        );
+        const markerId = "task-idle-discovery-collector-barrier";
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: markerId,
+            tool_use_id: `toolu-${markerId}`,
+            description: "Outcome collector barrier",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000004106",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // A later roster receipt also proves the collector has seen the outcome.
+        yield* Stream.fromQueue(harness.providerThreadReceipts).pipe(
+          Stream.filter(
+            (event) =>
+              event.providerThread.pendingBackgroundTasks?.some(
+                (task) => task.taskId === markerId,
+              ) === true,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const latest = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        );
+        assert.equal(latest?.type, "subagent.updated");
+        if (latest?.type !== "subagent.updated") return;
+        assert.equal(latest.subagent.status, "completed");
+        assert.equal(latest.subagent.result, "Audit finished.");
+        assert.equal(latest.subagent.title, "Audit recent commits");
+        assert.equal(latest.subagent.prompt, "Audit the last five commits.");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("releases buffered child frames when idle discovery has no tool id", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const taskId = "task-idle-optional-tool-id";
+        const toolUseId = "toolu-idle-optional-tool-id";
+        const bashToolUseId = "toolu-idle-optional-tool-id-bash";
+        const heldText = "Held idle discovery transcript token.";
+        const startTurn = (ordinal: number) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: DateTime.makeUnsafe(0),
+              attemptId: RunAttemptId.make(`attempt-idle-optional-tool-id-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Continue work.",
+              attachments: [],
+            }),
+          );
+        yield* startTurn(1);
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000004201",
+            result: "Initial turn finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId,
+            toolUseId,
+            uuid: "00000000-0000-4000-8000-000000004202",
+          }),
+        );
+        yield* startTurn(2);
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: toolUseId,
+          uuid: "00000000-0000-4000-8000-000000004203",
+          text: heldText,
+          bashToolUseId,
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* harness.offerAndWait(
+          makeSubagentToolResultFrame({
+            parentToolUseId: toolUseId,
+            uuid: "00000000-0000-4000-8000-000000004204",
+            toolUseId: bashToolUseId,
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: taskId,
+            description: "Checking the result.",
+            uuid: "00000000-0000-4000-8000-000000004205",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000004206",
+            result: "User turn finished.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "completed",
+            output_file: `/tmp/${taskId}.output`,
+            summary: "Optional tool id audit finished.",
+            uuid: "00000000-0000-4000-8000-000000004207",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const markerId = "task-idle-optional-tool-id-collector-barrier";
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: markerId,
+            tool_use_id: `toolu-${markerId}`,
+            description: "Outcome collector barrier",
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000004208",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Stream.fromQueue(harness.providerThreadReceipts).pipe(
+          Stream.filter(
+            (event) =>
+              event.providerThread.pendingBackgroundTasks?.some(
+                (task) => task.taskId === markerId,
+              ) === true,
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const latest = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        );
+        assert.equal(latest?.type, "subagent.updated");
+        if (latest?.type !== "subagent.updated") return;
+        assert.equal(latest.subagent.status, "completed");
+        assert.equal(latest.subagent.result, "Optional tool id audit finished.");
+        const routing = subagentRouting(harness.events, [bashToolUseId]);
+        assert.isDefined(routing.childThreadId);
+        assert.equal(routing.childThreadId, latest.subagent.childThreadId);
+        assert.lengthOf(
+          routing.assistantTexts(routing.childThreadId).filter((text) => text === heldText),
+          1,
+        );
+        assert.notInclude(routing.assistantTexts(harness.threadId), heldText);
+        assert.deepEqual(
+          [...(routing.toolThreadIds.get(bashToolUseId) ?? [])],
+          [routing.childThreadId],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === bashToolUseId
+              ? [event.turnItem.status]
+              : [],
+          ),
+          ["running", "completed"],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("replays idle child frames before late discovery progress", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const taskId = "task-idle-transcript";
+        const toolUseId = "toolu-idle-transcript";
+        const bashToolUseId = "toolu-idle-transcript-bash";
+        const siblingTaskId = "task-idle-transcript-sibling";
+        const siblingToolUseId = "toolu-idle-transcript-sibling";
+        const idleText = "Idle child transcript token.";
+        const liveText = "Live child transcript token.";
+        const siblingText = "Sibling idle transcript token.";
+        let sequence = 4300;
+        const uuid = () => `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`;
+        const startTurn = (ordinal: number, continuation = false) =>
+          harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: DateTime.makeUnsafe(0),
+              attemptId: RunAttemptId.make(`attempt-idle-transcript-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Continue work.",
+              attachments: [],
+              ...(continuation
+                ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+                : {}),
+            }),
+          );
+        const receiptBarrier = (markerId: string) =>
+          Effect.gen(function* () {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: "task_started",
+                task_id: markerId,
+                tool_use_id: `toolu-${markerId}`,
+                description: "Transcript collector barrier",
+                is_backgrounded: true,
+                task_type: "local_bash",
+                uuid: uuid(),
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+            yield* Stream.fromQueue(harness.providerThreadReceipts).pipe(
+              Stream.filter(
+                (event) =>
+                  event.providerThread.pendingBackgroundTasks?.some(
+                    (task) => task.taskId === markerId,
+                  ) === true,
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+            );
+          });
+        yield* startTurn(1);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: uuid(), result: "Initial turn finished." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        for (const frame of [
+          makeSubagentTaskStartedFrame({ taskId, toolUseId, uuid: uuid() }),
+          ...makeSubagentAssistantFrames({
+            parentToolUseId: toolUseId,
+            uuid: uuid(),
+            text: idleText,
+            bashToolUseId,
+          }),
+          makeSubagentTaskStartedFrame({
+            taskId: siblingTaskId,
+            toolUseId: siblingToolUseId,
+            uuid: uuid(),
+          }),
+          ...makeSubagentAssistantFrames({
+            parentToolUseId: siblingToolUseId,
+            uuid: uuid(),
+            text: siblingText,
+          }),
+          makeSubagentToolResultFrame({
+            parentToolUseId: toolUseId,
+            uuid: uuid(),
+            toolUseId: bashToolUseId,
+          }),
+        ]) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* startTurn(2);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_progress",
+            task_id: taskId,
+            description: "Checking the result.",
+            uuid: uuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: toolUseId,
+          uuid: uuid(),
+          text: liveText,
+        })) {
+          yield* harness.offerAndWait(frame);
+        }
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: uuid(), result: "User turn finished." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            status: "completed",
+            output_file: `/tmp/${taskId}.output`,
+            summary: "Idle transcript audit finished.",
+            uuid: uuid(),
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* receiptBarrier("task-idle-transcript-before-drain");
+        const latest = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId,
+        );
+        assert.equal(latest?.type, "subagent.updated");
+        if (latest?.type !== "subagent.updated") return;
+        assert.equal(latest.subagent.status, "completed");
+        assert.equal(latest.subagent.result, "Idle transcript audit finished.");
+        const assertChildTranscript = () => {
+          const routing = subagentRouting(harness.events, [bashToolUseId]);
+          assert.isDefined(routing.childThreadId);
+          assert.equal(routing.childThreadId, latest.subagent.childThreadId);
+          assert.deepEqual(
+            routing
+              .assistantTexts(routing.childThreadId)
+              .filter((text) => text === idleText || text === liveText),
+            [idleText, liveText],
+          );
+          assert.notInclude(routing.assistantTexts(harness.threadId), idleText);
+          assert.notInclude(routing.assistantTexts(harness.threadId), liveText);
+          assert.notInclude(routing.assistantTexts(harness.threadId), siblingText);
+          assert.notInclude(routing.assistantTexts(routing.childThreadId), siblingText);
+          assert.deepEqual(
+            [...(routing.toolThreadIds.get(bashToolUseId) ?? [])],
+            [routing.childThreadId],
+          );
+          assert.deepEqual(
+            harness.events.flatMap((event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === bashToolUseId
+                ? [event.turnItem.status]
+                : [],
+            ),
+            ["running", "completed"],
+          );
+        };
+        assertChildTranscript();
+        const terminalIndex = harness.events.indexOf(latest);
+        assert.isTrue(
+          harness.events.every(
+            (event, index) =>
+              !(
+                (event.type === "message.updated" &&
+                  event.message.threadId === latest.subagent.childThreadId &&
+                  (event.message.text === idleText || event.message.text === liveText)) ||
+                (event.type === "turn_item.updated" &&
+                  event.turnItem.nativeItemRef?.nativeId === bashToolUseId)
+              ) || index < terminalIndex,
+          ),
+        );
+        assert.isFalse(
+          harness.events.some(
+            (event) => event.type === "message.updated" && event.message.text === siblingText,
+          ),
+        );
+        yield* Queue.take(harness.continuationReceipts);
+        yield* startTurn(3, true);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: uuid(), result: "Continuation finished." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        yield* receiptBarrier("task-idle-transcript-after-drain");
+        assertChildTranscript();
+        const sibling = harness.events.findLast(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === siblingTaskId,
+        );
+        assert.equal(sibling?.type, "subagent.updated");
+        if (sibling?.type !== "subagent.updated") return;
+        assert.isDefined(sibling.subagent.childThreadId);
+        assert.notEqual(sibling.subagent.childThreadId, latest.subagent.childThreadId);
+        assert.deepEqual(
+          subagentRouting(harness.events, []).assistantTexts(
+            sibling.subagent.childThreadId ?? undefined,
+          ),
+          [siblingText],
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

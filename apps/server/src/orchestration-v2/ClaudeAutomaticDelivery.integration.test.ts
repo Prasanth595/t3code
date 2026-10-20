@@ -15,6 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -484,4 +485,218 @@ it.effect.each(deliveries)(
         ),
       ),
     ),
+);
+
+it.effect("persists an idle-launched subagent outcome discovered during a later user turn", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("claude-idle-lineage");
+      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const processedMessages = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+      const offerAndWait = Effect.fnUntraced(function* (message: SDKMessage) {
+        const processed = yield* Deferred.make<void>();
+        processedMessages.set(message, processed);
+        yield* Queue.offer(sdkMessages, message);
+        yield* Deferred.await(processed);
+      });
+      const taskId = "task-idle-lineage";
+      const siblingId = "task-idle-lineage-sibling";
+      const markerId = "task-persistence-barrier";
+      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: modelSelection.instanceId,
+        settings,
+        environment: {},
+        attachmentsDir: cwd,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed(sessionId),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.fromQueue(sdkMessages).pipe(
+                Stream.flatMap((message) =>
+                  Stream.make(message).pipe(
+                    Stream.concat(
+                      Stream.fromEffect(
+                        Effect.suspend(() => {
+                          const processed = processedMessages.get(message);
+                          return processed === undefined
+                            ? Effect.void
+                            : Deferred.succeed(processed, undefined);
+                        }),
+                      ).pipe(Stream.drain),
+                    ),
+                  ),
+                ),
+              ),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.die("unexpected interrupt"),
+              close: Effect.void,
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:idle-lineage");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-idle-lineage"),
+          threadId,
+          projectId: ProjectId.make("project:idle-lineage"),
+          title: "Idle lineage",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const start = Effect.fnUntraced(function* (ordinal: number) {
+          const running = yield* watch(
+            (event) =>
+              event.type === "provider-turn.updated" &&
+              event.payload.status === "running" &&
+              event.threadId === threadId,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`start-${ordinal}`),
+            threadId,
+            messageId: MessageId.make(`message-${ordinal}`),
+            text: "Continue work.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(running);
+        });
+        const finish = Effect.fnUntraced(function* (ordinal: number) {
+          const finished = yield* watch(
+            (event) =>
+              event.type === "run.updated" &&
+              event.threadId === threadId &&
+              event.payload.status === "waiting",
+          );
+          yield* Queue.offer(sdkMessages, result(`finished-${ordinal}`, false));
+          yield* Fiber.join(finished);
+          yield* worker.drain();
+        });
+        const taskFrame = (subtype: string, id: string, uuid: string) =>
+          frame({
+            type: "system",
+            subtype,
+            task_id: id,
+            tool_use_id: `toolu-${id}`,
+            description: "Audit recent commits",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            task_type: "local_agent",
+            prompt: "Audit synthetic changes.",
+            uuid,
+            session_id: sessionId,
+          });
+        yield* start(1);
+        yield* finish(1);
+        yield* offerAndWait(taskFrame("task_started", taskId, "idle-start"));
+        const rosterBarrier = (uuid: string) =>
+          frame({
+            type: "system",
+            subtype: "task_started",
+            task_id: markerId,
+            tool_use_id: `toolu-${markerId}`,
+            description: uuid,
+            is_backgrounded: true,
+            task_type: "local_bash",
+            uuid,
+            session_id: sessionId,
+          });
+        const watchRoster = () =>
+          watch(
+            (event) =>
+              event.type === "provider-thread.updated" &&
+              event.payload.pendingBackgroundTasks?.some((task) => task.taskId === markerId) ===
+                true,
+          );
+        yield* start(2);
+        const discovered = yield* watch(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.payload.nativeTaskRef?.nativeId === siblingId,
+        );
+        yield* Queue.offer(sdkMessages, taskFrame("task_progress", taskId, "discovery"));
+        yield* Queue.offer(sdkMessages, taskFrame("task_progress", siblingId, "sibling-discovery"));
+        yield* Fiber.join(discovered);
+        yield* finish(2);
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const sibling = before.subagents.find((task) => task.nativeTaskRef?.nativeId === siblingId);
+        assert.equal(sibling?.status, "running");
+        const persisted = yield* watchRoster();
+        yield* Queue.offer(
+          sdkMessages,
+          frame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: taskId,
+            tool_use_id: `toolu-${taskId}`,
+            status: "completed",
+            summary: "Audit finished.",
+            output_file: "/tmp/synthetic-idle-lineage.output",
+            uuid: "idle-outcome",
+            session_id: sessionId,
+          }),
+        );
+        // Provider events are ingested in order. This later roster write is a
+        // persisted barrier even when the broken adapter emits no task outcome.
+        yield* Queue.offer(sdkMessages, rosterBarrier("outcome-barrier"));
+        yield* Fiber.join(persisted);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const task = after.subagents.find((task) => task.nativeTaskRef?.nativeId === taskId);
+        assert.equal(task?.status, "completed");
+        assert.equal(task?.result, "Audit finished.");
+        assert.ok(task?.completedAt);
+        assert.ok(task?.childThreadId);
+        if (!task?.childThreadId) return;
+        const child = yield* orchestrator.getThreadProjection(task.childThreadId);
+        assert.ok(child.nodes.length > 0);
+        assert.ok(child.nodes.every((node) => node.status !== "running"));
+        assert.deepEqual(
+          after.subagents.find((task) => task.id === sibling?.id),
+          sibling,
+        );
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "claude-idle-lineage" },
+            ProviderAdapterRegistry.layerSingle(adapter),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  ),
 );
