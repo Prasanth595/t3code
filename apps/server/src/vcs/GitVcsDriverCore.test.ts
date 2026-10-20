@@ -3601,6 +3601,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("stages a deleted directory with more files than one ls-files batch", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const deleted = Array.from({ length: 250 }, (_, index) => `old/file-${index}.txt`);
+        yield* Effect.forEach(deleted, (file) => writeTextFile(cwd, file, `${file}\n`), {
+          concurrency: 16,
+        });
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "add old files"]);
+        yield* fileSystem.remove(path.join(cwd, "old"), { recursive: true });
+
+        yield* driver.stageFiles({ cwd, filePaths: deleted });
+
+        assert.lengthOf(
+          (yield* git(cwd, ["diff", "--cached", "--name-only", "--diff-filter=D"])).split("\n"),
+          deleted.length,
+        );
+      }),
+    );
+
     it.effect("unstages files in a repository without commits", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

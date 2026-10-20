@@ -119,7 +119,7 @@ import {
 import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControlPresentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
-import { hasStagedChanges, resolveUnstagedFiles } from "@t3tools/client-runtime/state/vcs";
+import { hasStagedChanges, resolveCommitDialogSelection } from "@t3tools/client-runtime/state/vcs";
 import { useOpenLink } from "~/browser/useOpenLink";
 
 interface GitActionsControlProps {
@@ -1100,17 +1100,14 @@ export default function GitActionsControl({
   // Changed-file paths are repository-relative, so they must resolve against
   // the worktree root from the same status snapshot, not the project cwd.
   const workingTreeRoot = gitStatusForActions?.workingTree.rootPath ?? null;
-  const commitsStagedOnly = editedExclusions === null && !includeUnstaged;
   const hasStagedFiles = hasStagedChanges(allFiles);
-  const excludedFiles =
-    editedExclusions ?? (includeUnstaged ? new Set<string>() : resolveUnstagedFiles(allFiles));
+  const {
+    commitsStagedOnly,
+    excludedFiles,
+    request: dialogSelection,
+  } = resolveCommitDialogSelection({ files: allFiles, editedExclusions, includeUnstaged });
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
-  const dialogSelection = allSelected
-    ? { includeUnstaged: true }
-    : commitsStagedOnly
-      ? {}
-      : { filePaths: selectedFiles.map((f) => f.path) };
   const noneSelected = selectedFiles.length === 0;
 
   const initAction = useVcsInitAction(sourceControlScope);

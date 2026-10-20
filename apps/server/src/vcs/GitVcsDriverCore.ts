@@ -81,6 +81,8 @@ const REVIEW_DIFF_ARGS = [
   "--minimal",
   ...PATCH_RENDER_PREFIX_ARGS,
 ];
+// Keeps each ls-files command line well under Windows' 32K-character CreateProcess limit.
+const STAGE_ABSENT_PATHSPEC_CHUNK = 100;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
@@ -4565,19 +4567,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         { concurrency: 16 },
       );
       const absent = onDisk.flatMap(([file, exists]) => (exists ? [] : [file]));
-      const trackedAbsent =
-        absent.length === 0
-          ? []
-          : splitNullSeparatedGitStdoutPaths(
-              yield* executeGit("GitVcsDriver.stageFiles.trackedAbsent", input.cwd, [
-                "ls-files",
-                "--cached",
-                "--full-name",
-                "-z",
-                "--",
-                ...absent.map((file) => `:(top,literal)${file}`),
-              ]),
-            );
+      // ls-files has no --pathspec-from-file, so absent paths go on the command line in chunks.
+      const trackedAbsent = (yield* Effect.forEach(
+        Array.from({ length: Math.ceil(absent.length / STAGE_ABSENT_PATHSPEC_CHUNK) }, (_, index) =>
+          absent.slice(
+            index * STAGE_ABSENT_PATHSPEC_CHUNK,
+            (index + 1) * STAGE_ABSENT_PATHSPEC_CHUNK,
+          ),
+        ),
+        (chunk) =>
+          executeGit("GitVcsDriver.stageFiles.trackedAbsent", input.cwd, [
+            "ls-files",
+            "--cached",
+            "--full-name",
+            "-z",
+            "--",
+            ...chunk.map((file) => `:(top,literal)${file}`),
+          ]).pipe(Effect.map(splitNullSeparatedGitStdoutPaths)),
+      )).flat();
       const stageable = [
         ...onDisk.flatMap(([file, exists]) => (exists ? [file] : [])),
         ...new Set(trackedAbsent),
