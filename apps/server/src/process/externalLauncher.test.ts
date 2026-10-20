@@ -1818,6 +1818,72 @@ for (const [target, expectedArgs] of [
   );
 }
 
+it.effect.skipIf(windowsHost)(
+  "runs an unclassified installed editor through the default terminal",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+      for (const command of ["hx", "xdg-terminal-exec"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
+        yield* launcher.launchEditor({ editor: "default-editor", cwd: "/workspace/file.ts:3:2" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, EDITOR: "hx", DISPLAY: ":42" },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      assert.equal(spawned.command, "xdg-terminal-exec");
+      assert.deepEqual(spawned.args, ["--", "hx", "/workspace/file.ts"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)(
+  "launches a known graphical editor directly even when a default terminal exists",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
+      for (const command of ["code", "xdg-terminal-exec"]) {
+        yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(binDir, command), 0o755);
+      }
+      let spawned: ChildProcess.StandardCommand | undefined;
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        assert.include(yield* launcher.resolveAvailableEditors(), "default-editor");
+        yield* launcher.launchEditor({ editor: "default-editor", cwd: "/workspace/file.ts:3:2" });
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "linux",
+            env: { PATH: binDir, EDITOR: "code", DISPLAY: ":42" },
+            onSpawn: (command) => {
+              spawned = command;
+            },
+          }),
+        ),
+      );
+      assert.ok(spawned);
+      assert.equal(spawned.command, "code");
+      assert.deepEqual(spawned.args, ["--goto", "/workspace/file.ts:3:2"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)("prefers VISUAL and preserves its absolute executable path", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1884,7 +1950,7 @@ for (const [name, platform, env] of [
   ["unset editor", "linux", { DISPLAY: ":42" }],
   ["missing executable", "linux", { EDITOR: "missing", DISPLAY: ":42" }],
   ["missing terminal", "linux", { EDITOR: "nvim", DISPLAY: ":42" }],
-  ["unclassified installed terminal editor", "linux", { EDITOR: "hx", DISPLAY: ":42" }],
+  ["unclassified editor and no default terminal", "linux", { EDITOR: "hx", DISPLAY: ":42" }],
   ["headless host", "linux", { EDITOR: "nvim" }],
   ["blank X11 display", "linux", { EDITOR: "code", DISPLAY: " \t " }],
   ["blank Wayland display", "linux", { EDITOR: "code", WAYLAND_DISPLAY: " \t " }],

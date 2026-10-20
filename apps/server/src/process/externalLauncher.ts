@@ -433,8 +433,15 @@ const resolveDefaultEditorLaunch = Effect.fn("externalLauncher.resolveDefaultEdi
     if (!(yield* isCommandAvailable(command, { env }))) return Option.none();
 
     const editor = getEditor(command);
-    // Unknown executables default to non-terminal in open-editor.
-    if (!allEditors().some((known) => known.id === editor.id)) return Option.none();
+    // env-editor and open-editor both fall back to `isTerminalEditor: false`
+    // for executables they do not recognize, which would misclassify an
+    // installed terminal editor such as Helix as graphical. Treat unknown
+    // executables as terminal editors: a terminal is the only launch mode that
+    // can host an arbitrary command, and when `xdg-terminal-exec` is missing
+    // the editor is excluded below because its launch mode cannot be
+    // established.
+    const isTerminalEditor =
+      allEditors().find((known) => known.id === editor.id)?.isTerminalEditor ?? true;
 
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -450,7 +457,7 @@ const resolveDefaultEditorLaunch = Effect.fn("externalLauncher.resolveDefaultEdi
           };
     const info = getEditorInfo([file], { editor: command });
     const args = literalPath || Option.isNone(parsed) ? [file.file] : info.arguments;
-    if (!info.isTerminalEditor) {
+    if (!isTerminalEditor) {
       return Option.some({ command, args });
     }
     if (!(yield* isCommandAvailable("xdg-terminal-exec", { env }))) return Option.none();
