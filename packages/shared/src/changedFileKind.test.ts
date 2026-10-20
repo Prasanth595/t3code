@@ -18,6 +18,8 @@ describe("classifyChangedFile", () => {
     ["conftest.py", "tests"],
     ["src/main/java/RequestTest.java", "tests"],
     ["Sources/AppTests.swift", "tests"],
+    ["src/HTTPTest.java", "tests"],
+    ["Sources/URLTests.swift", "tests"],
     ["spec/models/user_spec.rb", "tests"],
     ["src/__tests__/helpers.ts", "tests"],
     ["src/testUtils.ts", "code"],
