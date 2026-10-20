@@ -1,4 +1,9 @@
-import { listLoginShellCandidates, setWindowsPath } from "@t3tools/shared/shell";
+import {
+  buildEnvironmentCaptureCommand,
+  listLoginShellCandidates,
+  setWindowsPath,
+} from "@t3tools/shared/shell";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -230,17 +235,6 @@ const logShellEnvironmentCommandError = (
     }),
   );
 
-const capturePosixEnvironmentCommand = (names: ReadonlyArray<string>) =>
-  names
-    .map((name) => {
-      return [
-        `printf '%s\\n' '${startMarker(name)}'`,
-        `printenv ${name} || true`,
-        `printf '%s\\n' '${endMarker(name)}'`,
-      ].join("; ");
-    })
-    .join("; ");
-
 const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
     "$ErrorActionPreference = 'Stop'",
@@ -351,7 +345,7 @@ const readLoginShellEnvironment = (
     : runCommandOutput({
         probe: "login-shell",
         command: shell,
-        args: ["-ilc", capturePosixEnvironmentCommand(names)],
+        args: ["-ilc", buildEnvironmentCaptureCommand(shell, names)],
         timeout: LOGIN_SHELL_TIMEOUT,
       }).pipe(Effect.map((output) => extractEnvironment(output, names)));
 
@@ -377,12 +371,16 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       captureWindowsEnvironmentCommand(names),
     ];
 
+    const deadline =
+      (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(LOGIN_SHELL_TIMEOUT);
     for (const command of WINDOWS_SHELL_CANDIDATES) {
+      const remainingNanos = deadline - (yield* Clock.monotonicTimeNanos);
+      if (remainingNanos <= 0n) break;
       const output = yield* runCommandOutput({
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
-        timeout: LOGIN_SHELL_TIMEOUT,
+        timeout: Duration.nanos(remainingNanos),
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
