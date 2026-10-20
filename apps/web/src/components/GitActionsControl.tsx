@@ -19,6 +19,7 @@ import type {
   SourceControlRepositoryVisibility,
   VcsStatusResult,
 } from "@t3tools/contracts";
+import { useDebouncer } from "@tanstack/react-pacer";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import { type MouseEvent, useEffect, useEffectEvent, useRef, useState } from "react";
@@ -45,6 +46,7 @@ import {
   buildMenuItems,
   formatGitActionElapsed,
   GIT_ACTION_SUCCESS_VISIBLE_MS,
+  hasGitActionMenuContent,
   type GitActionProgressPresentation,
   type GitActionIconName,
   type GitActionMenuItem,
@@ -159,7 +161,7 @@ interface InlineGitActionSuccess {
   readonly scopeKey: string;
 }
 
-const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
+const GIT_STATUS_REFRESH_DEBOUNCE_MS = 250;
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
@@ -1171,38 +1173,49 @@ export default function GitActionsControl({
       })
     : null;
 
+  const { maybeExecute: scheduleRefreshCurrentGitStatus, cancel: cancelScheduledGitStatusRefresh } =
+    useDebouncer(() => requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd), {
+      wait: GIT_STATUS_REFRESH_DEBOUNCE_MS,
+    });
+
+  useEffect(() => {
+    if (
+      activeEnvironmentId === null ||
+      gitCwd === null ||
+      !canWriteSourceControl ||
+      isGitActionRunning
+    ) {
+      cancelScheduledGitStatusRefresh();
+    }
+    return cancelScheduledGitStatusRefresh;
+  }, [
+    activeEnvironmentId,
+    gitCwd,
+    canWriteSourceControl,
+    isGitActionRunning,
+    cancelScheduledGitStatusRefresh,
+  ]);
+
   useEffect(() => {
     if (gitCwd === null) {
       return;
     }
 
-    let refreshTimeout: number | null = null;
-    const scheduleRefreshCurrentGitStatus = () => {
-      if (refreshTimeout !== null) {
-        window.clearTimeout(refreshTimeout);
-      }
-      refreshTimeout = window.setTimeout(() => {
-        refreshTimeout = null;
-        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
-      }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
-    };
+    const handleWindowFocus = () => scheduleRefreshCurrentGitStatus();
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         scheduleRefreshCurrentGitStatus();
       }
     };
 
-    window.addEventListener("focus", scheduleRefreshCurrentGitStatus);
+    window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
-      if (refreshTimeout !== null) {
-        window.clearTimeout(refreshTimeout);
-      }
-      window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
+      window.removeEventListener("focus", handleWindowFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [activeEnvironmentId, gitCwd, refreshVcsStatus]);
+  }, [gitCwd, scheduleRefreshCurrentGitStatus]);
 
   // Not an effect event: retained toast actions must stay bound to the checkout and
   // thread of the render that created them, not follow later selections.
@@ -1521,6 +1534,20 @@ export default function GitActionsControl({
 
   const canPublishRepository =
     canWriteSourceControl && isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
+  const isGitActionMenuDisabled =
+    isGitActionRunning ||
+    !hasGitActionMenuContent({
+      menuItems: gitActionMenuItems,
+      canWriteSourceControl,
+      canPublishRepository,
+      hasStatusError: Boolean(gitStatusError),
+    });
+
+  const refreshDisabledGitActions = () => {
+    if (isGitActionMenuDisabled && canWriteSourceControl && !isGitActionRunning) {
+      scheduleRefreshCurrentGitStatus();
+    }
+  };
 
   const initializeGit = () => {
     void (async () => {
@@ -1662,17 +1689,19 @@ export default function GitActionsControl({
                 {quickActionDisabledReason}
               </p>
             )}
-            <MenuSub
-              onOpenChange={(open) => {
-                if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
-              }}
-            >
-              <MenuSubTrigger density="touch" disabled={isGitActionRunning}>
-                <SourceControlIcon className="size-4" />
-                <MenuItemLabel>Git actions</MenuItemLabel>
-              </MenuSubTrigger>
-              <MenuSubPopup>{gitItems}</MenuSubPopup>
-            </MenuSub>
+            <div onPointerDown={refreshDisabledGitActions} onFocus={refreshDisabledGitActions}>
+              <MenuSub
+                onOpenChange={(open) => {
+                  if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                }}
+              >
+                <MenuSubTrigger density="touch" disabled={isGitActionMenuDisabled}>
+                  <SourceControlIcon className="size-4" />
+                  <MenuItemLabel>Git actions</MenuItemLabel>
+                </MenuSubTrigger>
+                <MenuSubPopup>{gitItems}</MenuSubPopup>
+              </MenuSub>
+            </div>
           </>
         )
       ) : !isRepo ? (
@@ -1691,6 +1720,8 @@ export default function GitActionsControl({
         </ThreadDetailsControl>
       ) : compact && !gitActionProgress && !visibleInlineSuccess ? null : (
         <ActionGroup
+          onPointerDown={refreshDisabledGitActions}
+          onFocus={refreshDisabledGitActions}
           role="group"
           aria-label="Git actions"
           {...(isPanel ? { ref: panelAnchorRef } : {})}
@@ -1806,7 +1837,7 @@ export default function GitActionsControl({
                       panel={isPanel}
                     />
                   }
-                  disabled={isGitActionRunning}
+                  disabled={isGitActionMenuDisabled}
                 >
                   <ChevronDownIcon
                     aria-hidden="true"

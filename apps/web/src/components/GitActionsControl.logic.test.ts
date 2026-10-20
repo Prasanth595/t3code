@@ -5,6 +5,7 @@ import {
   buildGitActionProgressStages,
   buildMenuItems,
   formatGitActionElapsed,
+  hasGitActionMenuContent,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -429,6 +430,41 @@ describe("when: ref is clean, up to date, and has no open PR", () => {
         dialogAction: "create_pr",
       },
     ]);
+  });
+});
+
+describe("git action menu availability", () => {
+  const menuContent = (
+    gitStatus: VcsStatusResult | null,
+    overrides: Partial<Parameters<typeof hasGitActionMenuContent>[0]> = {},
+  ) =>
+    hasGitActionMenuContent({
+      menuItems: buildMenuItems(gitStatus, false, gitStatus?.hasPrimaryRemote ?? true),
+      canWriteSourceControl: true,
+      canPublishRepository: false,
+      hasStatusError: false,
+      ...overrides,
+    });
+
+  it("follows commit and push availability as a clean branch changes and returns to clean", () => {
+    const clean = status();
+    const edited = status({ hasWorkingTreeChanges: true });
+    const committed = status({ aheadCount: 1 });
+
+    assert.deepEqual(
+      [clean, edited, committed, clean].map((value) => menuContent(value)),
+      [false, true, true, false],
+    );
+    assert.isFalse(menuContent(edited, { canWriteSourceControl: false }));
+    assert.isFalse(menuContent(null));
+  });
+
+  it("keeps publishing and status errors accessible when there are no runnable actions", () => {
+    const unpublished = status({ hasPrimaryRemote: false, hasUpstream: false });
+
+    assert.isFalse(menuContent(unpublished));
+    assert.isTrue(menuContent(unpublished, { canPublishRepository: true }));
+    assert.isTrue(menuContent(null, { canWriteSourceControl: false, hasStatusError: true }));
   });
 });
 

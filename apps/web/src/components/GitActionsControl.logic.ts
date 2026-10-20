@@ -224,6 +224,19 @@ export function buildMenuItems(
   ];
 }
 
+export function hasGitActionMenuContent(input: {
+  menuItems: readonly GitActionMenuItem[];
+  canWriteSourceControl: boolean;
+  canPublishRepository: boolean;
+  hasStatusError: boolean;
+}): boolean {
+  return (
+    input.canPublishRepository ||
+    input.hasStatusError ||
+    (input.canWriteSourceControl && input.menuItems.some((item) => !item.disabled))
+  );
+}
+
 export function resolveQuickAction(
   gitStatus: VcsStatusResult | null,
   isBusy: boolean,
