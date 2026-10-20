@@ -28,7 +28,13 @@ import {
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
-import Animated, { FadeInDown, ReduceMotion, useSharedValue } from "react-native-reanimated";
+import Animated, {
+  FadeInDown,
+  ReduceMotion,
+  useSharedValue,
+  withSpring,
+  type EntryExitAnimationFunction,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
@@ -144,7 +150,30 @@ import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
-const COMPOSER_POPOVER_ENTERING = FadeInDown.duration(180).reduceMotion(ReduceMotion.System);
+const MATERIAL_FAST_SPATIAL_SPRING = {
+  stiffness: 1400,
+  damping: 67.3,
+  reduceMotion: ReduceMotion.System,
+};
+const MATERIAL_FAST_EFFECTS_SPRING = {
+  stiffness: 3800,
+  damping: 123.3,
+  reduceMotion: ReduceMotion.System,
+};
+const MATERIAL_MENU_ENTERING: EntryExitAnimationFunction = () => {
+  "worklet";
+  return {
+    initialValues: { opacity: 0, transform: [{ scale: 0.8 }] },
+    animations: {
+      opacity: withSpring(1, MATERIAL_FAST_EFFECTS_SPRING),
+      transform: [{ scale: withSpring(1, MATERIAL_FAST_SPATIAL_SPRING) }],
+    },
+  };
+};
+const COMPOSER_POPOVER_ENTERING =
+  Platform.OS === "android"
+    ? MATERIAL_MENU_ENTERING
+    : FadeInDown.duration(180).reduceMotion(ReduceMotion.System);
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -1580,7 +1609,10 @@ export function NewTaskDraftScreen(props: {
       (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
         <View>
           <ComposerPopoverAnchor>
-            <Animated.View entering={COMPOSER_POPOVER_ENTERING}>
+            <Animated.View
+              entering={COMPOSER_POPOVER_ENTERING}
+              style={{ transformOrigin: "bottom" }}
+            >
               <ComposerCommandPopover
                 items={composerMenu.items}
                 triggerKind={composerMenu.trigger.kind}
