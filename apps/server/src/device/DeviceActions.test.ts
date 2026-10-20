@@ -227,6 +227,70 @@ describe("runDeviceAction", () => {
     }),
   );
 
+  it.effect.each([
+    ["camera", "grant", 1],
+    ["photos", "revoke", 2],
+  ] as const)(
+    "reports an Android %s %s that no pm command applied",
+    ([permission, decision, commands]) =>
+      Effect.gen(function* () {
+        const { ready, calls } = makeReady((call) => ({
+          code: 1,
+          stderr: `Unknown package: ${call.args.at(-1)}`,
+        }));
+        const error = yield* Effect.flip(
+          runDeviceAction(ready, "android", {
+            type: "setPermission",
+            deviceId: "emulator-5554",
+            appId: "com.example.missing",
+            permission,
+            decision,
+          }),
+        );
+        expect(calls).toHaveLength(commands);
+        expect(error._tag).toBe("DeviceOperationError");
+        expect(error.operation).toBe("permission");
+        const firstPermission = calls[0]?.args.at(-1);
+        expect(firstPermission).toBe(
+          permission === "camera"
+            ? "android.permission.CAMERA"
+            : "android.permission.READ_MEDIA_IMAGES",
+        );
+        expect(error._tag === "DeviceOperationError" && error.cause).toMatchObject({
+          stderr: `Unknown package: ${firstPermission}`,
+        });
+      }),
+  );
+
+  it.effect("keeps a permission change that one compatibility permission applied", () =>
+    Effect.gen(function* () {
+      // Images before Android 13 do not define READ_MEDIA_IMAGES.
+      const { ready, calls } = makeReady((call) =>
+        call.args.at(-1) === "android.permission.READ_MEDIA_IMAGES" ? { code: 1 } : {},
+      );
+      yield* runDeviceAction(ready, "android", {
+        type: "setPermission",
+        deviceId: "emulator-5554",
+        appId: "com.example.app",
+        permission: "photos",
+        decision: "grant",
+      });
+      expect(calls.map((call) => call.args.at(-1))).toEqual([
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
+      ]);
+      expect(calls.at(-1)?.args).toEqual([
+        "-s",
+        "emulator-5554",
+        "shell",
+        "pm",
+        "grant",
+        "com.example.app",
+        "android.permission.READ_EXTERNAL_STORAGE",
+      ]);
+    }),
+  );
+
   it.effect("wraps a bare push string in an APNs alert and feeds it on stdin", () =>
     Effect.gen(function* () {
       const { ready, calls } = makeReady();
