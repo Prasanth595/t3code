@@ -104,6 +104,7 @@ const FALLBACK_LC_CTYPE = "en_US.UTF-8";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
 const LOGIN_SHELL_TIMEOUT = Duration.seconds(5);
 const LAUNCHCTL_TIMEOUT = Duration.seconds(2);
+const FAILED_CAPTURE_RETRY_TTL = Duration.seconds(5);
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 
 const trimNonEmpty = (value: string | null | undefined): Option.Option<string> =>
@@ -549,7 +550,7 @@ export const make = Effect.gen(function* () {
       (exit) =>
         environment.platform === "win32" || (Exit.isSuccess(exit) && exit.value)
           ? Duration.infinity
-          : Duration.zero,
+          : FAILED_CAPTURE_RETRY_TTL,
     );
 
   return DesktopShellEnvironment.of({ installIntoProcess });

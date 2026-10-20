@@ -154,12 +154,13 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("desktop.ssh.ensureEnvironment"),
       ),
     disconnectEnvironment: (target) =>
-      shellEnvironment.installIntoProcess.pipe(
-        Effect.andThen(() => manager.disconnectEnvironment(target)),
-        Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
-        Effect.provide(runtimeContext),
-        Effect.withSpan("desktop.ssh.disconnectEnvironment"),
-      ),
+      manager
+        .disconnectEnvironment(target)
+        .pipe(
+          Effect.provideService(SshAuth.SshPasswordPrompt, passwordPrompt),
+          Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.disconnectEnvironment"),
+        ),
   });
 });
 
