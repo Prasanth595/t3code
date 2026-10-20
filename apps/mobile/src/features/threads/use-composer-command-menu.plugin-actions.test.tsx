@@ -6,7 +6,7 @@ import {
   ThreadId,
   type PluginAction,
 } from "@t3tools/contracts";
-import { act, createElement, useState } from "react";
+import { act, createElement, useLayoutEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -74,8 +74,12 @@ function Composer(props: {
   initialDraft: string;
   currentThreadId: ThreadId | null;
   report: (menu: Menu, draft: string) => void;
+  replaceDraft?: string;
 }) {
   const [draft, setDraft] = useState(props.initialDraft);
+  useLayoutEffect(() => {
+    if (props.replaceDraft !== undefined) setDraft(props.replaceDraft);
+  }, [props.replaceDraft]);
   const menu = useComposerCommandMenu({
     draftMessage: draft,
     ownerKey: "draft-1",
@@ -219,6 +223,40 @@ describe("picking a plugin action from the slash menu", () => {
     expect(fixture.runPluginAction).not.toHaveBeenCalled();
     expect(latest.draft).toBe(draft);
   });
+
+  it.each(["different-token", "shifted-token", "removed-action"])(
+    "refuses a retained handler after %s",
+    async (change) => {
+      const draft = "ship it\n/depl";
+      await openMenu(draft, draft.length, threadId);
+      const stale = offered("/deploy");
+      const staleMenu = latest.menu!;
+      const changed =
+        change === "different-token"
+          ? "ship it\n/nope"
+          : change === "shifted-token"
+            ? "prefix " + draft
+            : draft;
+      if (change === "removed-action") fixture.actions = [];
+      await act(async () =>
+        root.render(
+          createElement(Composer, {
+            initialDraft: draft,
+            replaceDraft: changed,
+            currentThreadId: threadId,
+            report,
+          }),
+        ),
+      );
+      await act(async () =>
+        latest.menu!.onSelectionChange({ start: changed.length, end: changed.length }),
+      );
+      await act(async () => staleMenu.onSelect(stale));
+      expect(latest.draft).toBe(changed);
+      expect(fixture.onChangeDraftMessage).not.toHaveBeenCalled();
+      expect(fixture.runPluginAction).not.toHaveBeenCalled();
+    },
+  );
 
   it("removes the command when it is picked, before the action settles, and runs it once", async () => {
     let finish: (ran: boolean) => void = () => {};

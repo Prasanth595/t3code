@@ -47,7 +47,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { serverEnvironment } from "../../state/server";
@@ -575,6 +575,21 @@ export function useComposerCommandMenu({
     return [];
   })();
 
+  const liveSelection = {
+    draftMessage,
+    trigger,
+    items,
+    canRunPluginActions,
+    environmentId,
+    ownerKey,
+    currentThreadId,
+    projectId,
+  };
+  const liveSelectionRef = useRef(liveSelection);
+  useLayoutEffect(() => {
+    liveSelectionRef.current = liveSelection;
+  });
+
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "thread") {
@@ -641,26 +656,45 @@ export function useComposerCommandMenu({
     }
 
     if (item.type === "plugin-action") {
-      // Keep the typed command when this connection may no longer run actions.
-      // The live grant is read because the menu may predate a permission change.
+      const current = liveSelectionRef.current;
+      const liveTrigger = current.trigger;
+      const offered = current.items.find(
+        (candidate) => candidate.id === item.id && candidate.type === "plugin-action",
+      );
+      // An old menu may outlive its draft, target, permission, or plugin generation.
       if (
-        environmentId === null ||
-        !canRunPluginActions ||
-        !canRunPluginActionsNow(environmentId)
-      ) {
+        current.environmentId === null ||
+        current.environmentId !== environmentId ||
+        current.ownerKey !== ownerKey ||
+        current.currentThreadId !== currentThreadId ||
+        current.projectId !== projectId ||
+        !current.canRunPluginActions ||
+        !canRunPluginActionsNow(current.environmentId) ||
+        trigger.kind !== "slash" ||
+        liveTrigger?.kind !== "slash" ||
+        liveTrigger.rangeStart !== trigger.rangeStart ||
+        liveTrigger.rangeEnd !== trigger.rangeEnd ||
+        liveTrigger.query !== trigger.query ||
+        offered?.type !== "plugin-action"
+      )
         return;
-      }
-      // A second tap before this render's draft updates must not run it twice.
       if (pluginActionRunningRef.current) return;
       pluginActionRunningRef.current = true;
-      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      const cleared = replaceTextRange(
+        current.draftMessage,
+        liveTrigger.rangeStart,
+        liveTrigger.rangeEnd,
+        "",
+      );
       setSelection({ start: cleared.cursor, end: cleared.cursor });
       onChangeDraftMessage(cleared.text);
-      void runPluginAction({ environmentId, action: item.action, target: item.target }).finally(
-        () => {
-          pluginActionRunningRef.current = false;
-        },
-      );
+      void runPluginAction({
+        environmentId: current.environmentId,
+        action: offered.action,
+        target: offered.target,
+      }).finally(() => {
+        pluginActionRunningRef.current = false;
+      });
       return;
     }
     if (
