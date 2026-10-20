@@ -9,7 +9,11 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import type { RemoteEnvironmentAuthorization } from "../authorization/service.ts";
-import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  ConnectionBlockedError,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 import type { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -158,12 +162,13 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
             ...(rejectedAccessToken === undefined ? {} : { rejectedAccessToken }),
           })
           .pipe(
-            Effect.mapError(
-              (cause) =>
-                new RemoteEnvironmentAuthFetchError({
-                  message: "Could not authorize the environment request.",
-                  cause,
-                }),
+            Effect.mapError((cause) =>
+              cause._tag === "ConnectionBlockedError"
+                ? cause
+                : new RemoteEnvironmentAuthFetchError({
+                    message: "Could not authorize the environment request.",
+                    cause,
+                  }),
             ),
           );
         // A learned direct route keeps its own origin; only the token renews.
@@ -208,9 +213,9 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
           rejectedAccessToken = authorization.accessToken;
           continue;
         }
-        return yield* new RemoteEnvironmentAuthFetchError({
-          message: "The environment rejected the renewed session authorization.",
-          cause: result.success,
+        return yield* new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "The environment rejected the renewed session authorization.",
         });
       }
       return result.success;

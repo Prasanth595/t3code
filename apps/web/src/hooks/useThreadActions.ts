@@ -14,7 +14,6 @@ import {
   EnvironmentId,
   type ScopedThreadRef,
   ThreadId,
-  sessionGrantsScope,
 } from "@t3tools/contracts";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
@@ -24,7 +23,7 @@ import { useRouter } from "@tanstack/react-router";
 
 import { getFallbackThreadIdAfterDelete, pinOrderKeyBetween } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { environmentSession, readEnvironmentScope } from "../state/session";
+import { readEnvironmentScope } from "../state/session";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../state/server";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
@@ -58,7 +57,6 @@ import * as ThreadUndo from "./threadUndo";
 import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -287,9 +285,6 @@ export function useThreadActions() {
   const removeWorktree = useAtomCommand(vcsEnvironment.removeWorktree, {
     reportFailure: false,
   });
-  const loadSessionState = useAtomQueryRunner(environmentSession.sessionStateAtom, {
-    reportFailure: false,
-  });
   const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
     reportFailure: false,
   });
@@ -453,12 +448,10 @@ export function useThreadActions() {
       !isScratchProject(threadProject, environmentConfig?.scratchWorkspaceRoot) &&
       localApi
     ) {
-      const sessionResult = await loadSessionState(threadRef.environmentId);
-      const permissionFailure = threadOperationFailure(threadRef);
-      if (permissionFailure) return permissionFailure;
-      canDeleteWorktree =
-        sessionResult._tag === "Success" &&
-        sessionGrantsScope(sessionResult.value, AuthSourceControlWriteScope);
+      canDeleteWorktree = readEnvironmentScope(
+        threadRef.environmentId,
+        AuthSourceControlWriteScope,
+      );
     }
     let shouldDeleteWorktree = false;
     const environmentSettings = environmentConfig?.settings;

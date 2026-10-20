@@ -188,6 +188,8 @@ export function mapRemoteEnvironmentError(
   const unreachableHop = connectionMethod === "relay" ? "tunnel" : "server";
   const via = connectionMethod === "relay" ? "relay" : "direct";
   switch (error._tag) {
+    case "ConnectionBlockedError":
+      return error;
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
