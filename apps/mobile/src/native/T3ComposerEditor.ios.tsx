@@ -1,7 +1,7 @@
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
-import { composerContextEditorTokens } from "../lib/composerContext";
+import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
 import { requireNativeView } from "expo";
 import {
   useCallback,
@@ -15,18 +15,12 @@ import {
 import type { NativeSyntheticEvent, StyleProp, ViewProps, ViewStyle } from "react-native";
 import { StyleSheet } from "react-native";
 
-import {
-  markdownFileIconSource,
-  markdownIconAssetUri,
-} from "@t3tools/mobile-markdown-text/file-icons";
-import {
-  composerChipSizeSuffix,
-  contextChipPresentation,
-} from "@t3tools/mobile-markdown-text/markdown";
-import { resolveMarkdownFileIcon } from "@t3tools/mobile-markdown-text/links";
+import { markdownFileIconSource, markdownIconAssetUri } from "../lib/markdownFileIcons";
+import { composerChipSizeSuffix, contextChipPresentation } from "../lib/composerChipPresentation";
+import { resolveMarkdownFileIcon } from "../lib/markdownLinks";
 import { useUniwindTheme } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { useFontFamily } from "../lib/useFontFamily";
+import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
@@ -84,6 +78,8 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly editable: boolean;
   readonly readOnly: boolean;
   readonly enterBehavior: string;
+  readonly submitTitle: string;
+  readonly alternateSubmitTitle: string;
   readonly scrollEnabled: boolean;
   readonly autoFocus: boolean;
   readonly autoCorrect: boolean;
@@ -102,7 +98,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteText?: (event: NativePasteTextEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
-  readonly onComposerSubmit?: () => void;
+  readonly onComposerSubmit?: (event: NativeSyntheticEvent<{ alternate: boolean }>) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -143,7 +139,7 @@ export function ComposerEditor({
   const confirmedTokensRef = useRef(collectComposerInlineTokens(props.value));
   const bodyText = useScaledTextRole("body");
   const theme = useUniwindTheme();
-  const fontFamily = useFontFamily("regular");
+  const fontFamily = FONT_FAMILIES.regular;
 
   useImperativeHandle(
     ref,
@@ -156,17 +152,14 @@ export function ComposerEditor({
     [],
   );
 
-  const skillLabels = useMemo(
-    () => new Map(skills.map((skill) => [skill.name, skill.displayName?.trim() || skill.name])),
-    [skills],
-  );
+  const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
   const tokensJson = useMemo(() => {
     const tokens = collectComposerInlineTokens(props.value, {
       preserveTrailingFrom: confirmedTokensRef.current,
     });
     confirmedTokensRef.current = tokens;
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens).map((token) => {
+      composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
         const record =
           token.type === "context"
             ? props.context?.records.find((record) => record.contextId === token.contextId)
@@ -184,9 +177,6 @@ export function ComposerEditor({
                 ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
                 : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
-          // Only a mention wears per-filetype artwork. An attachment chip keeps the tinted
-          // monochrome glyph web draws for it: coloured artwork ignores the chip's accent and
-          // makes the composer chip read differently from the same chip in a sent message.
           iconUri:
             token.type === "mention"
               ? fileIconUri(token.value)
@@ -286,6 +276,8 @@ export function ComposerEditor({
       editable={props.editable ?? true}
       readOnly={props.readOnly ?? false}
       enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
+      submitTitle={props.submitTitle ?? "Send Message"}
+      alternateSubmitTitle={props.alternateSubmitTitle ?? props.submitTitle ?? "Send Message"}
       scrollEnabled={props.scrollEnabled ?? true}
       autoFocus={props.autoFocus ?? false}
       autoCorrect={props.autoCorrect ?? true}
@@ -357,7 +349,11 @@ export function ComposerEditor({
       }}
       onComposerFocus={onFocus}
       onComposerBlur={onBlur}
-      onComposerSubmit={onSubmit}
+      onComposerSubmit={
+        onSubmit === undefined
+          ? undefined
+          : (event) => onSubmit(event.nativeEvent.alternate === true)
+      }
     />
   );
 }

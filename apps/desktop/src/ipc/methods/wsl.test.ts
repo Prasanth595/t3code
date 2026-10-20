@@ -28,7 +28,7 @@ const invokeSetWslDistro = (distro: string | null) =>
 const invokeSetWslOnly = (enabled: boolean) =>
   setWslOnly.handler(enabled).pipe(Effect.flatMap(decodeWslState));
 
-function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void> } = {}) {
+function layerWslBackend(input: { readonly onReconcile?: Effect.Effect<void> } = {}) {
   return Layer.succeed(
     DesktopWslBackend.DesktopWslBackend,
     DesktopWslBackend.DesktopWslBackend.of({
@@ -38,7 +38,7 @@ function makeWslBackendLayer(input: { readonly onReconcile?: Effect.Effect<void>
   );
 }
 
-function makeLifecycleLayer(relaunchReasons: Array<string>) {
+function layerLifecycle(relaunchReasons: Array<string>) {
   return Layer.succeed(
     DesktopLifecycle.DesktopLifecycle,
     DesktopLifecycle.DesktopLifecycle.of({
@@ -51,7 +51,7 @@ function makeLifecycleLayer(relaunchReasons: Array<string>) {
   );
 }
 
-const unusedLifecycleRuntimeLayer = Layer.mergeAll(
+const layerUnusedLifecycleRuntime = Layer.mergeAll(
   DesktopShutdown.layer,
   DesktopState.layer,
   Layer.succeed(
@@ -114,11 +114,48 @@ describe("WSL IPC", () => {
             wslOnly: true,
           }),
           DesktopWslEnvironment.layerTest(),
-          makeWslBackendLayer(),
+          layerWslBackend(),
         ),
       ),
     ),
   );
+
+  it.effect("does not enumerate distros until the WSL backend is enabled", () => {
+    const distros = [
+      { name: "Ubuntu", isDefault: true, version: 2 as const },
+      { name: "Debian", isDefault: false, version: 2 as const },
+    ];
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        wslDistro: "Debian",
+      }),
+      DesktopWslEnvironment.layerTest({ isAvailable: true, distros }),
+      layerWslBackend(),
+      layerLifecycle([]),
+      layerUnusedLifecycleRuntime,
+    );
+
+    return Effect.gen(function* () {
+      const wsl = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+      const state = yield* getWslState.handler(undefined).pipe(
+        Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, {
+          ...wsl,
+          listDistros: Effect.die("must not enumerate distros"),
+        }),
+        Effect.flatMap(decodeWslState),
+      );
+      assert.equal(state.enabled, false);
+      assert.equal(state.available, true);
+      assert.equal(state.distro, "Debian");
+      assert.deepEqual(state.distros, []);
+
+      const enabledState = yield* invokeSetWslBackendEnabled(true);
+      assert.equal(enabledState.enabled, true);
+      assert.equal(enabledState.distro, "Debian");
+      assert.deepEqual(enabledState.distros, distros);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("stages dual-backend preferences before enabling without relaunching", () => {
     const relaunchReasons: Array<string> = [];
@@ -129,9 +166,9 @@ describe("WSL IPC", () => {
         wslOnly: true,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer(),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerWslBackend(),
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -160,9 +197,9 @@ describe("WSL IPC", () => {
         wslOnly: false,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer(),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerWslBackend(),
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -197,13 +234,13 @@ describe("WSL IPC", () => {
         wslOnly: true,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -232,13 +269,13 @@ describe("WSL IPC", () => {
         wslOnly: false,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -261,13 +298,13 @@ describe("WSL IPC", () => {
         wslOnly: true,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {
@@ -300,13 +337,13 @@ describe("WSL IPC", () => {
         wslOnly: false,
       }),
       DesktopWslEnvironment.layerTest({ isAvailable: true }),
-      makeWslBackendLayer({
+      layerWslBackend({
         onReconcile: Effect.sync(() => {
           reconcileCount += 1;
         }),
       }),
-      makeLifecycleLayer(relaunchReasons),
-      unusedLifecycleRuntimeLayer,
+      layerLifecycle(relaunchReasons),
+      layerUnusedLifecycleRuntime,
     );
 
     return Effect.gen(function* () {

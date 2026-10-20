@@ -1,5 +1,10 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
-import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
+import {
+  buildProjectGroups,
+  derivePhysicalProjectKey,
+  type ProjectGroupingSettings,
+} from "./logicalProject";
+import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
@@ -14,16 +19,23 @@ export interface SidebarProjectSnapshot extends Project {
   displayName: string;
   groupedProjectCount: number;
   environmentPresence: EnvironmentPresence;
-  // True iff every non-primary member of this group lives in a
-  // desktop-local environment. The sidebar uses this
-  // to differentiate "lives on this machine but in a sandbox" from
-  // "lives on a real remote" so the project header can pick a
-  // local-device treatment instead of the generic remote treatment.
   allRemoteMembersAreDesktopLocal: boolean;
   allRemoteMembersAreWsl: boolean;
   memberProjects: readonly SidebarProjectGroupMember[];
   memberProjectRefs: readonly ScopedProjectRef[];
   remoteEnvironmentLabels: readonly string[];
+}
+
+export function countSidebarProjectChoices(groups: ReadonlyArray<SidebarProjectSnapshot>): number {
+  let checkoutCount = 0;
+  let hasScratch = false;
+  for (const group of groups) {
+    for (const project of group.memberProjects) {
+      if (project.isScratch) hasScratch = true;
+      else checkoutCount += 1;
+    }
+  }
+  return checkoutCount + Number(hasScratch);
 }
 
 export function projectGroupsSpanEnvironments(
@@ -43,6 +55,45 @@ export interface SidebarProjectPickerEntry {
   group: SidebarProjectSnapshot;
   targetProject: SidebarProjectGroupMember;
   isPreferred: boolean;
+}
+
+export function getSidebarProjectSettingsKey(
+  group: SidebarProjectSnapshot,
+  settings: ProjectGroupingSettings,
+  projects: ReadonlyArray<Project>,
+  projectRef?: ScopedProjectRef,
+): string {
+  if (!group.isScratch) return group.projectKey;
+  const project =
+    group.memberProjects.find(
+      (member) =>
+        member.environmentId === projectRef?.environmentId && member.id === projectRef.projectId,
+    ) ??
+    group.memberProjects.find((member) => member.environmentId === projectRef?.environmentId) ??
+    group;
+  return (
+    buildPhysicalToLogicalProjectKeyMap({ projects, settings, primaryEnvironmentId: null }).get(
+      derivePhysicalProjectKey(project),
+    ) ?? group.projectKey
+  );
+}
+
+export function resolveSidebarProjectScopeKey(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly key: string | null;
+  readonly settings?: ProjectGroupingSettings;
+  readonly canClearMissingScope?: boolean;
+}): string | null {
+  if (input.key === null) return null;
+  const group =
+    input.groups.find((candidate) => candidate.projectKey === input.key) ??
+    input.groups.find(
+      (candidate) =>
+        candidate.isScratch &&
+        resolveScratchProjectScopeKey(input.key, candidate.memberProjects, input.settings) ===
+          candidate.projectKey,
+    );
+  return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {
@@ -67,17 +118,15 @@ export function buildPhysicalToLogicalProjectKeyMap(input: {
 export function buildSidebarProjectSnapshots(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
+  groupScratchProjects?: boolean;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
-  // Returns true when an env id maps to a desktop-local saved-env
-  // record. Defaults to "false for every
-  // env" so callers that don't care about the distinction get the
-  // legacy behavior.
   isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
   isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
 }): SidebarProjectSnapshot[] {
   return buildProjectGroups({
     projects: input.projects,
+    groupScratchProjects: input.groupScratchProjects ?? false,
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
   }).map((group): SidebarProjectSnapshot => {
@@ -136,8 +185,33 @@ export function buildSidebarProjectSnapshots(input: {
 export function buildSidebarProjectPickerEntries(input: {
   groups: ReadonlyArray<SidebarProjectSnapshot>;
   preferredProjectRef: ScopedProjectRef | null;
+  expandCheckouts?: boolean;
+  isEnvironmentReachable?: (environmentId: EnvironmentId) => boolean;
 }) {
   const preferredProjectRef = input.preferredProjectRef;
+  if (input.expandCheckouts) {
+    // memberProjects already deduplicates physical checkouts. Keep distinct
+    // worktrees on the same environment as separate choices.
+    return input.groups
+      .flatMap((group) =>
+        group.memberProjects.map((targetProject): SidebarProjectPickerEntry => ({
+          group,
+          targetProject,
+          isPreferred:
+            preferredProjectRef !== null &&
+            targetProject.environmentId === preferredProjectRef.environmentId &&
+            targetProject.id === preferredProjectRef.projectId,
+        })),
+      )
+      .toSorted((left, right) => {
+        const reachability = input.isEnvironmentReachable;
+        const reachableDelta = reachability
+          ? Number(reachability(right.targetProject.environmentId)) -
+            Number(reachability(left.targetProject.environmentId))
+          : 0;
+        return reachableDelta || Number(right.isPreferred) - Number(left.isPreferred);
+      });
+  }
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
     const isPreferred = preferredProjectRef
       ? group.memberProjectRefs.some(

@@ -39,7 +39,7 @@ const DesktopSettingsPatch = Schema.Struct({
 const decodeDesktopSettingsPatch = Schema.decodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
 const encodeDesktopSettingsPatch = Schema.encodeEffect(Schema.fromJsonString(DesktopSettingsPatch));
 
-function makeEnvironmentLayer(baseDir: string, appVersion = "0.0.17") {
+function layerEnvironment(baseDir: string, appVersion = "0.0.17") {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
@@ -73,7 +73,7 @@ const withSettings = <A, E, R>(
     return yield* effect.pipe(
       Effect.provide(
         DesktopAppSettings.layer.pipe(
-          Layer.provideMerge(makeEnvironmentLayer(baseDir, options?.appVersion)),
+          Layer.provideMerge(layerEnvironment(baseDir, options?.appVersion)),
           Layer.provideMerge(NodeServices.layer),
         ),
       ),
@@ -283,7 +283,7 @@ describe("DesktopSettings", () => {
       Effect.gen(function* () {
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
         yield* writeSettingsPatch({
-          mainWindowBounds: { x: 10.5, y: 20, width: 839, height: 620 },
+          mainWindowBounds: { x: 10, y: 20, width: 599, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         });
@@ -342,17 +342,52 @@ describe("DesktopSettings", () => {
         const fileSystem = yield* FileSystem.FileSystem;
         const settings = yield* DesktopAppSettings.DesktopAppSettings;
 
-        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 1440, height: 960 }, true);
+        yield* settings.setMainWindowBounds({ x: -1200, y: 40, width: 600, height: 620 }, true);
         yield* settings.setServerExposureMode("network-accessible");
 
         const persisted = yield* decodeDesktopSettingsPatch(
           yield* fileSystem.readFileString(environment.desktopSettingsPath),
         );
         assert.deepEqual(persisted, {
-          mainWindowBounds: { x: -1200, y: 40, width: 1440, height: 960 },
+          mainWindowBounds: { x: -1200, y: 40, width: 600, height: 620 },
           mainWindowMaximized: true,
           serverExposureMode: "network-accessible",
         } satisfies typeof DesktopSettingsPatch.Type);
+
+        const restored = yield* Effect.gen(function* () {
+          const freshSettings = yield* DesktopAppSettings.DesktopAppSettings;
+          return yield* freshSettings.load;
+        }).pipe(Effect.provide(DesktopAppSettings.layer));
+        assert.deepEqual(restored.mainWindowBounds, persisted.mainWindowBounds);
+        assert.isTrue(restored.mainWindowMaximized);
+      }),
+    ),
+  );
+
+  it.effect("saves through a symlinked settings file without replacing the link", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        const dotfiles = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-desktop-settings-dotfiles-",
+        });
+        const linkedSettingsPath = `${dotfiles}/desktop-settings.json`;
+        yield* fileSystem.writeFileString(linkedSettingsPath, "{}\n");
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.symlink(linkedSettingsPath, environment.desktopSettingsPath);
+
+        yield* settings.setServerExposureMode("network-accessible");
+
+        assert.equal(
+          yield* fileSystem.readLink(environment.desktopSettingsPath),
+          linkedSettingsPath,
+        );
+        const persisted = yield* decodeDesktopSettingsPatch(
+          yield* fileSystem.readFileString(linkedSettingsPath),
+        );
+        assert.equal(persisted.serverExposureMode, "network-accessible");
       }),
     ),
   );
