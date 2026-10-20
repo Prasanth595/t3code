@@ -16,6 +16,15 @@ function pendingQuestionTextIsSelected(): boolean {
   return (window.getSelection()?.toString().length ?? 0) > 0;
 }
 
+// A drag that ends on the header clicks the row, the shared ancestor, so the
+// target is not inside the question. The selection still is.
+function collapsedQuestionSelectionIntersects(row: Element): boolean {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  const question = row.querySelector("[data-pending-user-input-selectable]");
+  return question !== null && selection.getRangeAt(0).intersectsNode(question);
+}
+
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
   cwd: string | undefined;
@@ -216,12 +225,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           const target = event.target;
           if (!(target instanceof Element)) return;
           if (target.closest("[data-pending-user-input-toggle]")) return;
-          if (
-            target.closest("[data-pending-user-input-selectable]") &&
-            pendingQuestionTextIsSelected()
-          ) {
-            return;
-          }
+          if (collapsedQuestionSelectionIntersects(event.currentTarget)) return;
           setCollapsedQuestionId(isCollapsed ? null : activeQuestion.id);
         }}
       >
@@ -368,9 +372,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       event.preventDefault();
                       handleOptionSelection(activeQuestion.id, optionValue, index);
                     }}
-                    onClick={() => {
-                      // A drag that highlighted label or description text is a copy, not a choice.
-                      if (pendingQuestionTextIsSelected()) return;
+                    onClick={(event) => {
+                      // A pointer drag that highlighted text is a copy, not a choice.
+                      // Keyboard and assistive clicks (detail 0) still choose the option.
+                      if (event.detail !== 0 && pendingQuestionTextIsSelected()) return;
                       handleOptionSelection(activeQuestion.id, optionValue, index);
                     }}
                     className={className}

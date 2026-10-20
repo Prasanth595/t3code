@@ -95,12 +95,19 @@ it("keeps question copy selectable and ignores a click that finishes a selection
   expect(option?.getAttribute("role")).toBe("button");
 
   selectContents(description!);
-  await act(async () => (option as HTMLElement).click());
+  await act(async () =>
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })),
+  );
   expect(onToggleOption).not.toHaveBeenCalled();
+
+  await act(async () =>
+    option!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 0 })),
+  );
+  expect(onToggleOption).toHaveBeenCalledTimes(1);
 
   window.getSelection()?.removeAllRanges();
   await act(async () => (option as HTMLElement).click());
-  expect(onToggleOption).toHaveBeenCalledTimes(1);
+  expect(onToggleOption).toHaveBeenCalledTimes(2);
   expect(onToggleOption).toHaveBeenCalledWith("approach", "Keep the native button");
 });
 
@@ -122,7 +129,18 @@ it("still chooses an option from the keyboard and keeps a selected collapsed que
   await act(async () => (collapsedQuestion as HTMLElement).click());
   expect(toggle().dataset.pendingUserInputToggle).toBe("collapsed");
 
+  const row = container.querySelector("[data-composer-banner-row]") as HTMLElement;
+  const header = container.querySelector("span.shrink-0")!;
+  const range = document.createRange();
+  range.setStart(header.firstChild!, 0);
+  range.setEnd(collapsedQuestion!.firstChild!, collapsedQuestion!.textContent!.length);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+  await act(async () => row.click());
+  expect(toggle().dataset.pendingUserInputToggle).toBe("collapsed");
+
   window.getSelection()?.removeAllRanges();
-  await act(async () => (collapsedQuestion as HTMLElement).click());
+  await act(async () => row.click());
   expect(toggle().dataset.pendingUserInputToggle).toBe("expanded");
 });
