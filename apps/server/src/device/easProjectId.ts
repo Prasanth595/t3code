@@ -92,9 +92,10 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
 const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
 // A config may replace the object holding the entry, or the whole config,
 // from somewhere this scan cannot read: an assignment to `.extra` or `.eas`,
-// (as a property or in brackets), or another file it requires or imports.
+// (as a property or in brackets), a `delete` of anything, or another file it
+// requires or imports.
 const REPLACES_HOLDER =
-  /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\brequire\s*\(|\bimport\s*\(/;
+  /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\bdelete\b|\brequire\s*\(|\bimport\s*\(/;
 // An `extra:` or `eas:` entry in a config that takes its id from app.json:
 // unless its value is an object that starts by spreading that same entry
 // of `config` (`config.extra`, `config.extra.eas`; spreading the whole

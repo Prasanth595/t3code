@@ -404,6 +404,17 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config deletes from the config it spreads",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => {
+        delete config.extra;
+        return { ...config };
+      };`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when a config spreads part of the config over it",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.extra.preview });`,
