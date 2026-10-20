@@ -40,6 +40,9 @@ function openDatabase() {
     request.addEventListener("success", () => resolve(request.result));
     request.addEventListener("error", () => reject(request.error));
     request.addEventListener("blocked", () => reject(new Error("Saved usage is blocked.")));
+  }).catch((error: unknown) => {
+    database = undefined;
+    throw error;
   }));
 }
 
@@ -111,8 +114,8 @@ export async function loadSavedUsage(environmentId: string): Promise<readonly Sa
 }
 
 /** Keeps a summary that just arrived, replacing any older read of the same window. */
-export async function saveUsage(environmentId: string, saved: SavedUsage): Promise<void> {
-  if (typeof indexedDB === "undefined") return;
+export async function saveUsage(environmentId: string, saved: SavedUsage): Promise<boolean> {
+  if (typeof indexedDB === "undefined") return false;
   const generation = generations.get(environmentId) ?? 0;
   try {
     await inTransaction("readwrite", (store) => {
@@ -125,9 +128,12 @@ export async function saveUsage(environmentId: string, saved: SavedUsage): Promi
         store.put([saved, ...kept].slice(0, MAX_SAVED_WINDOWS), environmentId);
       });
     });
+    if ((generations.get(environmentId) ?? 0) !== generation) return false;
     for (const listener of listeners) listener(environmentId, false);
+    return true;
   } catch (error) {
     console.warn("Could not save usage.", error);
+    return false;
   }
 }
 

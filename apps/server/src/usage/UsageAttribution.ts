@@ -101,12 +101,12 @@ const make = Effect.gen(function* () {
   });
 
   const byNativeId = (rows: ReadonlyArray<typeof NativeRow.Type>) => {
-    const map = new Map<string, NativeThreadRef>();
+    const map = new Map<string, NativeThreadRef[]>();
     for (const row of rows) {
-      map.set(`${row.driver}\u0000${row.nativeId}`, {
-        threadId: row.threadId,
-        instanceId: row.instanceId,
-      });
+      const key = `${row.driver}\u0000${row.nativeId}`;
+      const entries = map.get(key) ?? [];
+      entries.push({ threadId: row.threadId, instanceId: row.instanceId });
+      map.set(key, entries);
     }
     return map;
   };

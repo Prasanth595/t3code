@@ -457,10 +457,15 @@ export function buildExplorerData(sources: readonly UsageExplorerSource[]): Usag
   }
   let hasThreads = false;
   for (const source of sources) {
+    const localTitleCount = new Map<string, number>();
+    for (const project of source.projects)
+      localTitleCount.set(project.title, (localTitleCount.get(project.title) ?? 0) + 1);
     for (const project of source.projects) {
-      // Two environments can each have a project with the same name.
-      const name =
-        (titleCount.get(project.title) ?? 0) > 1
+      const sameTitleInEnvironment = (localTitleCount.get(project.title) ?? 0) > 1;
+      // Include the stable project id when even the environment cannot distinguish names.
+      const name = sameTitleInEnvironment
+        ? `${project.title} · ${source.environmentLabel} · ${project.projectId}`
+        : (titleCount.get(project.title) ?? 0) > 1
           ? `${project.title} · ${source.environmentLabel}`
           : project.title;
       projectNames.set(projectKey(source.environmentId, project.projectId), name);

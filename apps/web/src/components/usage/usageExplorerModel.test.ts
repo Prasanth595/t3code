@@ -97,6 +97,19 @@ describe("buildExplorerData", () => {
     expect(data.projectNames.get("env-b\u001fapp")).toBe("app · Desktop");
   });
 
+  it("distinguishes projects with the same title inside one environment", () => {
+    const data = buildExplorerData([
+      source({
+        projects: [
+          { projectId: app, title: "app" },
+          { projectId: ProjectId.make("app-copy"), title: "app" },
+        ],
+      }),
+    ]);
+    expect(data.projectNames.get("env-a\u001fapp")).toBe("app · Laptop · app");
+    expect(data.projectNames.get("env-a\u001fapp-copy")).toBe("app · Laptop · app-copy");
+  });
+
   it("does not nest a thread under a parent in another project", () => {
     const data = buildExplorerData([
       source({

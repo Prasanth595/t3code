@@ -90,8 +90,8 @@ export interface TranscriptUsageFormat<State> {
    */
   readonly workingDirectory?: {
     readonly markers: readonly [string, ...string[]];
-    fromLine(line: string): string | null;
-    fromProjected(projected: unknown): string | null;
+    fromLine(line: string, state: State): string | null;
+    fromProjected(projected: unknown, state: State): string | null;
   };
 }
 
@@ -99,25 +99,25 @@ export interface TranscriptUsageFormat<State> {
  * Builds a `workingDirectory` hook from where a parsed line keeps the folder.
  * `read` returns the folder, or anything else when the line does not name it.
  */
-export function workingDirectoryHook(
+export function workingDirectoryHook<State = unknown>(
   markers: readonly [string, ...string[]],
-  read: (record: Record<string, unknown>) => unknown,
-): NonNullable<TranscriptUsageFormat<unknown>["workingDirectory"]> {
-  const fromProjected = (projected: unknown): string | null => {
+  read: (record: Record<string, unknown>, state: State) => unknown,
+): NonNullable<TranscriptUsageFormat<State>["workingDirectory"]> {
+  const fromProjected = (projected: unknown, state: State): string | null => {
     if (typeof projected !== "object" || projected === null) return null;
-    const value = read(projected as Record<string, unknown>);
+    const value = read(projected as Record<string, unknown>, state);
     return typeof value === "string" && value.length > 0 ? value : null;
   };
   return {
     markers,
-    fromLine: (line) => {
+    fromLine: (line, state) => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(line);
       } catch {
         return null;
       }
-      return fromProjected(parsed);
+      return fromProjected(parsed, state);
     },
     fromProjected,
   };

@@ -243,7 +243,7 @@ export async function readTranscriptRecords<State>(
       const namesCwd = cwd === null && mightNameCwd !== undefined && mightNameCwd(lineBuffer);
       if (!carriesUsage && !namesCwd) return;
       const line = toLineString(lineBuffer);
-      if (namesCwd) cwd = cwdHook!.fromLine(line);
+      if (namesCwd) cwd = cwdHook!.fromLine(line, lineState);
       if (!carriesUsage) return;
       for (const record of format.parseLine(line, lineState)) out.push(record);
     };
@@ -278,7 +278,8 @@ export async function readTranscriptRecords<State>(
       if (streaming) {
         streaming.write(decoder!.end());
         const projected = streaming.finish();
-        if (cwd === null && cwdHook !== undefined) cwd = cwdHook.fromProjected(projected);
+        if (cwd === null && cwdHook !== undefined)
+          cwd = cwdHook.fromProjected(projected, lineState);
         for (const record of format.parseProjected(projected, lineState)) out.push(record);
       } else if (pendingBytes > 0) {
         const line =

@@ -102,6 +102,31 @@ describe("readTranscriptRecords resume", () => {
     assert.strictEqual(read.records.length, 1);
   });
 
+  it.each([1, 8 * 1024 * 1024])(
+    "leaves a child without cwd unlocated across ancestor metadata (stream threshold %s)",
+    async (streamingThresholdBytes) => {
+      const path = NodePath.join(dir, "codex-no-cwd.jsonl");
+      const ancestor = `${JSON.stringify({ type: "session_meta", payload: { id: "ancestor", cwd: "/work/ancestor" } })}\n`;
+      await NodeFSP.writeFile(
+        path,
+        codexMetaLine() + ancestor + codexModelLine("gpt-6-astra") + codexUsageLine(5, 10),
+      );
+      const read = await readTranscriptRecords(path, TEST_FORMATS.codex, undefined, {
+        streamingThresholdBytes,
+      });
+      assert.isNotNull(read);
+      assert.isNull(read.cwd);
+      assert.strictEqual(read.records[0]?.sessionId, "codex-session-1");
+      await NodeFSP.appendFile(path, ancestor + codexUsageLine(7, 20));
+      const resumed = await readTranscriptRecords(path, TEST_FORMATS.codex, read.position, {
+        streamingThresholdBytes,
+      });
+      assert.isNotNull(resumed);
+      assert.isNull(resumed.cwd);
+      assert.strictEqual(resumed.records[0]?.sessionId, "codex-session-1");
+    },
+  );
+
   it("takes a Pi session's folder from its header", async () => {
     const path = NodePath.join(dir, "pi.jsonl");
     await NodeFSP.writeFile(

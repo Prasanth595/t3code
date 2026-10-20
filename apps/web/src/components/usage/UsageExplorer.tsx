@@ -200,7 +200,12 @@ export function UsageExplorer(props: UsageExplorerProps) {
     };
     let next = filterState;
     if (next.environment !== null && !environments.has(next.environment)) {
-      next = { ...next, environment: null };
+      next = {
+        ...next,
+        environment: null,
+        project:
+          next.project !== null && environmentOfKey(next.project) === null ? null : next.project,
+      };
     }
     if (next.project !== null && !selected(next.project)) next = { ...next, project: null };
     if (next.accounts !== null && ![...next.accounts].every(selected)) {

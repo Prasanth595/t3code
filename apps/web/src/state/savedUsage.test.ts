@@ -5,9 +5,9 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { pickSavedUsage, type SavedUsage, trimSavedUsage } from "./savedUsage";
+import { pickSavedUsage, type SavedUsage, trimSavedUsage, saveUsage } from "./savedUsage";
 
 const bucket = (day: string, hourStart?: string): UsageBucket => ({
   day: UsageDay.make(day),
@@ -187,5 +187,25 @@ describe("trimSavedUsage", () => {
     };
     const saved = read("2026-09-30T10:00:00Z", ["/a"], [pathed("/a")]);
     expect(paths(trimSavedUsage([live], new Map([["x", saved]])).get("x"))).toEqual(["/a"]);
+  });
+});
+
+describe("saveUsage", () => {
+  it("reports failed storage opens and allows the same read to be retried", async () => {
+    const open = vi.fn(() => {
+      const request = Object.assign(new EventTarget(), { error: new Error("storage unavailable") });
+      queueMicrotask(() => request.dispatchEvent(new Event("error")));
+      return request;
+    });
+    vi.stubGlobal("indexedDB", { open });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await saveUsage("env", month)).toBe(false);
+      expect(await saveUsage("env", month)).toBe(false);
+      expect(open).toHaveBeenCalledTimes(2);
+    } finally {
+      warning.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 });

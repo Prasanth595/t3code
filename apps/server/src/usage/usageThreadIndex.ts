@@ -17,9 +17,9 @@ import type { UsageBucketGroup } from "./usageAggregation.ts";
 /** T3's records needed for attribution, read from the orchestration read model. */
 export interface UsageAttributionIndex {
   /** Keyed `driver\0nativeId`: the T3 thread a provider session belongs to. */
-  readonly nativeThreads: ReadonlyMap<string, NativeThreadRef>;
+  readonly nativeThreads: ReadonlyMap<string, readonly NativeThreadRef[]>;
   /** Keyed `driver\0nativeTaskId`: the child thread a provider sub-agent ran as. */
-  readonly nativeSubagents: ReadonlyMap<string, NativeThreadRef>;
+  readonly nativeSubagents: ReadonlyMap<string, readonly NativeThreadRef[]>;
   readonly threads: ReadonlyMap<string, T3ThreadRef>;
   readonly projects: readonly T3ProjectRef[];
 }
@@ -106,7 +106,7 @@ export class UsageThreadIndex {
     if (source.sessionId.length === 0) {
       return source.instanceId === null ? {} : { instanceId: source.instanceId };
     }
-    const key = `${source.provider}\u0000${source.sessionId}\u0000${source.agentId ?? ""}`;
+    const key = `${source.provider}\u0000${source.sessionId}\u0000${source.agentId ?? ""}\u0000${source.instanceId ?? ""}`;
     const cached = this.#groupBySession.get(key);
     if (cached !== undefined) return cached;
     const group = this.#resolve(source);
@@ -149,7 +149,12 @@ export class UsageThreadIndex {
       return source.instanceId === null ? {} : { instanceId: source.instanceId };
     }
     if (source.agentId !== null) {
-      const child = this.#attribution.nativeSubagents.get(`${driver}\u0000${source.agentId}`);
+      const child = this.#nativeRef(
+        this.#attribution.nativeSubagents,
+        driver,
+        source.agentId,
+        source.instanceId,
+      );
       const parent = this.#resolve({ ...source, agentId: null, label: null });
       if (child !== undefined) {
         const thread = this.#t3Thread(child.threadId);
@@ -167,7 +172,12 @@ export class UsageThreadIndex {
       });
       return withInstance({ thread: index }, parent.instanceId ?? null);
     }
-    const native = this.#attribution.nativeThreads.get(`${driver}\u0000${source.sessionId}`);
+    const native = this.#nativeRef(
+      this.#attribution.nativeThreads,
+      driver,
+      source.sessionId,
+      source.instanceId,
+    );
     if (native !== undefined) {
       const thread = this.#t3Thread(native.threadId);
       if (thread !== null) return withInstance(thread, native.instanceId ?? source.instanceId);
@@ -178,6 +188,31 @@ export class UsageThreadIndex {
       located: source.cwd !== null,
     });
     return withInstance({ thread: index }, source.instanceId);
+  }
+
+  #nativeRef(
+    index: ReadonlyMap<string, readonly NativeThreadRef[]>,
+    driver: string,
+    nativeId: string,
+    instanceId: string | null,
+  ): NativeThreadRef | undefined {
+    const entries = index.get(`${driver}\u0000${nativeId}`) ?? [];
+    const matching = entries.filter((entry) => entry.instanceId === instanceId);
+    const candidates =
+      matching.length > 0
+        ? matching
+        : instanceId === null
+          ? entries
+          : entries.filter((entry) => entry.instanceId === null);
+    const first = candidates[0];
+    if (first === undefined || candidates.some((entry) => entry.threadId !== first.threadId))
+      return undefined;
+    return {
+      threadId: first.threadId,
+      instanceId: candidates.every((entry) => entry.instanceId === first.instanceId)
+        ? first.instanceId
+        : null,
+    };
   }
 
   /** The T3 thread's entry, with its ancestors, or null when T3 no longer has it. */

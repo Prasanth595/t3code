@@ -712,7 +712,7 @@ export function UsagePage() {
             hours: timeline.hours,
             resolution: timeline.hours.length > 0 ? "hour" : "day",
             timeZone: window.timeZone,
-            referenceTime: window.untilTime,
+            referenceTime: shownWindow.untilTime,
           }}
           onSetPrice={(model) => setPriceDialog({ model })}
         />

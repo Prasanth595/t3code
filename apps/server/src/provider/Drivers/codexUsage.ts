@@ -213,7 +213,8 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
   sharedSessionsAcrossFiles: true,
   // The rollout's first `session_meta` is its own session; a fork repeats its
   // ancestors' metas after it, and the engine keeps the first folder.
-  workingDirectory: workingDirectoryHook(['"session_meta"'], (record) => {
+  workingDirectory: workingDirectoryHook(['"session_meta"'], (record, state: CodexScanState) => {
+    if (state.sawSessionMeta) return null;
     const payload = record["payload"];
     return record["type"] === "session_meta" && typeof payload === "object" && payload !== null
       ? (payload as Record<string, unknown>)["cwd"]

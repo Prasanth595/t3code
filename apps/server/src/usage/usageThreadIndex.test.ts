@@ -17,11 +17,11 @@ const nested = ProjectId.make("project-app-docs");
 
 const attribution: UsageAttributionIndex = {
   nativeThreads: new Map([
-    ["claudeAgent\u0000parent-session", { threadId: parentThread, instanceId: "claude-work" }],
-    ["codex\u0000child-session", { threadId: childThread, instanceId: null }],
+    ["claudeAgent\u0000parent-session", [{ threadId: parentThread, instanceId: "claude-work" }]],
+    ["codex\u0000child-session", [{ threadId: childThread, instanceId: null }]],
   ]),
   nativeSubagents: new Map([
-    ["claudeAgent\u0000agent-1", { threadId: agentThread, instanceId: null }],
+    ["claudeAgent\u0000agent-1", [{ threadId: agentThread, instanceId: null }]],
   ]),
   threads: new Map([
     [parentThread, { projectId: app, title: "Ship it", parentThreadId: null }],
@@ -80,6 +80,44 @@ describe("UsageThreadIndex", () => {
     });
     expect(known.instanceId).toBe("claude-work");
     expect(unknown.instanceId).toBe("claude-work");
+  });
+
+  it("keeps native sessions and subagents attributed to the matching account", () => {
+    const index = new UsageThreadIndex({
+      ...attribution,
+      nativeThreads: new Map([
+        [
+          "claudeAgent\u0000shared",
+          [
+            { threadId: parentThread, instanceId: "work" },
+            { threadId: childThread, instanceId: "personal" },
+          ],
+        ],
+      ]),
+      nativeSubagents: new Map([
+        [
+          "claudeAgent\u0000shared-agent",
+          [
+            { threadId: agentThread, instanceId: "work" },
+            { threadId: childThread, instanceId: "personal" },
+          ],
+        ],
+      ]),
+    });
+    const work = index.groupFor(source({ sessionId: "shared", instanceId: "work" }));
+    const personal = index.groupFor(source({ sessionId: "shared", instanceId: "personal" }));
+    const agent = index.groupFor(
+      source({ sessionId: "shared", agentId: "shared-agent", instanceId: "work" }),
+    );
+    const unknown = index.groupFor(source({ sessionId: "shared" }));
+    const { threads } = index.finish();
+    expect(work.instanceId).toBe("work");
+    expect(personal.instanceId).toBe("personal");
+    expect(threads[work.thread!]?.threadId).toBe(parentThread);
+    expect(threads[personal.thread!]?.threadId).toBe(childThread);
+    expect(threads[agent.thread!]?.threadId).toBe(agentThread);
+    expect(unknown).not.toHaveProperty("instanceId");
+    expect(threads[unknown.thread!]?.threadId).toBeUndefined();
   });
 
   it("gives a sub-agent read first its session's folder once the session is read", () => {
@@ -167,7 +205,7 @@ describe("UsageThreadIndex", () => {
     const b = ThreadId.make("b");
     const index = new UsageThreadIndex({
       ...EMPTY_ATTRIBUTION,
-      nativeThreads: new Map([["claudeAgent\u0000s", { threadId: a, instanceId: null }]]),
+      nativeThreads: new Map([["claudeAgent\u0000s", [{ threadId: a, instanceId: null }]]]),
       threads: new Map([
         [a, { projectId: app, title: "A", parentThreadId: b }],
         [b, { projectId: app, title: "B", parentThreadId: a }],

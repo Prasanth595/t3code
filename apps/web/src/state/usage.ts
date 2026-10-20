@@ -408,8 +408,12 @@ export function useUsage(
       if (status.offline || status.isPending || status.summary === null) continue;
       const key = `${status.environmentId}\u0000${JSON.stringify(status.window)}`;
       if (lastSavedRead.get(key) === status.summary.readAt) continue;
-      lastSavedRead.set(key, status.summary.readAt);
-      void saveUsage(status.environmentId, { input: status.window, summary: status.summary });
+      const readAt = status.summary.readAt;
+      void saveUsage(status.environmentId, { input: status.window, summary: status.summary }).then(
+        (saved) => {
+          if (saved) lastSavedRead.set(key, readAt);
+        },
+      );
     }
   }, [environments]);
 
