@@ -411,6 +411,7 @@ function layerTest(input: {
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly threadIdleUnloadMs?: number;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
@@ -453,6 +454,9 @@ function layerTest(input: {
     ProviderSessionManager.layerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
+      ...(input.threadIdleUnloadMs === undefined
+        ? {}
+        : { threadIdleUnloadMs: input.threadIdleUnloadMs }),
     }).pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -3401,6 +3405,318 @@ it.effect(
         Effect.scoped,
       );
     }),
+);
+
+/**
+ * Opens one shared session for two threads, loads the first thread, and
+ * settles it with a turn.terminal event. Returns everything the idle-unload
+ * tests need to drive the clock and assert.
+ */
+function settleSharedThread(input: {
+  readonly fixtureName: string;
+  readonly state: Ref.Ref<TestProviderRuntimeState>;
+  readonly persistRunningTurn?: boolean;
+}) {
+  return Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const projectId = yield* idAllocator.allocate.project({
+      fixtureName: input.fixtureName,
+    });
+    const threadId = yield* idAllocator.allocate.thread({
+      fixtureName: `${input.fixtureName}-a`,
+      projectId,
+    });
+    const otherThreadId = yield* idAllocator.allocate.thread({
+      fixtureName: `${input.fixtureName}-b`,
+      projectId,
+    });
+    const providerSessionId = idAllocator.derive.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+    });
+    const providerThread = makeProviderThread({
+      idAllocator,
+      threadId,
+      providerSessionId,
+      now,
+    });
+    const providerTurnId = idAllocator.derive.providerTurn({
+      driver: CODEX_DRIVER,
+      nativeTurnId: `native-turn-${input.fixtureName}`,
+    });
+    const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+    yield* eventSink.write({
+      events: [
+        yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+        yield* makeThreadCreatedEvent({ idAllocator, threadId: otherThreadId, now }),
+        {
+          id: yield* idAllocator.allocate.event({ threadId }),
+          type: "provider-thread.updated",
+          threadId,
+          driver: CODEX_DRIVER,
+          occurredAt: now,
+          payload: providerThread,
+        },
+        ...(input.persistRunningTurn === true
+          ? [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-turn.updated",
+                threadId,
+                runId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload: {
+                  id: providerTurnId,
+                  providerThreadId: providerThread.id,
+                  nodeId: idAllocator.derive.rootNode({ runId }),
+                  runAttemptId: null,
+                  nativeTurnRef: null,
+                  ordinal: 1,
+                  status: "running",
+                  startedAt: now,
+                  completedAt: null,
+                },
+              } as const,
+            ]
+          : []),
+      ],
+    });
+    const runtime = yield* manager.open({
+      threadId,
+      providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    // A second thread keeps the shared runtime up after the unload.
+    yield* manager.open({
+      threadId: otherThreadId,
+      providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    // Loading the thread first proves a later resume reloads it.
+    yield* runtime.resumeThread({
+      providerThread,
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const queue = (yield* Ref.get(input.state)).eventQueues.get(String(providerSessionId));
+    assert.isDefined(queue);
+    const offerTerminal = Queue.offer(queue!, {
+      type: "turn.terminal",
+      driver: CODEX_DRIVER,
+      providerThreadId: providerThread.id,
+      providerTurnId,
+      runOrdinal: 1,
+      status: "completed",
+      failure: null,
+      threadDisposition: "reusable",
+    });
+    yield* offerTerminal;
+    return { runtime, manager, providerSessionId, threadId, providerThread, offerTerminal };
+  });
+}
+
+it.effect("ProviderSessionManagerV2 unloads a settled thread after the thread idle timeout", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const settled = yield* settleSharedThread({
+        fixtureName: "provider-session-manager-thread-idle-unload",
+        state,
+      });
+      yield* TestClock.adjust("500 millis");
+      yield* Effect.yieldNow;
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+      yield* TestClock.adjust("10 seconds");
+      yield* Effect.yieldNow;
+      // The thread's native state is unloaded while the shared runtime
+      // stays up for the other thread.
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+      assert.isTrue(Option.isSome(yield* manager.get(settled.providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, threadIdleUnloadMs: 1000 })),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not unload a thread with activity before the thread idle timeout",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const settled = yield* settleSharedThread({
+          fixtureName: "provider-session-manager-thread-idle-activity",
+          state,
+        });
+        yield* TestClock.adjust("500 millis");
+        yield* Effect.yieldNow;
+        // New turn activity cancels the pending unload; the already-loaded
+        // thread needs no reload.
+        yield* settled.runtime.resumeThread({
+          providerThread: settled.providerThread,
+          threadId: settled.threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).resumeCount, 1);
+        yield* TestClock.adjust("10 seconds");
+        yield* Effect.yieldNow;
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        assert.isTrue(Option.isSome(yield* manager.get(settled.providerSessionId)));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, threadIdleUnloadMs: 1000 })),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 reloads a thread on its next turn after an idle unload", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const settled = yield* settleSharedThread({
+        fixtureName: "provider-session-manager-thread-idle-reload",
+        state,
+      });
+      yield* TestClock.adjust("10 seconds");
+      yield* Effect.yieldNow;
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+      // The loaded mark was cleared by the unload, so this resume reloads.
+      yield* settled.runtime.resumeThread({
+        providerThread: settled.providerThread,
+        threadId: settled.threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.equal((yield* Ref.get(state)).resumeCount, 2);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, threadIdleUnloadMs: 1000 })),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 does not idle-unload a thread with a live turn", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const settled = yield* settleSharedThread({
+        fixtureName: "provider-session-manager-thread-idle-live-turn",
+        state,
+        persistRunningTurn: true,
+      });
+      yield* TestClock.adjust("10 seconds");
+      yield* Effect.yieldNow;
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+      assert.isTrue(Option.isSome(yield* manager.get(settled.providerSessionId)));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, threadIdleUnloadMs: 1000 })),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 lets a turn starting during an idle unload reload instead of hanging",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const unloadStarted = yield* Deferred.make<void>();
+      const releaseUnload = yield* Deferred.make<void>();
+      // Resumes the provider had served when the unload actually reached it.
+      let resumesBeforeUnload: number | undefined;
+      const beforeUnload = Effect.gen(function* () {
+        yield* Deferred.succeed(unloadStarted, undefined);
+        yield* Deferred.await(releaseUnload);
+        resumesBeforeUnload = (yield* Ref.get(state)).resumeCount;
+      });
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const settled = yield* settleSharedThread({
+          fixtureName: "provider-session-manager-thread-idle-race",
+          state,
+        });
+        yield* TestClock.adjust("10 seconds");
+        yield* Effect.yieldNow;
+        // The unload parked inside the provider call with the loaded mark
+        // already cleared. Poll boundedly so a real failure fails fast
+        // instead of hanging on the join below. The total advance stays far
+        // below the unload's own timeout so the parked fiber survives it.
+        yield* Effect.gen(function* () {
+          let steps = 0;
+          while (Option.isNone(yield* Deferred.poll(unloadStarted)) && steps < 8) {
+            yield* TestClock.adjust("500 millis");
+            yield* Effect.yieldNow;
+            steps += 1;
+          }
+        });
+        assert.isTrue(Option.isSome(yield* Deferred.poll(unloadStarted)));
+        // The same thread's next turn arrives while the unload is parked.
+        // Give it room to run: unfixed, it would run on torn-down native
+        // state; serialized, it waits for the unload, then reloads.
+        const reattach = yield* settled.runtime
+          .resumeThread({
+            providerThread: settled.providerThread,
+            threadId: settled.threadId,
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        yield* Effect.yieldNow;
+        yield* Deferred.succeed(releaseUnload, undefined);
+        yield* Fiber.join(reattach);
+        // The unload reached the provider before the re-attached resume, so
+        // that resume reloads the thread instead of reusing torn-down state.
+        assert.equal(resumesBeforeUnload, 1);
+        assert.equal((yield* Ref.get(state)).resumeCount, 2);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.isTrue(Option.isSome(yield* manager.get(settled.providerSessionId)));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, threadIdleUnloadMs: 1000, beforeUnload }),
+        ),
+        Effect.scoped,
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 does not idle-unload threads when disabled", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const settled = yield* settleSharedThread({
+        fixtureName: "provider-session-manager-thread-idle-disabled",
+        state,
+      });
+      yield* TestClock.adjust("10 seconds");
+      yield* Effect.yieldNow;
+      assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+      assert.isTrue(Option.isSome(yield* manager.get(settled.providerSessionId)));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, threadIdleUnloadMs: 0 })),
+    );
+  }),
 );
 
 it.effect(
