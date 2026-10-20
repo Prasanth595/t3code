@@ -18,6 +18,7 @@ import { hasThreadLinks, relabelThreadLinks } from "@t3tools/shared/threadLinks"
 import { Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
+import { pullRequestChipStates, type PullRequestChipState } from "../lib/enrichedLinkPresentation";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -51,6 +52,28 @@ const threadTitlesAtom = Atom.family((environmentId: EnvironmentId) => {
     }
     return previous;
   }).pipe(Atom.withLabel(`mobile-thread-titles:${environmentId}`));
+});
+
+const EMPTY_PULL_REQUEST_CHIP_STATES: ReadonlyMap<string, PullRequestChipState> = new Map();
+
+const pullRequestChipStatesAtom = Atom.family((environmentId: EnvironmentId) => {
+  let previous = EMPTY_PULL_REQUEST_CHIP_STATES;
+  return Atom.make((get) => {
+    const next = pullRequestChipStates(
+      Array.from(
+        get(environmentThreadShells.environmentThreadIndexAtom(environmentId)).values(),
+        (shell) => shell.pullRequests ?? [],
+      ).flat(),
+    );
+    const unchanged =
+      next.size === previous.size &&
+      Array.from(next).every(([key, state]) => {
+        const known = previous.get(key);
+        return known?.state === state.state && known.isDraft === state.isDraft;
+      });
+    if (!unchanged) previous = next;
+    return previous;
+  }).pipe(Atom.withLabel(`mobile-pull-request-chip-states:${environmentId}`));
 });
 
 export function waitForProject(
@@ -121,6 +144,12 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
         : relabelThreadLinks(markdown, (threadId) => titles.get(threadId)),
     [markdown, titles],
   );
+}
+
+export function usePullRequestChipStates(
+  environmentId: EnvironmentId,
+): ReadonlyMap<string, PullRequestChipState> {
+  return useAtomValue(pullRequestChipStatesAtom(environmentId));
 }
 
 export function useEnvironmentServerConfig(

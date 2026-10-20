@@ -4,7 +4,10 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
-import { enrichedContextLinkCustomization } from "../../native/useEnrichedLinkVariants";
+import {
+  enrichedChatLinkCustomization,
+  enrichedContextLinkCustomization,
+} from "../../native/useEnrichedLinkVariants";
 import {
   enrichedSkillDisplayName,
   enrichedSkillInstructionsPath,
@@ -230,7 +233,7 @@ import {
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
-import { useLiveThreadLinkLabels } from "../../state/entities";
+import { useLiveThreadLinkLabels, usePullRequestChipStates } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -1970,6 +1973,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       void openPullRequest(presentation.href);
     }
   };
+  const pullRequestChipStates = usePullRequestChipStates(props.environmentId);
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,
     threadId: props.threadId,
@@ -1977,6 +1981,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
     onLinkPress: onMarkdownLinkPress,
+    linkCustomization: (href) => enrichedChatLinkCustomization(href, pullRequestChipStates),
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
     fileContextMenu: (href) => {
@@ -2147,6 +2152,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     workRowSizing,
     iconSubtleColor,
     markdownStyles,
+    pullRequestChipStates,
     reviewCommentColors,
     themeAppearance,
     userBubbleColor,

@@ -1,4 +1,4 @@
-import type { ComposerContextRecord } from "@t3tools/contracts";
+import type { ComposerContextRecord, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
   composerChipSizeSuffix,
   contextChipIcon,
@@ -7,8 +7,12 @@ import {
   type ContextChipIconRef,
   UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
 } from "./composerChipPresentation";
+import { resolveMarkdownLinkIcon } from "./markdownLinks";
 import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { threadPullRequestKeyOf } from "@t3tools/shared/threadPullRequests";
 
 export function enrichedContextLinkPresentation(
   href: string,
@@ -26,6 +30,50 @@ export function enrichedContextLinkPresentation(
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, contextRecordFileName(record)),
     ...(record && size ? { label: `${record.label} · ${size}` } : {}),
+  };
+}
+
+export interface PullRequestChipState {
+  readonly state: string;
+  readonly isDraft: boolean;
+}
+
+export function pullRequestChipStates(links: ReadonlyArray<ThreadPullRequestLink>) {
+  const newest = new Map<string, NonNullable<ThreadPullRequestLink["snapshot"]>>();
+  for (const link of links) {
+    if (link.snapshot === null) continue;
+    const key = threadPullRequestKeyOf(link);
+    const known = newest.get(key);
+    if (!known || known.syncedAt < link.snapshot.syncedAt) newest.set(key, link.snapshot);
+  }
+  return new Map<string, PullRequestChipState>(
+    Array.from(newest, ([key, snapshot]) => [
+      key,
+      { state: snapshot.state, isDraft: snapshot.isDraft },
+    ]),
+  );
+}
+
+export function enrichedChatLinkPresentation(
+  href: string,
+  pullRequestStates: ReadonlyMap<string, PullRequestChipState>,
+): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
+  if (parseThreadLinkHref(href)) return chatLinkChip(contextChipPresentation("thread"));
+  const pullRequest = parseChangeRequestUrl(href);
+  if (!pullRequest || resolveMarkdownLinkIcon(pullRequest.host) !== "github") return undefined;
+  return chatLinkChip(
+    contextChipPresentation("pull-request", {
+      pullRequest: pullRequestStates.get(threadPullRequestKeyOf(pullRequest)),
+    }),
+    `#${pullRequest.number}`,
+  );
+}
+
+function chatLinkChip(presentation: ReturnType<typeof contextChipPresentation>, label?: string) {
+  return {
+    ...(presentation.accent ? { accent: presentation.accent } : {}),
+    icon: { kind: "chip", name: presentation.icon ?? "circle-dashed" } as const,
+    ...(label ? { label } : {}),
   };
 }
 

@@ -18,23 +18,37 @@ import type {
   SelectableMarkdownTextProps,
 } from "./SelectableMarkdownText.types";
 import {
+  enrichedChatLinkPresentation,
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
   enrichedSkillReference,
+  type PullRequestChipState,
 } from "../lib/enrichedLinkPresentation";
+
+function chipCustomization(
+  chip: ReturnType<typeof enrichedContextLinkPresentation>,
+): MarkdownLinkCustomization | undefined {
+  if (!chip) return undefined;
+  return {
+    label: chip.label,
+    icon: contextChipIconSource(chip.icon),
+    chip: { accent: chip.accent, tintsIcon: chip.icon.kind === "chip" },
+  };
+}
 
 export function enrichedContextLinkCustomization(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
-): MarkdownLinkCustomization | undefined {
-  const context = enrichedContextLinkPresentation(href, records);
-  if (!context) return undefined;
-  return {
-    label: context.label,
-    icon: contextChipIconSource(context.icon),
-    chip: { accent: context.accent, tintsIcon: context.icon.kind === "chip" },
-  };
+) {
+  return chipCustomization(enrichedContextLinkPresentation(href, records));
+}
+
+export function enrichedChatLinkCustomization(
+  href: string,
+  pullRequestStates: ReadonlyMap<string, PullRequestChipState>,
+) {
+  return chipCustomization(enrichedChatLinkPresentation(href, pullRequestStates));
 }
 
 function presentation(
