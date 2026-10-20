@@ -129,7 +129,8 @@ export function RightPanelSurfaceContent(props: {
         <PullRequestDetailPanel
           getShortcutContext={props.getShortcutContext}
           shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
-          key={`${surface.host ?? ""}:${surface.repository}#${surface.number}`}
+          // Threads showing the same pull request each restore their own saved code position.
+          key={`${scopedThreadKey(threadRef)}:${surface.host ?? ""}:${surface.repository}#${surface.number}`}
           environmentId={props.environmentId}
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
