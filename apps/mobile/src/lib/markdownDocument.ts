@@ -61,11 +61,23 @@ function markdownDestination(url: string): string {
 
 const ANCHOR_TAG = /^<\/?a[\s/>]/i;
 
+/** Replacements for the anchor tags still ahead, and how many emitted links are open. */
+type AnchorState = { readonly pending: string[]; open: number };
+
+function escapeLinkLabel(text: string): string {
+  return text.replace(/\\?[[\]]/g, (match) => (match.length === 2 ? match : `\\${match}`));
+}
+
+// An unescaped "!" before the inserted "[" would turn the link into an image.
+function bangBefore(text: string, index: number): boolean {
+  return text[index - 1] === "!" && text[index - 2] !== "\\";
+}
+
 /**
  * Pairs `<a>` tags in order. Only a closed anchor with an http(s) or mailto href becomes a
  * Markdown link; any other anchor keeps its text unlinked.
  */
-function anchorMarkdown(tags: readonly string[]): string[] {
+function anchorMarkdown(tags: readonly string[]): AnchorState {
   const replacements = tags.map(() => "");
   const open: Array<{ index: number; href: string | undefined }> = [];
   tags.forEach((tag, index) => {
@@ -79,7 +91,7 @@ function anchorMarkdown(tags: readonly string[]): string[] {
     replacements[opening.index] = "[";
     replacements[index] = `](${markdownDestination(opening.href)})`;
   });
-  return replacements;
+  return { pending: replacements, open: 0 };
 }
 
 function markdownHtmlTags(content: string): RegExpExecArray[] {
@@ -134,12 +146,11 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
 
 /**
  * Called only for parsed HTML nodes, so Markdown code examples keep their literal tags.
- * `anchors` holds the replacements for the anchor tags still ahead, shared across sibling
- * inline HTML nodes because each of those carries a single tag.
+ * `anchors` is shared across sibling inline HTML nodes because each of those carries a single tag.
  */
 export function markdownHtmlContent(
   content: string,
-  options: { readonly anchors?: string[]; readonly inTableCell?: boolean } = {},
+  options: { readonly anchors?: AnchorState; readonly inTableCell?: boolean } = {},
 ): string {
   const tags = markdownHtmlTags(content);
   const anchors =
@@ -148,19 +159,30 @@ export function markdownHtmlContent(
   let result = "";
   let end = 0;
   for (const match of tags) {
-    result += content.slice(end, match.index) + htmlTagMarkdown(match[0], anchors, options);
+    const text = content.slice(end, match.index);
+    result += anchors.open > 0 ? escapeLinkLabel(text) : text;
+    const replacement = htmlTagMarkdown(match[0], anchors, options);
+    if (replacement === "[" && bangBefore(result, result.length))
+      result = `${result.slice(0, -1)}\\!`;
+    result += replacement;
     end = match.index + match[0].length;
   }
-  return result + content.slice(end);
+  const text = content.slice(end);
+  return result + (anchors.open > 0 ? escapeLinkLabel(text) : text);
 }
 
 function htmlTagMarkdown(
   tag: string,
-  anchors: string[],
+  anchors: AnchorState,
   options: { readonly inTableCell?: boolean },
 ): string {
   if (tag.startsWith("<!--")) return "";
-  if (ANCHOR_TAG.test(tag)) return anchors.shift() ?? "";
+  if (ANCHOR_TAG.test(tag)) {
+    const replacement = anchors.pending.shift() ?? "";
+    if (replacement === "[") anchors.open += 1;
+    else if (replacement) anchors.open -= 1;
+    return replacement;
+  }
   if (/^<img\b/i.test(tag)) {
     const src = attribute(tag, "src");
     if (!src) return "";
@@ -178,7 +200,7 @@ function htmlTagMarkdown(
 export function markdownWithHtml(markdown: string): string {
   if (!/<(?:!--|\/?[a-z])/i.test(markdown)) return markdown;
   const edits: Array<{ start: number; end: number; content: string }> = [];
-  const visit = (node: MarkdownNode, inTableCell: boolean) => {
+  const visit = (node: MarkdownNode, inTableCell: boolean, inLink: boolean) => {
     if (!("children" in node)) return;
     inTableCell ||= node.type === "tableCell";
     const children: readonly MarkdownNode[] = node.children;
@@ -196,17 +218,29 @@ export function markdownWithHtml(markdown: string): string {
             ),
           );
     for (const child of children) {
-      if (child.type !== "html") {
-        visit(child, inTableCell);
-        continue;
-      }
       const start = child.position?.start.offset;
       const end = child.position?.end.offset;
+      const linkLabel = inLink || (anchors?.open ?? 0) > 0;
+      if (child.type === "text") {
+        if (linkLabel && start !== undefined && end !== undefined) {
+          const content = escapeLinkLabel(markdown.slice(start, end));
+          if (content !== markdown.slice(start, end)) edits.push({ start, end, content });
+        }
+        continue;
+      }
+      if (child.type !== "html") {
+        visit(child, inTableCell, linkLabel);
+        continue;
+      }
       const content = markdownHtmlContent(child.value, { anchors, inTableCell });
-      if (start !== undefined && end !== undefined) edits.push({ start, end, content });
+      if (start === undefined || end === undefined) continue;
+      // Text before an outermost link is never edited, so this edit cannot overlap another.
+      if (content.startsWith("[") && !linkLabel && bangBefore(markdown, start))
+        edits.push({ start: start - 1, end: start, content: "\\!" });
+      edits.push({ start, end, content });
     }
   };
-  visit(parser.parse(markdown), false);
+  visit(parser.parse(markdown), false, false);
   for (const edit of edits.reverse())
     markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
   return markdown;

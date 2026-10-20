@@ -102,4 +102,20 @@ describe("HTML in native Markdown", () => {
       "Mail [us](<mailto:a@example.com>)",
     );
   });
+
+  it("keeps an anchor a link after a bang or with brackets in its text", () => {
+    for (const markdown of [
+      "Done!<a href='https://example.com'>logs [1] ]</a>",
+      "<p>Done!<a href='https://example.com'>logs [1] ]</a></p>",
+    ]) {
+      const document = parseMarkdownDocument(markdown);
+      const paragraph = document.children[0];
+      expect(paragraph?.type).toBe("paragraph");
+      if (paragraph?.type !== "paragraph") continue;
+      expect(paragraph.children).toMatchObject([
+        { type: "text", value: "Done!" },
+        { type: "link", url: "https://example.com", children: [{ value: "logs [1] ]" }] },
+      ]);
+    }
+  });
 });
