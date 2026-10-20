@@ -12,7 +12,7 @@ import {
 import type { UsageRecord } from "@t3tools/provider-core/server/usage";
 
 import { TEST_FORMAT_MAP } from "./usageTestFormats.ts";
-import { initialCodexScanState } from "../provider/Drivers/codexUsage.ts";
+import { initialCodexScanState, parseCodexLine } from "../provider/Drivers/codexUsage.ts";
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
@@ -102,6 +102,30 @@ describe("scan cache round trip", () => {
       tailRecords: [record({ provider: "grok", model: "<synthetic>", dedupeKey: null })],
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
+    const state = initialCodexScanState();
+    for (const line of [
+      { type: "session_meta", payload: { id: "session-c", model_provider: "openai" } },
+      { type: "turn_context", payload: { model: "gpt-6-astra", turn_id: "native-turn" } },
+      {
+        type: "event_msg",
+        timestamp: "2026-08-01T10:00:00Z",
+        payload: {
+          type: "token_count",
+          info: { last_token_usage: { input_tokens: 1, output_tokens: 2 } },
+        },
+      },
+    ])
+      parseCodexLine(JSON.stringify(line), state);
+    const pending = {
+      ...record({
+        provider: "codex",
+        model: "gpt-6-astra",
+        sessionId: "session-c",
+        dedupeKey: null,
+      }),
+      unresolvedServiceTierTurnId: "native-turn",
+    };
+    const pendingTail = { ...pending, unresolvedServiceTierTurnId: "native-tail" };
     original.set("/codex.jsonl", {
       size: 80,
       malformedRecords: 3,
@@ -110,19 +134,17 @@ describe("scan cache round trip", () => {
       cwd: null,
       label: null,
       records: [
-        record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null, speed: "ultrafast" }),
-      ],
-      tailRecords: [],
-      position: position({
-        state: {
-          ...initialCodexScanState(),
+        record({
+          provider: "codex",
           model: "gpt-6-astra",
+          rateModel: "gpt-6",
+          dedupeKey: null,
           speed: "ultrafast",
-          sessionId: "session-c",
-          lastUsageSignature: '{"input_tokens":1}',
-          sawSessionMeta: true,
-        },
-      }),
+        }),
+        pending,
+      ],
+      tailRecords: [pendingTail],
+      position: position({ state }),
     });
 
     original.set("/a.jsonl", {
@@ -160,55 +182,73 @@ describe("scan cache round trip", () => {
     ).toEqual(original);
   });
 
-  it("retains v5 history and stateless positions but invalidates obsolete Codex state", () => {
-    const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
-    original.set("/gone-codex.jsonl", {
-      ...original.get("/gone.jsonl")!,
+  it.each([5, 6, 7])(
+    "retains v%s history while re-reading folder metadata and Codex provenance",
+    (version) => {
+      const original = cacheWith([["/gone.jsonl", 100, [record({ speed: "fast" })]]]);
+      original.set("/gone-codex.jsonl", {
+        ...original.get("/gone.jsonl")!,
+        provider: "codex",
+        records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
+        position: position({
+          state: { ...initialCodexScanState(), model: "gpt-6-astra", sawSessionMeta: true },
+        }),
+      });
+      original.set("/gone-pi.jsonl", {
+        ...original.get("/gone.jsonl")!,
+        provider: "pi",
+        records: [record({ provider: "pi", model: "anthropic/claude-fable-5" })],
+        malformedRecords: 3,
+        position: position({ state: { sessionId: "session-a" } }),
+      });
+      original.set("/grok.jsonl", {
+        ...original.get("/gone.jsonl")!,
+        provider: "grok",
+        records: [record({ provider: "grok", model: "grok-4.5-build" })],
+        position: position(),
+      });
+      const encoded = encodeScanCache(original);
+      const restored = decodeScanCache({ ...encoded, version }, TEST_FORMAT_MAP);
+      for (const path of ["/gone.jsonl", "/gone-codex.jsonl", "/gone-pi.jsonl"]) {
+        expect(restored.get(path)).toEqual({
+          ...original.get(path),
+          size: -1,
+          position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
+        });
+      }
+      expect(restored.get("/grok.jsonl")).toEqual(original.get("/grok.jsonl"));
+      // A format without folder metadata can keep main's compatible v6 reducer state.
+      const { workingDirectory: _folder, ...withoutFolder } = TEST_FORMAT_MAP.get("pi")!;
+      const formats = new Map(TEST_FORMAT_MAP).set("pi", withoutFolder);
+      const compatible = decodeScanCache({ ...encoded, version }, formats);
+      expect(compatible.get("/gone-pi.jsonl")).toEqual(
+        version >= 6 ? original.get("/gone-pi.jsonl") : restored.get("/gone-pi.jsonl"),
+      );
+    },
+  );
+
+  it("preserves folder attribution from the earlier v7 writer without its Codex tier state", () => {
+    const original = cacheWith([
+      ["/codex.jsonl", 100, [record({ provider: "codex", model: "gpt-6-astra", dedupeKey: null })]],
+    ]);
+    const {
+      modelProvider: _provider,
+      turnId: _turn,
+      sawThreadSettings: _settings,
+      ...previousState
+    } = initialCodexScanState();
+    original.set("/codex.jsonl", {
+      ...original.get("/codex.jsonl")!,
       provider: "codex",
-      cwd: null,
-      label: null,
-      records: [record({ provider: "codex", speed: "fast", dedupeKey: null })],
+      cwd: "/work/project",
+      label: "Inspect project",
       position: position({
-        state: {
-          model: "gpt-6-astra",
-          speed: "fast",
-          sessionId: "session-a",
-          lastUsageSignature: null,
-          sawSessionMeta: true,
-          suppressingForkCopies: false,
-          forkCopyAnchorMs: 0,
-        },
+        state: { ...previousState, model: "gpt-6-astra", sawSessionMeta: true },
       }),
     });
-    const encoded = encodeScanCache(original);
-    const entry = encoded.files["/gone.jsonl"]!;
-    const legacy = {
-      ...encoded,
-      version: 5,
-      files: {
-        ...encoded.files,
-        "/gone.jsonl": {
-          s: entry.s,
-          m: entry.m,
-          p: entry.p,
-          r: entry.r,
-          t: entry.t,
-          o: entry.o,
-          gl: entry.gl,
-          gh: entry.gh,
-          cs: entry.cs,
-        },
-      },
-    };
-
-    const restored = decodeScanCache(JSON.parse(JSON.stringify(legacy)), TEST_FORMAT_MAP);
-    expect(restored.get("/gone.jsonl")).toEqual({
-      ...original.get("/gone.jsonl"),
-      size: -1,
-      position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
-    });
-    expect(restored.get("/gone-codex.jsonl")).toEqual({
-      ...original.get("/gone-codex.jsonl"),
+    const restored = decodeScanCache({ ...encodeScanCache(original), version: 7 }, TEST_FORMAT_MAP);
+    expect(restored.get("/codex.jsonl")).toEqual({
+      ...original.get("/codex.jsonl"),
       size: -1,
       position: { resumeOffset: 0, guardLength: 0, guardHash: 0, state: null },
     });

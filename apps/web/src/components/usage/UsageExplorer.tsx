@@ -1510,7 +1510,13 @@ function BreakdownTable({
     sort?.column === column ? (sort.descending ? " ↓" : " ↑") : "";
   const span = columns.length + 1;
   return (
-    <div className="overflow-x-auto" onMouseLeave={() => onHoverRow(null)}>
+    <div
+      className="overflow-x-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      role="region"
+      aria-label="Usage breakdown"
+      tabIndex={0}
+      onMouseLeave={() => onHoverRow(null)}
+    >
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-right text-xs text-muted-foreground">
