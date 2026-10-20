@@ -24,6 +24,7 @@ import { useKnownTerminalSessions } from "~/state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "~/terminalUiStateStore";
 import { useThreadTerminalActions } from "~/components/terminal/useThreadTerminalActions";
 import ThreadTerminalDrawer from "~/components/ThreadTerminalDrawer";
+import { resolveTerminalWorktreePath } from "~/components/ChatView.logic";
 
 /** Where a drawer or panel opens new terminals when a script run overrides the thread's own. */
 export type PersistentTerminalLaunchContext = {
@@ -80,6 +81,7 @@ interface PersistentThreadTerminalDrawerProps {
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
+  composerHeight: number;
   launchContext: PersistentTerminalLaunchContext | null;
   focusRequestId: number;
   splitShortcutLabel: string | undefined;
@@ -94,6 +96,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   threadRef,
   threadId,
   active,
+  composerHeight,
   launchContext,
   focusRequestId,
   splitShortcutLabel,
@@ -267,6 +270,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           runtimeEnv={runtimeEnv}
           visible={visible}
           height={terminalUiState.terminalHeight}
+          composerHeight={composerHeight}
           // Known-session order is MRU and changes on focus; persisted store order keeps sidebar labels stable.
           terminalIds={canOperateTerminal ? terminalUiState.terminalIds : serverOrderedTerminalIds}
           activeTerminalId={terminalUiState.activeTerminalId}
@@ -292,16 +296,6 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     </div>
   );
 });
-
-function terminalWorktreePath(
-  launchContext: PersistentTerminalLaunchContext | null,
-  summary: { readonly worktreePath: string | null } | null,
-  threadWorktreePath: string | null,
-): string | null {
-  if (launchContext !== null) return launchContext.worktreePath;
-  if (summary !== null) return summary.worktreePath;
-  return threadWorktreePath;
-}
 
 export interface PersistentThreadTerminalPanelProps {
   visible: boolean;
@@ -356,7 +350,11 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
   const activeSummary =
     knownTerminalSessions?.find((session) => session.target.terminalId === surface.activeTerminalId)
       ?.state.summary ?? null;
-  const worktreePath = terminalWorktreePath(launchContext, activeSummary, threadWorktreePath);
+  const worktreePath = resolveTerminalWorktreePath({
+    launchContext,
+    summary: activeSummary,
+    threadWorktreePath,
+  });
   const cwd =
     launchContext?.cwd ??
     activeSummary?.cwd ??
@@ -372,11 +370,11 @@ export const PersistentThreadTerminalPanel = memo(function PersistentThreadTermi
         .summary ?? null;
     terminalLabelsById.set(terminalId, resolveTerminalSessionLabel(terminalId, summary));
     if (!project) continue;
-    const terminalLocationWorktreePath = terminalWorktreePath(
+    const terminalLocationWorktreePath = resolveTerminalWorktreePath({
       launchContext,
       summary,
       threadWorktreePath,
-    );
+    });
     terminalLaunchLocationsById.set(terminalId, {
       cwd:
         launchContext?.cwd ??
