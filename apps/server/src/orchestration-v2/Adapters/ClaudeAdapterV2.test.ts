@@ -1006,6 +1006,7 @@ describe("ClaudeAdapterV2 context usage", () => {
       },
       CLAUDE_TEST_MODEL_SELECTION,
       "2026-08-29T00:03:00.000Z",
+      "",
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
     );
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
