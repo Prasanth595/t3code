@@ -57,13 +57,15 @@ export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
 }
 
 // These targets may be files, which terminals and git clients cannot open. A
-// folder-only favorite is skipped here but stays the Open button's default.
+// folder-only favorite is skipped here but stays the Open button's default,
+// even when the caller passes a list already narrowed to file editors.
 function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
   const fileEditorIds = new Set(availableEditors.filter(editorOpensFiles));
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && fileEditorIds.has(stored)) return stored;
   const editor = EDITORS.find((editor) => fileEditorIds.has(editor.id))?.id ?? null;
-  if (editor && !(stored && availableEditors.includes(stored))) {
+  const keepStored = stored && (availableEditors.includes(stored) || !editorOpensFiles(stored));
+  if (editor && !keepStored) {
     setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   }
   return editor ?? null;

@@ -79,3 +79,11 @@ it("opens files in an editor when the favorite is a terminal, without replacing 
   });
   expect(state.setPreference).not.toHaveBeenCalled();
 });
+
+it("keeps a folder-only favorite when the caller passes only file editors", async () => {
+  state.allowed.add(secondary);
+  state.getPreference.mockReturnValue("warp");
+  const open = useOpenInPreferredEditor(secondary, ["vscode"]);
+  expect(await open("/work/readme.md")).toMatchObject({ _tag: "Success", value: "vscode" });
+  expect(state.setPreference).not.toHaveBeenCalled();
+});
