@@ -244,6 +244,7 @@ const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
       layerEventSinkProvided,
       IdAllocator.layer,
       ProviderSessionRuntime.layer,
+      layerProviderAdapterRegistryProvided,
     ),
   ),
 );
