@@ -6,6 +6,7 @@ import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkPresentation,
   enrichedSkillDisplayName,
+  enrichedSkillInstructionsPath,
   enrichedSkillReference,
 } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
@@ -1803,7 +1804,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
     const skill = enrichedSkillReference(href, props.skills);
     if (skill) {
-      if (skill.path) openSkillInstructions(skill.path);
+      const instructionsPath = enrichedSkillInstructionsPath(skill);
+      if (instructionsPath) openSkillInstructions(instructionsPath);
       return;
     }
     const linkedThreadId = parseThreadLinkHref(href);
@@ -1885,7 +1887,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         return {
           title: enrichedSkillDisplayName(skill),
           actions: [
-            { id: "open-skill", title: "View instructions", disabled: !skill.path },
+            {
+              id: "open-skill",
+              title: "View instructions",
+              disabled: !enrichedSkillInstructionsPath(skill),
+            },
             { id: "copy-skill", title: "Copy skill" },
           ],
         };
@@ -1896,7 +1902,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     onFileContextMenuAction: (href, actionId) => {
       const skill = enrichedSkillReference(href, props.skills);
       if (skill) {
-        if (actionId === "open-skill" && skill.path) openSkillInstructions(skill.path);
+        const instructionsPath = enrichedSkillInstructionsPath(skill);
+        if (actionId === "open-skill" && instructionsPath) openSkillInstructions(instructionsPath);
         else if (actionId === "copy-skill") copyTextWithHaptic(href);
         return;
       }
