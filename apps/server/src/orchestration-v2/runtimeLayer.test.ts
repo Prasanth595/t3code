@@ -5233,6 +5233,22 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);
       yield* orchestrator.dispatch({
         type: "thread.snooze",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-before-settle"),
+        threadId,
+        snoozedUntil,
+        quiet: true,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-snoozed-thread-settle"),
+        threadId,
+      });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.isNull(settled.thread.snoozedUntil);
+      assert.isNull(settled.thread.snoozedAt);
+      assert.equal(settled.thread.snoozeQuiet, false);
+      yield* orchestrator.dispatch({
+        type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
         threadId,
         snoozedUntil,
@@ -5384,7 +5400,8 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", 
         worktreePath: null,
       });
       const key = { host: "github.com", repository: "pingdotgg/t3code" };
-      for (const number of [1, 2, 3]) {
+      const repositoryWebUrl = "https://github.com/pingdotgg/t3code/pull/2";
+      for (const number of [1, 2]) {
         yield* orchestrator.dispatch({
           type: "thread.pull-request.link",
           commandId: CommandId.make(`compact-pr-link-${number}`),
@@ -5393,8 +5410,31 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", 
           number,
           url: `https://github.com/pingdotgg/t3code/pull/${number}`,
           source: "manual",
+          ...(number === 2 ? { repositoryWebUrl } : {}),
         });
       }
+      const watchedLink = {
+        url: "https://github.com/pingdotgg/t3code/pull/3",
+        repositoryWebUrl: "https://github.com/pingdotgg/t3code/pull/3",
+        source: "manual" as const,
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("compact-pr-watch-new"),
+        threadId,
+        ...key,
+        number: 3,
+        watching: true,
+        link: watchedLink,
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("compact-pr-watch-existing"),
+        threadId,
+        ...key,
+        number: 2,
+        watching: true,
+      });
       const before = yield* orchestrator.getThreadShell(threadId);
       yield* orchestrator.dispatch({
         type: "thread.pull-request-link.sync",
@@ -5434,6 +5474,8 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("compact PR events", 
       assert.deepEqual(after?.pullRequests?.[0], before?.pullRequests?.[0]);
       assert.deepEqual(after?.pullRequests?.[2], before?.pullRequests?.[2]);
       assert.equal(after?.pullRequests?.[1]?.stack?.id, "updated");
+      assert.propertyVal(after?.pullRequests?.[1], "repositoryWebUrl", repositoryWebUrl);
+      assert.deepInclude(after?.pullRequests?.[2], watchedLink);
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests,
