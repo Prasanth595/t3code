@@ -152,7 +152,12 @@ it("preserves the user's later scroll when the list defers cancellation", async 
     error: null,
     onLoadEarlier: vi.fn(),
   };
+  viewport.style.cssText = "height: 100px; overflow-y: auto";
+  const content = document.createElement("div");
+  content.style.height = "1000px";
+  viewport.append(content);
   viewport.scrollTop = 40;
+  expect(viewport.scrollTop).toBe(40);
   await act(() =>
     root.render(
       <Harness
@@ -163,6 +168,7 @@ it("preserves the user's later scroll when the list defers cancellation", async 
   );
   await act(() => viewport.dispatchEvent(new WheelEvent("wheel", { bubbles: true })));
   viewport.scrollTop = 90;
+  expect(viewport.scrollTop).toBe(90);
   expect(pendingScrolls).toHaveLength(1);
   await act(() => pendingScrolls.shift()?.());
   expect(viewport.scrollTop).toBe(90);
