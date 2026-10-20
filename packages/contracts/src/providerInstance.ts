@@ -101,6 +101,14 @@ export const ProviderInstanceMutation = Schema.Union([
     operation: Schema.Literal("remove"),
     instanceId: ProviderInstanceId,
   }),
+  Schema.Struct({
+    operation: Schema.Literal("set-inventory-item"),
+    instanceId: ProviderInstanceId,
+    driver: ProviderDriverKind,
+    kind: ProviderInventoryKind,
+    itemId: TrimmedNonEmptyString,
+    enabledInT3: Schema.Boolean,
+  }),
 ]);
 export type ProviderInstanceMutation = typeof ProviderInstanceMutation.Type;
 

@@ -12,24 +12,6 @@ const INVENTORY_KINDS = [
   "skills",
 ] as const satisfies ReadonlyArray<ProviderInventoryKind>;
 
-/** Returns `undefined` once nothing is switched off, so the key leaves the saved config. */
-export function nextDisabledInventory(
-  current: ProviderDisabledInventory | undefined,
-  kind: ProviderInventoryKind,
-  id: string,
-  enabledInT3: boolean,
-): ProviderDisabledInventory | undefined {
-  const ids = new Set(current?.[kind] ?? []);
-  if (enabledInT3) ids.delete(id);
-  else ids.add(id);
-  const next: Record<string, ReadonlyArray<string>> = {};
-  for (const candidate of INVENTORY_KINDS) {
-    const values = candidate === kind ? [...ids] : (current?.[candidate] ?? []);
-    if (values.length > 0) next[candidate] = values;
-  }
-  return Object.keys(next).length > 0 ? (next as ProviderDisabledInventory) : undefined;
-}
-
 export function countDisabledInventory(disabled: ProviderDisabledInventory | undefined): number {
   return INVENTORY_KINDS.reduce((total, kind) => total + (disabled?.[kind]?.length ?? 0), 0);
 }

@@ -16,14 +16,12 @@ export function ProviderWizardAuthenticationStep({
   environmentLabel,
   instanceId,
   instance,
-  onInstanceChange,
   onFinish,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly instanceId: ProviderInstanceId;
   readonly instance?: ProviderInstanceConfig | undefined;
-  readonly onInstanceChange?: (instance: ProviderInstanceConfig) => void;
   readonly onFinish: () => void;
 }) {
   const providers =
@@ -94,16 +92,13 @@ export function ProviderWizardAuthenticationStep({
             />
           )}
         </SettingsGroup>
-        {showInventory && instance && onInstanceChange ? (
+        {showInventory && instance ? (
           <SettingsGroup variant="plain" className="mt-4 max-h-96 overflow-y-auto">
             <ProviderInventoryList
               environmentId={environmentId}
               instanceId={instanceId}
+              driver={instance.driver}
               disabled={instance.disabledInventory}
-              onDisabledChange={(next) => {
-                const { disabledInventory: _omit, ...rest } = instance;
-                onInstanceChange(next ? { ...rest, disabledInventory: next } : rest);
-              }}
             />
           </SettingsGroup>
         ) : null}

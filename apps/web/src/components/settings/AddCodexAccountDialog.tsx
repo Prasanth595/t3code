@@ -1,5 +1,4 @@
 import { AuthProvidersManageScope } from "@t3tools/contracts";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -11,10 +10,7 @@ import {
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 
-import {
-  useEnvironmentSettings,
-  usePersistEnvironmentProviderInstanceMutation,
-} from "../../hooks/useSettings";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -24,7 +20,6 @@ import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderInventoryList } from "./ProviderInventorySection";
-import { toastManager } from "../ui/toast";
 
 export function AddCodexAccountDialog({
   environmentId,
@@ -43,7 +38,6 @@ export function AddCodexAccountDialog({
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const update = useAtomCommand(serverEnvironment.updateSettings, "Add ChatGPT account");
-  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const [name, setName] = useState("Personal");
   const displayName = `ChatGPT - ${name.trim()}`;
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
@@ -112,30 +106,9 @@ export function AddCodexAccountDialog({
                 <ProviderInventoryList
                   environmentId={environmentId}
                   instanceId={instanceId}
+                  driver={instance.driver}
                   disabled={instance.disabledInventory}
-                  onDisabledChange={
-                    canManageProviders
-                      ? (next) => {
-                          const { disabledInventory: _omit, ...rest } = instance;
-                          void persistProviderInstance({
-                            operation: "upsert",
-                            instanceId,
-                            instance: next ? { ...rest, disabledInventory: next } : rest,
-                          }).then((result) => {
-                            if (result._tag !== "Failure") return;
-                            const error = squashAtomCommandFailure(result);
-                            toastManager.add({
-                              type: "error",
-                              title: "Could not save provider settings",
-                              description:
-                                error instanceof Error
-                                  ? error.message
-                                  : "The settings update failed.",
-                            });
-                          });
-                        }
-                      : undefined
-                  }
+                  readOnly={!canManageProviders}
                 />
               </div>
             ) : provider?.setup ? (

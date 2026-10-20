@@ -2,6 +2,7 @@ import {
   AuthProvidersManageScope,
   type EnvironmentId,
   type ProviderDisabledInventory,
+  type ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderInventoryItem,
   type ProviderInventoryKind,
@@ -9,21 +10,23 @@ import {
 } from "@t3tools/contracts";
 import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 import { cn } from "~/lib/utils";
+import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import {
-  countDisabledInventory,
-  inventoryItemDetail,
-  nextDisabledInventory,
-} from "./ProviderInventorySection.logic";
+import { countDisabledInventory, inventoryItemDetail } from "./ProviderInventorySection.logic";
 
 const GROUPS: ReadonlyArray<{ readonly kind: ProviderInventoryKind; readonly title: string }> = [
   { kind: "connectors", title: "Connectors" },
@@ -50,10 +53,14 @@ function manageHost(url: string | undefined): string | null {
 export function ProviderInventoryList(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
   readonly disabled: ProviderDisabledInventory | undefined;
-  /** Absent hides the switches, for viewers who cannot change settings. */
-  readonly onDisabledChange?: ((next: ProviderDisabledInventory | undefined) => void) | undefined;
+  readonly readOnly?: boolean;
 }) {
+  const canManage = useEnvironmentScope(props.environmentId, AuthProvidersManageScope);
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(
+    props.environmentId,
+  );
   const query = useEnvironmentQuery(
     serverEnvironment.providerInventory({
       environmentId: props.environmentId,
@@ -84,7 +91,25 @@ export function ProviderInventoryList(props: {
 
   const host = manageHost(inventory.manageUrl);
   const listedGroups = GROUPS.filter(({ kind }) => inventory[kind]._tag !== "Unsupported");
-  const onDisabledChange = props.onDisabledChange;
+  const toggleItem = async (kind: ProviderInventoryKind, itemId: string, enabledInT3: boolean) => {
+    if (props.readOnly || !canManage) return;
+    const result = await persistProviderInstance({
+      operation: "set-inventory-item",
+      instanceId: props.instanceId,
+      driver: props.driver,
+      kind,
+      itemId,
+      enabledInT3,
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not save provider settings",
+        description: error instanceof Error ? error.message : "The settings update failed.",
+      });
+    }
+  };
 
   return (
     <div className="px-3 py-3 sm:px-4">
@@ -119,9 +144,10 @@ export function ProviderInventoryList(props: {
           section={inventory[kind]}
           disabledIds={props.disabled?.[kind]}
           onToggle={
-            onDisabledChange
-              ? (id, enabledInT3) =>
-                  onDisabledChange(nextDisabledInventory(props.disabled, kind, id, enabledInT3))
+            !props.readOnly && canManage
+              ? (id, enabledInT3) => {
+                  void toggleItem(kind, id, enabledInT3);
+                }
               : undefined
           }
         />
@@ -250,8 +276,9 @@ function ItemDetail(props: { readonly item: ProviderInventoryItem; readonly deta
 export function ProviderInventorySection(props: {
   readonly environmentId: EnvironmentId;
   readonly instanceId: ProviderInstanceId;
+  readonly driver: ProviderDriverKind;
   readonly disabled: ProviderDisabledInventory | undefined;
-  readonly onDisabledChange?: ((next: ProviderDisabledInventory | undefined) => void) | undefined;
+  readonly readOnly?: boolean;
 }) {
   const canManage = useEnvironmentScope(props.environmentId, AuthProvidersManageScope);
   if (!canManage) return null;

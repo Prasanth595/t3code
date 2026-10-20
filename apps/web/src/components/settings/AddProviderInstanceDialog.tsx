@@ -392,22 +392,6 @@ export function AddProviderInstanceDialog({
             environmentLabel={environmentLabel}
             instanceId={createdInstanceId}
             instance={settings.providerInstances?.[createdInstanceId]}
-            onInstanceChange={(instance) => {
-              void persistProviderInstance({
-                operation: "upsert",
-                instanceId: createdInstanceId,
-                instance,
-              }).then((result) => {
-                if (result._tag !== "Failure") return;
-                const error = squashAtomCommandFailure(result);
-                toastManager.add({
-                  type: "error",
-                  title: "Could not save provider settings",
-                  description:
-                    error instanceof Error ? error.message : "The settings update failed.",
-                });
-              });
-            }}
             onFinish={() => onOpenChange(false)}
           />
         ) : (

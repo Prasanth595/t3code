@@ -21,7 +21,6 @@ import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
-  type ProviderDisabledInventory,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -755,11 +754,6 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateDisabledInventory = (next: ProviderDisabledInventory | undefined) => {
-    const { disabledInventory: _omit, ...rest } = instance;
-    onUpdate(next ? { ...rest, disabledInventory: next } : rest);
-  };
-
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
     const { config: _omit, ...rest } = instance;
     onUpdate(
@@ -1265,8 +1259,9 @@ export function ProviderInstanceCard({
         <ProviderInventorySection
           environmentId={environmentId}
           instanceId={instanceId}
+          driver={instance.driver}
           disabled={instance.disabledInventory}
-          onDisabledChange={readOnly ? undefined : updateDisabledInventory}
+          readOnly={readOnly}
         />
       ) : null}
 
