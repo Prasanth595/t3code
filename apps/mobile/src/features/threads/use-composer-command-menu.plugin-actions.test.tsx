@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import {
   EnvironmentId,
   PluginActionId,
@@ -6,7 +5,7 @@ import {
   ThreadId,
   type PluginAction,
 } from "@t3tools/contracts";
-import { act, createElement, useLayoutEffect, useState } from "react";
+import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -74,12 +73,9 @@ function Composer(props: {
   initialDraft: string;
   currentThreadId: ThreadId | null;
   report: (menu: Menu, draft: string) => void;
-  replaceDraft?: string;
 }) {
   const [draft, setDraft] = useState(props.initialDraft);
-  useLayoutEffect(() => {
-    if (props.replaceDraft !== undefined) setDraft(props.replaceDraft);
-  }, [props.replaceDraft]);
+  editDraft = setDraft;
   const menu = useComposerCommandMenu({
     draftMessage: draft,
     ownerKey: "draft-1",
@@ -102,6 +98,7 @@ function Composer(props: {
 }
 
 let root: Root;
+let editDraft: (draft: string) => void = () => {};
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -238,16 +235,12 @@ describe("picking a plugin action from the slash menu", () => {
             ? "prefix " + draft
             : draft;
       if (change === "removed-action") fixture.actions = [];
-      await act(async () =>
+      await act(async () => {
+        editDraft(changed);
         root.render(
-          createElement(Composer, {
-            initialDraft: draft,
-            replaceDraft: changed,
-            currentThreadId: threadId,
-            report,
-          }),
-        ),
-      );
+          createElement(Composer, { initialDraft: draft, currentThreadId: threadId, report }),
+        );
+      });
       await act(async () =>
         latest.menu!.onSelectionChange({ start: changed.length, end: changed.length }),
       );
