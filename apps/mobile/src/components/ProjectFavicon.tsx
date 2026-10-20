@@ -1,6 +1,6 @@
 import { deriveProjectIdentity } from "@t3tools/client-runtime/project-identity";
-import { SymbolView } from "./AppSymbol";
-import { AppText } from "./AppText";
+import { SymbolView } from "./ui/AppSymbol";
+import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
 import { memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
@@ -30,7 +30,6 @@ import {
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
-/* ─── Component ──────────────────────────────────────────────────────── */
 export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly environmentId: EnvironmentId;
   readonly size?: number;
@@ -201,7 +200,6 @@ function ProjectFaviconImage(props: {
         <ProjectFaviconFallback projectTitle={props.projectTitle} size={props.size} />
       ) : null}
 
-      {/* Favicon image (hidden until loaded) */}
       {requestIsActive ? (
         <Image
           key={faviconRequest.faviconUrl}

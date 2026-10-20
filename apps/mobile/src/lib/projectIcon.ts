@@ -6,8 +6,8 @@ export type ProjectIconGlyph =
   | { readonly kind: "monogram"; readonly text: string; readonly color: ProjectIconColor };
 
 /**
- * Visible glyph count for sizing monogram text. Hermes has no Intl.Segmenter, so combining
- * marks are folded into their base character instead of full grapheme segmentation.
+ * Hermes has no Intl.Segmenter, so combining marks are folded into their base
+ * character instead of full grapheme segmentation.
  */
 export function countGlyphs(text: string): number {
   return Array.from(text.replace(/\p{M}/gu, "")).length;

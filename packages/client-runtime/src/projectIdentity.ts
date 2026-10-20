@@ -1,6 +1,5 @@
 import { ProjectIconColor } from "@t3tools/contracts";
 
-/** Visual identity tokens for a generated project badge. */
 export interface ProjectIdentity {
   readonly monogram: string;
   readonly color: ProjectIconColor;
@@ -33,7 +32,6 @@ function projectColor(projectName: string): ProjectIconColor {
   return ProjectIconColor.literals[index] ?? "blue";
 }
 
-/** Derives the stable monogram and generated colors used when a project has no icon. */
 export function deriveProjectIdentity(projectName: string): ProjectIdentity {
   return {
     monogram: projectMonogram(projectName),
