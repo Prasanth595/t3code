@@ -1,6 +1,7 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 
+import { useStableCallback } from "../../hooks/useStableCallback";
 import type { TimelineEntry } from "../../session-logic";
 import type { LinkedMessageRequest } from "../promptLinks/ThreadLinkParams";
 import { toastManager } from "../ui/toast";
@@ -24,6 +25,8 @@ export function useLinkedMessageTarget({
   listReady,
   viewport,
   historyLoading,
+  synced,
+  onHandled,
   historyControls,
   onRevealEntry,
   onManualNavigation,
@@ -36,6 +39,8 @@ export function useLinkedMessageTarget({
   /** Receives the user's scroll, key, and pointer input. */
   viewport: HTMLElement | null;
   historyLoading: boolean;
+  synced: boolean;
+  onHandled?: ((key: string) => void) | undefined;
   historyControls: MessagesTimelineHistoryControls | undefined;
   /** Opens the folds that hide an entry. False when none does. */
   onRevealEntry: (entryId: string) => boolean;
@@ -47,6 +52,13 @@ export function useLinkedMessageTarget({
     requestedPages: Set<string>;
     revealed: boolean;
   } | null>(null);
+  const handledKeyRef = useRef<string | null>(null);
+  const finishTarget = useStableCallback((handledKey: string) => {
+    if (handledKeyRef.current === handledKey) return;
+    handledKeyRef.current = handledKey;
+    setFinishedKey(handledKey);
+    onHandled?.(handledKey);
+  });
   const positioning = request !== null && finishedKey !== request.key;
   const key = positioning ? request.key : null;
   const rowId = positioning
@@ -57,7 +69,7 @@ export function useLinkedMessageTarget({
 
   // Without a row yet, load history through the message or unfold what hides it.
   useEffect(() => {
-    if (!request || !positioning || rowId !== null) return;
+    if (!request || !positioning || rowId !== null || !synced) return;
     if (progressRef.current?.key !== request.key) {
       progressRef.current = { key: request.key, requestedPages: new Set(), revealed: false };
       onManualNavigation();
@@ -65,7 +77,7 @@ export function useLinkedMessageTarget({
     if (historyLoading) return;
     const progress = progressRef.current;
     const fail = (description: string) => {
-      setFinishedKey(request.key);
+      finishTarget(request.key);
       toastManager.add({
         type: "warning",
         title: "Could not open the linked message",
@@ -97,6 +109,7 @@ export function useLinkedMessageTarget({
     historyControls.onLoadEarlier(request.messageId);
   }, [
     entries,
+    finishTarget,
     historyControls,
     historyLoading,
     onManualNavigation,
@@ -104,13 +117,14 @@ export function useLinkedMessageTarget({
     positioning,
     request,
     rowId,
+    synced,
   ]);
 
   // The user takes over at any step, including while history loads.
   useEffect(() => {
     if (key === null || !viewport) return;
     const cancel = () => {
-      setFinishedKey(key);
+      finishTarget(key);
       const scrollNode = listRef.current?.getScrollableNode();
       // Supersede a queued list scroll before the user's gesture runs. Legend may defer this
       // call too, so it reads the user's position when it executes.
@@ -141,11 +155,11 @@ export function useLinkedMessageTarget({
       viewport.removeEventListener("pointerdown", cancel);
       viewport.ownerDocument.removeEventListener("keydown", onKeyDown);
     };
-  }, [key, listRef, viewport]);
+  }, [finishTarget, key, listRef, viewport]);
 
   // Scroll the row to the top, then correct for measured row sizes until it holds still.
   // History lands in stages, so a row shown mid-load can still move: wait for the last stage.
-  const historySettled = !historyLoading && historyControls?.loading !== true;
+  const historySettled = synced && !historyLoading && historyControls?.loading !== true;
   useEffect(() => {
     const list = listRef.current;
     const scrollNode = list?.getScrollableNode();
@@ -157,7 +171,7 @@ export function useLinkedMessageTarget({
     let stableFrames = 0;
     const finish = () => {
       stopped = true;
-      setFinishedKey(key);
+      finishTarget(key);
     };
     const settle = () => {
       frame = null;
@@ -213,7 +227,7 @@ export function useLinkedMessageTarget({
       stopped = true;
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [historySettled, key, listReady, listRef, onManualNavigation, rowId]);
+  }, [finishTarget, historySettled, key, listReady, listRef, onManualNavigation, rowId]);
 
   return {
     positioning,

@@ -1212,6 +1212,20 @@ export default function ChatView(props: ChatViewProps) {
         key: linkedMessageState.activation,
       }
     : null;
+  const onLinkedMessageHandled = useStableCallback((activation: string) => {
+    const location = router.state.location;
+    if (location.state.linkedMessage?.activation !== activation) return;
+    void navigate({
+      href: location.href,
+      replace: true,
+      state: (current) => {
+        if (current.linkedMessage?.activation !== activation) return current;
+        const next = { ...current };
+        delete next.linkedMessage;
+        return next;
+      },
+    });
+  });
   const citationLocation = { href: citationHref, key: citationKey };
   const citationRequest = (() => {
     const citation = assistantCitationFromLocation(citationLocation.href);
@@ -8024,6 +8038,8 @@ export default function ChatView(props: ChatViewProps) {
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 linkedMessage={paintOnlyDisplayedTimeline ? null : linkedMessageRequest}
+                linkedMessageSynced={threadStatus === "live"}
+                onLinkedMessageHandled={onLinkedMessageHandled}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
                   ? {

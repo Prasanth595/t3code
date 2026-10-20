@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   ContextHandoffId,
   MessageId,
   CheckpointId,
@@ -24,6 +25,7 @@ import { summarizeToolGroup } from "@t3tools/client-runtime/work-log/presentatio
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
+import { persistedMessageLink } from "../features/threads/thread-feed-message-link";
 import {
   workEntryRowLabel,
   isContextHandoffActivityGroup,
@@ -358,6 +360,30 @@ describe("buildThreadFeed", () => {
     const messageEntry = feed.find((entry) => entry.type === "message");
     expect(messageEntry?.message.senderThreadId).toBe(sourceThreadId);
     expect(messageEntry?.message.sourceThreadId).toBe(threadId);
+  });
+
+  it("enables a message permalink only after an anchored creation prompt is persisted", () => {
+    const threadRef = { environmentId: EnvironmentId.make("env"), threadId };
+    const item = userMessage("2026-08-29T00:00:01.000Z");
+    const local = {
+      id: item.messageId,
+      role: "user",
+      text: item.text,
+      streaming: false,
+      createdAt: "2026-08-29T00:00:01.000Z",
+      updatedAt: "2026-08-29T00:00:01.000Z",
+    };
+    const pending = buildThreadFeed([], { anchoredMessages: [local] });
+    expect(pending[0]?.type).toBe("message");
+    if (pending[0]?.type !== "message") throw new Error("Missing local creation prompt");
+    expect(persistedMessageLink(threadRef, pending[0].message)).toBeNull();
+    const delivered = buildThreadFeed([projected(item, 0)], { anchoredMessages: [local] });
+    expect(delivered).toHaveLength(1);
+    if (delivered[0]?.type !== "message") throw new Error("Missing persisted message");
+    expect(persistedMessageLink(threadRef, delivered[0].message)).toEqual({
+      ...threadRef,
+      messageId: item.messageId,
+    });
   });
 
   it("anchors feedback before later committed turns", () => {

@@ -201,7 +201,7 @@ import {
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
-import { resolveLinkedMessageStep } from "./thread-feed-message-link";
+import { persistedMessageLink, resolveLinkedMessageStep } from "./thread-feed-message-link";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
 import { htmlRenderFrameHeight } from "@t3tools/shared/htmlRender";
@@ -1377,13 +1377,10 @@ function renderFeedEntry(
                 text={presentation.text}
                 isPrompt
                 messageLink={
-                  entry.pendingMessage
-                    ? null
-                    : {
-                        environmentId: props.environmentId,
-                        threadId: props.threadId,
-                        messageId: message.id,
-                      }
+                  persistedMessageLink(
+                    { environmentId: props.environmentId, threadId: props.threadId },
+                    message,
+                  )
                 }
                 onCopy={
                   message.context
@@ -1460,11 +1457,10 @@ function renderFeedEntry(
               text={renderedText}
               tintColor={iconSubtleColor}
               isPrompt={false}
-              messageLink={{
-                environmentId: props.environmentId,
-                threadId: props.threadId,
-                messageId: message.id,
-              }}
+              messageLink={persistedMessageLink(
+                { environmentId: props.environmentId, threadId: props.threadId },
+                message,
+              )}
             />
             {message.projectedItem ? (
               <AssistantForkButton

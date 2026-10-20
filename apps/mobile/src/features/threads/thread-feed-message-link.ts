@@ -1,3 +1,11 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ThreadFeedMessage } from "../../lib/threadActivity";
+
+/** Local feedback and anchored creation prompts have no persisted server turn item. */
+export function persistedMessageLink(threadRef: ScopedThreadRef, message: ThreadFeedMessage) {
+  return message.projectedItem === undefined ? null : { ...threadRef, messageId: message.id };
+}
+
 /**
  * The next thing the feed does to open at a linked message. Used by `ThreadFeed` until it scrolls
  * to the message or reports it missing.

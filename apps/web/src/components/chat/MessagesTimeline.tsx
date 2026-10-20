@@ -444,6 +444,8 @@ interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
   /** A thread link's message, scrolled to the top once it is found. */
   linkedMessage?: LinkedMessageRequest | null;
+  linkedMessageSynced?: boolean;
+  onLinkedMessageHandled?: (key: string) => void;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
     citation: AssistantCitation,
@@ -551,6 +553,8 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
   linkedMessage = null,
+  linkedMessageSynced = false,
+  onLinkedMessageHandled,
   citationHistoryLoading = false,
   onCiteAssistantText,
   isWorking,
@@ -1066,6 +1070,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     alwaysRender: linkedMessageAlwaysRender,
   } = useLinkedMessageTarget({
     request: linkedMessage,
+    synced: linkedMessageSynced,
+    onHandled: onLinkedMessageHandled,
     entries: timelineEntries,
     rows,
     listRef,
@@ -2877,10 +2883,9 @@ function MessageTimestamp({
       <TooltipTrigger
         render={
           threadRef ? (
-            <button
-              type="button"
+            <InlineButton
+              tone="muted"
               aria-label={`Copy link to message from ${formatChatTimestampTooltip(time, ctx.timestampFormat)}`}
-              className="text-muted-foreground text-xs tabular-nums hover:text-foreground hover:underline"
               onClick={() => void copyMessageLink(threadRef, messageId)}
             />
           ) : (

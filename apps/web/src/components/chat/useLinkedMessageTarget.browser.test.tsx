@@ -1,3 +1,4 @@
+import type { LegendListRef } from "@legendapp/list/react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -12,6 +13,7 @@ vi.mock("../ui/toast", () => ({ toastManager: { add: warn } }));
 let root: Root;
 let container: HTMLDivElement;
 let viewport: HTMLDivElement;
+const onHandled = vi.fn();
 const onManualNavigation = () => {};
 const onRevealEntry = () => false;
 const entries = [] as const;
@@ -19,7 +21,15 @@ const rows = [] as const;
 const listRef = { current: null };
 const request = { key: "activation", messageId: MessageId.make("older-message") };
 
-function Harness({ controls }: { controls: MessagesTimelineHistoryControls }) {
+function Harness({
+  controls,
+  synced = true,
+  overrides = {},
+}: {
+  controls: MessagesTimelineHistoryControls;
+  synced?: boolean;
+  overrides?: Partial<Parameters<typeof useLinkedMessageTarget>[0]>;
+}) {
   const result = useLinkedMessageTarget({
     request,
     entries,
@@ -28,9 +38,12 @@ function Harness({ controls }: { controls: MessagesTimelineHistoryControls }) {
     listReady: false,
     viewport,
     historyLoading: false,
+    synced,
+    onHandled,
     historyControls: controls,
     onRevealEntry,
     onManualNavigation,
+    ...overrides,
   });
   return <output>{result.positioning ? "pending" : "finished"}</output>;
 }
@@ -42,6 +55,7 @@ beforeEach(() => {
   document.body.append(container, viewport);
   root = createRoot(container);
   warn.mockClear();
+  onHandled.mockClear();
 });
 afterEach(async () => {
   await act(() => root.unmount());
@@ -65,6 +79,7 @@ it("continues through cursor advances that leave rendered entries unchanged, the
     root.render(<Harness controls={{ ...controls, historyCursor: null, hasMoreHistory: false }} />),
   );
   expect(container.textContent).toBe("finished");
+  expect(onHandled.mock.calls).toEqual([[request.key]]);
   expect(warn).toHaveBeenCalledWith(
     expect.objectContaining({ description: "It is no longer in this thread." }),
   );
@@ -95,4 +110,81 @@ it("keeps navigating while scroll keys edit text and lets a viewport scroll key 
     viewport.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
   });
   expect(container.textContent).toBe("finished");
+  expect(onHandled.mock.calls).toEqual([[request.key]]);
+});
+
+it("waits for live synchronization before failing a cached missing target", async () => {
+  const controls = {
+    historyCursor: null,
+    hasMoreHistory: false,
+    loading: false,
+    error: null,
+    onLoadEarlier: vi.fn(),
+  };
+  await act(() => root.render(<Harness controls={controls} synced={false} />));
+  expect(container.textContent).toBe("pending");
+  expect(warn).not.toHaveBeenCalled();
+  expect(onHandled).not.toHaveBeenCalled();
+  await act(() => root.render(<Harness controls={controls} synced />));
+  expect(container.textContent).toBe("finished");
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(onHandled.mock.calls).toEqual([[request.key]]);
+  await act(() => root.render(<Harness controls={{ ...controls }} synced />));
+  expect(onHandled).toHaveBeenCalledTimes(1);
+});
+
+it("finishes a measured target once after live sync and reports its handled activation", async () => {
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  const element = document.createElement("div");
+  const list = {
+    getScrollableNode: () => viewport,
+    getState: () => ({ indexByKey: () => 0, elementAtIndex: () => element }),
+    scrollToIndex: vi.fn(() => Promise.resolve()),
+    scrollToOffset: vi.fn(() => Promise.resolve()),
+  };
+  const time = "2026-10-01T00:00:00.000Z";
+  const overrides = {
+    listReady: true,
+    listRef: { current: list as unknown as LegendListRef },
+    rows: [
+      {
+        kind: "message" as const,
+        id: "target",
+        createdAt: time,
+        durationStart: time,
+        showAssistantMeta: false,
+        showAssistantCopyButton: false,
+        assistantCopyStreaming: false,
+        message: {
+          id: request.messageId,
+          role: "user" as const,
+          text: "target",
+          runId: null,
+          streaming: false,
+          createdAt: time,
+          updatedAt: time,
+        },
+      },
+    ],
+  };
+  const controls = {
+    historyCursor: null,
+    hasMoreHistory: false,
+    loading: false,
+    error: null,
+    onLoadEarlier: vi.fn(),
+  };
+  await act(() =>
+    root.render(<Harness controls={controls} synced={false} overrides={overrides} />),
+  );
+  expect(list.scrollToIndex).not.toHaveBeenCalled();
+  await act(() => root.render(<Harness controls={controls} synced overrides={overrides} />));
+  expect(list.scrollToIndex).toHaveBeenCalledTimes(1);
+  await act(() => frames.shift()?.(0));
+  await act(() => frames.shift()?.(16));
+  expect(container.textContent).toBe("finished");
+  expect(onHandled.mock.calls).toEqual([[request.key]]);
+  expect(warn).not.toHaveBeenCalled();
 });
