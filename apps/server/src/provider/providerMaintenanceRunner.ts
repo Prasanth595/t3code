@@ -49,6 +49,9 @@ const UPDATE_PROGRESS_INTERVAL = Duration.seconds(1);
 const UPDATE_PROGRESS_MAX_LENGTH = 200;
 // An installer may write for minutes without a line ending; only its tail matters.
 const UPDATE_PARTIAL_LINE_MAX_LENGTH = 4_096;
+// The capture above keeps the head of the output, but an updater explains its
+// failure at the end, so the failure message reads this much of the end instead.
+const UPDATE_TAIL_MAX_LENGTH = 4_096;
 
 export interface ProviderMaintenanceCommandResult {
   readonly stdout: string;
@@ -57,6 +60,8 @@ export interface ProviderMaintenanceCommandResult {
   readonly timedOut: boolean;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
+  readonly stdoutTail?: string;
+  readonly stderrTail?: string;
 }
 
 export interface ProviderMaintenanceRunnerShape {
@@ -87,6 +92,31 @@ interface VerifiedProviderRefresh {
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+function makeOutputTail() {
+  const decoder = new TextDecoder();
+  let text = "";
+  let cut = false;
+  return {
+    track: <E>(stream: Stream.Stream<Uint8Array, E>) =>
+      stream.pipe(
+        Stream.tap((chunk) =>
+          Effect.sync(() => {
+            text += decoder.decode(chunk, { stream: true });
+            if (text.length > UPDATE_TAIL_MAX_LENGTH) {
+              text = text.slice(-UPDATE_TAIL_MAX_LENGTH);
+              cut = true;
+            }
+          }),
+        ),
+      ),
+    // A cut tail starts mid-line, unless it is one unbroken line.
+    read: () => {
+      const firstLineEnd = cut ? text.search(/[\r\n]/) : -1;
+      return firstLineEnd < 0 ? text : text.slice(firstLineEnd + 1);
+    },
+  };
+}
 
 const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceRunner.runCommand")(
   function* (input: {
@@ -147,14 +177,16 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           );
         };
 
+        const stdoutTail = makeOutputTail();
+        const stderrTail = makeOutputTail();
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({
-              stream: trackProgress(child.stdout),
+              stream: stdoutTail.track(trackProgress(child.stdout)),
               maxBytes: UPDATE_OUTPUT_MAX_BYTES,
             }),
             collectUint8StreamText({
-              stream: trackProgress(child.stderr),
+              stream: stderrTail.track(trackProgress(child.stderr)),
               maxBytes: UPDATE_OUTPUT_MAX_BYTES,
             }),
             child.exitCode,
@@ -177,6 +209,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           timedOut: false,
           stdoutTruncated: stdout.truncated,
           stderrTruncated: stderr.truncated,
+          stdoutTail: stdoutTail.read(),
+          stderrTail: stderrTail.read(),
         } satisfies ProviderMaintenanceCommandResult;
       },
     );
@@ -201,6 +235,8 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
     );
   },
 );
+
+export { runProviderMaintenanceCommandWithSpawner };
 
 export function splitOutputLines(
   partialLine: string,
@@ -247,7 +283,7 @@ function commandOutput(result: ProviderMaintenanceCommandResult): string | null 
 const FAILURE_EXCERPT_LINES = 2;
 
 function failureExcerpt(result: ProviderMaintenanceCommandResult): string | null {
-  for (const text of [result.stderr, result.stdout]) {
+  for (const text of [result.stderrTail ?? result.stderr, result.stdoutTail ?? result.stdout]) {
     const lines = text
       .split(/\r\n|\r|\n/)
       .map(toProgressLine)

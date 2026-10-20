@@ -1,7 +1,13 @@
 import { expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   failureMessage,
+  runProviderMaintenanceCommandWithSpawner,
   type ProviderMaintenanceCommandResult,
 } from "./providerMaintenanceRunner.ts";
 
@@ -78,3 +84,70 @@ it("leaves the timeout and unknown-exit messages alone", () => {
     "Update command failed.",
   );
 });
+
+// Chunk boundaries fall mid-line, as they do on a real pipe.
+const runFailingUpdater = (stderr: string, chunkSize = 1_000) => {
+  const bytes = new TextEncoder().encode(stderr);
+  const chunks = Array.from({ length: Math.ceil(bytes.length / chunkSize) }, (_, index) =>
+    bytes.slice(index * chunkSize, (index + 1) * chunkSize),
+  );
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.fromIterable(chunks),
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    ),
+  );
+  return runProviderMaintenanceCommandWithSpawner({ spawner, command: "updater", args: [] }).pipe(
+    Effect.provideService(HostProcess.Platform, "linux"),
+  );
+};
+
+it.effect("shows the final error of output longer than the captured 10 KB", () =>
+  Effect.gen(function* () {
+    const progress = Array.from(
+      { length: 1_000 },
+      (_, index) => `Downloading part ${index} of 1000\n`,
+    ).join("");
+    const result = yield* runFailingUpdater(
+      `${progress}npm error code EACCES\nnpm error Could not write to /usr/local/lib\n`,
+    );
+
+    expect(result.stderrTruncated).toBe(true);
+    expect(result.stderr.length).toBeLessThanOrEqual(10_000);
+    expect(result.stderr.startsWith("Downloading part 0 of 1000\n")).toBe(true);
+    expect(failureMessage(result)).toBe(
+      "Update command exited with code 1: npm error code EACCES npm error Could not write to /usr/local/lib",
+    );
+  }),
+);
+
+it.effect("does not show the cut start of a long output as its last line", () =>
+  Effect.gen(function* () {
+    const result = yield* runFailingUpdater(`${"x".repeat(20_000)}\nError: boom\n`);
+
+    expect(failureMessage(result)).toBe("Update command exited with code 1: Error: boom");
+  }),
+);
+
+it.effect("keeps the failure excerpt bounded for a huge line without newlines", () =>
+  Effect.gen(function* () {
+    const result: ProviderMaintenanceCommandResult = yield* runFailingUpdater(
+      "y".repeat(1_000_000),
+      64 * 1_024,
+    );
+
+    expect(result.stderrTail?.length).toBeLessThanOrEqual(4_096);
+    expect(failureMessage(result).length).toBeLessThanOrEqual(260);
+  }),
+);
