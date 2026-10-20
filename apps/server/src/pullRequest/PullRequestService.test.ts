@@ -3875,4 +3875,3 @@ it.effect("hands an assignment to the host only where the host and the viewer bo
     assert.deepStrictEqual(received, [{ assignees: ["octocat"], assigned: true }]);
   }),
 );
-

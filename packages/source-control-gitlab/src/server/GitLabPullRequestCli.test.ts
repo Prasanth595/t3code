@@ -1273,5 +1273,4 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ assignee_ids: [9, 3] });
     }),
   );
-
 });

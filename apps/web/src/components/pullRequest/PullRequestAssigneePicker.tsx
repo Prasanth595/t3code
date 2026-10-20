@@ -124,12 +124,15 @@ export function PullRequestAssigneePicker({
       errorLabel="The people who can be assigned could not be read."
       truncated={
         candidatesQuery.data?.truncated === true &&
-        (query.trim().length === 0 || (searched && searchResult.error !== null))
+        (query.trim().length === 0 ||
+          (searched && (searchResult.error !== null || searchResult.data?.truncated === true)))
       }
       truncatedLabel={
         searched && searchResult.error !== null
           ? `Only the people already listed are matched: the host search failed. ${searchResult.error}`
-          : "This repository has more people who can be assigned than are listed here. Search to find them."
+          : searched
+            ? "More people match than the host returned. Keep typing to narrow it down."
+            : "This repository has more people who can be assigned than are listed here. Search to find them."
       }
       candidateKey={(candidate) => candidate.id}
       disabled={pending !== null}

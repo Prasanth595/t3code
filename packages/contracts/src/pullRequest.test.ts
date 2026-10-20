@@ -169,4 +169,3 @@ describe("narrowing a row by its assignees", () => {
     expect(matchesPullRequestAssigneeFilter(undefined, "octocat", "bilal")).toBe(true);
   });
 });
-
