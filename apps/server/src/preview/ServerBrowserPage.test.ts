@@ -423,6 +423,11 @@ it("captures the native display viewport after page script reassigns the globals
     });
     await resize.evaluate("resize => resize.done");
     await resize.dispose();
+    expect(await ServerBrowserPage.readPageMetrics(cdp)).toMatchObject({
+      ratio: 1.5,
+      width: 390,
+      height: 844,
+    });
     expect(await snapshotSize()).toEqual({ width: 585, height: 1266 });
   } finally {
     await browser.close();
