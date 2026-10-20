@@ -78,7 +78,7 @@ function InterfaceFontRow({ preview }: { preview?: ReactNode }) {
   return (
     <FontFamilySettingsRow
       {...searchableSetting("interface-font")}
-      description="Menus, controls, user messages, and the default for replies."
+      description="Menus, controls, and user messages."
       defaultFamily={defaults.sans}
       defaultValue={DEFAULT_UNIFIED_SETTINGS.fontFamilySans}
       value={settings.fontFamilySans}
