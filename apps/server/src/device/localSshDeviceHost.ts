@@ -60,12 +60,14 @@ export const isLocalSshDeviceHost = Effect.fn("isLocalSshDeviceHost")(function* 
 });
 
 /** Drops SSH hosts that resolve to this machine; other host kinds pass through. */
-export const remoteSshDeviceHosts = <Host extends DeviceHostConfig>(hosts: ReadonlyArray<Host>) =>
-  Effect.filter(
-    hosts,
-    (host) =>
-      host.kind === "ssh"
-        ? isLocalSshDeviceHost(host).pipe(Effect.map((local) => !local))
-        : Effect.succeed(true),
-    { concurrency: 4 },
-  ).pipe(Effect.withSpan("remoteSshDeviceHosts"));
+export const remoteSshDeviceHosts = Effect.fn("remoteSshDeviceHosts")(
+  <Host extends DeviceHostConfig>(hosts: ReadonlyArray<Host>) =>
+    Effect.filter(
+      hosts,
+      (host) =>
+        host.kind === "ssh"
+          ? isLocalSshDeviceHost(host).pipe(Effect.map((local) => !local))
+          : Effect.succeed(true),
+      { concurrency: 4 },
+    ),
+);
