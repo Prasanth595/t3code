@@ -3720,12 +3720,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // as renames, but leave the expensive checkout outside the lock.
       yield* configLocks.withLock(
         yield* resolveGitCommonDir(input.cwd),
-        runGit("GitVcsDriver.createWorktree.createBranch", input.cwd, [
-          "branch",
-          "--",
-          input.newRefName,
-          input.refName === "-" ? "@{-1}" : input.refName,
-        ]),
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.createWorktree.createBranch",
+          input.cwd,
+          ["branch", "--", input.newRefName, input.refName === "-" ? "@{-1}" : input.refName],
+          { fallbackErrorDetail: "git worktree add failed" },
+        ),
       );
     }
     const args = ["worktree", "add", "--", worktreePath, targetBranch];
@@ -3830,31 +3830,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (newRefName && input.baseRefName) {
       const base = yield* resolveBranchBase(input.cwd, input.baseRefName);
       if (base) {
-        yield* configLocks.withLock(
-          yield* resolveGitCommonDir(input.cwd),
-          Effect.gen(function* () {
-          yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
-            "config",
-            branchBaseConfigKey(newRefName),
-            base.branchName,
-          ]);
-          if (base.baseRef.startsWith("refs/remotes/")) {
-            // The base key names a branch on the host; this one keeps the remote it came from.
-            yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
-              "config",
-              `branch.${input.newRefName}.t3-merge-base-ref`,
-              base.baseRef,
-            ]);
-          }
-        })).pipe(
-          Effect.catchTags({
-            GitCommandError: () =>
-              Effect.logWarning(
-                "worktree base-ref configuration failed; using base-branch fallback",
-              ),
-          }),
-          ),
-        );
+        yield* configLocks
+          .withLock(
+            yield* resolveGitCommonDir(input.cwd),
+            Effect.gen(function* () {
+              yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
+                "config",
+                branchBaseConfigKey(newRefName),
+                base.branchName,
+              ]);
+              if (base.baseRef.startsWith("refs/remotes/")) {
+                // The base key names a branch on the host; this one keeps the remote it came from.
+                yield* runGit("GitVcsDriver.createWorktree.configureComparisonRef", input.cwd, [
+                  "config",
+                  `branch.${input.newRefName}.t3-merge-base-ref`,
+                  base.baseRef,
+                ]);
+              }
+            }),
+          )
+          .pipe(
+            Effect.catchTags({
+              GitCommandError: () =>
+                Effect.logWarning(
+                  "worktree base-ref configuration failed; using base-branch fallback",
+                ),
+            }),
+          );
       }
     }
 
@@ -4054,7 +4056,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       timeToLive: () => Duration.zero,
     },
   );
-  const fetchRemoteShared: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = (input) =>
+  const fetchRemoteShared = (input: GitVcsDriver.GitFetchRemoteInput) =>
     Cache.get(
       fetchRemoteInFlight,
       new FetchRemoteKey({
@@ -4543,7 +4545,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           Effect.flatMap((fetched) =>
             fetched
               ? Effect.void
-              : fetchRemoteShared({ cwd: input.cwd, remoteName: input.remoteName }).pipe(Effect.asVoid),
+              : fetchRemoteShared({ cwd: input.cwd, remoteName: input.remoteName }).pipe(
+                  Effect.asVoid,
+                ),
           ),
         ),
       );

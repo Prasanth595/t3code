@@ -423,7 +423,6 @@ const make = Effect.gen(function* () {
           branch = flattenTemporaryWorktreeBranchName(branch);
         }
         yield* setupTracker.stageStatus(threadId, "checkout", "running");
-        const baseRefName = input.workspaceStrategy.baseRef;
         const createWorktree = (newRefName: string) =>
           git.createWorktree(
             {
