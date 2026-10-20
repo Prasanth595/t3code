@@ -4,7 +4,10 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { mapCodexReasoningEffortDescriptor } from "./CodexProvider.ts";
+import {
+  codexDefaultReasoningEffortOverride,
+  mapCodexReasoningEffortDescriptor,
+} from "./CodexProvider.ts";
 
 export class ChatGptCatalogError extends Schema.TaggedError<ChatGptCatalogError>()(
   "ChatGptCatalogError",
@@ -51,10 +54,13 @@ export const chatGptModels = Effect.fn("chatGptModels")(function* (
           decodeReasoningLevels(model.supported_reasoning_levels),
           () => [],
         );
+        const defaultReasoningEffort =
+          codexDefaultReasoningEffortOverride(model.slug) ??
+          (typeof model.default_reasoning_level === "string"
+            ? model.default_reasoning_level
+            : undefined);
         const reasoningDescriptor = mapCodexReasoningEffortDescriptor({
-          ...(typeof model.default_reasoning_level === "string"
-            ? { defaultReasoningEffort: model.default_reasoning_level }
-            : {}),
+          ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
           supportedReasoningEfforts: reasoningLevels.map((level) => ({
             reasoningEffort: level.effort,
           })),

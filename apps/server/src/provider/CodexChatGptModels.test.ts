@@ -34,11 +34,11 @@ it.effect("restores account reasoning controls with catalog defaults and explici
         label: "Reasoning",
         type: "select",
         options: [
-          { id: "low", label: "Low", isDefault: true },
-          { id: "medium", label: "Medium" },
+          { id: "low", label: "Low" },
+          { id: "medium", label: "Medium", isDefault: true },
           { id: "high", label: "High" },
         ],
-        currentValue: "low",
+        currentValue: "medium",
       },
     ]);
     assert.isUndefined(
@@ -142,7 +142,7 @@ it.effect(
         models.map(({ slug }) => slug),
         [accountModel.slug, "invalid-levels", "invalid-default"],
       );
-      assert.strictEqual(models[0]!.capabilities!.optionDescriptors![0]!.currentValue, "low");
+      assert.strictEqual(models[0]!.capabilities!.optionDescriptors![0]!.currentValue, "medium");
       assert.isNull(models[1]!.capabilities);
       assert.deepStrictEqual(models[2]!.capabilities!.optionDescriptors, [
         {
