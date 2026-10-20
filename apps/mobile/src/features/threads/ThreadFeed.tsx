@@ -1904,7 +1904,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (skill) {
         const instructionsPath = enrichedSkillInstructionsPath(skill);
         if (actionId === "open-skill" && instructionsPath) openSkillInstructions(instructionsPath);
-        else if (actionId === "copy-skill") copyTextWithHaptic(href);
+        else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
         return;
       }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
