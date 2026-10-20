@@ -93,6 +93,69 @@ const firstView = Effect.fn("firstView")(function* (
 });
 
 describe("pluginCatalogStream", () => {
+  it.effect("sends nothing to an unsupported session arriving during config delivery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: Array<string> = [];
+        const unsupported = recordingSession({ repositoryIdentity: true }, calls);
+        const { supervisor, sessionRef } = yield* makeCommands(unsupported);
+        const supported: RpcSession.RpcSession = {
+          ...unsupported,
+          client: {
+            [WS_METHODS.pluginsSubscribe]: () => Stream.succeed(SNAPSHOT),
+          } as unknown as WsRpcProtocolClient,
+          initialConfig: SubscriptionRef.set(sessionRef, Option.some(unsupported)).pipe(
+            Effect.as({
+              environment: { capabilities: { repositoryIdentity: true, plugins: true } },
+            } as ServerConfig),
+          ),
+        };
+        yield* SubscriptionRef.set(sessionRef, Option.some(supported));
+        const view = yield* pluginCatalogStream.pipe(
+          Stream.filter((view) => view._tag === "unsupported"),
+          Stream.runHead,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        );
+        expect(Option.getOrThrow(view)).toEqual({ _tag: "unsupported" });
+        expect(calls).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("stops the old catalogue before reconnecting to an unsupported server", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const calls: Array<string> = [];
+        const subscribed = yield* Deferred.make<void>();
+        const unsupported = recordingSession({ repositoryIdentity: true }, calls);
+        const supported: RpcSession.RpcSession = {
+          ...unsupported,
+          client: {
+            [WS_METHODS.pluginsSubscribe]: () =>
+              Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                Stream.flatMap(() => Stream.succeed(SNAPSHOT)),
+                Stream.concat(Stream.never),
+              ),
+          } as unknown as WsRpcProtocolClient,
+          initialConfig: Effect.succeed({
+            environment: { capabilities: { repositoryIdentity: true, plugins: true } },
+          } as ServerConfig),
+        };
+        const { supervisor, sessionRef } = yield* makeCommands(supported);
+        const view = yield* pluginCatalogStream.pipe(
+          Stream.filter((view) => view._tag === "unsupported"),
+          Stream.runHead,
+          Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(subscribed);
+        yield* SubscriptionRef.set(sessionRef, Option.some(unsupported));
+        expect(Option.getOrThrow(yield* Fiber.join(view))).toEqual({ _tag: "unsupported" });
+        expect(calls).toEqual([]);
+      }),
+    ),
+  );
+
   it.effect("never calls a server that does not announce the plugin catalogue", () =>
     Effect.gen(function* () {
       const { view, calls } = yield* firstView({ repositoryIdentity: true });
@@ -174,7 +237,7 @@ const makeCommands = Effect.fn("makeCommands")(function* (session: RpcSession.Rp
     () => atoms.remove.run(registry, { environmentId, input: { installationId } }),
     () => atoms.resume.run(registry, { environmentId, input: { installationId } }),
   ];
-  return { atoms, registry, sessionRef, runAll, environmentId, installationId };
+  return { atoms, registry, supervisor, sessionRef, runAll, environmentId, installationId };
 });
 
 const failureTag = (result: AsyncResult.AsyncResult<unknown, unknown>) =>

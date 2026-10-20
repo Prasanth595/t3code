@@ -565,6 +565,8 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
 
   const enable = Effect.fn("PluginCatalog.enable")(function* (input: PluginInstallationInput) {
     const installation = yield* find(input.installationId);
+    // A caller may have left disable while its process was still exiting.
+    if (installation.stopping) yield* Fiber.join(installation.stopping);
     // Checked even when already enabled: changed bytes stop it and need consent again.
     const inspection = yield* reinspect(installation);
     if (inspection._tag === "failed")
