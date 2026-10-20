@@ -31,6 +31,7 @@ import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenance
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeTargetedProviderUpdateAction,
+  resolveLatestProviderUpdateAction,
   resolveLatestProviderVersion,
   type ProviderMaintenanceCommandAction,
 } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -467,7 +468,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const command =
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
-                : fresh.update;
+                : resolveLatestProviderUpdateAction(fresh, candidateVersion);
             const rejected =
               targetVersion !== undefined
                 ? !command ||
@@ -518,12 +519,17 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             // fail transiently on a healthy binary.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
-              verifiedProviders.some(
-                (verifiedProvider) =>
+              verifiedProviders.some((verifiedProvider) => {
+                const installedVersion =
+                  verifiedProvider.installedVersion !== undefined
+                    ? verifiedProvider.installedVersion
+                    : verifiedProvider.version;
+                return (
                   !isStillInstalled(verifiedProvider) ||
                   (targetVersion !== undefined &&
-                    verifiedProvider.version?.replace(/^v/, "") !== targetVersion),
-              );
+                    installedVersion?.replace(/^v/, "") !== targetVersion)
+                );
+              });
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
