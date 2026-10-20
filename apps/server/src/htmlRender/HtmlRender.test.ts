@@ -121,6 +121,19 @@ describe("HtmlRender", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("rejects viewport height units, which make the fitted frame grow without end", () =>
+    Effect.gen(function* () {
+      const htmlRender = yield* HtmlRender.HtmlRender;
+      for (const css of ["min-height:100vh", "height: calc(100dvh - 2rem)", "top:.5svh"]) {
+        const error = yield* htmlRender.prepare(`<style>main{${css}}</style>`).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(HtmlRender.HtmlRenderViewportHeightError);
+      }
+      yield* htmlRender.prepare(
+        '<style>main{width:100vw;height:320px}</style><img src="data:image/png;base64,AB1vh+2vh/3vhC">',
+      );
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("inlines an SVG behind processing instructions and a doctype subset", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
