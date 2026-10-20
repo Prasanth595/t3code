@@ -6,6 +6,7 @@ import { createPanelRegistry } from "./panelRegistry";
 export interface SidePanelProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   workspaceMutationId: string | null;
+  visible: boolean;
 }
 
 const bundledPanels = createPanelRegistry<SidePanelProps, "diff">([
