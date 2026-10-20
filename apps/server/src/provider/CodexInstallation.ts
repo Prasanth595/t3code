@@ -606,6 +606,16 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       yield* activate();
     },
     Effect.scoped,
+    Effect.catchTags({
+      HttpClientError: (cause) =>
+        installationError(
+          "download",
+          cause.reason._tag === "StatusCodeError"
+            ? `The Codex download server returned HTTP ${cause.reason.response.status}. Try again later.`
+            : "The Codex download was interrupted. Check your internet connection, then retry installation.",
+          cause,
+        ),
+    }),
     Effect.mapError(
       wrapFailure(
         "install",
