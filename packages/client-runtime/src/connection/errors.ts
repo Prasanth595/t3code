@@ -14,6 +14,7 @@ export function profileMissingError(connectionId: string): ConnectionBlockedErro
   return new ConnectionBlockedError({
     reason: "configuration",
     detail: `Connection profile ${connectionId} is unavailable.`,
+    hop: "device",
   });
 }
 
@@ -21,6 +22,7 @@ export function credentialMissingError(connectionId: string): ConnectionBlockedE
   return new ConnectionBlockedError({
     reason: "authentication",
     detail: `Connection credential ${connectionId} is unavailable.`,
+    hop: "device",
   });
 }
 
@@ -126,6 +128,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         detail,
         traceId,
         hop: "relay",
+        failureCause: "relay_error",
       });
   }
 }
@@ -140,7 +143,10 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
         reason: "relay-unavailable",
         detail: error.message,
         hop: "relay",
-        ...(error.status !== undefined ? { httpStatus: error.status } : {}),
+        // A status means the relay answered, so this device did reach it.
+        ...(error.status !== undefined
+          ? { httpStatus: error.status, failureCause: "relay_error" }
+          : {}),
         ...(error.traceId ? { traceId: error.traceId } : {}),
       });
     case "ManagedRelayRequestTimeoutError":

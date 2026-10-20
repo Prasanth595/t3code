@@ -84,6 +84,8 @@ function headline(host: string, located: Located, failure: ConnectionAttemptErro
       return "This device's clock is off";
     case "not_linked":
       return `${host} is not linked to your T3 Connect account`;
+    case "relay_error":
+      return "T3 Connect returned an error";
     case "tunnel_pending":
       return `${host}'s tunnel is still being set up`;
     case "tunnel_not_enabled":
@@ -144,6 +146,11 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
       ];
     case "tunnel_pending":
       return ["Wait a minute. T3 Code retries on its own.", checkHost];
+    case "relay_error":
+      return [
+        "Wait a few minutes. T3 Code retries on its own.",
+        "If it keeps failing, copy the diagnostics and report it.",
+      ];
     case "tunnel_not_enabled":
       return [`On ${host}, open Settings > Connections and turn T3 Connect on.`];
     case "released":
@@ -168,7 +175,10 @@ function steps(host: string, located: Located, failure: ConnectionAttemptError |
   }
   switch (located.hop) {
     case "device":
-      return ["Restart T3 Code on this device."];
+      return [
+        "Restart T3 Code on this device.",
+        `If it keeps failing, remove ${host} from this device and add it again.`,
+      ];
     case "relay":
       return failure?.reason === "authentication"
         ? ["Sign out of T3 Connect and sign in again."]

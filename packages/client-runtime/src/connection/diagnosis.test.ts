@@ -7,7 +7,11 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 
 import { connectionDiagnosisText, presentConnectionDiagnosis } from "./diagnosis.ts";
-import { mapManagedRelayError, mapRemoteEnvironmentError } from "./errors.ts";
+import {
+  credentialMissingError,
+  mapManagedRelayError,
+  mapRemoteEnvironmentError,
+} from "./errors.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
   type ConnectionAttemptError,
@@ -119,6 +123,24 @@ describe("presentConnectionDiagnosis", () => {
       "tunnel:unchecked",
       "server:unchecked",
     ]);
+  });
+
+  it("does not blame this device's network when T3 Connect answered with an error", () => {
+    const failure = mapManagedRelayError(
+      new ManagedRelayRequestFailedError({
+        action: "connect relay environment",
+        cause: new Error("Bad Gateway"),
+        status: 502,
+      }),
+    );
+    const diagnosis = diagnose(backoff(failure));
+    expect(diagnosis?.headline).toBe("T3 Connect returned an error");
+    expect(diagnosis?.steps.join(" ")).not.toContain("this device");
+  });
+
+  it("blames this device when its saved credential is missing", () => {
+    const diagnosis = diagnose(backoff(credentialMissingError("connection-1")), "direct");
+    expect(diagnosis?.hops[0]).toMatchObject({ hop: "device", result: "failed" });
   });
 
   it("names clock skew from a DPoP time window rejection", () => {

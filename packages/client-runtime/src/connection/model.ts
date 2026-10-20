@@ -86,6 +86,7 @@ export const ConnectionFailureCause = Schema.Literals([
   ...RelayEnvironmentEndpointFailure.literals,
   "clock_skew",
   "not_linked",
+  "relay_error",
   "tunnel_pending",
   "tunnel_not_enabled",
 ]);
