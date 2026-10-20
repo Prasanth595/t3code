@@ -7,6 +7,10 @@
  * debugger types into the app's focused field. Such input goes through CDP only
  * while the guest holds focus. Otherwise it goes straight to the guest's own
  * widget, which nothing redirects.
+ *
+ * Mouse input cannot avoid the window's focus: Chromium focuses the guest for
+ * any mouse event it receives. An agent's mouse input therefore runs between
+ * noting which element of the app had focus and handing it back.
  */
 
 /** CDP input Chromium delivers to the window's focused frame rather than the page's. */
@@ -115,6 +119,42 @@ const evaluate = async (debuggee: Electron.Debugger, expression: string) => {
   return reply.result?.value;
 };
 
+/**
+ * Page scripts for the app window around a guest. Chromium makes a guest the
+ * window's focus for every mouse event an agent sends it, and nothing gives that
+ * focus back, so the person's next keystrokes land in the page. Only the app's
+ * own document knows which of its elements had focus.
+ */
+const HELD_FOCUS = "Symbol.for('t3.previewHostFocus')";
+const holdHostFocusScript = (guestId: number) =>
+  `(() => { const held = (globalThis[${HELD_FOCUS}] ??= new Map()); held.set(${guestId}, document.activeElement); })()`;
+const restoreHostFocusScript = (guestId: number) =>
+  `(() => {
+    const held = globalThis[${HELD_FOCUS}]; const previous = held?.get(${guestId}); held?.delete(${guestId});
+    const current = document.activeElement;
+    if (current?.localName !== "webview" || current.getWebContentsId() !== ${guestId}) return;
+    if (previous && previous !== current && previous.isConnected) previous.focus({ preventScroll: true });
+    if (document.activeElement === current) current.blur();
+  })()`;
+
+/** Runs an agent's mouse input in a guest the app does not have focused, then hands the app its focus back. */
+const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () => Promise<A>) => {
+  const host = webContents.hostWebContents;
+  if (!host || host.isDestroyed()) return run();
+  // A host that went away mid-click has no focus left to restore.
+  const inHost = async (script: string) => {
+    try {
+      await host.executeJavaScript(script);
+    } catch {}
+  };
+  await inHost(holdHostFocusScript(webContents.id));
+  try {
+    return await run();
+  } finally {
+    await inHost(restoreHostFocusScript(webContents.id));
+  }
+};
+
 /** Sends one command to the guest's page, keeping reloads and input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
@@ -127,6 +167,9 @@ export const sendPageCommand = async (
     if (params["ignoreCache"] === true) webContents.reloadIgnoringCache();
     else webContents.reload();
     return {};
+  }
+  if (method === "Input.dispatchMouseEvent" && !webContents.focusedFrame) {
+    return keepingHostFocus(webContents, () => debuggee.sendCommand(method, params));
   }
   if (!FOCUS_ROUTED_INPUT.has(method) || webContents.focusedFrame) {
     return debuggee.sendCommand(method, params);
