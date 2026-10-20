@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { LegendListRef } from "@legendapp/list/react";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";

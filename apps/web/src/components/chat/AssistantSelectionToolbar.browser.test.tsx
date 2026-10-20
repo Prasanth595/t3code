@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { act } from "react";
