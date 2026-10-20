@@ -59,6 +59,8 @@ function memberRowSubagent(
     threadId: coordinatorThreadId,
     childThreadId: member.childThreadId as ThreadId | null,
     model: member.model,
+    // The provider's own workflow tool launches its members.
+    origin: "provider_native" as const,
     driver: opening.driver!,
     providerInstanceId: opening.providerInstanceId!,
     title: member.title,

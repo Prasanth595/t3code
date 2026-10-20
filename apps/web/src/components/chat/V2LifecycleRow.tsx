@@ -16,7 +16,11 @@ import {
   type HandoffEndpoints,
   type HandoffTimelineRun,
 } from "@t3tools/client-runtime/handoff";
-import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  formatSubagentDisplayTitle,
+  resolveSubagentMetadata,
+  resolveSubagentModelTraits,
+} from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
   type OrchestrationV2Notification,
@@ -51,6 +55,7 @@ import {
 import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
+import { TraitsSpeedIcon } from "./TraitsSpeed";
 import { cn } from "~/lib/utils";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
@@ -435,6 +440,37 @@ function SubagentTimelineLink(props: {
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
+  // Older app-owned records keep their selection only on the child thread.
+  const childModelSelection = useThreadShell(
+    props.origin === "app_owned" && threadId !== null && agent?.modelSelection === undefined
+      ? scopeThreadRef(props.parentRef.environmentId, threadId)
+      : null,
+  )?.source.modelSelection;
+  const model = agent?.model ?? null;
+  // Select only the derived labels so provider status pushes, which replace
+  // the provider objects, do not re-render every row.
+  const providersAtom = serverEnvironment.providersValueAtom(props.parentRef.environmentId);
+  const findProvider = (providers: ReadonlyArray<ServerProvider> | null | undefined) =>
+    providers?.find((provider) => provider.instanceId === props.providerInstanceId);
+  const modelTraits = (providers: ReadonlyArray<ServerProvider> | null | undefined) =>
+    resolveSubagentModelTraits({
+      model,
+      providerInstanceId: props.providerInstanceId,
+      origin: props.origin,
+      modelSelection: agent?.modelSelection,
+      childThread: childModelSelection ? { modelSelection: childModelSelection } : null,
+      provider: findProvider(providers),
+    });
+  const modelLabel = useAtomValue(providersAtom, (providers) =>
+    model === null
+      ? null
+      : resolveSubagentMetadata({ model, provider: findProvider(providers) }).modelLabel,
+  );
+  const effortLabel = useAtomValue(
+    providersAtom,
+    (providers) => modelTraits(providers).effortLabel,
+  );
+  const speed = useAtomValue(providersAtom, (providers) => modelTraits(providers).speed);
   const content = (
     <>
       <EnvironmentSubagentAvatar
@@ -474,6 +510,21 @@ function SubagentTimelineLink(props: {
           )}
         </span>
       </span>
+      {modelLabel === null ? null : (
+        // Same order as the hover card: speed icon, then effort.
+        <span className="inline-flex max-w-[40%] min-w-0 items-center gap-1 text-3xs text-muted-foreground">
+          <span className="min-w-0 truncate">{modelLabel}</span>
+          {effortLabel !== null || speed !== null ? (
+            <span className="inline-flex shrink-0 items-center gap-1">
+              {effortLabel !== null ? " · " : null}
+              {speed !== null ? (
+                <TraitsSpeedIcon provider={props.driver} speedIcon={speed} size="xs" />
+              ) : null}
+              {effortLabel}
+            </span>
+          ) : null}
+        </span>
+      )}
       <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
