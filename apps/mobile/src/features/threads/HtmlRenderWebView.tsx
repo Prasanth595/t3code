@@ -136,7 +136,7 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
-        // Android's patched WebView always keeps horizontal drags. Only pages
+        // Android's patched WebView always checks horizontal intent. Only pages
         // with vertical overflow hold vertical drags until they reach an edge.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
