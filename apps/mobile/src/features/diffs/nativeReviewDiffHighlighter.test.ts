@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as reviewHighlighter from "../review/shikiReviewHighlighter";
+import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
+import { buildReviewParsedDiff } from "../review/reviewModel";
 import type { NativeReviewDiffRow } from "./nativeReviewDiffSurface";
 import type { NativeReviewDiffFile } from "./nativeReviewDiffTypes";
 import { highlightNativeReviewDiffVisibleRows } from "./nativeReviewDiffHighlighter";
 
 const tokenization = vi.hoisted(() => ({
   calls: [] as string[],
+  contextCharacters: [] as number[],
   afterCall: undefined as (() => void) | undefined,
 }));
 
@@ -19,6 +23,7 @@ vi.mock("@shikijs/core", async (importOriginal) => {
         ...highlighter,
         codeToTokensBase: (...input: Parameters<typeof highlighter.codeToTokensBase>) => {
           tokenization.calls.push(input[0]);
+          tokenization.contextCharacters.push(input[1].grammarContextCode?.length ?? 0);
           const result = highlighter.codeToTokensBase(...input);
           tokenization.afterCall?.();
           return result;
@@ -35,6 +40,7 @@ vi.mock("react-native-shiki-engine", async () => {
 
 afterEach(() => {
   tokenization.calls = [];
+  tokenization.contextCharacters = [];
   tokenization.afterCall = undefined;
 });
 
@@ -80,6 +86,35 @@ function highlight(
     maxRows: 100,
     alreadyHighlightedRowIds,
   });
+}
+
+async function highlightSveltePatch(patch: string) {
+  const { rows, files } = buildNativeReviewDiffData(buildReviewParsedDiff(patch, "svelte"));
+  const result = await highlightNativeReviewDiffVisibleRows({
+    rows,
+    files,
+    scheme: "dark",
+    engine: "javascript",
+    firstRowIndex: 0,
+    lastRowIndex: rows.length - 1,
+    overscanRows: 0,
+  });
+  return rows
+    .filter((row) => row.kind === "line")
+    .map((row) => ({
+      content: row.content,
+      tokens: result.tokensByRowId[row.id],
+    }));
+}
+
+function fullSveltePatch(lines: readonly string[]) {
+  return [
+    "diff --git a/App.svelte b/App.svelte",
+    "--- /dev/null",
+    "+++ b/App.svelte",
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((line) => `+${line}`),
+  ].join("\n");
 }
 
 describe("highlightNativeReviewDiffVisibleRows", () => {
@@ -219,6 +254,224 @@ describe("highlightNativeReviewDiffVisibleRows", () => {
     expect(highlighted.tokensByRowId[additionRow.id]).toEqual(
       standalone.tokensByRowId[additionRow.id],
     );
+  });
+
+  it("renders partial Svelte script, style and markup like full-file syntax on both sides", async () => {
+    const actual = await highlightSveltePatch(
+      [
+        "diff --git a/App.svelte b/App.svelte",
+        "--- a/App.svelte",
+        "+++ b/App.svelte",
+        "@@ -5,3 +5,3 @@",
+        "   let count = $state(0);",
+        "-  count = 1;",
+        "+  count = 2;",
+        "   console.log(count);",
+        "@@ -20,3 +20,3 @@",
+        " <main>",
+        "-  <p>{label}</p>",
+        '+  <p class="label">{label}</p>',
+        " </main>",
+        "@@ -40,4 +40,4 @@",
+        "     display: grid;",
+        "-    color: red;",
+        "+    color: blue;",
+        "   }",
+        " </style>",
+        "@@ -60,5 +60,3 @@",
+        " export const prerender = true;",
+        " </script>",
+        "-<script>",
+        "-  const removed = 1;",
+        "-</script>",
+        '+<div class="x">hi</div>',
+      ].join("\n"),
+    );
+    const expected = await highlightSveltePatch(
+      fullSveltePatch([
+        '<script lang="ts">',
+        "  let count = $state(0);",
+        "  count = 1;",
+        "  count = 2;",
+        "  console.log(count);",
+        "export const prerender = true;",
+        "</script>",
+        "<main>",
+        "  <p>{label}</p>",
+        '  <p class="label">{label}</p>',
+        "</main>",
+        "<style>",
+        "  p {",
+        "    display: grid;",
+        "    color: red;",
+        "    color: blue;",
+        "  }",
+        "</style>",
+        '<div class="x">hi</div>',
+      ]),
+    );
+    for (const content of [
+      "  let count = $state(0);",
+      "  count = 1;",
+      "  count = 2;",
+      "  console.log(count);",
+      "  <p>{label}</p>",
+      '  <p class="label">{label}</p>',
+      "    display: grid;",
+      "    color: red;",
+      "    color: blue;",
+      '<div class="x">hi</div>',
+    ]) {
+      const matching = actual.filter((line) => line.content === content);
+      expect(matching.length, content).toBeGreaterThan(0);
+      const reference = expected.find((line) => line.content === content)!;
+      for (const line of matching) expect.soft(line.tokens, content).toEqual(reference.tokens);
+    }
+    tokenization.contextCharacters = [];
+    const manyEdits = await highlightSveltePatch(
+      [
+        "diff --git a/App.svelte b/App.svelte",
+        "--- a/App.svelte",
+        "+++ b/App.svelte",
+        "@@ -20,200 +20,200 @@",
+        ...Array.from({ length: 100 }, (_, index) => [
+          `   const value${index} = compute(${index});`,
+          `-  total += value${index};`,
+          `+  total += value${index} * 2;`,
+        ]).flat(),
+      ].join("\n"),
+    );
+    expect(manyEdits).toHaveLength(300);
+    expect(
+      manyEdits.every(
+        (line) => line.tokens?.map((token) => token.content).join("") === line.content,
+      ),
+    ).toBe(true);
+    expect(tokenization.contextCharacters.some((length) => length > 0)).toBe(true);
+    expect(
+      tokenization.contextCharacters.reduce((total, length) => total + length, 0),
+    ).toBeLessThanOrEqual(8_000);
+  });
+  it("uses CSS evidence, keeps ambiguous text plain, and resumes markup after a long line", async () => {
+    const actual = await highlightSveltePatch(
+      [
+        "diff --git a/App.svelte b/App.svelte",
+        "--- a/App.svelte",
+        "+++ b/App.svelte",
+        "@@ -40,2 +40,2 @@",
+        "     display: grid;",
+        "-    color: red;",
+        "+    color: blue;",
+        "@@ -70 +70 @@",
+        "-Welcome to version 1",
+        "+Welcome to version 2",
+      ].join("\n"),
+    );
+    const expected = await highlightSveltePatch(
+      fullSveltePatch([
+        "<style>",
+        "  p {",
+        "    display: grid;",
+        "    color: red;",
+        "    color: blue;",
+        "  }",
+        "</style>",
+        "<main>",
+        "Welcome to version 1",
+        "Welcome to version 2",
+        "</main>",
+      ]),
+    );
+    for (const content of [
+      "    display: grid;",
+      "    color: red;",
+      "    color: blue;",
+      "Welcome to version 1",
+      "Welcome to version 2",
+    ]) {
+      const matching = actual.filter((line) => line.content === content);
+      expect(matching.length, content).toBeGreaterThan(0);
+      const reference = expected.find((line) => line.content === content)!;
+      for (const line of matching) expect.soft(line.tokens, content).toEqual(reference.tokens);
+    }
+    const longLine = "x".repeat(1_001);
+    const spanning = await highlightSveltePatch(
+      [
+        "diff --git a/App.svelte b/App.svelte",
+        "--- a/App.svelte",
+        "+++ b/App.svelte",
+        "@@ -4,4 +4,4 @@",
+        "   let count = 0;",
+        " </script>",
+        ` ${longLine}`,
+        "-Welcome to version 1",
+        "+Welcome to version 2",
+      ].join("\n"),
+    );
+    for (const content of ["Welcome to version 1", "Welcome to version 2"]) {
+      expect
+        .soft(spanning.find((line) => line.content === content)?.tokens, content)
+        .toEqual(expected.find((line) => line.content === content)?.tokens);
+    }
+    expect(spanning.find((line) => line.content === longLine)?.tokens).toEqual([
+      { content: longLine, color: null, fontStyle: null },
+    ]);
+  });
+
+  it("retries a failed lazy grammar load and discards a batch cancelled while loading", async () => {
+    const { rows, files } = buildNativeReviewDiffData(
+      buildReviewParsedDiff(
+        fullSveltePatch(["def greet(name):", '    return "Hello " + name']).replaceAll(
+          "App.svelte",
+          "greet.py",
+        ),
+        "python",
+      ),
+    );
+    const input = {
+      rows,
+      files,
+      scheme: "dark",
+      engine: "javascript",
+      firstRowIndex: 0,
+      lastRowIndex: rows.length - 1,
+      overscanRows: 0,
+    } as const;
+    const language = (await reviewHighlighter.importReviewLanguage("python"))!;
+    const loading = Promise.withResolvers<typeof language>();
+    const started = Promise.withResolvers<void>();
+    const importer = vi
+      .spyOn(reviewHighlighter, "importReviewLanguage")
+      .mockRejectedValueOnce(new Error("grammar unavailable"))
+      .mockImplementationOnce(() => {
+        started.resolve();
+        return loading.promise;
+      });
+    try {
+      const fallback = await highlightNativeReviewDiffVisibleRows(input);
+      const lineRows = rows.filter((row) => row.kind === "line");
+      for (const row of lineRows) {
+        expect(fallback.tokensByRowId[row.id]).toEqual([
+          { content: row.content, color: null, fontStyle: null },
+        ]);
+      }
+      const controller = new AbortController();
+      tokenization.calls = [];
+      const pending = highlightNativeReviewDiffVisibleRows({ ...input, signal: controller.signal });
+      await started.promise;
+      controller.abort();
+      loading.resolve(language);
+      expect(await pending).toMatchObject({ tokensByRowId: {}, rowCount: 0 });
+      expect(tokenization.calls).toEqual([]);
+
+      const recovered = await highlightNativeReviewDiffVisibleRows(input);
+      const tokens = recovered.tokensByRowId[lineRows[0]!.id]!;
+      expect(tokens.map((token) => token.content).join("")).toBe("def greet(name):");
+      expect(new Set(tokens.map((token) => token.color)).size).toBeGreaterThan(1);
+    } finally {
+      loading.resolve(language);
+      importer.mockRestore();
+    }
   });
 });
 

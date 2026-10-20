@@ -1,6 +1,7 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { parseDiffFromFile } from "@pierre/diffs";
+import { getFiletypeFromFileName, parseDiffFromFile } from "@pierre/diffs";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
+import { inferEmbeddedGrammarContext } from "@t3tools/shared/embeddedGrammarContext";
 
 const DIFF_THEME_NAMES = {
   light: "pierre-light",
@@ -162,6 +163,40 @@ function compactPartialHunkOffsets(file: FileDiffMetadata): FileDiffMetadata {
   };
 }
 
+/** Read lazily, so a language without embedded blocks never walks its hunks. */
+function* lineRange(lines: readonly string[], start: number, count: number) {
+  for (let index = start; index < start + count; index += 1) {
+    const line = lines[index];
+    if (line !== undefined) yield line;
+  }
+}
+
+function* hunkLines(file: FileDiffMetadata, hunk: FileDiffMetadata["hunks"][number]) {
+  yield* lineRange(file.deletionLines, hunk.deletionLineIndex, hunk.deletionCount);
+  yield* lineRange(file.additionLines, hunk.additionLineIndex, hunk.additionCount);
+}
+
+/**
+ * Pierre highlights each partial hunk separately. Either side can supply missing block context;
+ * unchanged context counts as old-side lines even in a hunk that only adds code.
+ */
+function withEmbeddedGrammarContext(file: FileDiffMetadata) {
+  if (!file.isPartial) return file;
+
+  const language = file.lang ?? getFiletypeFromFileName(file.name);
+  const hunks = file.hunks.map((hunk) => {
+    const fromDeletions = hunk.deletionCount > 0;
+    const grammarContextCode = inferEmbeddedGrammarContext(
+      language,
+      fromDeletions ? hunk.deletionStart : hunk.additionStart,
+      hunkLines(file, hunk),
+    );
+    return grammarContextCode === undefined ? hunk : { ...hunk, grammarContextCode };
+  });
+
+  return hunks.some((hunk, index) => hunk !== file.hunks[index]) ? { ...file, hunks } : file;
+}
+
 export function getRenderablePatch(
   patch: string | undefined,
   cacheScope = "diff-panel",
@@ -179,7 +214,9 @@ export function getRenderablePatch(
     const sourceFiles = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
     const files = sourceFiles.map((file) => {
       const filtered = options.ignoreWhitespace ? hideWhitespaceChanges(file) : file;
-      return options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered;
+      return withEmbeddedGrammarContext(
+        options.compactPartialHunkOffsets ? compactPartialHunkOffsets(filtered) : filtered,
+      );
     });
     if (files.length > 0) {
       return { kind: "files", files, sourceFiles };
