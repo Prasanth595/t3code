@@ -3391,6 +3391,63 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       event.type === "turn_item.updated" ? [`${event.turnItem.type}:${event.turnItem.status}`] : [],
     );
 
+  it.effect("keeps a background shell whose launch result was lost with the stream", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("message.list", { sessionID: SESSION, order: "desc", limit: "50" }),
+        reply("message.list", {
+          data: [
+            { id: "msg_idle_gap", time: { created: 3 }, type: "idle", outcome: "succeeded" },
+            {
+              id: "msg_assistant_gap",
+              time: { created: 2 },
+              type: "assistant",
+              agent: "build",
+              model: { id: "big-pickle", providerID: "opencode", variant: "default" },
+              content: [
+                {
+                  type: "tool",
+                  id: "call-sh_gap",
+                  name: "shell",
+                  executed: false,
+                  state: {
+                    status: "completed",
+                    input: { command: SHELL_COMMAND, background: true },
+                    content: [
+                      { type: "text", text: "Command moved to the background (shell ID: sh_gap)." },
+                    ],
+                    metadata: { status: "running", truncated: false, shellID: "sh_gap" },
+                  },
+                  time: { created: 2, ran: 2, completed: 2 },
+                },
+              ],
+              finish: "stop",
+            },
+            { id: PROMPT_ID, time: { created: 1 }, text: "hi", type: "user" },
+          ],
+          cursor: {},
+        }),
+        ...shellStatus("sh_gap", "running"),
+        out("session.inbox.list", { sessionID: SESSION }),
+        replyData("session.inbox.list", []),
+        readMarker("verified"),
+      ]);
+      const watch = yield* watchShells(runtime);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(
+        () => watch.seen.ended === 1 && watch.seen.models.has("opencode/verified"),
+      );
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("does not end a turn from an earlier turn's history when its prompt is not there", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([

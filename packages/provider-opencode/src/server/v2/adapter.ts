@@ -2248,14 +2248,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
 
+    const trackShellLaunch = (
+      state: ThreadState,
+      metadata: Readonly<Record<string, unknown>> | undefined,
+    ) => {
+      const shellId = stringField(metadata, "shellID");
+      if (metadata?.["status"] !== "running" || !isShellId(shellId)) return;
+      if (!state.endedShells.delete(shellId) && !state.shells.has(shellId)) {
+        state.shells.set(shellId, state.directory);
+      }
+    };
+
     /** Held executions must count shell events even if no turn replays them. */
     const trackShells = (state: ThreadState, event: OpenCode2Client.OpenCode2StreamEvent) => {
       if (event.type === "session.tool.success") {
-        const shellId = stringField(event.data.metadata, "shellID");
-        if (event.data.metadata?.["status"] !== "running" || !isShellId(shellId)) return;
-        if (!state.endedShells.delete(shellId) && !state.shells.has(shellId)) {
-          state.shells.set(shellId, state.directory);
-        }
+        trackShellLaunch(state, event.data.metadata);
       } else if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
         const metadata = event.data.item.payload.metadata;
         if (stringField(metadata, "source") !== "shell") return;
@@ -2525,6 +2532,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             tool.input = part.state.input as Record<string, unknown>;
           }
           if (part.state.status === "completed") {
+            // A launch result lost with the stream still leaves its shell running;
+            // reconcile verifies every tracked shell after this backfill.
+            trackShellLaunch(state, part.state.metadata);
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
               metadata: part.state.metadata,
