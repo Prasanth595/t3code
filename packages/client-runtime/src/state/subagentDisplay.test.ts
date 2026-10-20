@@ -261,6 +261,31 @@ describe("resolveSubagentModelTraits", () => {
     ).toEqual({ effortLabel: "High", speed: null });
   });
 
+  it("names Cursor's reasoning effort", () => {
+    const cursorInstance = ProviderInstanceId.make("cursor");
+    expect(
+      resolveSubagentModelTraits({
+        model: "gpt-6.1-sol",
+        providerInstanceId: cursorInstance,
+        origin: "provider_native",
+        modelSelection: selection(cursorInstance, "gpt-6.1-sol", [
+          { id: "reasoning_effort", value: "xhigh" },
+        ]),
+        provider: {
+          driver: ProviderDriverKind.make("cursor"),
+          models: [
+            {
+              slug: "gpt-6.1-sol",
+              name: "GPT-6.1-Sol",
+              isCustom: false,
+              capabilities: { optionDescriptors: [{ ...effort, id: "reasoning_effort" }] },
+            },
+          ],
+        },
+      }),
+    ).toEqual({ effortLabel: "Extra High", speed: null });
+  });
+
   it("calls out a Codex fast tier and leaves the standard tier unmarked", () => {
     const traits = (tier: string) =>
       resolveSubagentModelTraits({

@@ -118,7 +118,13 @@ export function resolveSubagentMetadata(input: {
   return { modelLabel, workspace };
 }
 
-const EFFORT_OPTION_IDS = ["reasoningEffort", "effort", "reasoning", "variant"] as const;
+const EFFORT_OPTION_IDS = [
+  "reasoningEffort",
+  "effort",
+  "reasoning",
+  "variant",
+  "reasoning_effort",
+] as const;
 
 /**
  * The reasoning effort and speed a subagent runs at, named as the composer
