@@ -265,6 +265,42 @@ describe("ChangedFilesTree", () => {
     expect(container.querySelectorAll("button").length).toBe(1);
   });
 
+  it("moves the next timeline row up in the same frame a folder collapses", async () => {
+    await render(
+      <LegendList
+        data={["files", "after"]}
+        keyExtractor={(item) => item}
+        estimatedItemSize={100}
+        style={{ height: 600 }}
+        renderItem={({ item }) =>
+          item === "files" ? (
+            <ChangedFilesTree
+              runId={RunId.make("run-1")}
+              files={[file("src/a.ts"), file("src/b.ts"), file("src/c.ts")]}
+              allDirectoriesExpanded
+              resolvedTheme="light"
+              onOpenTurnDiff={() => {}}
+            />
+          ) : (
+            <div data-testid="after">After</div>
+          )
+        }
+      />,
+    );
+    // Let the initial ResizeObserver measurements settle.
+    await act(async () => {
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+    });
+    const after = () => container.querySelector('[data-testid="after"]')!.getBoundingClientRect();
+    const topBefore = after().top;
+
+    await act(async () => buttonWithText("src").click());
+
+    expect(text()).not.toContain("a.ts");
+    expect(after().top).toBe(topBefore - 3 * 28);
+  });
+
   it("keeps a focused file mounted when scrolling it out of view", async () => {
     await render(
       <div style={{ height: 280, overflowY: "auto" }}>
