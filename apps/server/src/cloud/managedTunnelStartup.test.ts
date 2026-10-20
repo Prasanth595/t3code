@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -7,6 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import {
   MANAGED_TUNNEL_RECOVERY_COOLDOWN,
+  makeManagedTunnelRecovery,
   managedTunnelStartupAction,
   nextManagedTunnelRecoveryCooldown,
   relayRetrySchedule,
@@ -192,6 +194,68 @@ describe("relayRetrySchedule", () => {
       yield* TestClock.adjust("31 seconds");
       expect(yield* Fiber.join(fiber)).toBe("done");
       expect(attempts).toBe(2);
+    }),
+  );
+});
+
+describe("makeManagedTunnelRecovery", () => {
+  const config = {
+    providerKind: "cloudflare_tunnel" as const,
+    connectorToken: "connector-token",
+    tunnelId: "tunnel-1",
+  };
+
+  it.effect("retries an unavailable relay every cooldown without growing it", () =>
+    Effect.gen(function* () {
+      const attemptMinutes: Array<number> = [];
+      const recover = makeManagedTunnelRecovery({
+        recover: () =>
+          Effect.gen(function* () {
+            attemptMinutes.push((yield* Clock.currentTimeMillis) / 60_000);
+            return attemptMinutes.length < 4
+              ? yield* Effect.fail("relay unavailable" as const)
+              : true;
+          }),
+        isRetryable: () => true,
+      });
+      const run = yield* recover;
+      const fiber = yield* Effect.forkChild(run(config), { startImmediately: true });
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Fiber.join(fiber)).toBe(true);
+      expect(attemptMinutes.map(Math.round)).toEqual([0, 2, 4, 6]);
+    }),
+  );
+});
+
+describe("retryManagedTunnelRegistration fallback", () => {
+  it.effect("falls back when the window ends even if Retry-After asks for longer", () =>
+    Effect.gen(function* () {
+      let fallbackAtMillis: number | undefined;
+      const registration = Effect.fail(
+        new RelayRequestError({
+          rejection: "unavailable",
+          description: "paused",
+          retryAfterMillis: 120_000,
+        }),
+      );
+      yield* Effect.forkChild(
+        retryManagedTunnelRegistration(
+          registration,
+          () => true,
+          Clock.currentTimeMillis.pipe(
+            Effect.tap((now) =>
+              Effect.sync(() => {
+                fallbackAtMillis ??= now;
+              }),
+            ),
+            Effect.asVoid,
+          ),
+        ),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("15 minutes");
+      expect(fallbackAtMillis).toBeDefined();
+      expect(fallbackAtMillis).toBeLessThanOrEqual(10 * 60_000 + 1_000);
     }),
   );
 });

@@ -1,7 +1,9 @@
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 
 import { relayRetryAfterMillis } from "./relayResponse.ts";
 
@@ -69,10 +71,19 @@ export const retryManagedTunnelRegistration = <A, E, R>(
   onRetryWindowExhausted?: Effect.Effect<void, never, R>,
 ) => {
   const schedule = relayRetrySchedule;
+  const windowMillis = Duration.toMillis(MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW);
   const withinWindow = registration.pipe(
     Effect.retry({
       while: isRetryable,
+      // A backed-off sleep can outlast the window; trim it so the fallback
+      // still starts the stored connector when the window ends. At least 1 ms,
+      // so time moves past the window and `upTo` stops.
       schedule: schedule.pipe(
+        Schedule.modifyDelay(({ duration, elapsed }) =>
+          Effect.succeed(
+            Duration.min(duration, Duration.millis(Math.max(1, windowMillis - elapsed))),
+          ),
+        ),
         Schedule.upTo({ duration: MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW }),
       ),
     }),
@@ -90,6 +101,14 @@ export const retryManagedTunnelRegistration = <A, E, R>(
 // Every managed host shares one relay, so a host stuck in a bad loop must not
 // turn into a fleet-wide request storm.
 export const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
+
+// Retries inside one recovery, while the relay keeps failing, stay at least a
+// cooldown apart. They do not grow the cooldown: only a new request does.
+export const managedTunnelRecoveryRetrySchedule = relayRetrySchedule.pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(Duration.max(duration, MANAGED_TUNNEL_RECOVERY_COOLDOWN)),
+  ),
+);
 const MANAGED_TUNNEL_RECOVERY_MAX_COOLDOWN = Duration.minutes(30);
 // A recovery that fixed the tunnel stops the runtime asking for another, so a
 // request this long after the cooldown means the previous one worked.
@@ -116,3 +135,39 @@ export function nextManagedTunnelRecoveryCooldown(input: {
 // auto-update delivers that boot to many hosts at once. Spread the first
 // registration so the relay and Cloudflare see a ramp instead of a spike.
 export const MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER = Duration.seconds(30);
+
+/**
+ * Runs one recovery per request, one at a time: waits out the current
+ * cooldown, then calls the relay, retrying it while it stays unavailable.
+ */
+export const makeManagedTunnelRecovery = Effect.fnUntraced(function* <A, E, R>(options: {
+  readonly recover: (config: RelayManagedEndpointRuntimeConfig) => Effect.Effect<A, E, R>;
+  readonly isRetryable: (error: E) => boolean;
+}) {
+  const lock = yield* Semaphore.make(1);
+  let lastRecoveryAtMillis = Number.NEGATIVE_INFINITY;
+  let cooldown = MANAGED_TUNNEL_RECOVERY_COOLDOWN;
+  const waitForCooldown = Effect.gen(function* () {
+    const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
+    cooldown = nextManagedTunnelRecoveryCooldown({
+      current: cooldown,
+      sinceLastRecovery: Duration.millis(elapsed),
+    });
+    const wait = Duration.toMillis(cooldown) - elapsed;
+    if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
+    lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
+  });
+  return (config: RelayManagedEndpointRuntimeConfig) =>
+    lock.withPermits(1)(
+      waitForCooldown.pipe(
+        Effect.andThen(
+          options.recover(config).pipe(
+            Effect.retry({
+              while: options.isRetryable,
+              schedule: managedTunnelRecoveryRetrySchedule,
+            }),
+          ),
+        ),
+      ),
+    );
+});
