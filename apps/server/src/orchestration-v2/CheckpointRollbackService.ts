@@ -355,7 +355,8 @@ export const layer: Layer.Layer<
     });
 
     return CheckpointRollbackServiceV2.of({
-      execute: Effect.fn("CheckpointRollbackService.execute")(
+      // The inner execute owns the rollback span; this wrapper selects the workspace lease.
+      execute: Effect.fnUntraced(
         function* (input) {
           // Storage cleanup removes worktrees under the same lease.
           const thread = yield* projections.getThread(input.threadId);

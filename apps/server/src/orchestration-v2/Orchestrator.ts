@@ -11502,9 +11502,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  const dispatchWithReceipt = Effect.fn("Orchestrator.dispatchWithReceipt")(function* (
-    command: OrchestrationV2ServerCommand,
-  ) {
+  // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
+  const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
