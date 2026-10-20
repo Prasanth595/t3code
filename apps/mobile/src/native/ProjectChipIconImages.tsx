@@ -1,7 +1,7 @@
 import type { ProjectIconColor } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Rect, Text } from "react-native-svg";
 import { useResolveClassNames } from "uniwind";
@@ -81,8 +81,10 @@ export function ProjectChipIconRasterizer() {
 }
 
 function GlyphCapture(props: { readonly tile: PendingTile }) {
+  const started = useRef(false);
   const capture = (svg: Svg | null) => {
-    if (!svg) return;
+    if (!svg || started.current) return;
+    started.current = true;
     requestAnimationFrame(() =>
       svg.toDataURL(
         (base64?: string) => finish(props.tile, base64),
