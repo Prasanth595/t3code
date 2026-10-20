@@ -49,3 +49,15 @@ describe("useLocalStorage with a stored value that fails decode", () => {
     expect(current[0]).toBe(1);
   });
 });
+
+it("resets a mounted preference when another window clears storage", async () => {
+  await act(() => current[1](65));
+  expect(current[0]).toBe(65);
+
+  await act(() => {
+    localStorage.clear();
+    window.dispatchEvent(new StorageEvent("storage", { key: null, storageArea: localStorage }));
+  });
+
+  expect(current[0]).toBe(0);
+});
