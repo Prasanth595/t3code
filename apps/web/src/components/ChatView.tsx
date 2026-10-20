@@ -5212,7 +5212,7 @@ export default function ChatView(props: ChatViewProps) {
         <span
           className={cn(
             "size-1.5 rounded-full bg-foreground",
-            presentation.waiting && "animate-status-pulse",
+            presentation.waiting && "motion-safe:animate-status-pulse",
           )}
           aria-hidden="true"
         />
@@ -7957,7 +7957,7 @@ export default function ChatView(props: ChatViewProps) {
                 </div>
               </div>
             ) : null}
-            <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
+            <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
               <ProviderStatusBanner
                 status={visibleProviderStatus}
                 onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}

@@ -34,7 +34,7 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref, resolveThreadLinkRef } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -174,6 +174,7 @@ import {
   resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import {
+  createThreadFeedCache,
   failedFeedRunIds,
   deriveThreadFeedPresentation,
   threadFeedRunIsUnsettled,
@@ -1681,6 +1682,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const [feedCache] = useState(createThreadFeedCache);
   const previousLatestTurnRef = useRef(props.latestRun);
   const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
@@ -1788,9 +1790,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
     const linkedThreadId = parseThreadLinkHref(href);
     if (linkedThreadId) {
+      const source = scopeThreadRef(props.environmentId, linkedThreadId);
+      const target =
+        resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
+        source;
       navigation.navigate("Thread", {
-        environmentId: String(props.environmentId),
-        threadId: String(linkedThreadId),
+        environmentId: String(target.environmentId),
+        threadId: String(target.threadId),
       });
       return;
     }
@@ -2097,6 +2103,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
       props.activeWorkStartedAt,
       props.runlessWorkActive ?? false,
+      feedCache,
     ),
     props.feed,
     props.queuedMessages,
