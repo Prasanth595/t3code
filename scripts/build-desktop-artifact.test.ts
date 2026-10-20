@@ -2404,23 +2404,93 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.notInclude(error.message, secret);
   });
 
-  it.effect("adds passkey entitlements and both renderer protocols to signed macOS builds", () =>
+  it.effect("ad-hoc signs unsigned local macOS builds under a separate bundle id", () =>
     Effect.gen(function* () {
-      const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
-        entitlementsPath: "/tmp/entitlements.mac.plist",
-        provisioningProfilePath: "/tmp/t3code.provisionprofile",
-      });
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
 
       const mac = config.mac as Record<string, unknown>;
-      assert.equal(config.appId, "com.t3tools.t3code");
-      assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
-      assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
-      assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
-      assert.deepStrictEqual(mac.protocols, [
-        { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
-        { name: "Web site URL", schemes: ["http", "https"], role: "Viewer" },
-      ]);
+      assert.equal(config.appId, "com.t3tools.t3code.local");
+      assert.equal(mac.identity, "-");
+      assert.equal(mac.hardenedRuntime, false);
+      assert.notProperty(mac, "sign");
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect.each(["1.2.3", "0.0.33-pr.8182.1"])(
+    "preserves release identity and signing defaults for unsigned macOS CI builds (%s)",
+    (version) =>
+      Effect.gen(function* () {
+        const config = yield* createBuildConfig(
+          "mac",
+          "dmg",
+          version,
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+
+        const mac = config.mac as Record<string, unknown>;
+        assert.equal(config.appId, "com.t3tools.t3code");
+        assert.notProperty(mac, "identity");
+        assert.notProperty(mac, "hardenedRuntime");
+        assert.notProperty(mac, "sign");
+      }).pipe(
+        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: { CI: "true" } }))),
+      ),
+  );
+
+  it.effect.each([
+    { platform: "linux", target: "AppImage" },
+    { platform: "win", target: "nsis" },
+  ] as const)(
+    "preserves the release bundle id for unsigned local $platform builds",
+    ({ platform, target }) =>
+      Effect.gen(function* () {
+        const config = yield* createBuildConfig(
+          platform,
+          target,
+          "1.2.3",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+
+        assert.equal(config.appId, "com.t3tools.t3code");
+        assert.notProperty(config, "mac");
+      }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect.each([{}, { CI: "true" }])(
+    "adds passkey entitlements and both renderer protocols to signed macOS builds (%j)",
+    (env) =>
+      Effect.gen(function* () {
+        const config = yield* createBuildConfig("mac", "dmg", "1.2.3", true, false, undefined, {
+          entitlementsPath: "/tmp/entitlements.mac.plist",
+          provisioningProfilePath: "/tmp/t3code.provisionprofile",
+        });
+
+        const mac = config.mac as Record<string, unknown>;
+        assert.equal(config.appId, "com.t3tools.t3code");
+        assert.notProperty(mac, "identity");
+        assert.notProperty(mac, "hardenedRuntime");
+        assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
+        assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
+        assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
+        assert.deepStrictEqual(mac.protocols, [
+          { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
+          { name: "Web site URL", schemes: ["http", "https"], role: "Viewer" },
+        ]);
+      }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env })))),
   );
 
   it.effect("uses the nightly DMG background for nightly macOS builds", () =>

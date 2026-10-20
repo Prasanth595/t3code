@@ -2828,8 +2828,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  // Keep local macOS privacy grants separate from installed releases.
+  const localMacBuild =
+    platform === "mac" && !signed && Option.isNone(yield* Config.String("CI").pipe(Config.option));
   const buildConfig: Record<string, unknown> = {
-    appId: DESKTOP_APP_ID,
+    appId: localMacBuild ? `${DESKTOP_APP_ID}.local` : DESKTOP_APP_ID,
     productName: resolveDesktopProductName(version),
     artifactName: "T3-Code-${version}-${arch}.${ext}",
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
@@ -2918,6 +2921,8 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         },
       ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      // Leave hardened runtime off so ad-hoc signed builds can load native addons.
+      ...(localMacBuild ? { identity: "-", hardenedRuntime: false } : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
