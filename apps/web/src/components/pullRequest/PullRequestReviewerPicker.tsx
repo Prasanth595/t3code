@@ -4,26 +4,19 @@ import type {
   PullRequestRef,
   PullRequestReviewerCandidate,
 } from "@t3tools/contracts";
+import { mergeReviewerCandidates } from "@t3tools/client-runtime/pull-request-reviewers";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
+import { useDebouncedValue } from "~/state/queries";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "./PullRequestCandidatePicker";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
 import { readableFailure } from "./pullRequestDetail.logic";
-
-function matches(candidate: PullRequestReviewerCandidate, query: string): boolean {
-  if (query.length === 0) return true;
-  const needle = query.toLowerCase();
-  return (
-    candidate.login.toLowerCase().includes(needle) ||
-    (candidate.name ?? "").toLowerCase().includes(needle)
-  );
-}
 
 export function PullRequestReviewerPicker({
   environmentId,
@@ -41,12 +34,25 @@ export function PullRequestReviewerPicker({
   const candidatesQuery = useEnvironmentQuery(
     open ? pullRequestEnvironment.reviewerCandidates({ environmentId, input: reference }) : null,
   );
+  // Past the first page the host is asked, since what was loaded cannot answer for the rest.
+  const searchQuery = useDebouncedValue(query.trim(), 250);
+  const searchesHost = candidatesQuery.data?.truncated === true && searchQuery.length > 0;
+  const searchResult = useEnvironmentQuery(
+    open && searchesHost
+      ? pullRequestEnvironment.reviewerSearch({
+          environmentId,
+          input: { ...reference, query: searchQuery },
+        })
+      : null,
+  );
   const requestReviewers = useAtomCommand(pullRequestEnvironment.requestReviewers, {
     reportFailure: false,
   });
 
-  const candidates = (candidatesQuery.data?.candidates ?? []).filter((entry) =>
-    matches(entry, query),
+  const candidates = mergeReviewerCandidates(
+    candidatesQuery.data?.candidates ?? [],
+    searchesHost ? (searchResult.data?.candidates ?? []) : [],
+    query,
   );
 
   const toggle = async (candidate: PullRequestReviewerCandidate) => {
@@ -93,14 +99,21 @@ export function PullRequestReviewerPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel="Search people with access"
-      isPending={candidatesQuery.isPending && candidatesQuery.data === null}
+      isPending={
+        (candidatesQuery.isPending && candidatesQuery.data === null) ||
+        // Nothing loaded matches yet, and the host has not answered: not a "nobody matches".
+        (candidates.length === 0 &&
+          candidatesQuery.data?.truncated === true &&
+          query.trim().length > 0 &&
+          (searchQuery !== query.trim() || searchResult.isPending))
+      }
       error={candidatesQuery.data === null ? candidatesQuery.error : null}
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."
       errorLabel="The people with access could not be read."
-      truncated={candidatesQuery.data?.truncated === true}
-      truncatedLabel="This repository has more people with access than are listed here. Ask for the rest on the host."
+      truncated={candidatesQuery.data?.truncated === true && query.trim().length === 0}
+      truncatedLabel="This repository has more people with access than are listed here. Search to find them."
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}

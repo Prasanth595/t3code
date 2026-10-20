@@ -934,6 +934,54 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "lists the requested reviewers first, even when the users page does not reach them",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(
+            Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 42, username: "late" }] }))),
+          )
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        expect(
+          list.candidates.map((candidate) => [
+            candidate.login,
+            candidate.id,
+            candidate.isRequested,
+          ]),
+        ).toEqual([
+          ["late", "42", true],
+          [reviewer.username, "5", false],
+        ]);
+      }),
+  );
+
+  it.effect("asks GitLab to search the project's users when the menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({}))))
+        .mockReturnValueOnce(Effect.succeed(output("[]")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        query: "octo cat",
+      });
+
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+    }),
+  );
+
   it.effect("writes the reviewer set back with the one being asked added to it", () =>
     Effect.gen(function* () {
       mockedExecute

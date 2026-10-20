@@ -275,6 +275,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
 
     readonly setReviewerRequest: (input: {
@@ -872,11 +873,13 @@ export const make = Effect.gen(function* () {
   const projectUsers = (input: {
     readonly cwd: string;
     readonly repository: string;
+    readonly search?: string | undefined;
   }): Effect.Effect<GitLabProjectUsers, GitLabPullRequestCliError> =>
     api({
       cwd: input.cwd,
       path: `projects/${projectPath(input.repository)}/users?${query([
         ["per_page", String(MAX_PAGE_SIZE)],
+        ...searchParams(input.search),
       ])}`,
     }).pipe(
       Effect.flatMap((result) => {
@@ -1231,18 +1234,29 @@ export const make = Effect.gen(function* () {
       ),
 
     listReviewerCandidates: (input) =>
-      Effect.all([mergeRequestDetail(input), projectUsers(input)], { concurrency: 2 }).pipe(
+      Effect.all([mergeRequestDetail(input), projectUsers({ ...input, search: input.query })], {
+        concurrency: 2,
+      }).pipe(
         Effect.map(([mergeRequest, users]) => {
           const author = mergeRequest.author?.login;
-          const requested = new Set(mergeRequest.reviewRequestLogins);
+          const requested = mergeRequest.reviewerUsers.map(({ id, ...actor }) => ({
+            ...actor,
+            id: String(id),
+            kind: "user" as const,
+            isRequested: true,
+          }));
+          const requestedIds = new Set(requested.map((reviewer) => reviewer.id));
           return {
+            // The reviewers lead, and come from the merge request rather than the users page:
+            // that page stops at a hundred, and somebody missing from it could not be taken off.
             // The author is dropped rather than shown unusable: GitLab refuses to make the person
             // who opened a merge request its reviewer.
-            candidates: users.candidates.flatMap((candidate) =>
-              candidate.login === author
-                ? []
-                : [{ ...candidate, isRequested: requested.has(candidate.login) }],
-            ),
+            candidates: [
+              ...requested,
+              ...users.candidates.filter(
+                (candidate) => candidate.login !== author && !requestedIds.has(candidate.id),
+              ),
+            ],
             truncated: users.rawCount >= MAX_PAGE_SIZE,
           };
         }),
@@ -1254,7 +1268,7 @@ export const make = Effect.gen(function* () {
           // GitLab has no endpoint that adds or removes one reviewer: `reviewer_ids` replaces the
           // whole set, so the set that is already there is read first and the change applied to
           // it.
-          const ids = new Set(mergeRequest.reviewerIds);
+          const ids = new Set(mergeRequest.reviewerUsers.map((reviewer) => reviewer.id));
           for (const reviewer of input.reviewers) {
             const id = Number(reviewer.id);
             if (!Number.isSafeInteger(id) || id <= 0) continue;
