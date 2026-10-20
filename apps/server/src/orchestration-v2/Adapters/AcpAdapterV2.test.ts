@@ -121,7 +121,7 @@ const ACP_TEST_DRIVER = ProviderDriverKind.make("acp-test");
 const decodeUnknownJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 describe("acpPerTurnPromptUsage", () => {
-  it("maps a per-turn sample straight through without any baseline", () => {
+  it("maps a per-turn sample straight onto TurnTokenUsage", () => {
     assert.deepEqual(
       acpPerTurnPromptUsage(
         {
@@ -190,7 +190,7 @@ describe("acpPerTurnPromptUsage", () => {
   });
 
   it("caps cache writes at the input left over after cache reads", () => {
-    // PR review case: each counter fits under input alone, but together they exceed it.
+    // Each counter fits under input alone, but together they exceed it.
     assert.deepEqual(
       acpPerTurnPromptUsage(
         {
@@ -1073,8 +1073,7 @@ describe("AcpAdapterV2", () => {
           (event) =>
             event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
         );
-        // Per-turn semantics map each response's own sample onto its turn:
-        // turn 2 reports 2453 input tokens, not the 21-token delta.
+        // Per-turn: each response's own sample maps straight onto its turn.
         assert.deepEqual(
           completed?.type === "provider_turn.updated"
             ? completed.providerTurn.turnTokenUsage
@@ -1251,77 +1250,75 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live(
-    "keeps usage unavailable for undeclared semantics even when the agent reports usage",
-    () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const instanceId = ProviderInstanceId.make("acp-test-usage-undeclared");
-        const threadId = ThreadId.make("thread-acp-usage-undeclared");
-        const adapter = yield* makeAcpAdapterV2({
-          instanceId,
-          selfInvocation: yield* resolveSelfInvocation(),
-          flavor: {
-            driver: ACP_TEST_DRIVER,
-            capabilities: AcpProviderCapabilitiesV2,
-            makeRuntime: makeMockRuntime({
-              childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-              mockAgentPath: yield* path.fromFileUrl(
-                new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-              ),
-              wrapRuntime: (runtime) => ({
-                ...runtime,
-                prompt: () =>
-                  Effect.succeed({
-                    stopReason: "end_turn" as const,
-                    usage: { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
-                  }),
-              }),
-            }),
-          },
-        });
-        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        });
-        const modelSelection = { instanceId, model: "default" } as const;
-        const runtime = yield* adapter.openSession({
-          threadId,
-          providerSessionId: ProviderSessionId.make("provider-session-acp-usage-undeclared"),
-          modelSelection,
-          runtimePolicy,
-        });
-        const providerThread = yield* runtime.ensureThread({
-          threadId,
-          modelSelection,
-          runtimePolicy,
-        });
-        const now = yield* DateTime.now;
-        for (const ordinal of [1, 2]) {
-          yield* runtime.startTurn(
-            makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
-          );
-          const events = Array.from(
-            yield* runtime.events.pipe(
-              Stream.takeUntil((event) => event.type === "turn.terminal"),
-              Stream.runCollect,
+  it.live("keeps usage unavailable for undeclared agents even when they report usage", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-usage-undeclared");
+      const threadId = ThreadId.make("thread-acp-usage-undeclared");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
             ),
-          );
-          const completed = events.find(
-            (event) =>
-              event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
-          );
-          // Usage semantics are unverified for an undeclared agent, so its
-          // counters are never trusted, on any turn.
-          assert.deepEqual(
-            completed?.type === "provider_turn.updated"
-              ? completed.providerTurn.turnTokenUsage
-              : null,
-            { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false },
-          );
-        }
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: () =>
+                Effect.succeed({
+                  stopReason: "end_turn" as const,
+                  usage: { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-usage-undeclared"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      for (const ordinal of [1, 2]) {
+        yield* runtime.startTurn(
+          makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal }),
+        );
+        const events = Array.from(
+          yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const completed = events.find(
+          (event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+        );
+        // Usage semantics are unverified for an undeclared agent, so its
+        // counters are never trusted, on any turn.
+        assert.deepEqual(
+          completed?.type === "provider_turn.updated"
+            ? completed.providerTurn.turnTokenUsage
+            : null,
+          { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents: false },
+        );
+      }
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   // Factory Droid 0.243.0 sends an optional text companion for every AskUser choice.

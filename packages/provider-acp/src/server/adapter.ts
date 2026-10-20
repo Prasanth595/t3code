@@ -7611,19 +7611,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               // Wire settlement precedes the completion callback's permit request so
               // settled-soft classification can observe the native return even when
               // the completion fiber has not yet set promptSettled under the permit.
+              // The sample is captured only before finalize starts: a response
+              // landing inside finalize's window must not flip a settled turn.
               Effect.tap((result) =>
-                (flavor.reportsPerTurnPromptUsage === true
-                  ? // Per-turn: the sample already covers exactly this prompt,
-                    // so it maps straight onto the turn unless it settled late.
-                    Effect.sync(() => {
-                      if (!context.finalized) {
-                        context.promptUsage = result.usage ?? undefined;
-                      }
-                    })
-                  : // Undeclared: usage reading is unverified, so the
-                    // response's counters are not captured.
-                    Effect.void
-                ).pipe(
+                Effect.sync(() => {
+                  if (flavor.reportsPerTurnPromptUsage === true && !context.finalized) {
+                    context.promptUsage = result.usage ?? undefined;
+                  }
+                }).pipe(
                   Effect.andThen(
                     Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
                   ),
