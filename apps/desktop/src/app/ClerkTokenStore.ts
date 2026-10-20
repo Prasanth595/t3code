@@ -10,6 +10,10 @@ import * as NodePath from "node:path";
  * survives those writes. `0600` is reapplied after every storage call, and an
  * existing token file in the state directory is tightened and moved in.
  *
+ * electron-store 8 joins a relative `cwd` onto `app.getPath('userData')`, so
+ * `stateDir` is resolved before the private directory is created. Otherwise the
+ * token file would miss that directory.
+ *
  * Windows ignores Unix mode bits except for the read-only attribute. Other
  * users are kept out by the profile ACL; `0600` still leaves the owner write bit set.
  */
@@ -96,14 +100,15 @@ export function openClerkTokenStorage(
   stateDir: string,
   createStorage: (directory: string) => ClerkTokenStorage,
 ): ClerkTokenStorage {
-  const directory = NodePath.join(stateDir, CLERK_TOKEN_DIRECTORY_NAME);
+  const absoluteStateDir = NodePath.resolve(stateDir);
+  const directory = NodePath.join(absoluteStateDir, CLERK_TOKEN_DIRECTORY_NAME);
   NodeFS.mkdirSync(directory, { recursive: true, mode: CLERK_TOKEN_DIRECTORY_MODE });
   const stat = NodeFS.lstatSync(directory);
   if (stat.isSymbolicLink() || !stat.isDirectory()) {
     throw new Error(`Clerk token directory "${directory}" must be a real directory.`);
   }
   NodeFS.chmodSync(directory, CLERK_TOKEN_DIRECTORY_MODE);
-  migrateLegacyClerkTokenFile(stateDir, directory);
+  migrateLegacyClerkTokenFile(absoluteStateDir, directory);
   const tokenPath = NodePath.join(directory, CLERK_TOKEN_FILE_NAME);
   restrictClerkTokenFile(tokenPath);
 

@@ -89,6 +89,22 @@ describePosix("ClerkTokenStore", () => {
     });
   });
 
+  it("resolves a relative state directory before opening storage", async () => {
+    await withStateDir(async (stateDir) => {
+      const relativeStateDir = NodePath.relative(process.cwd(), stateDir);
+      const opened: string[] = [];
+      openClerkTokenStorage(relativeStateDir, (directory) => {
+        opened.push(directory);
+        return idleStorage();
+      });
+
+      const directory = NodePath.join(stateDir, "clerk");
+      assert.equal(NodePath.isAbsolute(relativeStateDir), false);
+      assert.deepEqual(opened, [directory]);
+      assert.equal(modeOf(directory), 0o700);
+    });
+  });
+
   it("does not follow a symlinked clerk directory or token file", async () => {
     await withStateDir(async (stateDir) => {
       const outsideDirectory = NodePath.join(stateDir, "outside-dir");
