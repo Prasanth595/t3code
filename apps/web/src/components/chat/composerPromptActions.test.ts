@@ -21,6 +21,13 @@ describe("appendComposerPromptAction", () => {
     const once = appendComposerPromptAction("Fix the login bug.", "Review this.");
 
     expect(appendComposerPromptAction(`${once}\n`, "Review this.")).toBe(`${once}\n`);
+    expect(appendComposerPromptAction("Review this.", "Review this.")).toBe("Review this.");
+  });
+
+  it("still adds the action when the draft only ends with the same words", () => {
+    expect(appendComposerPromptAction("Do not run tests.", "run tests.")).toBe(
+      "Do not run tests.\n\nrun tests.",
+    );
   });
 });
 

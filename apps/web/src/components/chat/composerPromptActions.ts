@@ -7,13 +7,13 @@ export function runnableComposerPromptActions(
 }
 
 /**
- * Adds the action's text as its own paragraph at the end of the draft. Running the same action
- * twice in a row leaves the draft unchanged, so a double click does not repeat the instruction.
+ * Adds the action's text as its own paragraph at the end of the draft. When that paragraph is
+ * already last, the draft is left unchanged, so a double click does not repeat the instruction.
  */
 export function appendComposerPromptAction(prompt: string, actionPrompt: string): string {
   const addition = actionPrompt.trim();
   const draft = prompt.trimEnd();
-  if (addition === "" || draft.endsWith(addition)) return prompt;
+  if (addition === "" || draft === addition || draft.endsWith(`\n\n${addition}`)) return prompt;
   return draft === "" ? addition : `${draft}\n\n${addition}`;
 }
 

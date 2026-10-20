@@ -2900,7 +2900,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setPromptFromTraits(appendComposerPromptAction(promptRef.current, action.prompt));
   };
   const runComposerPromptActionStable = useStableCallback(runComposerPromptAction);
-  const composerPromptActions = runnableComposerPromptActions(settings.composerPromptActions);
+  // While the agent waits for an answer or an approval, the composer edits that reply instead of
+  // the draft these actions append to.
+  const composerPromptActions =
+    settings.composerPromptActionsEnabled &&
+    pendingUserInputs.length === 0 &&
+    !isComposerApprovalState
+      ? runnableComposerPromptActions(settings.composerPromptActions)
+      : [];
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,

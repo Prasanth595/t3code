@@ -12,6 +12,7 @@ import { randomUUID } from "~/lib/utils";
 import { composerPromptActionsAreDefault } from "../chat/composerPromptActions";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
+import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -55,40 +56,37 @@ function ComposerPromptActionPromptField(props: { action: ComposerPromptAction }
 }
 
 export function ComposerPromptActionsSetting() {
+  const enabled = useClientSettings((settings) => settings.composerPromptActionsEnabled);
   const actions = useClientSettings((settings) => settings.composerPromptActions);
 
   return (
     <SettingsRow
       {...searchableSetting("composer-prompt-actions")}
-      description="Saved text that Actions in the composer adds to the end of your prompt."
+      description="Show Actions in the composer to add saved text to the end of your prompt. Cross-model review asks the agent to have another available model review its response."
       resetAction={
-        composerPromptActionsAreDefault(actions) ? null : (
+        !enabled && composerPromptActionsAreDefault(actions) ? null : (
           <SettingResetButton
             label="composer actions"
             onClick={() =>
-              void updateClientSettings({ composerPromptActions: DEFAULT_COMPOSER_PROMPT_ACTIONS })
+              void updateClientSettings({
+                composerPromptActionsEnabled: false,
+                composerPromptActions: DEFAULT_COMPOSER_PROMPT_ACTIONS,
+              })
             }
           />
         )
       }
       control={
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={actions.length >= COMPOSER_PROMPT_ACTIONS_MAX_COUNT}
-          onClick={() =>
-            updateComposerPromptActions((current) => [
-              ...current,
-              { id: randomUUID(), label: "", prompt: "" },
-            ])
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) =>
+            void updateClientSettings({ composerPromptActionsEnabled: Boolean(checked) })
           }
-        >
-          <PlusIcon />
-          Add action
-        </Button>
+          aria-label="Composer actions"
+        />
       }
     >
-      {actions.length > 0 ? (
+      {enabled ? (
         <div className="grid gap-2 pt-1 pb-2">
           {actions.map((action) => (
             <div key={action.id} className="grid gap-2 rounded-lg border border-border p-2">
@@ -121,6 +119,22 @@ export function ComposerPromptActionsSetting() {
               <ComposerPromptActionPromptField action={action} />
             </div>
           ))}
+          <div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={actions.length >= COMPOSER_PROMPT_ACTIONS_MAX_COUNT}
+              onClick={() =>
+                updateComposerPromptActions((current) => [
+                  ...current,
+                  { id: randomUUID(), label: "", prompt: "" },
+                ])
+              }
+            >
+              <PlusIcon />
+              Add action
+            </Button>
+          </div>
         </div>
       ) : null}
     </SettingsRow>

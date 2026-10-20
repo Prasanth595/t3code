@@ -152,6 +152,7 @@ describe("storage cleanup settings", () => {
 
 describe("ClientSettings composer prompt actions", () => {
   it("offers the cross-model review until the user changes the list, including emptying it", () => {
+    expect(decodeClientSettings({}).composerPromptActionsEnabled).toBe(false);
     expect(decodeClientSettings({}).composerPromptActions).toEqual(DEFAULT_COMPOSER_PROMPT_ACTIONS);
     expect(decodeClientSettings({ composerPromptActions: [] }).composerPromptActions).toEqual([]);
     const draft = { id: "new", label: "", prompt: "" };

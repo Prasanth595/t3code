@@ -617,7 +617,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
-    ...(!composerPromptActionsAreDefault(settings.composerPromptActions)
+    ...(settings.composerPromptActionsEnabled !==
+      DEFAULT_UNIFIED_SETTINGS.composerPromptActionsEnabled ||
+    !composerPromptActionsAreDefault(settings.composerPromptActions)
       ? ["Composer actions"]
       : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
@@ -738,6 +740,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      composerPromptActionsEnabled: DEFAULT_UNIFIED_SETTINGS.composerPromptActionsEnabled,
       composerPromptActions: DEFAULT_UNIFIED_SETTINGS.composerPromptActions,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
