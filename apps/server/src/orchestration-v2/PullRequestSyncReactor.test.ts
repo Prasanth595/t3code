@@ -1302,7 +1302,7 @@ describe("PullRequestSyncReactor", () => {
           // #18's summary stays in flight until #83 has read its stack, flagged #18 and synced.
           summary: (input) =>
             (holdSummary && input.number === 18 ? Deferred.await(synced83) : Effect.void).pipe(
-              Effect.as(makeSummary(input)),
+              Effect.as(makeSummary(input, { updatedAt: NOW })),
             ),
           onSync: (command) =>
             command.number === 83 ? Deferred.succeed(synced83, undefined) : Effect.void,
