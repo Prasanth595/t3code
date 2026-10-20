@@ -271,6 +271,9 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
             body: "",
           },
         }),
+        // The custom alias stays opaque: it resolves to itself rather than the
+        // built-in it shadows, so its own default Reasoning control is what
+        // reaches the CLI, not the built-in's `[expanded]` mapping.
         argsMustContain: `--model ${SYNTHETIC_CLAUDE_COLLIDING_ALIAS} --effort max --settings`,
         claudeConfig: { customModels: [SYNTHETIC_CLAUDE_COLLIDING_ALIAS] },
       },

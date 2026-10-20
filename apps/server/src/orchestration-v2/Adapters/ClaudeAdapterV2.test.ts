@@ -88,6 +88,10 @@ import { WorktreeToolkit } from "../../mcp/toolkits/worktree/tools.ts";
 import { ThreadToolkit } from "../../mcp/toolkits/thread/tools.ts";
 import { OrchestratorToolkit } from "../../mcp/toolkits/orchestrator/tools.ts";
 import { ClaudeExecutableFileCheck } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  scopeClaudeModelCatalog,
+} from "../../provider/ClaudeModelCatalog.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -125,6 +129,9 @@ const decodeUserInputQuestions = Schema.decodeUnknownSync(
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 const AUTO_COMPACT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   autoCompactWindow: "300000",
+});
+const BARE_CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
+  customModels: [{ slug: "gateway-bare", name: "Gateway Bare" }],
 });
 const CUSTOM_MODEL_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({
   customModels: [
@@ -1025,6 +1032,38 @@ describe("ClaudeAdapterV2 context usage", () => {
       DateTime.makeUnsafe("2026-08-29T00:00:00.000Z"),
     );
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
+  });
+
+  it("defaults a bare custom slug and opens 1M through the turn path", () => {
+    const settings = BARE_CUSTOM_MODEL_CLAUDE_SETTINGS;
+    const bareSelection = {
+      instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+      model: "gateway-bare",
+      options: [
+        { id: "effort", value: "max" },
+        { id: "contextWindow", value: "1m" },
+      ],
+    } satisfies ModelSelection;
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: bareSelection,
+      nativeThreadId: "bare-model-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings,
+    });
+    assert.equal(options.model, "gateway-bare[1m]");
+    assert.equal(options.effort, "max");
+    assert.equal(
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 1, output_tokens: 1 },
+        bareSelection,
+        "2026-08-29T00:00:00.000Z",
+        "",
+        undefined,
+        scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, settings.customModels),
+      ).maxTokens,
+      1_000_000,
+    );
   });
 });
 
@@ -12630,7 +12669,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             model: "claude-custom-tuned",
             options: [{ id: "effort", value: "brutal" }],
           },
-          [`task-${SHADOW_TOOL_USE_ID}`]: { instanceId, model: "opus" },
+          [`task-${SHADOW_TOOL_USE_ID}`]: {
+            instanceId,
+            model: "opus",
+            options: [{ id: "effort", value: "high" }],
+          },
         });
       }).pipe(
         Effect.provide(

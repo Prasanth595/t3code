@@ -3,6 +3,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId, type ModelSelection } from "@t3tools/contracts";
 
 import { compileClaudeModelSelection } from "./claudeModelOptions.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  scopeClaudeModelCatalog,
+} from "./provider/ClaudeModelCatalog.ts";
 
 const selection = (
   model: string,
@@ -73,5 +77,23 @@ describe("compileClaudeModelSelection", () => {
       compileClaudeModelSelection(selection("claude-haiku-4-5", [{ id: "thinking", value: false }]))
         .settings,
     ).toEqual({ alwaysThinkingEnabled: false });
+  });
+
+  it("compiles 1M, effort, and thinking for a bare custom model", () => {
+    const catalog = scopeClaudeModelCatalog(BUNDLED_CLAUDE_MODEL_CATALOG, ["glm-flash"]);
+    expect(
+      compileClaudeModelSelection(
+        selection("glm-flash", [
+          { id: "contextWindow", value: "1m" },
+          { id: "effort", value: "max" },
+          { id: "thinking", value: false },
+        ]),
+        catalog,
+      ),
+    ).toMatchObject({
+      apiModelId: "glm-flash[1m]",
+      effort: "max",
+      settings: { alwaysThinkingEnabled: false },
+    });
   });
 });
