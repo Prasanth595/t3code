@@ -246,6 +246,7 @@ it("keeps workspace controls after expanding and collapsing 70 linked pull reque
         showOpenInPicker
         openInShortcutEnabled={false}
         gitCwd="/tmp/project"
+        workspaceMutationId={null}
         isGitRepo
         envLocked={false}
         availableEnvironments={[]}
