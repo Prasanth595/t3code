@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -841,6 +843,59 @@ describe("ManagedEndpointProvider", () => {
         "getToken",
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("keeps a pause recorded while a shared pause read was in flight", () => {
+    let listCalls = 0;
+    const tunnelClient = {
+      list: () =>
+        Effect.suspend(() => {
+          listCalls += 1;
+          return Effect.fail({ _tag: "TooManyRequests", message: "Rate limited" });
+        }),
+    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+
+    return Effect.gen(function* () {
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      const layer = ManagedEndpointProvider.layerCloudflareBindings(
+        tunnelClient,
+        {} as Cloudflare.DNS.ReadWriteDnsClient,
+        {} as Alchemy.BaseRuntimeContext,
+      ).pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(RelayConfiguration.layer(config)),
+        Layer.provide(
+          Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
+        ),
+        Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
+        Layer.provide(
+          Layer.succeed(
+            CloudflareApiPause.CloudflareApiPause,
+            CloudflareApiPause.CloudflareApiPause.of({
+              pausedUntilMillis: Deferred.succeed(readStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRead)),
+                Effect.as(0),
+              ),
+              pauseUntil: () => Effect.void,
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const tunnels = yield* ManagedEndpointProvider.ManagedEndpointTunnelClient;
+        const list = tunnels.list({ isDeleted: false }).pipe(Effect.flip);
+        // The first call starts the shared read; the second hits a 429 meanwhile.
+        const reading = yield* Effect.forkChild(list);
+        yield* Deferred.await(readStarted);
+        yield* list;
+        yield* Deferred.succeed(releaseRead, undefined);
+        yield* Fiber.join(reading);
+        yield* list;
+        expect(listCalls).toBe(1);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("pauses Cloudflare calls in every isolate until a rate limit has passed", () => {

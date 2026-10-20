@@ -478,7 +478,9 @@ const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext
         const now = yield* Clock.currentTimeMillis;
         if (now >= pausedUntilMillis && now - checkedAtMillis >= CLOUDFLARE_PAUSE_REFRESH_MILLIS) {
           checkedAtMillis = now;
-          pausedUntilMillis = Math.max(pausedUntilMillis, yield* pause.pausedUntilMillis);
+          // Read first: a 429 recorded while the read is in flight must win.
+          const shared = yield* pause.pausedUntilMillis;
+          pausedUntilMillis = Math.max(pausedUntilMillis, shared);
         }
         // A paused call never reaches Cloudflare, so it leaves no 429 behind.
         // Its own span keeps a storm visible to the rate-limit monitors.
