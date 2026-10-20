@@ -93,7 +93,7 @@ const LIST_REFS_SNAPSHOT_CACHE_TTL = Duration.minutes(2);
 const LIST_REFS_REFRESH_COALESCE_TTL = Duration.seconds(5);
 const LIST_REFS_REFRESH_FAILURE_COOLDOWN = Duration.seconds(30);
 const STATUS_DEFAULT_BRANCH_CACHE_TTL = Duration.minutes(5);
-const STATUS_PRIMARY_REMOTE_EXISTS_CACHE_TTL = Duration.minutes(5);
+const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -1442,7 +1442,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     {
       capacity: 2_048,
       timeToLive: Exit.match({
-        onSuccess: () => STATUS_PRIMARY_REMOTE_EXISTS_CACHE_TTL,
+        onSuccess: () => STATUS_ORIGIN_EXISTS_CACHE_TTL,
         onFailure: () => Duration.zero,
       }),
     },
