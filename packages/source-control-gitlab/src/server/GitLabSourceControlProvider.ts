@@ -205,6 +205,7 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("gitlab"),
+    changeRequestHeadRef: (number) => `refs/merge-requests/${number}/head`,
     readChangeRequestTemplate: ({ cwd, treeish }) =>
       GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute),
     refineRepositoryIdentity,
