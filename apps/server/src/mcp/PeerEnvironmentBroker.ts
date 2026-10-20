@@ -122,7 +122,8 @@ export const make = Effect.gen(function* () {
       }
       return [orphaned, { ...current, hosts, pending }];
     });
-    yield* Queue.end(host.queue);
+    yield* Queue.clear(host.queue);
+    yield* Queue.interrupt(host.queue);
     yield* Effect.forEach(orphaned, (entry) => Deferred.fail(entry.deferred, disconnectedError), {
       discard: true,
     });

@@ -267,7 +267,10 @@ export const runPeerEnvironmentHost = Effect.fn("clientRuntime.connection.runPee
   function* () {
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
     const clientId = `peer-${(yield* Random.nextInt).toString(36)}-${(yield* Random.nextInt).toString(36)}`;
-    yield* SubscriptionRef.changes(registry.entries).pipe(
+    yield* Stream.concat(
+      Stream.fromEffect(SubscriptionRef.get(registry.entries)),
+      SubscriptionRef.changes(registry.entries),
+    ).pipe(
       Stream.map((entries) => Array.from(entries.keys()).sort().join("\n")),
       Stream.changes,
       Stream.switchMap((key) =>
