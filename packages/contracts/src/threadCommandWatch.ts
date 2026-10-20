@@ -2,9 +2,9 @@ import * as Schema from "effect/Schema";
 
 import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const THREAD_COMMAND_WATCH_MAX_COMMAND_LENGTH = 4_000;
-export const THREAD_COMMAND_WATCH_MAX_LABEL_LENGTH = 120;
-export const THREAD_COMMAND_WATCH_MAX_EVERY_MINUTES = 24 * 60;
+const THREAD_COMMAND_WATCH_MAX_COMMAND_LENGTH = 4_000;
+const THREAD_COMMAND_WATCH_MAX_LABEL_LENGTH = 120;
+const THREAD_COMMAND_WATCH_MAX_EVERY_MINUTES = 24 * 60;
 /** Every watch id starts with this, so a pending background task can name its watch. */
 export const THREAD_COMMAND_WATCH_ID_PREFIX = "command-watch:";
 /** Watches one thread may hold at once. */

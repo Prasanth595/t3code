@@ -1017,7 +1017,7 @@ export const layerPullRequestsToolkit = toolkitRegistration(
   PullRequestsHandlers.layer,
 );
 
-export const layerCommandWatchesToolkit = toolkitRegistration(
+const layerCommandWatchesToolkit = toolkitRegistration(
   CommandWatchesToolkit,
   CommandWatchesHandlers.layer,
 );
