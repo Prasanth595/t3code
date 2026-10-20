@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { act, Suspense } from "react";
 import { createRoot, type Root } from "react-dom/client";
