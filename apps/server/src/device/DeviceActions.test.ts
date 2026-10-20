@@ -1,5 +1,8 @@
+import * as NodeChildProcess from "node:child_process";
+
 import { describe, expect, it } from "@effect/vitest";
 import type { DeviceActionInput } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import { readDeviceDetail, runDeviceAction, supportsAction } from "./DeviceActions.ts";
@@ -59,6 +62,42 @@ describe("supportsAction", () => {
 });
 
 describe("runDeviceAction", () => {
+  it.effect.each([
+    "https://example.com/callback?code=1&state=2",
+    "https://example.com/it's?a=1&b=2",
+    "https://example.com/a b?key=value",
+    "https://example.com/plain",
+  ])("opens the complete Android URL %s", (url) =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const { ready, calls } = makeReady();
+      yield* runDeviceAction(ready, "android", {
+        type: "openUrl",
+        deviceId: "emulator-5554",
+        url,
+      });
+      const args = calls[0]!.args;
+      expect(args.slice(0, 3)).toEqual(["-s", "emulator-5554", "shell"]);
+      // adb joins its shell arguments without escaping before the device runs sh -c.
+      const result = NodeChildProcess.spawnSync(
+        "/bin/sh",
+        [
+          "-c",
+          `am() { printf '%s\\0' "$@"; }
+${args.slice(3).join(" ")}`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout.split("\0").slice(0, -1)).toEqual([
+        "start",
+        "-a",
+        "android.intent.action.VIEW",
+        "-d",
+        url,
+      ]);
+    }),
+  );
   it.effect("maps shared text sizes onto simctl content-size categories", () =>
     Effect.gen(function* () {
       const { ready, calls } = makeReady();
