@@ -354,6 +354,7 @@ function useThreadFilesWorkspace(params: {
   readonly threadId?: string | string[];
   readonly cwd?: string | string[];
   readonly projectName?: string | string[];
+  readonly path?: string | string[];
 }) {
   const routeEnvironmentId = firstRouteParam(params.environmentId);
   const routeThreadId = firstRouteParam(params.threadId);
@@ -375,6 +376,7 @@ function useThreadFilesWorkspace(params: {
     cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
     environmentId,
     projectName: routeProjectName ?? project?.title ?? "Files",
+    relativePath: normalizeRoutePath(params.path),
     selectedThread,
     threadId,
   };
@@ -585,11 +587,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const iconColor = useUniwindTheme()["--color-icon"];
   const params = props.route.params;
-  const relativePath = normalizeRoutePath(params.path);
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const { cwd, environmentId, projectName, relativePath, selectedThread, threadId } =
+    useThreadFilesWorkspace(props.route.params);
   const fileAccessSession = useEnvironmentQuery(
     environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
   );
