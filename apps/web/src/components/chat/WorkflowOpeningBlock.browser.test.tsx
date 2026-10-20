@@ -6,8 +6,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
-
-import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useThreadFindHighlights } from "./threadFindHighlights";
