@@ -1578,17 +1578,19 @@ export function NewTaskDraftScreen(props: {
       {!voiceInput.isBusy &&
       composerMenu.trigger &&
       (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
-        <ComposerPopoverAnchor>
-          <Animated.View entering={COMPOSER_POPOVER_ENTERING}>
-            <ComposerCommandPopover
-              items={composerMenu.items}
-              triggerKind={composerMenu.trigger.kind}
-              isLoading={composerMenu.isLoading}
-              error={composerMenu.error}
-              onSelect={composerMenu.onSelect}
-            />
-          </Animated.View>
-        </ComposerPopoverAnchor>
+        <View>
+          <ComposerPopoverAnchor>
+            <Animated.View entering={COMPOSER_POPOVER_ENTERING}>
+              <ComposerCommandPopover
+                items={composerMenu.items}
+                triggerKind={composerMenu.trigger.kind}
+                isLoading={composerMenu.isLoading}
+                error={composerMenu.error}
+                onSelect={composerMenu.onSelect}
+              />
+            </Animated.View>
+          </ComposerPopoverAnchor>
+        </View>
       ) : null}
       {projectClone && projectClone.phase !== "done" && selectedProject ? (
         <View className="px-1 pb-2">
