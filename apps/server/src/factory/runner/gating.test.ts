@@ -75,7 +75,7 @@ import {
   prepareOutputTail,
   prepareSessionText,
 } from "./messages.ts";
-import { applyActions, progressFrom, type Progress } from "./run.ts";
+import { applyActions, progressFrom, runProject, type Progress } from "./run.ts";
 import { readProgress, type Moved } from "./progress.ts";
 
 const tempDir = useTempDirs();
@@ -327,6 +327,8 @@ class FakeGh {
   baseTip = BASE;
   /** When set, what `branchTip` answers in place of `baseTip`: a base a test moves from outside. */
   tipCell: { tip: string } | null = null;
+  /** When set, the tip of each branch by name, in place of `baseTip` and `tipCell`. */
+  tips: Record<string, string> | null = null;
   failAt: number | null = null;
   /** The failing call still has its effect: the answer was lost, not the request. */
   loseResponse = false;
@@ -455,7 +457,9 @@ class FakeGh {
       ),
     branchTip: (branch) =>
       this.run(`branchTip ${branch}`, () => {}).pipe(
-        Effect.map(() => (this.tipCell === null ? this.baseTip : this.tipCell.tip)),
+        Effect.map(
+          () => this.tips?.[branch] ?? (this.tipCell === null ? this.baseTip : this.tipCell.tip),
+        ),
       ),
     setState: (n, state) =>
       this.run(`setState ${n} ${state}`, (w) => {
@@ -1491,9 +1495,9 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
         ["it is not a draft", { isDraft: false }],
         ["it comes from a fork", { crossRepository: true }],
         [
-          "its base is not the configured base branch",
+          "its base is not the base branch main",
           { baseRef: "release" },
-          "the session reported PR #12 but its base release is not the configured base branch",
+          "the session reported PR #12 but its base release is not the base branch main",
         ],
         [
           "its branch is not this session's branch",
@@ -4200,7 +4204,7 @@ describe("last_pass: what the pass reads before it starts the gate", () => {
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
       const last = yield* pass(rig);
-      assert.deepStrictEqual(last, { pr: 12, head: HEAD, base: BASE });
+      assert.deepStrictEqual(last, { pr: 12, head: HEAD, base: BASE, baseBranch: null });
       const same = (head: string, tip: string) => unchangedSince(last!.head, last!.base, head, tip);
       assert.isTrue(same(HEAD, BASE));
       assert.isTrue(same(HEAD.toUpperCase(), BASE.toUpperCase()));
@@ -4248,7 +4252,12 @@ describe("last_pass: what the pass reads before it starts the gate", () => {
       // The gate's own call removes it, whatever it finds of the pull request.
       assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
       assert.deepStrictEqual(checkoutsOnDisk(rig), []);
-      assert.deepStrictEqual(yield* pass(rig), { pr: 12, head: HEAD, base: BASE });
+      assert.deepStrictEqual(yield* pass(rig), {
+        pr: 12,
+        head: HEAD,
+        base: BASE,
+        baseBranch: null,
+      });
     }),
   );
 
@@ -5727,4 +5736,58 @@ describe("regate: a first relaunch with no T3 project", () => {
       assert.strictEqual(rig.gh.world.state, "stuck");
     }),
   );
+});
+
+describe("gate: a run whose launch recorded a base other than the project's", () => {
+  const onFeature = STARTED.map((event) =>
+    event.event === "session_launched"
+      ? { ...event, data: { ...event.data, base: "feature/x" } }
+      : event,
+  );
+
+  it.effect("gates against that base's tip, and a move of main does not re-gate", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(onFeature);
+      rig.project = runProject(rig.project, readProgress(readRun(rig.dataDir, rig.run).entries));
+      rig.gh.pr = { ...defaultPr(), baseRef: "feature/x" };
+      rig.gh.tips = { main: MOVED, "feature/x": BASE };
+      setRun(rig, "completed", 1);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(
+        eventsOf(rig, "gate_checkout").map((l) => (l.data as { base_sha: string }).base_sha),
+        [BASE],
+      );
+      assert.ok(rig.gh.calls.includes("branchTip feature/x"), rig.gh.calls.join("\n"));
+      assert.ok(!rig.gh.calls.includes("branchTip main"), rig.gh.calls.join("\n"));
+      assert.deepStrictEqual(yield* lastPass(rig.dataDir, rig.run), {
+        pr: 12,
+        head: HEAD,
+        base: BASE,
+        baseBranch: "feature/x",
+      });
+      clearCalls(rig);
+      // `main` moves: nothing to gate again.
+      rig.gh.tips.main = PUSHED;
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
+      assert.deepStrictEqual(rig.gh.calls, [PR_READ, "branchTip feature/x"]);
+      // The run's own base moves: it is gated again, against that tip.
+      clearCalls(rig);
+      rig.gh.tips["feature/x"] = MOVED;
+      assert.notDeepEqual(yield* regateStep(rig), { kind: "unchanged" });
+      assert.deepStrictEqual(
+        eventsOf(rig, "gate_checkout")
+          .map((l) => (l.data as { base_sha: string }).base_sha)
+          .at(-1),
+        MOVED,
+      );
+    }),
+  );
+
+  it("a run with no base on its launch line keeps the project's base", () => {
+    const project = projectConfig();
+    const seen = readProgress([]);
+    assert.strictEqual(runProject(project, seen), project);
+  });
 });

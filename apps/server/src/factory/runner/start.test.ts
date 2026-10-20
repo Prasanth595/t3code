@@ -347,6 +347,7 @@ const startedLines = (): Array<{ line: RunEvent; cause: Cause }> => [
         model: "claude-opus-5-5",
         model_options: null,
         resumed_from: null,
+        base: "main",
       },
     },
     cause: cause("session-launched"),
@@ -2167,6 +2168,103 @@ describe("start: the resume after a time limit", () => {
       const request = t3.launchRequests[0]!;
       assert.strictEqual(request.baseRef, "main");
       assert.strictEqual(request.startFromOrigin, false);
+    }),
+  );
+});
+
+describe("start: an issue that names its base", () => {
+  const withBody = (body: string) => ({ ...detail("ready"), body });
+  const baseOf = (dataDir: string) =>
+    (entriesOf(dataDir).find((e) => e.event === "session_launched")?.data as { base?: unknown })
+      ?.base;
+
+  it.effect("launches from the named branch on origin and records it", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [withBody("Build it.\n\n## Base\n\nfeature/x\n\n## Notes\nx\n")],
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(outcome.kind, "started");
+      assert.ok(calls.includes("branchTip feature/x"), calls.join("\n"));
+      const request = t3.launchRequests[0]!;
+      assert.strictEqual(request.baseRef, "feature/x");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.strictEqual(
+        request.message,
+        launchMessage(REPO, 7, USER, "/gh/rawphp", undefined, "feature/x"),
+      );
+      assert.ok(
+        request.message.includes(
+          "Open the pull request against feature/x, not the repo's default base.",
+        ),
+        request.message,
+      );
+      assert.strictEqual(baseOf(dataDir), "feature/x");
+    }),
+  );
+
+  it.effect("an issue with no base records the project's base and says nothing more", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({ issues: [withBody("## Base\n\nNone.\n")] });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(lookups(calls), []);
+      assert.strictEqual(t3.launchRequests[0]!.message, launchMessage(REPO, 7, USER, "/gh/rawphp"));
+      assert.strictEqual(baseOf(dataDir), "main");
+    }),
+  );
+
+  it.effect("a base that is not a branch name goes stuck before any launch is sent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({ issues: [withBody("## Base\n--force x\n")] });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      const reason = "base branch --force x is not a branch name";
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+      assert.deepStrictEqual(calls.slice(3), stuckCalls(reason, null));
+      assert.deepStrictEqual(t3.launchRequests, []);
+      assert.deepStrictEqual(entriesOf(dataDir), [
+        ...startedEvents().slice(0, 3),
+        ...stuckTail(reason, "launch-failed"),
+      ]);
+    }),
+  );
+
+  it.effect("a base that origin does not have goes stuck before any launch is sent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [withBody("## Base\nfeature/gone\n")],
+        branchTip: "missing",
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      const reason = "base branch feature/gone is not on origin";
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+      assert.deepStrictEqual(calls.slice(3), [
+        "branchTip feature/gone",
+        ...stuckCalls(reason, null),
+      ]);
+      assert.deepStrictEqual(t3.launchRequests, []);
+    }),
+  );
+
+  it.effect("a base whose lookup fails claims and waits for the next pass", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({
+        issues: [withBody("## Base\nfeature/x\n")],
+        branchTip: ghFailure(),
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* Effect.result(startIn(dataDir, tracker, t3.sessions));
+      assert.strictEqual(outcome._tag, "Failure");
+      assert.deepStrictEqual(t3.launchRequests, []);
+      assert.ok(!stepsOf(dataDir).includes("stuck"));
     }),
   );
 });

@@ -513,7 +513,7 @@ class Fake implements PassWorld {
     this.calls.push(`last_pass ${key}`);
     const found =
       this.lastPasses[key] === undefined
-        ? { pr: 12, head: HEAD, base: BASE }
+        ? { pr: 12, head: HEAD, base: BASE, baseBranch: null }
         : this.lastPasses[key];
     if (found === "error") {
       return Effect.fail(
@@ -523,9 +523,10 @@ class Fake implements PassWorld {
     return Effect.succeed(found);
   }
 
-  baseTip(repo: Repo) {
-    this.calls.push(`base_tip ${repo.watched.repo}`);
-    const found = this.baseTips[repo.watched.repo] ?? BASE;
+  baseTip(repo: Repo, base: string) {
+    this.calls.push(`base_tip ${repo.watched.repo} ${base}`);
+    const found =
+      this.baseTips[`${repo.watched.repo} ${base}`] ?? this.baseTips[repo.watched.repo] ?? BASE;
     return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
   }
 
@@ -3925,7 +3926,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       // The comparison reads the ledger, the base tip, and the pull request's head.
       assert.deepEqual(
         fake.calls.filter((c) => /^(last_pass|base_tip|open_head) /.test(c)),
-        [`last_pass ${REPO}#41`, `base_tip ${REPO}`, `open_head ${REPO}#12`],
+        [`last_pass ${REPO}#41`, `base_tip ${REPO} main`, `open_head ${REPO}#12`],
       );
     }),
   );
@@ -4069,6 +4070,30 @@ describe("pr-open runs: gated again only when something moved", () => {
       }),
   );
 
+  it.effect("two runs of one repo on different bases each compare with their own base's tip", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      pr(fake, 42);
+      fake.lastPasses[`${REPO}#42`] = { pr: 12, head: HEAD, base: BASE, baseBranch: "feature/x" };
+      fake.baseTips[`${REPO} feature/x`] = MOVED;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(reads(fake, "base_tip"), [
+        `base_tip ${REPO} main`,
+        `base_tip ${REPO} feature/x`,
+      ]);
+      assert.deepEqual(gated(fake), [`gate ${REPO}#42`]);
+      // And the other way round: main moved, the feature branch did not.
+      const other = new Fake();
+      pr(other, 41);
+      pr(other, 42);
+      other.lastPasses[`${REPO}#42`] = { pr: 12, head: HEAD, base: BASE, baseBranch: "feature/x" };
+      other.baseTips[`${REPO} main`] = MOVED;
+      yield* pass(other, [REPO], 5);
+      assert.deepEqual(gated(other), [`gate ${REPO}#41`]);
+    }),
+  );
+
   it.effect("the tip is read once for two runs of one repo, and once for each repo", () =>
     Effect.gen(function* () {
       const fake = new Fake();
@@ -4076,7 +4101,10 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 42);
       pr(fake, 43, OTHER);
       yield* pass(fake, [REPO, OTHER], 5);
-      assert.deepEqual(reads(fake, "base_tip"), [`base_tip ${REPO}`, `base_tip ${OTHER}`]);
+      assert.deepEqual(reads(fake, "base_tip"), [
+        `base_tip ${REPO} main`,
+        `base_tip ${OTHER} main`,
+      ]);
       assert.deepEqual(gated(fake), []);
     }),
   );
@@ -4157,7 +4185,7 @@ describe("pr-open runs: instructor feedback", () => {
   /** Run 12 waits in `pr-open` with pull request 7, nothing moved. */
   const quiet = (fake: Fake) => {
     fake.runIn(12, "pr-open", REPO, false);
-    fake.lastPasses[`${REPO}#12`] = { pr: 7, head: HEAD, base: BASE };
+    fake.lastPasses[`${REPO}#12`] = { pr: 7, head: HEAD, base: BASE, baseBranch: null };
   };
   /** Run 12 as `quiet`, and the feedback step answers `step` for it. */
   const reviewed = (step: FeedbackStep | BuildingError) => {
