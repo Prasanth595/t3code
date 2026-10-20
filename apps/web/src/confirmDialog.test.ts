@@ -54,17 +54,22 @@ describe("confirm dialog coordinator", () => {
     unregister();
   });
 
-  it("serializes concurrent confirmations", async () => {
+  it("preserves each queued confirmation's focus preference through closing", async () => {
     const unregister = registerConfirmDialogHost();
-    const first = requireConfirmation(requestConfirmDialog("Delete the project?"));
-    const second = requireConfirmation(requestConfirmDialog("Delete the worktree too?"));
+    const first = requireConfirmation(
+      requestConfirmDialog("Install the update?", { initialFocus: "confirm" }),
+    );
+    const second = requireConfirmation(
+      requestConfirmDialog("Delete the worktree too?", { initialFocus: "cancel" }),
+    );
 
     respondToConfirmDialog(false);
     await expect(first).resolves.toBe(false);
     expect(readConfirmDialogState()).toEqual({
       status: "closing",
-      message: "Delete the project?",
+      message: "Install the update?",
       variant: "default",
+      initialFocus: "confirm",
     });
 
     completeConfirmDialogClose();
@@ -72,6 +77,7 @@ describe("confirm dialog coordinator", () => {
       status: "confirming",
       message: "Delete the worktree too?",
       variant: "default",
+      initialFocus: "cancel",
     });
 
     respondToConfirmDialog(true);
