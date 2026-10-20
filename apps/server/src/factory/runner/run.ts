@@ -117,6 +117,14 @@ export const progressFrom = (step: CauseStep, seen: Seen, fallback: State): Prog
   gateResultsPosted: seen.resultsPosted,
 });
 
+/**
+ * The project as one run sees it: `base` is the base its launch recorded (`Seen.base`, the issue's
+ * `## Base`), else the repo's. Where a run's context is built, so every reader of
+ * `ctx.project.base` follows the run's base.
+ */
+export const runProject = <P extends { readonly base: string }>(project: P, seen: Seen): P =>
+  seen.base === null || seen.base === project.base ? project : { ...project, base: seen.base };
+
 /** The words for what a failed call said: its message when it has one. */
 export const describe = (cause: unknown): string =>
   typeof cause === "object" &&

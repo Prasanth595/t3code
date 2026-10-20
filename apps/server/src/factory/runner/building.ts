@@ -33,6 +33,7 @@ import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
+import { sanitize } from "../text.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
   GitHubParse,
@@ -545,9 +546,10 @@ export const checkBinding = (
   if (pull.open && mustBeDraft && !pull.isDraft) return { public: `${reported} it is not a draft` };
   if (pull.crossRepository) return { public: `${reported} it comes from a fork` };
   if (pull.baseRef !== base) {
+    const runBase = sanitize(base, false);
     return {
-      public: `${reported} its base is not the configured base branch`,
-      detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the configured base branch`,
+      public: `${reported} its base is not the base branch ${runBase}`,
+      detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the base branch ${runBase}`,
     };
   }
   const launched = isLaunchBranch(pull.headRef, worktreePath);

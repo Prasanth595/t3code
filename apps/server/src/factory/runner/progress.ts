@@ -107,6 +107,11 @@ export interface Seen {
   readonly state: State | null;
   /** The `session_launched` line's thread. */
   readonly threadId: string | null;
+  /**
+   * The base branch the newest `session_launched` line that names one records: the run's base,
+   * read from the ledger on every later pass and never from the issue again. Null for none.
+   */
+  readonly base: string | null;
   /** The `launch-sending` step: a launch call was about to be sent, so a session may exist. */
   readonly launchSent: boolean;
   /**
@@ -394,6 +399,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let paused: Seen["paused"] = null;
   let interruption: Interruption | null = null;
   let lastBranch: string | null = null;
+  let base: string | null = null;
   let workedMs = 0;
   let workingSince: number | null = entries[0]?.ms ?? null;
   const commandAttempts = new Set<number>();
@@ -589,6 +595,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         resumedFromRun = typeof fromRun === "string" ? fromRun : null;
         const launchedBranch = dataField(entry.data, "branch");
         if (typeof launchedBranch === "string") lastBranch = launchedBranch;
+        const launchedBase = dataField(entry.data, "base");
+        if (typeof launchedBase === "string") base = launchedBase;
         // A resume owed to the old thread is not owed to this one.
         if (interruption !== null) interruption = sentInterruption(interruption);
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
@@ -810,6 +818,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     paused,
     interruption,
     lastBranch,
+    base,
     workedMs,
     workingSince,
     commandAttempts,

@@ -4122,6 +4122,7 @@ const relaunchedLine: Line = {
     model: "claude-opus-5-5",
     model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
+    base: "main",
   },
 };
 
@@ -5075,6 +5076,7 @@ describe("regate: a failed re-gate of a ready pull request", () => {
             model: "claude-opus-5-5",
             model_options: options,
             resumed_from: { run: RUN, branch: "t3code/abc" },
+            base: "main",
           },
         }),
       );

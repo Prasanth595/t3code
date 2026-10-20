@@ -167,8 +167,8 @@ export interface PassWorld {
    * `runner/gating.ts` `lastPass`.
    */
   readonly lastPass: (run: RunId) => Effect.Effect<LastPass | null, LedgerError>;
-  /** The tip of the repo's base branch, in lower case. */
-  readonly baseTip: (repo: Repo) => Effect.Effect<string, PassError>;
+  /** The tip of the repo's branch `base`, in lower case. */
+  readonly baseTip: (repo: Repo, base: string) => Effect.Effect<string, PassError>;
   /** Whether GitHub has the issue closed. */
   readonly issueClosed: (repo: Repo, issue: number) => Effect.Effect<boolean, PassError>;
   /** When the issue of each stuck attention item was last read, by item id, in epoch milliseconds; kept from pass to pass. */
@@ -980,12 +980,13 @@ const actedOnFeedback = (
   });
 
 /**
- * Whether `regate` would find the run's pull request and its repo's base tip where its last pass
- * left them, by the reads it makes before it answers `unchanged`. A run it would do more for, or
- * a read that fails, is not unchanged: the gate deals with it, and says what failed. `tips` holds
- * each repo's base tip as the pass first read it, by lowercase name, so it is read at most once a
- * pass. It is read before the pull request, and `null` once a read of the repo failed: the repo's
- * other runs then go to the gate without a read that could wait for its timeout again.
+ * Whether `regate` would find the run's pull request and its base tip where its last pass left
+ * them, by the reads it makes before it answers `unchanged`. A run it would do more for, or a
+ * read that fails, is not unchanged: the gate deals with it, and says what failed. The run's base
+ * is the one its launch recorded, else the repo's. `tips` holds each base tip as the pass first
+ * read it, by lowercase repo name and base, so it is read at most once a pass. It is read before
+ * the pull request, and `null` once a read for that repo and base failed: the other runs on it
+ * then go to the gate without a read that could wait for its timeout again.
  */
 const unchanged = (
   world: PassWorld,
@@ -996,9 +997,10 @@ const unchanged = (
   Effect.gen(function* () {
     const last = yield* Effect.result(world.lastPass(run));
     if (last._tag === "Failure" || last.success === null) return false;
-    const key = asciiLower(repo.watched.repo);
+    const base = last.success.baseBranch ?? repo.project.base;
+    const key = `${asciiLower(repo.watched.repo)} ${base}`;
     if (!tips.has(key)) {
-      const read = yield* Effect.result(world.baseTip(repo));
+      const read = yield* Effect.result(world.baseTip(repo, base));
       tips.set(key, read._tag === "Success" ? read.success : null);
     }
     const tip = tips.get(key) ?? null;

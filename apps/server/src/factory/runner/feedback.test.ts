@@ -865,6 +865,7 @@ const relaunchedLine: Line = {
     model: "claude-opus-5-5",
     model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
+    base: "main",
   },
 };
 

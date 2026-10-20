@@ -24,8 +24,11 @@ const isHeading = (line: string): boolean => {
   return rest.length < line.length && (rest === "" || rest[0] === " " || rest[0] === "\t");
 };
 
-/** The lines of the `## Depends on` section: after its heading, up to the next heading line. */
-const dependsOnLines = (body: string): Array<string> => {
+/**
+ * The lines of the issue body's `## <name>` section (`name` in lower case): after its heading, up
+ * to the next heading line. Empty when the body has no such section.
+ */
+export const sectionLines = (body: string, name: string): Array<string> => {
   const lines: Array<string> = [];
   let inSection = false;
   for (const line of textLines(body)) {
@@ -35,7 +38,7 @@ const dependsOnLines = (body: string): Array<string> => {
     } else {
       inSection =
         line.startsWith("## ") || line.startsWith("##\t")
-          ? line.slice(3).trim().toLowerCase() === "depends on"
+          ? line.slice(3).trim().toLowerCase() === name
           : false;
     }
   }
@@ -49,7 +52,7 @@ const dependsOnLines = (body: string): Array<string> => {
  */
 export const dependsOn = (body: string): Array<IssueRef> => {
   const found: Array<IssueRef> = [];
-  for (const line of dependsOnLines(body)) {
+  for (const line of sectionLines(body, "depends on")) {
     for (let at = 0; at < line.length; at++) {
       if (line[at] !== "#") continue;
       let end = at + 1;

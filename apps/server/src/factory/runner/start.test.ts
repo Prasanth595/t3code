@@ -470,6 +470,7 @@ describe("start: a fresh ready issue", () => {
         model: "gpt-5.5",
         model_options: null,
         resumed_from: null,
+        base: "main",
       });
     }),
   );
@@ -491,6 +492,7 @@ describe("start: a fresh ready issue", () => {
         model: "gpt-5.5",
         model_options: options,
         resumed_from: null,
+        base: "main",
       });
     }),
   );
@@ -511,6 +513,7 @@ describe("start: a fresh ready issue", () => {
         model: "claude-opus-5-5",
         model_options: null,
         resumed_from: null,
+        base: "main",
       });
     }),
   );

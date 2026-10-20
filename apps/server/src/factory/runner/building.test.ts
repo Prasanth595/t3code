@@ -890,15 +890,20 @@ describe("advance: done", () => {
       assert.strictEqual((yield* advanceIn(bound)).kind, "ready-for-gate");
       const refused = forRun(rigFor(onFeature));
       refused.world.pr = { ...defaultPr(), baseRef: "main" };
-      assertStuck(refused, yield* advanceIn(refused), {
-        publicReason: "the session reported PR #12 but its base is not the base branch feature/x",
-        text: DONE_MESSAGE,
-        before: ["pullRequest 12"],
-        recorded: joined(
+      assert.deepStrictEqual(yield* advanceIn(refused), {
+        kind: "stuck",
+        reason: joined(
           "the session reported PR #12 but its base main is not the base branch feature/x",
           DONE_MESSAGE,
         ),
       });
+      assert.deepStrictEqual(refused.gh, [
+        "pullRequest 12",
+        ...stuckCalls(
+          "the session reported PR #12 but its base is not the base branch feature/x",
+          DONE_MESSAGE,
+        ),
+      ]);
     }),
   );
 
