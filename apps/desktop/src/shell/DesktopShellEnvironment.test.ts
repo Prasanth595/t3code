@@ -98,7 +98,9 @@ function runShellEnvironment(input: {
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
-    yield* shellEnvironment.installIntoProcess;
+    const prepared = yield* shellEnvironment.installIntoProcess;
+    assert.equal(yield* shellEnvironment.installIntoProcess, prepared);
+    return prepared;
   }).pipe(
     Effect.provide(
       DesktopShellEnvironment.layer.pipe(
@@ -446,7 +448,7 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
-      yield* runShellEnvironment({
+      const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
@@ -462,6 +464,7 @@ describe("DesktopShellEnvironment", () => {
         },
       });
 
+      assert.isTrue(prepared);
       assert.equal(
         env.PATH,
         [
@@ -483,6 +486,90 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+    }),
+  );
+
+  it.effect.each([false, true])(
+    "leaves Windows preparation incomplete when loadProfile=%s fails",
+    (loadProfile) =>
+      Effect.gen(function* () {
+        const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
+        let calls = 0;
+        const prepared = yield* runShellEnvironment({
+          env,
+          platform: "win32",
+          handler: (command) => {
+            calls++;
+            if (command._tag !== "StandardCommand") return "";
+            return !command.args.includes("-NoProfile") === loadProfile
+              ? { output: "", exitCode: 1 }
+              : envOutput({ PATH: "C:\\Working" });
+          },
+        }).pipe(Effect.provide(Logger.layer([])));
+        assert.isFalse(prepared);
+        assert.equal(calls, 3);
+        assert.include(env.PATH, "C:\\Working");
+        assert.include(env.PATH, "C:\\Windows\\System32");
+      }),
+  );
+
+  it.effect("replaces a Path-spelled Windows PATH instead of adding a second key", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { Path: "C:\\Windows\\System32" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "win32",
+        handler: (command) =>
+          command._tag === "StandardCommand" && command.args.includes("-NoProfile")
+            ? envOutput({ PATH: "C:\\Shell\\Bin" })
+            : "",
+      });
+
+      assert.deepEqual(env, { PATH: "C:\\Shell\\Bin;C:\\Windows\\System32" });
+    }),
+  );
+
+  it.effect("drops earlier AppImage launches' mount dirs from the search paths on linux", () =>
+    Effect.gen(function* () {
+      const current = "/var/tmp/.mount_cur";
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        APPIMAGE: "/home/me/T3-Code.AppImage",
+        APPDIR: `${current}/`,
+        PATH: `${current}/usr/bin:/tmp/.mount_old/usr/bin:/usr/bin`,
+        LD_LIBRARY_PATH: `/tmp/.mount_old/usr/lib:${current}/usr/lib::/opt/lib`,
+        XDG_DATA_DIRS: "/tmp/.mount_old/usr/share:/var/tmp/.mount_cur2/usr/share",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/tmp/.mount_older/usr/bin:/home/me/.local/bin" }),
+      });
+
+      assert.equal(env.PATH, `/home/me/.local/bin:${current}/usr/bin:/usr/bin`);
+      assert.equal(env.LD_LIBRARY_PATH, `${current}/usr/lib::/opt/lib`);
+      assert.equal(env.XDG_DATA_DIRS, undefined);
+    }),
+  );
+
+  it.effect("keeps AppImage-looking search paths outside an AppImage launch", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/tmp/.mount_old/usr/bin:/usr/bin",
+        LD_LIBRARY_PATH: "/tmp/.mount_old/usr/lib",
+      };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "linux",
+        handler: () => envOutput({ PATH: "/usr/bin" }),
+      });
+
+      assert.equal(env.PATH, "/usr/bin:/tmp/.mount_old/usr/bin");
+      assert.equal(env.LD_LIBRARY_PATH, "/tmp/.mount_old/usr/lib");
     }),
   );
 
