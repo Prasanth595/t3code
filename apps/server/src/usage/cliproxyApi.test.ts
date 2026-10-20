@@ -428,16 +428,73 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("skips disabled accounts and rejects redemption on them", () =>
-    Effect.gen(function* () {
-      const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });
-      const api = yield* test.api;
-      expect(yield* api.readAccounts(config)).toEqual([]);
-      expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
-        "Failure",
-      );
-      expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
-    }),
+  it.effect.each(["codex", "claude"])(
+    "reads exhausted routing-disabled %s accounts without mutations",
+    (provider) =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider, disabled: true }],
+          upstream: (request) => ({
+            status: 200,
+            body: request.url?.endsWith("/rate-limit-reset-credits")
+              ? { credits: [] }
+              : provider === "codex"
+                ? {
+                    rate_limit: {
+                      primary_window: { used_percent: 100, limit_window_seconds: 18000 },
+                    },
+                  }
+                : {
+                    five_hour: { utilization: 100, resets_at: null },
+                    seven_day: { utilization: 100, resets_at: null },
+                  },
+          }),
+        });
+        const api = yield* test.api;
+        const read = yield* api.readAccounts(config);
+        expect(read).toHaveLength(1);
+        expect(read[0]?.usageLimits.windows.length).toBeGreaterThan(0);
+        expect(read[0]?.usageLimits.windows.every((window) => window.usedPercent === 100)).toBe(
+          true,
+        );
+        expect(
+          test.requests.every((request) => !request.body || request.body.method === "GET"),
+        ).toBe(true);
+      }),
+  );
+
+  it.effect.each(["codex", "claude"])(
+    "reports failed first reads for routing-disabled %s accounts",
+    (provider) =>
+      Effect.gen(function* () {
+        const test = fixture({
+          accounts: [{ ...accounts[0]!, provider, disabled: true }],
+          upstream: () => ({ status: 503, body: {} }),
+        });
+        const api = yield* test.api;
+        const read = yield* api.readAccounts(config);
+        expect(read).toHaveLength(1);
+        expect(read[0]?.usageLimits).toMatchObject({
+          windows: [],
+          unavailable: {
+            reason: "probeFailed",
+            message: "The hub could not read this account's usage.",
+          },
+        });
+      }),
+  );
+
+  it.effect.each(["codex", "claude"])(
+    "rejects redemption on disabled %s accounts without forwarding any mutation",
+    (provider) =>
+      Effect.gen(function* () {
+        const test = fixture({ accounts: [{ ...accounts[0]!, provider, disabled: true }] });
+        const api = yield* test.api;
+        expect((yield* api.consume(config, "first.json", "credit").pipe(Effect.result))._tag).toBe(
+          "Failure",
+        );
+        expect(test.requests.every((request) => request.path.endsWith("/auth-files"))).toBe(true);
+      }),
   );
 
   it.effect("keeps the same redemption id after an uncertain upstream failure", () =>

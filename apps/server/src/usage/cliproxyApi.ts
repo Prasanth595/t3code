@@ -359,10 +359,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
     return yield* Effect.forEach(
-      accounts.filter(
-        (account) =>
-          !account.disabled && (account.provider === "codex" || account.provider === "claude"),
-      ),
+      // Routing-disabled accounts still have quota worth reporting, especially
+      // exhausted accounts. Redemption keeps its separate disabled-account guard.
+      accounts.filter((account) => account.provider === "codex" || account.provider === "claude"),
       (account) => readAccount(config, account),
       { concurrency: 4 },
     );
