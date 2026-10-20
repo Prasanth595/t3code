@@ -12,7 +12,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { isAbsolutePath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
+import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
@@ -639,30 +639,6 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     return observeResize(table, measureClippedCells);
   }, [measureClippedCells]);
 
-  function toggleExpanded() {
-    const table = tableRef.current;
-    if (!table) return;
-
-    if (!expanded) {
-      const rows = [...table.rows];
-      const columnWidths = rows.reduce<number[]>((widths, row) => {
-        [...row.cells].forEach((cell, columnIndex) => {
-          widths[columnIndex] = Math.max(
-            widths[columnIndex] ?? 0,
-            cell.getBoundingClientRect().width,
-          );
-        });
-        return widths;
-      }, []);
-
-      [...(table.tHead?.rows[0]?.cells ?? [])].forEach((cell, columnIndex) => {
-        cell.style.minWidth = `${columnWidths[columnIndex] ?? cell.getBoundingClientRect().width}px`;
-      });
-    }
-
-    setExpanded((value) => !value);
-  }
-
   const handleCopy = (format: "markdown" | "csv") => {
     const table = containerRef.current?.querySelector("table");
     if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
@@ -720,7 +696,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
                   variant={expanded ? "secondary" : "ghost-muted"}
                   size="icon-xs"
                   aria-pressed={expanded}
-                  onClick={toggleExpanded}
+                  onClick={() => setExpanded((value) => !value)}
                   aria-label={expandLabel}
                 />
               }
@@ -2776,7 +2752,7 @@ function useChatMarkdownState({
       ) !== null;
     const panelPath =
       fileLinkMeta.workspaceRelativePath ??
-      (!canPreviewMedia && isAbsolutePath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
+      (!canPreviewMedia && isHostPath(fileLinkMeta.filePath) ? fileLinkMeta.filePath : null);
 
     return (
       <MarkdownFileLink
