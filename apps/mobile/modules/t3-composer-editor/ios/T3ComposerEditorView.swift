@@ -889,11 +889,13 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       ?? UIColor(composerHex: theme.text) ?? .label
     let chipFont = UIFont(name: "DMSans-Medium", size: fontSize)
       ?? UIFont.systemFont(ofSize: fontSize, weight: .medium)
+    let icon = token.iconUri.flatMap(iconImage(for:)).map {
+      token.tintsIcon == true ? Self.tinted($0, color: color) : $0
+    }
     let image = renderChip(
       label: token.label,
       detail: token.detail,
-      icon: token.iconUri.flatMap(iconImage(for:)),
-      tintsIcon: token.tintsIcon ?? false,
+      icon: icon,
       color: color,
       font: chipFont
     )
@@ -916,7 +918,6 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     label: String,
     detail: String?,
     icon: UIImage?,
-    tintsIcon: Bool,
     color: UIColor,
     font: UIFont
   ) -> UIImage {
@@ -959,8 +960,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
     return renderer.image { _ in
       if let icon {
-        let drawn = tintsIcon ? Self.tinted(icon, color: color) : icon
-        drawn.draw(
+        icon.draw(
           in: CGRect(x: padding, y: (height - iconSide) / 2, width: iconSide, height: iconSide)
         )
       }
