@@ -5,9 +5,16 @@ export interface ProviderMaintenanceCapabilities {
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
-  /** `undefined` uses npm; `null` means the installer's latest version is unknown. */
+  /**
+   * `undefined` means the installer has no channel of its own and the npm
+   * registry entry for `packageName` is authoritative; `null` means the
+   * installer was asked and did not know.
+   */
   readonly latestVersion?: string | null;
-  /** Lazy, authoritative installer lookup, including when the answer is unknown. */
+  /**
+   * Deferred until update checks are enabled; `null` falls back to
+   * `latestVersion`, then npm.
+   */
   readonly lookupLatestVersion?: Effect.Effect<string | null>;
   readonly compareVersions?: (current: string, latest: string) => number;
   /**
