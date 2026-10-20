@@ -1327,8 +1327,8 @@ export const CODEX_THREAD_CONFIG = {
   mcp_optional_startup_grace_ms: 10_000,
 } as const;
 
-// T3 wait tools can block for up to an hour. Keep Codex's MCP timeout above
-// that limit so the server's own wait timeout ends a long call.
+// request_secret can wait up to MAX_SECRET_REQUEST_TIMEOUT_MS (one hour).
+// Keep Codex's budget above it so the server can return its own timeout.
 const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 
 function codexThreadRuntimeParams(input: {

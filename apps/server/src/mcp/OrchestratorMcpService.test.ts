@@ -19,10 +19,15 @@ import {
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -38,6 +43,7 @@ import {
   OrchestratorProjectionError,
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1266,6 +1272,232 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(request.modelSelection.model, "ant-model");
         }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
       }),
+  );
+
+  it.effect.each([
+    { name: "default", timeoutMs: undefined, budgetMs: 30_000 },
+    { name: "capped", timeoutMs: 3_600_000, budgetMs: 45_000 },
+    { name: "shorter requested", timeoutMs: 500, budgetMs: 500 },
+  ])("returns recoverable task and thread handles at the $name wait budget", (scenario) =>
+    Effect.gen(function* () {
+      const taskSubscribed = yield* Deferred.make<void>();
+      const threadSubscribed = yield* Deferred.make<void>();
+      const taskReturned = yield* Deferred.make<void>();
+      const threadReturned = yield* Deferred.make<void>();
+      const childRunId = RunId.make("run:mcp-wait-child");
+      let delegated = false;
+      let completed = false;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        origin: "app_owned",
+        childThreadId,
+        providerInstanceId: codexInstanceId,
+        driver: "codex",
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerThreadManagement = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({
+            getByCommandId: () => Effect.succeedNone,
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadShell: (threadId) =>
+              Effect.succeed({ ...liveThreadShell(threadId), projectId }),
+            getThreadEventSequence: () => Effect.succeed(0),
+            restartContinuationPending: () => Effect.succeed(false),
+            streamStoredEventsFrom: (options) =>
+              Stream.fromEffect(
+                Deferred.succeed(
+                  options?.eventType === "thread.deleted" ? threadSubscribed : taskSubscribed,
+                  undefined,
+                ),
+              ).pipe(Stream.drain, Stream.concat(Stream.never)),
+            getThreadRecords: (threadId) =>
+              Effect.sync(() =>
+                threadId === parentThreadId
+                  ? parentProjection(
+                      delegated ? [{ ...task, result: completed ? "Done." : null }] : [],
+                    )
+                  : {
+                      ...childProjection,
+                      thread: {
+                        ...parentProjection([]).thread,
+                        id: childThreadId,
+                        deletedAt: null,
+                      },
+                      runs: [
+                        {
+                          ...parentProjection([]).runs[0]!,
+                          id: childRunId,
+                          delegatedTaskId: taskId,
+                          status: completed ? ("completed" as const) : ("running" as const),
+                        },
+                      ],
+                    },
+              ),
+            dispatch: (command) =>
+              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    delegated = true;
+                  }),
+                ),
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+        ),
+      );
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        layerThreadManagement,
+        ServerSettings.layerTest(),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const budget = scenario.timeoutMs === undefined ? {} : { timeoutMs: scenario.timeoutMs };
+        const taskFiber = yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            mode: "wait",
+            clientRequestId: "wait-budget",
+            ...budget,
+          })
+          .pipe(
+            Effect.tap(() => Deferred.succeed(taskReturned, undefined)),
+            Effect.forkChild,
+          );
+        yield* Deferred.await(taskSubscribed);
+        const threadFiber = yield* service
+          .waitForThread(scope, { threadId: childThreadId, runId: childRunId, ...budget })
+          .pipe(
+            Effect.tap(() => Deferred.succeed(threadReturned, undefined)),
+            Effect.forkChild,
+          );
+        yield* Deferred.await(threadSubscribed);
+        yield* TestClock.adjust(Duration.millis(scenario.budgetMs - 1));
+        assert.isFalse(yield* Deferred.isDone(taskReturned));
+        assert.isFalse(yield* Deferred.isDone(threadReturned));
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.deepEqual(
+          [yield* Deferred.isDone(taskReturned), yield* Deferred.isDone(threadReturned)],
+          [true, true],
+        );
+        const result = yield* Fiber.join(taskFiber);
+        assert.include(result, { taskId, childThreadId, status: "running", waitTimedOut: true });
+        assert.deepEqual(yield* Fiber.join(threadFiber), {
+          threadId: childThreadId,
+          runId: childRunId,
+          status: "running",
+          timedOut: true,
+        });
+        assert.include(yield* service.taskStatus(scope, result.taskId), {
+          status: "running",
+          waitTimedOut: false,
+        });
+        const commands = yield* Ref.get(dispatched);
+        assert.equal(commands.length, 2);
+        assert.include(commands[1], {
+          type: "delegated_task.wake-policy",
+          taskId,
+          completionWake: "always",
+        });
+        completed = true;
+        assert.include(yield* service.taskStatus(scope, result.taskId), {
+          status: "completed",
+          summary: "Done.",
+          waitTimedOut: false,
+        });
+        assert.deepEqual(
+          yield* service.waitForThread(scope, {
+            threadId: result.childThreadId,
+            runId: childRunId,
+          }),
+          { threadId: childThreadId, runId: childRunId, status: "completed", timedOut: false },
+        );
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
+  it.effect.each([
+    { name: "ten-minute default", timeoutMs: undefined, budgetMs: 600_000 },
+    { name: "one-hour maximum", timeoutMs: 3_600_000, budgetMs: 3_600_000 },
+  ])("keeps a secret request pending for its $name", (scenario) =>
+    Effect.gen(function* () {
+      const pending = yield* Deferred.make<void>();
+      const returned = yield* Deferred.make<void>();
+      const statuses = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed({ ...parentProjection([]), turnItems: [] }),
+          dispatch: (command) => {
+            assert.equal(command.type, "secret_request.record");
+            if (command.type !== "secret_request.record") return Effect.die("Unexpected command");
+            return Ref.update(statuses, (values) => [...values, command.secretStatus]).pipe(
+              Effect.andThen(Deferred.succeed(pending, undefined)),
+              Effect.as({} as never),
+            );
+          },
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const fiber = yield* service
+          .requestSecret(scope, {
+            label: "Token",
+            reason: "Connect the account.",
+            clientRequestId: "secret-budget",
+            ...(scenario.timeoutMs === undefined ? {} : { timeoutMs: scenario.timeoutMs }),
+          })
+          .pipe(
+            Effect.tap(() => Deferred.succeed(returned, undefined)),
+            Effect.forkChild,
+          );
+        yield* Deferred.await(pending);
+        yield* TestClock.adjust(Duration.millis(scenario.budgetMs - 1));
+        assert.isFalse(yield* Deferred.isDone(returned));
+        assert.deepEqual(yield* Ref.get(statuses), ["pending"]);
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.isTrue(yield* Deferred.isDone(returned));
+        assert.deepEqual(yield* Fiber.join(fiber), { status: "timed_out" });
+        assert.deepEqual(yield* Ref.get(statuses), ["pending", "cancelled"]);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
   );
 
   it.effect("resolves a driverKind target to a capable Antigravity instance", () =>
