@@ -13,6 +13,7 @@ import {
   MessageId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
@@ -29,7 +30,7 @@ const ref: ScopedThreadRef = {
 
 function threadState(
   partial: Pick<EnvironmentThreadState, "data" | "status" | "error"> &
-    Partial<Pick<EnvironmentThreadState, "history">>,
+    Partial<Pick<EnvironmentThreadState, "history" | "resuming">>,
 ): EnvironmentThreadState {
   return { ...partial, history: partial.history ?? EMPTY_THREAD_HISTORY_META };
 }
@@ -107,6 +108,70 @@ describe("createEnvironmentThreadDetailAtoms", () => {
     expect(registry.get(details.statusAtom(ref))).toBe("deleted");
     expect(registry.get(details.errorAtom(ref))).toBeNull();
     expect(registry.get(details.historyAtom(ref))).toBe(EMPTY_THREAD_HISTORY_META);
+    registry.dispose();
+  });
+
+  it("marks a saved copy the shell shows is behind until the thread catches up", () => {
+    const state = (projection: OrchestrationV2ThreadProjection, status: "cached" | "live") =>
+      AsyncResult.success(
+        threadState({ data: Option.some(projection), status, error: Option.none() }),
+      );
+    const sourceAtom = Atom.make<AsyncResult.AsyncResult<EnvironmentThreadState, never>>(
+      state(v2Projection, "cached"),
+    );
+    const shellAtom = Atom.make<{ readonly updatedAt: string } | null>({
+      updatedAt: "2026-06-20T00:05:00.000Z",
+    });
+    const details = createEnvironmentThreadDetailAtoms(
+      () => sourceAtom,
+      () => shellAtom,
+    );
+    const registry = AtomRegistry.make();
+    const unmount = registry.mount(details.behindShellAtom(ref));
+
+    // The old copy stays visible; it is only marked.
+    expect(registry.get(details.threadAtom(ref))?.projection).toBe(v2Projection);
+    expect(registry.get(details.behindShellAtom(ref))).toBe(true);
+
+    const caughtUp = { ...v2Projection, updatedAt: DateTime.makeUnsafe("2026-06-20T00:05:00Z") };
+    registry.set(sourceAtom, state(caughtUp, "cached"));
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+
+    // A live thread is not marked when the shell moves first.
+    registry.set(sourceAtom, state(caughtUp, "live"));
+    registry.set(shellAtom, { updatedAt: "2026-06-20T00:06:00.000Z" });
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+
+    unmount();
+    registry.dispose();
+  });
+
+  it("marks a warm resume that is live but behind until the server confirms it", () => {
+    const resumed = (resuming: boolean) =>
+      AsyncResult.success(
+        threadState({
+          data: Option.some(v2Projection),
+          status: "live",
+          error: Option.none(),
+          resuming,
+        }),
+      );
+    const sourceAtom = Atom.make<AsyncResult.AsyncResult<EnvironmentThreadState, never>>(
+      resumed(true),
+    );
+    const shellAtom = Atom.make<{ readonly updatedAt: string } | null>(null);
+    const details = createEnvironmentThreadDetailAtoms(
+      () => sourceAtom,
+      () => shellAtom,
+    );
+    const registry = AtomRegistry.make();
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
+    registry.set(shellAtom, { updatedAt: "2026-06-20T00:05:00.000Z" });
+    expect(registry.get(details.behindShellAtom(ref))).toBe(true);
+
+    // Confirmed caught up, even if a skipped event left updatedAt short.
+    registry.set(sourceAtom, resumed(false));
+    expect(registry.get(details.behindShellAtom(ref))).toBe(false);
     registry.dispose();
   });
 });

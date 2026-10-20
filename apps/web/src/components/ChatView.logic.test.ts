@@ -64,6 +64,7 @@ import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
   peekRememberedThreadTimeline,
+  peekRememberedThreadTimelineUpdatedAt,
   rememberReadyThreadTimeline,
   resetHeldThreadTimeline,
   resolveThreadSwitchTimeline,
@@ -1141,6 +1142,12 @@ describe("resolveThreadSwitchTimeline", () => {
         nextEntries: ["fresh-b"],
       }),
     ).toEqual({ entries: ["fresh-b"], displayThreadKey: "env-1:thread-b" });
+  });
+
+  it("remembers which projection a timeline came from", () => {
+    const updatedAt = Date.parse("2026-06-20T00:00:00.000Z");
+    rememberReadyThreadTimeline({ threadKey: "env-1:thread-b", entries: ["old-b"], updatedAt });
+    expect(peekRememberedThreadTimelineUpdatedAt("env-1:thread-b")).toBe(updatedAt);
   });
 
   it("does not keep a remembered snapshot on a resolved empty thread", () => {

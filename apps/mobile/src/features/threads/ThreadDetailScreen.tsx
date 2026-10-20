@@ -196,6 +196,7 @@ export interface ThreadDetailScreenProps {
   readonly respondingUserInputId: RuntimeRequestId | null;
   readonly connectionStateLabel: EnvironmentConnectionPhase;
   readonly threadSyncStatus?: EnvironmentThreadStatus;
+  readonly threadBehind?: boolean;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
@@ -503,6 +504,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
+    // A warm resume stays live while it catches up; its faded feed still syncs.
+    if (props.threadBehind === true) return "Syncing messages...";
     switch (props.threadSyncStatus) {
       case "empty":
       case "cached":
@@ -1135,6 +1138,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               // Cancel on the edit banner would discard it.
               onEditPendingMessage={isProviderSubagent ? null : handleEditPendingMessage}
               contentPresentation={props.contentPresentation}
+              behind={props.threadBehind === true}
               agentLabel={agentLabel}
               threadTitle={props.selectedThread.title}
               latestRun={props.activityRun}

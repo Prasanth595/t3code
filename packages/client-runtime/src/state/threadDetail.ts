@@ -1,4 +1,5 @@
 import type { OrchestrationV2ThreadProjection, ScopedThreadRef } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -12,7 +13,7 @@ import {
   deriveThreadCheckpointSummaries,
   type ThreadCheckpointSummary,
 } from "./threadCheckpoints.ts";
-import type { EnvironmentThread } from "./models.ts";
+import type { EnvironmentThread, EnvironmentThreadShell } from "./models.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
 import {
   createQuestionHistoryProjector,
@@ -26,11 +27,23 @@ const EMPTY_VISIBLE_TURN_ITEMS: OrchestrationV2ThreadProjection["visibleTurnItem
 );
 const EMPTY_CHECKPOINT_SUMMARIES: ReadonlyArray<ThreadCheckpointSummary> = Object.freeze([]);
 
+// The shell's updatedAt is the server thread's last event time, so a detail
+// older than it is missing events.
+function isBehindShell(
+  projection: OrchestrationV2ThreadProjection,
+  shell: Pick<EnvironmentThreadShell, "updatedAt">,
+): boolean {
+  return DateTime.toEpochMillis(projection.updatedAt) < Date.parse(shell.updatedAt);
+}
+
 export function createEnvironmentThreadDetailAtoms<E>(
   threadStateAtom: (
     environmentId: ScopedThreadRef["environmentId"],
     threadId: ScopedThreadRef["threadId"],
   ) => Atom.Atom<AsyncResult.AsyncResult<EnvironmentThreadState, E>>,
+  threadShellAtom?: (
+    ref: ScopedThreadRef,
+  ) => Atom.Atom<Pick<EnvironmentThreadShell, "updatedAt"> | null>,
 ) {
   const threadStateValueAtomFamily = Atom.family((key: string) => {
     const ref = parseThreadKey(key);
@@ -189,6 +202,23 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-pending-requests:${key}`));
   });
 
+  // A saved copy can be many turns old when the thread moved on while it was
+  // closed. Clients still show it, but marked as out of date until it catches
+  // up. A live thread is current even when the shell arrives an event first,
+  // unless it is a warm resume the server has not confirmed yet.
+  const behindShellAtomFamily = Atom.family((key: string) => {
+    const ref = parseThreadKey(key);
+    return Atom.make((get) => {
+      if (threadShellAtom === undefined) return false;
+      const state = get(threadStateValueAtomFamily(key));
+      if (Option.isNone(state.data) || (state.status === "live" && state.resuming !== true)) {
+        return false;
+      }
+      const shell = get(threadShellAtom(ref));
+      return shell !== null && isBehindShell(state.data.value, shell);
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-behind-shell:${key}`));
+  });
+
   const statusAtomFamily = Atom.family((key: string) =>
     Atom.make((get) => get(threadStateValueAtomFamily(key)).status).pipe(
       Atom.setIdleTTL(0),
@@ -220,6 +250,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),
     statusAtom: (ref: ScopedThreadRef) => statusAtomFamily(threadKey(ref)),
+    behindShellAtom: (ref: ScopedThreadRef) => behindShellAtomFamily(threadKey(ref)),
     errorAtom: (ref: ScopedThreadRef) => errorAtomFamily(threadKey(ref)),
     historyAtom: (ref: ScopedThreadRef) => historyAtomFamily(threadKey(ref)),
   };

@@ -300,6 +300,8 @@ export interface ThreadFeedProps {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
   readonly contentPresentation: ThreadContentPresentation;
+  /** Fades the rows: they are an older copy that the thread is still catching up from. */
+  readonly behind?: boolean;
   readonly agentLabel: string;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
@@ -2490,7 +2492,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   return (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
       <View className="flex-1" onLayout={handleViewportLayout}>
-        <View className="flex-1">
+        <View className={props.behind === true ? "flex-1 opacity-50" : "flex-1"}>
           <KeyboardAwareLegendList
             ref={listRef}
             // LegendList's maintainScrollAtEnd calls scrollToEnd(), which is

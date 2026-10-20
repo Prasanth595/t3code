@@ -16,6 +16,7 @@ import {
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
   peekRememberedThreadTimeline,
+  peekRememberedThreadTimelineUpdatedAt,
   rememberReadyThreadTimeline,
   resolveExplicitDiffOpenOnActivate,
   resolveThreadSwitchTimeline,
@@ -51,6 +52,7 @@ import {
   TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR,
 } from "./chat/composerFocusRedirect";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -391,6 +393,8 @@ import {
   useProjects,
   useThreadProjection,
   useThreadStatus,
+  useThreadBehindShell,
+  useThreadShellNewerThan,
   useThreadHistory,
   useQuietThreadShell,
   useThreadShell,
@@ -1207,6 +1211,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeProviderThread = serverProjection?.providerThreads.find(
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
   );
+  const threadBehindShell = useThreadBehindShell(routeThreadDetailRef);
   const activeThreadLiveTokenUsage = latestProviderTurnTokenUsage(
     serverProjection?.providerTurns ?? [],
     serverProjection,
@@ -2889,12 +2894,23 @@ export default function ChatView(props: ChatViewProps) {
   const timelineMessages = timelineEntries.flatMap((entry) =>
     entry.kind === "message" ? [entry.message] : [],
   );
+  const rememberedTimelineBehind = useThreadShellNewerThan(
+    routeThreadDetailRef,
+    peekRememberedThreadTimelineUpdatedAt(activeThreadKey),
+  );
   const displayedTimeline = resolveThreadSwitchTimeline({
     loading: timelineEntries.length === 0 && threadSyncPhase !== null,
     activeThreadKey,
     nextEntries: timelineEntries,
     rememberedForActive: peekRememberedThreadTimeline<typeof timelineEntries>(activeThreadKey),
   });
+  // Old messages stay visible while the thread catches up, but faded so they
+  // do not read as the latest. The composer shows sync progress alongside.
+  // Remembered entries are only painted while the detail loads.
+  const timelineBehind =
+    timelineEntries.length > 0
+      ? threadBehindShell
+      : displayedTimeline.entries.length > 0 && rememberedTimelineBehind;
   const displayedTimelineKey = displayedTimeline.displayThreadKey ?? routeThreadKey;
   const paintOnlyDisplayedTimeline = isPaintOnlyThreadTimeline(
     displayedTimeline.displayThreadKey,
@@ -3098,6 +3114,8 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const serverProjectionUpdatedAt =
+    serverProjection === null ? null : DateTime.toEpochMillis(serverProjection.updatedAt);
   useLayoutEffect(() => {
     if (
       threadDetailLoading ||
@@ -3111,8 +3129,16 @@ export default function ChatView(props: ChatViewProps) {
       entries: timelineEntries,
       markdownCwd: gitCwd,
       workspaceRoot: activeWorkspaceRoot ?? null,
+      ...(serverProjectionUpdatedAt === null ? {} : { updatedAt: serverProjectionUpdatedAt }),
     });
-  }, [activeThreadKey, activeWorkspaceRoot, gitCwd, threadDetailLoading, timelineEntries]);
+  }, [
+    activeThreadKey,
+    activeWorkspaceRoot,
+    gitCwd,
+    serverProjectionUpdatedAt,
+    threadDetailLoading,
+    timelineEntries,
+  ]);
   const heldPaintContext = paintOnlyDisplayedTimeline
     ? peekHeldThreadTimeline<typeof timelineEntries>()
     : null;
@@ -8178,6 +8204,7 @@ export default function ChatView(props: ChatViewProps) {
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               <MessagesTimeline
+                behind={timelineBehind}
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
@@ -8486,7 +8513,9 @@ export default function ChatView(props: ChatViewProps) {
                               showPlanFollowUpPrompt={showPlanFollowUpPrompt}
                               activeProposedPlan={activeProposedPlan}
                               threadSyncPhase={
-                                activeEnvironmentUnavailable ? null : threadSyncPhase
+                                activeEnvironmentUnavailable
+                                  ? null
+                                  : (threadSyncPhase ?? (timelineBehind ? "syncing" : null))
                               }
                               runtimeMode={runtimeMode}
                               interactionMode={interactionMode}
