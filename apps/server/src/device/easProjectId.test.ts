@@ -404,6 +404,22 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config spreads part of the config over it",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, ...config.extra.preview });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config spreads a property of the config instead of it",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config.preview });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when an extra entry spreads the whole config, not its extra",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config } });`,

@@ -39,15 +39,29 @@ const SPREAD_LATER = /\.\.\./;
 // Space, a comment, or an opening parenthesis: what may sit between `...`
 // and the thing spread. Sticky, so the scan moves through the file once.
 const SPREAD_FILLER = /(?:\s+|\/\/[^\n\r\u2028\u2029]*|\/\*(?:[^*]|\*(?!\/))*\*\/|\()/y;
-// `config` and no more of an identifier after it (`$`, Unicode letters and
-// a `\u` escape continue one, where `\b` would not).
-const CONFIG_AT = /config(?![\p{ID_Continue}$\u200c\u200d\\])/uy;
+// `config`'s `extra` and `extra.eas` entries, the holders of the EAS id
+// (dotted, optional-chained or in brackets).
+const EXTRA_OF_CONFIG = String.raw`config(?:\s*\??\.\s*extra|\s*(?:\?\.)?\s*\[\s*["'\x60]extra["'\x60]\s*\])`;
+const EAS_OF_CONFIG =
+  EXTRA_OF_CONFIG + String.raw`(?:\s*\??\.\s*eas|\s*(?:\?\.)?\s*\[\s*["'\x60]eas["'\x60]\s*\])`;
+// The holder, and nothing more of it: no further property, call or operator
+// (`?? {}` keeps it, so it may follow).
+const HOLDER_END = String.raw`(?![\p{ID_Continue}$\u200c\u200d\\]|\s*(?:[.\[(]|\?(?!\?)))`;
+const HOLDER_AT = {
+  extra: new RegExp(EXTRA_OF_CONFIG + HOLDER_END, "uy"),
+  eas: new RegExp(EAS_OF_CONFIG + HOLDER_END, "uy"),
+};
+// `config` and no more of it: not an identifier continuing (`$`, Unicode
+// letters and a `\u` escape do, where `\b` would not), nor a property.
+const CONFIG_AT = new RegExp("config" + HOLDER_END, "uy");
 
 /**
  * How a dynamic config with no EAS id of its own relates to app.json's:
- * `spreads` when every spread in it spreads `config`, the one Expo hands it
- * (app.json's entry carries through); `replaces` when it spreads anything
- * else, which may replace that entry; `unclear` when it spreads nothing,
+ * `spreads` when it spreads `config`, the one Expo hands it (app.json's
+ * entry carries through), and nothing else but `config`'s own `extra` or
+ * `extra.eas`, which keep the entry wherever they land; `replaces` when it
+ * spreads anything else (`config.extra.preview` too), which may replace
+ * that entry; `unclear` when it spreads nothing,
  * since it may return `config` changed, or a config of its own that Expo
  * uses alone. A `...` inside a comment after a spread is skipped with the
  * comment, so the scan is linear.
@@ -58,7 +72,6 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
   for (;;) {
     const next = source.indexOf("...", at);
     if (next === -1) return spreads > 0 ? "spreads" : "unclear";
-    spreads++;
     at = next + 3;
     for (;;) {
       SPREAD_FILLER.lastIndex = at;
@@ -67,7 +80,13 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
       at += filler[0].length;
     }
     CONFIG_AT.lastIndex = at;
-    if (!CONFIG_AT.test(source)) return "replaces";
+    if (CONFIG_AT.test(source)) {
+      spreads++;
+      continue;
+    }
+    HOLDER_AT.extra.lastIndex = at;
+    HOLDER_AT.eas.lastIndex = at;
+    if (!HOLDER_AT.extra.test(source) && !HOLDER_AT.eas.test(source)) return "replaces";
   }
 };
 const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
@@ -84,16 +103,6 @@ const REPLACES_HOLDER =
 // or computed; a shorthand `extra` or `eas` entry replaces it too. More
 // entries than mentions are allowed are not read.
 const EXTRA_OR_EAS = /(?:\b(extra|eas)|["'`](extra|eas)["'`]\s*\]?)\s*:\s*/g;
-const EXTRA_OF_CONFIG = String.raw`config(?:\s*\??\.\s*extra|\s*(?:\?\.)?\s*\[\s*["'\x60]extra["'\x60]\s*\])`;
-const EAS_OF_CONFIG =
-  EXTRA_OF_CONFIG + String.raw`(?:\s*\??\.\s*eas|\s*(?:\?\.)?\s*\[\s*["'\x60]eas["'\x60]\s*\])`;
-// The holder, and nothing more of it: no further property, call or operator
-// (`?? {}` keeps it, so it may follow).
-const HOLDER_END = String.raw`(?![\p{ID_Continue}$\u200c\u200d\\]|\s*(?:[.\[(]|\?(?!\?)))`;
-const HOLDER_AT = {
-  extra: new RegExp(EXTRA_OF_CONFIG + HOLDER_END, "uy"),
-  eas: new RegExp(EAS_OF_CONFIG + HOLDER_END, "uy"),
-};
 const SHORTHAND_EXTRA_OR_EAS = /(?<![.\p{ID_Continue}$])(?:extra|eas)\s*(?=[,}])/u;
 const keepsStaticExtra = (source: string): boolean => {
   if (SHORTHAND_EXTRA_OR_EAS.test(source)) return false;
