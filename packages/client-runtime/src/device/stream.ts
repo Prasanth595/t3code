@@ -57,6 +57,21 @@ const controlReplySchema = Schema.Struct({
 });
 const decodeScreenConfig = Schema.decodeUnknownOption(screenConfigSchema);
 const decodeControlReply = Schema.decodeUnknownOption(controlReplySchema);
+const decodeVideoSession = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.Literal("video-session"),
+      size: Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Struct({
+            width: Schema.Finite.check(Schema.isGreaterThan(0)),
+            height: Schema.Finite.check(Schema.isGreaterThan(0)),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
 
 export interface DuoPanelSinks {
   readonly cover: DeviceFrameSink;
@@ -97,9 +112,11 @@ const FIRST_FRAME_TIMEOUT_MS = 15_000;
 const MJPEG_FRAME_CHECK_MS = 250;
 const FRAME_DURATION_US = 16_667;
 const SEMU_MAGIC = 0x53454d55;
-const SEMU_HEADER_BYTES = 16;
+const SEMU_V1_HEADER_BYTES = 16;
+const SEMU_V2_HEADER_BYTES = 24;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
+const MAX_PENDING_VIDEO_BYTES = 8 * 1024 * 1024;
 
 const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
@@ -136,12 +153,18 @@ export function parseSemuPacket(raw: ArrayBuffer): {
   readonly timestamp: number | null;
 } {
   const bytes = new Uint8Array(raw);
-  if (bytes.byteLength > SEMU_HEADER_BYTES) {
-    const view = new DataView(raw, 0, SEMU_HEADER_BYTES);
-    if (view.getUint32(0, false) === SEMU_MAGIC && view.getUint8(4) === 1) {
+  if (bytes.byteLength > SEMU_V1_HEADER_BYTES) {
+    const view = new DataView(raw);
+    const version = view.getUint8(4);
+    const headerBytes = version === 1 ? SEMU_V1_HEADER_BYTES : SEMU_V2_HEADER_BYTES;
+    if (
+      view.getUint32(0, false) === SEMU_MAGIC &&
+      (version === 1 || version === 2) &&
+      bytes.byteLength > headerBytes
+    ) {
       const pts = view.getBigUint64(8, false);
       return {
-        data: bytes.subarray(SEMU_HEADER_BYTES),
+        data: bytes.subarray(headerBytes),
         isKey: (view.getUint8(5) & SEMU_FLAG_KEY) !== 0,
         timestamp: pts <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(pts) : null,
       };
@@ -149,15 +172,6 @@ export function parseSemuPacket(raw: ArrayBuffer): {
   }
   return { data: bytes, isKey: null, timestamp: null };
 }
-
-const isVideoSessionMessage = (text: string) => {
-  try {
-    const message = JSON.parse(text) as { type?: unknown };
-    return message.type === "video-session";
-  } catch {
-    return false;
-  }
-};
 
 export function scanAccessUnit(buf: Uint8Array): { isKey: boolean; sps: Uint8Array | null } {
   let isKey = false;
@@ -339,9 +353,12 @@ export function createDeviceStreamClient(
   let iosInputUnavailable = false;
   let timestamp = 0;
   let awaitingKeyframe = true;
+  let sessionSize: { width: number; height: number } | null = null;
   let screen: DeviceScreenSize | null = null;
   let firstFrame = false;
   let configuring = false;
+  let pendingPackets: (ReturnType<typeof parseSemuPacket> & { isKey: boolean })[] = [];
+  let pendingBytes = 0;
   let mjpeg = false;
   let generation = 0;
   let decoderEpoch = 0;
@@ -488,8 +505,22 @@ export function createDeviceStreamClient(
     frameReceived();
   };
 
+  const clearPendingPackets = () => {
+    pendingPackets = [];
+    pendingBytes = 0;
+  };
+
+  const cancelKeyframeRequest = () => {
+    const retry = retryTimers.get("video");
+    if (retry !== undefined) clearTimeout(retry);
+    retryTimers.delete("video");
+  };
+
   const closeDecoder = () => {
     decoderEpoch++;
+    configuring = false;
+    clearPendingPackets();
+    if (platform === "android") cancelKeyframeRequest();
     try {
       videoDecoder?.close();
     } catch {}
@@ -583,15 +614,37 @@ export function createDeviceStreamClient(
         }),
       );
       timestamp += FRAME_DURATION_US;
+      if (platform === "android" && isKey) cancelKeyframeRequest();
     } catch {
       recoverDecoder();
     }
   };
 
   const requestKeyframe = () => {
-    if (platform === "android" && socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "reset-video", ack: false }));
+    if (platform !== "android") return;
+    // The hub silently coalesces resets for 500 ms after client-open or a prior reset.
+    scheduleRetry("video", () => {
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "reset-video", ack: false }));
+      }
+    });
+  };
+
+  const queueAndroidPacket = (packet: ReturnType<typeof parseSemuPacket>, isKey: boolean) => {
+    if (isKey) clearPendingPackets();
+    else if (pendingPackets.length === 0) return;
+    // Keep dependent deltas together and stay within the decoder's backlog budget.
+    if (
+      pendingPackets.length >= SOFT_DECODE_QUEUE ||
+      pendingBytes + packet.data.byteLength > MAX_PENDING_VIDEO_BYTES
+    ) {
+      clearPendingPackets();
+      requestKeyframe();
+      return;
     }
+    if (isKey) cancelKeyframeRequest();
+    pendingPackets.push({ ...packet, isKey });
+    pendingBytes += packet.data.byteLength;
   };
 
   const scheduleRetry = (channel: "video" | "input", run: () => void) => {
@@ -864,6 +917,7 @@ export function createDeviceStreamClient(
 
   const connectAndroid = () => {
     if (stopped) return;
+    sessionSize = null;
     const ws = new WebSocket(wsUrl(`/ws?device=${device}&frame-meta=1`));
     ws.binaryType = "arraybuffer";
     socket = ws;
@@ -875,13 +929,23 @@ export function createDeviceStreamClient(
     ws.onmessage = (event) => {
       if (stopped || socket !== ws) return;
       if (typeof event.data === "string") {
-        // The encoder restarts at a new size when the device rotates; the
-        // next keyframe carries a fresh SPS, so the decoder is rebuilt from it.
-        if (isVideoSessionMessage(event.data)) {
-          closeDecoder();
-          configuring = false;
-          connecting();
-          requestKeyframe();
+        const session = decodeVideoSession(event.data);
+        if (Option.isSome(session)) {
+          const size = session.value.size ?? null;
+          // Opening a client or resetting video also restarts the encoder.
+          // Keep the decoder unless the size changed or is unknown.
+          const same =
+            size !== null &&
+            sessionSize !== null &&
+            size.width === sessionSize.width &&
+            size.height === sessionSize.height;
+          sessionSize = size;
+          clearPendingPackets();
+          awaitingKeyframe = true;
+          if (!same) {
+            closeDecoder();
+            connecting();
+          }
         }
         return;
       }
@@ -892,17 +956,28 @@ export function createDeviceStreamClient(
         (packet.isKey && (!videoDecoder || videoDecoder.state !== "configured"));
       const scanned = needsScan ? scanAccessUnit(packet.data) : null;
       const isKey = packet.isKey ?? scanned?.isKey ?? false;
+      if (configuring) {
+        queueAndroidPacket(packet, isKey);
+        return;
+      }
       if (scanned?.sps && (!videoDecoder || videoDecoder.state !== "configured")) {
-        if (configuring) return;
+        queueAndroidPacket(packet, isKey);
         configuring = true;
         const epoch = decoderEpoch;
-        const isCurrent = () => !stopped && socket === ws;
+        const isCurrent = () => !stopped && socket === ws && epoch === decoderEpoch;
         void configureDecoder({ codec: avcCodecString(scanned.sps) }, isCurrent).then(
           (configured) => {
-            if (!isCurrent() || epoch !== decoderEpoch) return;
+            if (!isCurrent()) return;
             configuring = false;
             awaitingKeyframe = true;
-            if (configured) requestKeyframe();
+            if (!configured) return;
+            const packets = pendingPackets;
+            clearPendingPackets();
+            if (packets.length === 0) requestKeyframe();
+            for (const pending of packets) {
+              if (!isCurrent()) break;
+              decode(pending.isKey, pending.data, pending.timestamp);
+            }
           },
         );
         return;
@@ -925,7 +1000,6 @@ export function createDeviceStreamClient(
         (event.code === 1006 && access.query.wsTicket)
       )
         return handleUnauthorized();
-      configuring = false;
       connecting(event.reason || undefined);
       scheduleRetry("input", connectAndroid);
     };
@@ -936,7 +1010,6 @@ export function createDeviceStreamClient(
     if (!stopped) return;
     stopped = false;
     generation++;
-    configuring = false;
     iosInputAdmitted = false;
     iosInputUnavailable = false;
     connecting();
