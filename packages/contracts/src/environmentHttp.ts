@@ -408,6 +408,50 @@ export const EnvironmentCloudRelayConfigResult = Schema.Struct({
 });
 export type EnvironmentCloudRelayConfigResult = typeof EnvironmentCloudRelayConfigResult.Type;
 
+export const EnvironmentConnectReachabilityCause = Schema.Literals([
+  "not_linked",
+  "connector_not_running",
+  "connector_not_ready",
+  "edge_unreachable",
+  "no_connector",
+  "origin_unreachable",
+  "dns_failed",
+  "timeout",
+  "unexpected_response",
+]);
+export type EnvironmentConnectReachabilityCause = typeof EnvironmentConnectReachabilityCause.Type;
+
+/** Whether other devices can reach this environment through its T3 Connect tunnel. */
+export const EnvironmentConnectReachability = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("reachable"),
+    checkedAt: Schema.String,
+    readyConnections: Schema.Int,
+    protocol: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    status: Schema.Literal("unreachable"),
+    checkedAt: Schema.String,
+    cause: EnvironmentConnectReachabilityCause,
+    reason: Schema.String,
+    hint: Schema.NullOr(Schema.String),
+    fix: Schema.String,
+  }),
+]);
+export type EnvironmentConnectReachability = typeof EnvironmentConnectReachability.Type;
+
+/** "Tunnel connected · 4 connections · QUIC" for a healthy check. */
+export function formatConnectReachable(
+  result: Extract<EnvironmentConnectReachability, { status: "reachable" }>,
+): string {
+  const connections = `${result.readyConnections} connection${result.readyConnections === 1 ? "" : "s"}`;
+  return [
+    "Tunnel connected",
+    connections,
+    ...(result.protocol ? [result.protocol.toUpperCase()] : []),
+  ].join(" · ");
+}
+
 export const EnvironmentCloudLinkStateResult = Schema.Struct({
   linked: Schema.Boolean,
   cloudUserId: Schema.NullOr(Schema.String),
@@ -417,6 +461,8 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   publishAgentActivity: Schema.Boolean,
   holdWebhooksWhileOffline: Schema.optional(Schema.Boolean),
   linkRevoked: Schema.optional(Schema.Boolean),
+  /** The latest check the server ran on its own, absent until one finishes. */
+  reachability: Schema.optional(EnvironmentConnectReachability),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;
 
@@ -686,6 +732,13 @@ class EnvironmentConnectHttpApi extends HttpApiGroup.make("connect")
     HttpApiEndpoint.get("linkState", "/api/connect/link-state", {
       headers: OptionalBearerHeaders,
       success: EnvironmentCloudLinkStateResult,
+      error: EnvironmentHttpCloudErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("checkReachability", "/api/connect/reachability", {
+      headers: OptionalBearerHeaders,
+      success: EnvironmentConnectReachability,
       error: EnvironmentHttpCloudErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )

@@ -1,0 +1,83 @@
+import { describe, expect, it } from "@effect/vitest";
+
+import {
+  classifyReachability,
+  formatReachabilityFailure,
+  type ReachabilityFacts,
+} from "./ConnectReachability.ts";
+
+const checkedAt = "2026-10-19T00:00:00.000Z";
+const connected = { readyConnections: 4, hostname: "env.example.test", protocol: "quic" };
+const notConnected = { readyConnections: 0, hostname: null, protocol: null };
+const facts = (overrides: Partial<ReachabilityFacts>): ReachabilityFacts => ({
+  managedTunnelConfigured: true,
+  connector: connected,
+  endpoint: null,
+  edgeReachable: null,
+  exitNode: null,
+  ...overrides,
+});
+
+describe("classifyReachability", () => {
+  it("blames the exit node when the tunnel edge times out through it", () => {
+    const result = classifyReachability(
+      facts({
+        connector: notConnected,
+        edgeReachable: false,
+        exitNode: { name: "home-pi", online: true },
+      }),
+      checkedAt,
+    );
+
+    expect(result.status === "unreachable" && formatReachabilityFailure(result)).toBe(
+      [
+        "✕ T3 Connect is NOT reachable from other devices",
+        "  Cloudflare's tunnel port (7844) times out from this machine.",
+        '  Tailscale exit node "home-pi" is on. Traffic to Cloudflare goes through it.',
+        "  Fix: tailscale set --exit-node=   (or allow outbound 7844 on that network)",
+      ].join("\n"),
+    );
+  });
+
+  it("names a generic blocker when no exit node is on", () => {
+    const result = classifyReachability(
+      facts({ connector: notConnected, edgeReachable: false }),
+      checkedAt,
+    );
+
+    expect(result).toMatchObject({
+      cause: "edge_unreachable",
+      hint: "A VPN, proxy, or firewall may block it.",
+    });
+  });
+
+  it.each([
+    [{ kind: "status", status: 502 }, "origin_unreachable"],
+    [{ kind: "status", status: 530 }, "no_connector"],
+    [{ kind: "status", status: 404 }, "unexpected_response"],
+    [{ kind: "dns_failed" }, "dns_failed"],
+    [{ kind: "network_error" }, "timeout"],
+  ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
+    expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
+      { status: "unreachable", cause },
+    );
+  });
+
+  it("waits on a connector that has not connected while the edge answers", () => {
+    expect(
+      classifyReachability(facts({ connector: notConnected, edgeReachable: true }), checkedAt),
+    ).toMatchObject({ cause: "connector_not_ready" });
+  });
+
+  it("reports connections and protocol when the endpoint answers", () => {
+    expect(
+      classifyReachability(facts({ endpoint: { kind: "status", status: 200 } }), checkedAt),
+    ).toEqual({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
+  });
+
+  it("does not probe a tunnel that was never set up", () => {
+    expect(
+      classifyReachability(facts({ managedTunnelConfigured: false, connector: null }), checkedAt),
+    ).toMatchObject({ cause: "not_linked" });
+  });
+});
