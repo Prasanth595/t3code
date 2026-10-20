@@ -17,48 +17,49 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
-vi.mock("../hooks/useThreadRouteTarget", () => ({
+vi.mock("~/hooks/useThreadRouteTarget", () => ({
   useThreadRouteRef: () => threadRef,
   useThreadRouteTarget: () => ({ ...threadRef, kind: "thread" }),
 }));
-vi.mock("../state/entities", () => ({
+vi.mock("~/state/entities", () => ({
   useQuietThreadShell: () => thread,
   useThreadCheckpointSummaries: () => turns,
   useProject: () => null,
 }));
-vi.mock("../state/filesystem", () => ({ useFilesystemReadAccess: () => ({ canReadFiles: true }) }));
-vi.mock("../state/server", () => ({ serverEnvironment: { configValueAtom: () => configAtom } }));
-vi.mock("../state/vcs", () => ({ vcsEnvironment: { status: () => null, listRefs: () => null } }));
-vi.mock("../state/review", () => ({
+vi.mock("~/state/filesystem", () => ({ useFilesystemReadAccess: () => ({ canReadFiles: true }) }));
+vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => configAtom } }));
+vi.mock("~/state/vcs", () => ({ vcsEnvironment: { status: () => null, listRefs: () => null } }));
+vi.mock("~/state/review", () => ({
   reviewEnvironment: {
     diffPreview: () => previewAtom,
     diffFilePatch: ({ input }: { input: { request: { file: { path: string } } } }) =>
       patchAtoms(input.request.file.path),
   },
 }));
-vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("../hooks/useSettings", () => ({
+vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("~/hooks/useSettings", () => ({
   useClientSettings: () => ({
     ...DEFAULT_CLIENT_SETTINGS,
     diffFilesCollapsed: useAtomValue(collapsedAtom),
   }),
   updateClientSettings: vi.fn(),
 }));
-vi.mock("../hooks/useTheme", () => ({
+vi.mock("~/hooks/useTheme", () => ({
   useRenderedAppearance: () => "dark",
   useTheme: () => ({ resolvedTheme: "dark" }),
 }));
-vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
-vi.mock("../fileContextMenu", () => ({ useFileContextMenuHandler: () => vi.fn() }));
-vi.mock("../lib/checkpointDiffState", () => ({
+vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => vi.fn() }));
+vi.mock("~/fileContextMenu", () => ({ useFileContextMenuHandler: () => vi.fn() }));
+vi.mock("~/lib/checkpointDiffState", () => ({
   useCheckpointDiff: () => {
     const diff = useAtomValue(checkpointAtom);
     return { data: diff === null ? null : { diff }, isPending: diff === null, error: null };
   },
 }));
 
-import DiffPanel from "./DiffPanel";
-import { useDiffPanelStore } from "../diffPanelStore";
+import DiffSidePanel from "./DiffSidePanel";
+import { PanelHostContext } from "../panelHost";
+import { useDiffPanelStore } from "~/diffPanelStore";
 
 const threadRef = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("thread"));
 const thread = { ...threadRef, worktreePath: "/repo" };
@@ -137,12 +138,17 @@ async function render() {
   await act(async () =>
     root.render(
       <RegistryContext.Provider value={registry}>
-        <DiffPanel
-          visible
-          mode="embedded"
-          composerDraftTarget={threadRef}
-          workspaceMutationId={null}
-        />
+        <PanelHostContext
+          value={{
+            threadRef,
+            visible: true,
+            composerDraftTarget: threadRef,
+            workspaceMutationId: null,
+            sendAnnotation: () => undefined,
+          }}
+        >
+          <DiffSidePanel />
+        </PanelHostContext>
       </RegistryContext.Provider>,
     ),
   );
