@@ -31,6 +31,7 @@ export const make = Effect.gen(function* () {
       net.hasListenerOnHost(SSH_PORT, "::1"),
       (ipv4, ipv6) => ipv4 || ipv6,
     );
+    const username = yield* HostProcess.Username;
 
     const magicDnsName = yield* readTailscaleStatus.pipe(
       Effect.map((status) => status.magicDnsName),
@@ -50,13 +51,21 @@ export const make = Effect.gen(function* () {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ))
       ) {
-        targets.push({ kind: "tailscale", host: magicDnsName });
+        targets.push({
+          kind: "tailscale",
+          host: magicDnsName,
+          ...(username === null ? {} : { username }),
+        });
       }
       return targets;
     }
 
     if (magicDnsName !== null) {
-      targets.push({ kind: "tailscale", host: magicDnsName });
+      targets.push({
+        kind: "tailscale",
+        host: magicDnsName,
+        ...(username === null ? {} : { username }),
+      });
     }
 
     // os.hostname() may already be an FQDN (macOS often reports
@@ -64,7 +73,11 @@ export const make = Effect.gen(function* () {
     const hostname = yield* HostProcess.Hostname;
     const shortHostname = hostname.split(".")[0]?.trim();
     if (shortHostname !== undefined && shortHostname.length > 0) {
-      targets.push({ kind: "mdns", host: `${shortHostname}.local` });
+      targets.push({
+        kind: "mdns",
+        host: `${shortHostname}.local`,
+        ...(username === null ? {} : { username }),
+      });
     }
 
     return targets;
