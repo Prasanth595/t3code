@@ -1,7 +1,7 @@
 import type { ProjectIconOverride } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveProjectChipIcon } from "./projectIcon";
+import { projectAutoMonogram, resolveProjectChipIcon } from "./projectIcon";
 
 const project = (title: string, projectIcon?: ProjectIconOverride) => ({
   title,
@@ -55,5 +55,27 @@ describe("resolveProjectChipIcon", () => {
         () => "https://env.example/api/assets/project-favicon-missing",
       ),
     ).toMatchObject({ kind: "monogram" });
+  });
+});
+
+describe("projectAutoMonogram", () => {
+  it("matches desktop's deriveProjectIdentity", () => {
+    const desktop = [
+      ["t3code", "T3", "teal"],
+      ["Auto Monogram", "AM", "lime"],
+      ["blitzdiff", "BF", "pink"],
+      ["uoalbumdotclub", "UB", "gray"],
+      ["  Tagium  ", "TM", "lime"],
+      ["Café Ünïcode", "CÜ", "fuchsia"],
+      ["web2 app", "W2", "emerald"],
+    ] as const;
+    for (const [title, text, color] of desktop) {
+      expect(projectAutoMonogram(title)).toEqual({ kind: "monogram", text, color });
+    }
+  });
+
+  it("leaves untitled projects to the folder icon, like desktop", () => {
+    expect(projectAutoMonogram("")).toBeNull();
+    expect(projectAutoMonogram("   ")).toBeNull();
   });
 });

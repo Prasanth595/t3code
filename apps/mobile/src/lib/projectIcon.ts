@@ -41,6 +41,15 @@ export function projectMonogramColor(projectName: string): ProjectIconColor {
   return ProjectIconColor.literals[index] ?? "blue";
 }
 
+export function projectAutoMonogram(projectTitle: string): ProjectIconGlyph | null {
+  if (!projectTitle.trim()) return null;
+  return {
+    kind: "monogram",
+    text: projectMonogram(projectTitle),
+    color: projectMonogramColor(projectTitle),
+  };
+}
+
 export function resolveProjectIconGlyph(
   projectIcon: ProjectIconOverride | null | undefined,
   projectTitle: string,
@@ -73,11 +82,7 @@ export function resolveProjectChipIcon(
   if (glyph) return glyph;
   const url = faviconUrl();
   if (url && !isProjectFaviconFallbackUrl(url)) return { kind: "favicon", uri: url };
-  return {
-    kind: "monogram",
-    text: projectMonogram(project.title),
-    color: projectMonogramColor(project.title),
-  };
+  return projectAutoMonogram(project.title);
 }
 
 const PROJECT_ICON_COLOR_CLASSES: Record<
