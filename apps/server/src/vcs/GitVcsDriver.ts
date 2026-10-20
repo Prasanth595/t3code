@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   VcsProcessExitError,
+  VcsUnsupportedOperationError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -421,7 +422,6 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
-const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -783,16 +783,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
-  const resolveGitCommonDir = (cwd: string) =>
-    Effect.gen(function* () {
-      const result = yield* execute({
-        operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
-        cwd,
-        args: ["rev-parse", "--git-common-dir"],
-      });
-      const gitCommonDir = result.stdout.trim();
-      return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+  const resolveGitCommonDir = Effect.fn("GitVcsDriver.resolveGitCommonDir")(function* (
+    cwd: string,
+  ) {
+    const result = yield* execute({
+      operation: "GitVcsDriver.checkpoints.resolveGitCommonDir",
+      cwd,
+      args: ["rev-parse", "--git-common-dir"],
     });
+    const gitCommonDir = result.stdout.trim();
+    return path.isAbsolute(gitCommonDir) ? gitCommonDir : path.resolve(cwd, gitCommonDir);
+  });
 
   // Git renames loose objects and refs into place without fsync by default, so
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
@@ -965,6 +966,64 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           }
         }
 
+        const workspaceIgnored = (yield* filterIgnoredPaths(input.cwd, ["."])).length === 0;
+        if (workspaceIgnored) {
+          // HEAD omits staged-only paths. Seed just this workspace's additions, keeping
+          // unrelated staged changes and the scratch index's sparse flags untouched.
+          const additions = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [
+              "-c",
+              "core.quotePath=true",
+              "diff",
+              "--cached",
+              "--raw",
+              "--no-abbrev",
+              "--no-renames",
+              "--no-relative",
+              "--ignore-submodules=none",
+              "--no-color",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--ita-visible-in-index",
+              "--diff-filter=A",
+              "--",
+              ".",
+            ],
+            maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            outputMode: "error",
+          });
+          if (additions.stdout.length > 0) {
+            // Git's quoted paths round-trip through index-info, including non-UTF-8 names.
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: [...indexConfig, "-c", "index.sparse=false", "update-index", "--index-info"],
+              stdin: additions.stdout.replace(
+                /^:000000 ([0-7]{6}) 0+ ([0-9a-f]+) A\t/gm,
+                "$1 $2\t",
+              ),
+              env: commitEnv,
+            });
+          }
+          const tracked = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: [...indexConfig, "ls-files", "--cached", "-z", "--", "."],
+            env: commitEnv,
+            maxOutputBytes: 1,
+            outputMode: "truncate",
+          });
+          if (tracked.stdout.length === 0) {
+            return yield* new VcsUnsupportedOperationError({
+              operation,
+              kind: "git",
+              detail: "The workspace directory is ignored by its Git repository.",
+            });
+          }
+        }
+
         const stageFiles = (exclusions: ReadonlyArray<string>) =>
           execute({
             operation,
@@ -975,7 +1034,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ...longPaths,
               "add",
               ...(sparseCheckout ? ["--sparse"] : []),
-              "-A",
+              // add -A rejects ignored directories even when they contain tracked files.
+              workspaceIgnored ? "-u" : "-A",
               "--",
               ".",
               ...exclusions,
@@ -1238,7 +1298,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             : []),
         ],
         allowNonZeroExit: true,
-        maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        maxOutputBytes: input.maxOutputBytes ?? VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
         outputMode: input.format === "numstat" ? "error" : "truncate",
       });
 
@@ -1280,7 +1340,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: [...args, "--name-only", "-z", "--no-renames", "--no-ext-diff"],
-          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
       // Remerge diff lists a merge's paths only where the result differs from Git's
