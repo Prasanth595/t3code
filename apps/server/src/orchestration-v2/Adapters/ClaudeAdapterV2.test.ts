@@ -17501,6 +17501,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const calls: Array<string> = [];
           const backgroundRequested = yield* Deferred.make<void>();
           let beforeAnswer: Effect.Effect<void> = Effect.void;
+          const lateAnswer = yield* Deferred.make<void>();
           const harness = yield* makeWakeHarnessWithOptions({
             backgroundTasks: (toolUseId) =>
               Effect.sync(() => calls.push(toolUseId)).pipe(
@@ -17519,7 +17520,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                       : backgrounding === "never answers"
                         ? Effect.never
                         : backgrounding === "answers after the steer went out"
-                          ? Effect.sleep("6 seconds").pipe(Effect.as(true))
+                          ? Deferred.await(lateAnswer).pipe(Effect.as(true))
                           : Effect.succeed(true),
                 ),
               ),
@@ -17705,7 +17706,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             assert.deepEqual(calls, [FOREGROUND_TOOL_USE_ID]);
           }
           if (backgrounding === "answers after the steer went out") {
-            yield* TestClock.adjust("1 second");
+            yield* Deferred.succeed(lateAnswer, undefined);
           } else if (
             backgrounding !== "succeeds" &&
             backgrounding !== "answers after the subagent ran again"
