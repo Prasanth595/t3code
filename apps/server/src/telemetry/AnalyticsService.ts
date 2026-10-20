@@ -95,11 +95,13 @@ export class AnalyticsService extends Context.Service<
     readonly flush: Effect.Effect<void>;
 
     /**
-     * Records `install.owner_observed` for an owner of this install. Each owner
-     * is sent once per server process, so reconnects and repeated reads are free.
+     * Records `install.owner_observed` for each owner of this install that the
+     * server read itself or a connecting client reported. Each owner is sent once
+     * per server process, so reconnects and repeated reads are free.
      */
-    readonly recordOwner: (
-      owner: TelemetryOwner & { readonly observedBy: "server" | "client" },
+    readonly recordOwners: (
+      owners: ReadonlyArray<TelemetryOwner>,
+      observedBy: "server" | "client",
     ) => Effect.Effect<void>;
   }
 >()("t3/telemetry/AnalyticsService") {
@@ -108,7 +110,7 @@ export class AnalyticsService extends Context.Service<
     AnalyticsService.of({
       record: () => Effect.void,
       flush: Effect.void,
-      recordOwner: () => Effect.void,
+      recordOwners: () => Effect.void,
     }),
   );
 }
@@ -297,22 +299,23 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const recordOwner: AnalyticsService["Service"]["recordOwner"] = ({
-    source,
-    ownerId,
-    observedBy,
-  }) =>
-    Ref.modify(recordedOwnersRef, (recorded) => {
-      const key = `${observedBy}:${source}:${ownerId}`;
-      return recorded.has(key) || recorded.size >= MAX_RECORDED_OWNERS
-        ? [false, recorded]
-        : [true, new Set(recorded).add(key)];
-    }).pipe(
-      Effect.flatMap((isNew) =>
-        isNew
-          ? record("install.owner_observed", { ownerSource: source, ownerId, observedBy })
-          : Effect.void,
-      ),
+  const recordOwners: AnalyticsService["Service"]["recordOwners"] = (owners, observedBy) =>
+    Effect.forEach(
+      owners,
+      ({ source, ownerId }) =>
+        Ref.modify(recordedOwnersRef, (recorded) => {
+          const key = `${observedBy}:${source}:${ownerId}`;
+          return recorded.has(key) || recorded.size >= MAX_RECORDED_OWNERS
+            ? [false, recorded]
+            : [true, new Set(recorded).add(key)];
+        }).pipe(
+          Effect.flatMap((isNew) =>
+            isNew
+              ? record("install.owner_observed", { ownerSource: source, ownerId, observedBy })
+              : Effect.void,
+          ),
+        ),
+      { discard: true },
     );
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
@@ -321,7 +324,7 @@ export const make = Effect.gen(function* () {
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush, recordOwner });
+  return AnalyticsService.of({ record, flush, recordOwners });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);

@@ -175,11 +175,7 @@ const recordStartupHeartbeat = Effect.gen(function* () {
     threadCount,
     projectCount,
   });
-  yield* Effect.forEach(
-    yield* getServerOwners,
-    (owner) => analytics.recordOwner({ ...owner, observedBy: "server" }),
-    { discard: true },
-  );
+  yield* analytics.recordOwners(yield* getServerOwners, "server");
 });
 
 export const getAutoBootstrapThreadModelSelection = (): ModelSelection => ({

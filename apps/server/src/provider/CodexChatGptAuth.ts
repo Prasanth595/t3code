@@ -229,11 +229,10 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
         Option.flatMap(Option.fromUndefinedOr(saved.idToken), openAiUserId),
       );
       return Option.isSome(userId) && Option.isSome(analytics)
-        ? analytics.value.recordOwner({
-            source: "openai",
-            ownerId: hashTelemetryId(userId.value),
-            observedBy: "server",
-          })
+        ? analytics.value.recordOwners(
+            [{ source: "openai", ownerId: hashTelemetryId(userId.value) }],
+            "server",
+          )
         : Effect.void;
     }),
   );

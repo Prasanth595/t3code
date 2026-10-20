@@ -3148,11 +3148,7 @@ export const layer = Layer.unwrap(
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
-        yield* Effect.forEach(
-          readClientOwners(request),
-          (owner) => analytics.recordOwner({ ...owner, observedBy: "client" }),
-          { discard: true },
-        );
+        yield* analytics.recordOwners(readClientOwners(request), "client");
         const rpcWebSocketHttpEffect = yield* Effect.gen(function* () {
           const { protocol, httpEffect } = yield* RpcServer.makeProtocolWithHttpEffectWebsocket;
           yield* RpcServer.make(ServerWsRpcGroup, WS_RPC_SERVER_OPTIONS).pipe(

@@ -209,14 +209,11 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
           identity = yield* getTelemetryIdentity;
           const analytics = yield* AnalyticsService.AnalyticsService;
           const connect = { source: "connect", ownerId: "a".repeat(64) } as const;
-          yield* analytics.recordOwner({ ...connect, observedBy: "server" });
-          yield* analytics.recordOwner({ ...connect, observedBy: "server" });
-          yield* analytics.recordOwner({ ...connect, observedBy: "client" });
-          yield* analytics.recordOwner({
-            source: "device",
-            ownerId: "b".repeat(64),
-            observedBy: "client",
-          });
+          yield* analytics.recordOwners([connect, connect], "server");
+          yield* analytics.recordOwners(
+            [connect, { source: "device", ownerId: "b".repeat(64) }],
+            "client",
+          );
         }),
       );
       const events = batches.flat();
