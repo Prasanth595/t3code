@@ -1,5 +1,5 @@
 diff --git a/keyboard.d.ts b/keyboard.d.ts
-index 367945c..0ac7bf8 100644
+index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8c92d39b3 100644
 --- a/keyboard.d.ts
 +++ b/keyboard.d.ts
 @@ -279,7 +279,7 @@ type KeyboardChatComposerInsetListRef = {
@@ -23,7 +23,7 @@ index 367945c..0ac7bf8 100644
  } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
  
 diff --git a/keyboard.js b/keyboard.js
-index 6645bcb..321c4c3 100644
+index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d51720a73fb83 100644
 --- a/keyboard.js
 +++ b/keyboard.js
 @@ -33,19 +33,22 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
@@ -119,7 +119,7 @@ index 6645bcb..321c4c3 100644
        renderScrollComponent: memoList,
        ...rest
 diff --git a/keyboard.mjs b/keyboard.mjs
-index 87b38b9..111eb24 100644
+index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85cf4f361ee 100644
 --- a/keyboard.mjs
 +++ b/keyboard.mjs
 @@ -1,7 +1,7 @@
@@ -224,7 +224,7 @@ index 87b38b9..111eb24 100644
        renderScrollComponent: memoList,
        ...rest
 diff --git a/react-native.d.ts b/react-native.d.ts
-index ce1fe00..3ccf6f1 100644
+index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6aba6636e5 100644
 --- a/react-native.d.ts
 +++ b/react-native.d.ts
 @@ -293,6 +293,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -241,7 +241,7 @@ index ce1fe00..3ccf6f1 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a30..5ac6bbe 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..5ac6bbe8fe40bf252fefa6b885c2196d0677d75f 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -809,7 +809,7 @@ index b3c5a30..5ac6bbe 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cd..93aac74 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..93aac741d2cf77ce35996362439108176f19da7a 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1377,7 +1377,7 @@ index 40e87cd..93aac74 100644
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/react-native.web.js b/react-native.web.js
-index 914d2da..8b88b09 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..8b88b09d1269acef77c6ce0f8aaa1049d4fa26e9 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
 @@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1412,7 +1412,7 @@ index 914d2da..8b88b09 100644
      }
    }
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 95465f2..d7cbe1c 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbddd67f1e7d 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
 @@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1447,7 +1447,7 @@ index 95465f2..d7cbe1c 100644
      }
    }
 diff --git a/react.js b/react.js
-index 914d2da..86dbd9a 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2ace70387 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1514,18 +1514,308 @@ index 914d2da..86dbd9a 100644
        }
      }
    }
-@@ -6446,8 +6466,8 @@ function ScrollAdjust() {
-               window.getComputedStyle(contentNode)[axis.paddingEndProp]
-             );
-             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+@@ -6092,10 +6112,11 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+     if (!scrollElement) {
+       return 0;
+     }
+-    return horizontal ? scrollElement.scrollLeft : scrollElement.scrollTop;
+-  }, [getMaxScrollOffset, horizontal, isWindowScroll]);
++    return (horizontal ? scrollElement.scrollLeft : scrollElement.scrollTop) + getDeferredScrollAdjust(ctx.state);
++  }, [ctx, getMaxScrollOffset, horizontal, isWindowScroll]);
+   const scrollToLocalOffset = React3.useCallback(
+     (offset, animated) => {
++      flushTouchScrollDeferral(ctx.state);
+       const scrollElement = scrollRef.current;
+       const target = getScrollTarget();
+       if (!target || typeof target.scrollTo !== "function") {
+@@ -6123,7 +6144,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+       }
+       target.scrollTo(options);
+     },
+-    [getMaxScrollOffset, getScrollTarget, horizontal, isWindowScroll]
++    [ctx, getMaxScrollOffset, getScrollTarget, horizontal, isWindowScroll]
+   );
+   React3.useImperativeHandle(ref, () => {
+     const api = {
+@@ -6137,6 +6158,7 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+       getScrollResponder: () => resolveScrollableNode(scrollRef.current, isWindowScroll),
+       isWindowScroll: () => isWindowScroll,
+       scrollBy: (x, y) => {
++        flushTouchScrollDeferral(ctx.state);
+         const target = getScrollTarget();
+         if (!target || typeof target.scrollBy !== "function") {
+           return;
+@@ -6237,6 +6259,74 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+       scrollEventCoalescer.cancel();
+     };
+   }, [emitScrollEnd, getScrollTarget, handleScroll, scrollEventCoalescer]);
++  React3.useEffect(() => {
++    const element = scrollRef.current;
++    if (!deferScrollAdjustDuringTouchScroll || isWindowScroll || !element) {
++      return;
++    }
++    const deferral = getTouchScrollDeferral(ctx.state);
++    let scrolledDuringTouch = false;
++    const clearSettle = () => {
++      if (deferral.settleTimer !== void 0) {
++        clearTimeout(deferral.settleTimer);
++        deferral.settleTimer = void 0;
++      }
++    };
++    const settle = () => {
++      clearSettle();
++      if (deferral.touching || !deferral.active) {
++        return;
++      }
++      deferral.active = false;
++      flushTouchScrollDeferral(ctx.state);
++    };
++    const scheduleSettle = () => {
++      clearSettle();
++      deferral.settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
++    };
++    const onTouchStart = () => {
++      clearSettle();
++      deferral.touching = true;
++      deferral.active = true;
++      scrolledDuringTouch = false;
++    };
++    const onTouchEnd = (event) => {
++      if (event.touches.length > 0) {
++        return;
++      }
++      deferral.touching = false;
++      if (scrolledDuringTouch) {
++        scheduleSettle();
++      } else {
++        settle();
++      }
++    };
++    const onScroll = () => {
++      if (!deferral.active) {
++        return;
++      }
++      scrolledDuringTouch = true;
++      if (!deferral.touching) {
++        scheduleSettle();
++      }
++    };
++    element.addEventListener("touchstart", onTouchStart, { passive: true });
++    element.addEventListener("touchend", onTouchEnd, { passive: true });
++    element.addEventListener("touchcancel", onTouchEnd, { passive: true });
++    element.addEventListener("scroll", onScroll, { passive: true });
++    element.addEventListener("scrollend", settle);
++    return () => {
++      element.removeEventListener("touchstart", onTouchStart);
++      element.removeEventListener("touchend", onTouchEnd);
++      element.removeEventListener("touchcancel", onTouchEnd);
++      element.removeEventListener("scroll", onScroll);
++      element.removeEventListener("scrollend", settle);
++      clearSettle();
++      deferral.touching = false;
++      deferral.active = false;
++      flushTouchScrollDeferral(ctx.state);
++    };
++  }, [ctx, isWindowScroll]);
+   React3.useEffect(() => {
+     const doScroll = () => {
+       if (contentOffset) {
+@@ -6404,6 +6494,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
+   }
+   return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
+ }
++// iOS WebKit scrolls an overflow element outside the page: a scrollBy from
++// script while a finger drags it is overwritten by the drag, and one during
++// momentum lands twice, so every size correction made while scrolling jumps
++// the content by its size. While a touch scroll runs, corrections move the
++// content container with a transform instead, and the scroll offset takes
++// them in one absolute step once the scroll has ended (a relative step there
++// can still land twice). Scroll events pause while the page is busy during
++// momentum, so a quiet period only stands in for scrollend where it is missing
++// or never arrives.
++var TOUCH_SCROLL_SETTLE_FALLBACK_MS = 600;
++var deferScrollAdjustDuringTouchScroll = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-touch-callout", "none");
++function getTouchScrollDeferral(state) {
++  if (!state.touchScrollDeferral) {
++    state.touchScrollDeferral = {
++      active: false,
++      baselineTransform: void 0,
++      flush: void 0,
++      offset: 0,
++      settleTimer: void 0,
++      touching: false
++    };
++  }
++  return state.touchScrollDeferral;
++}
++function getDeferredScrollAdjust(state) {
++  const deferral = state == null ? void 0 : state.touchScrollDeferral;
++  return deferral ? deferral.offset : 0;
++}
++function flushTouchScrollDeferral(state) {
++  const deferral = state == null ? void 0 : state.touchScrollDeferral;
++  if (deferral == null ? void 0 : deferral.flush) {
++    deferral.flush();
++  }
++}
++function setDeferredScrollTransform(deferral, contentNode, horizontal) {
++  if (deferral.baselineTransform === void 0) {
++    deferral.baselineTransform = contentNode.style.transform;
++  }
++  const offset = deferral.offset;
++  contentNode.style.transform = Math.abs(offset) < 0.01 ? deferral.baselineTransform : `${deferral.baselineTransform ? `${deferral.baselineTransform} ` : ""}${horizontal ? "translateX" : "translateY"}(${-offset}px)`;
++}
++function clearDeferredScrollTransform(deferral, contentNode) {
++  if (deferral.baselineTransform !== void 0) {
++    contentNode.style.transform = deferral.baselineTransform;
++    deferral.baselineTransform = void 0;
++  }
++}
+ function scrollAdjustBy(el, left, top) {
+   el.scrollBy({ behavior: "auto", left, top });
+ }
+@@ -6414,6 +6551,48 @@ function ScrollAdjust() {
+   const resetPaddingRafRef = React3__namespace.useRef(void 0);
+   const temporaryPaddingRef = React3__namespace.useRef(void 0);
+   const contentNodeRef = React3__namespace.useRef(null);
++  const applyScrollDelta = React3__namespace.useCallback((target, scrollDelta, absolute) => {
++    const horizontal = !!ctx.state.props.horizontal;
++    const axis = getScrollAdjustAxis(horizontal);
++    const { contentNode, scrollElement: el } = target;
++    const currentScroll = horizontal ? el.scrollLeft : el.scrollTop;
++    const scrollBy = absolute ? () => el.scrollTo({ behavior: "auto", [horizontal ? "left" : "top"]: currentScroll + scrollDelta }) : () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
++    if (contentNode) {
++      const totalSize = contentNode[axis.contentSizeKey];
++      const viewportSize = el[axis.viewportSizeKey];
++      const nextScroll = currentScroll + scrollDelta;
++      const needsTemporaryPadding = scrollDelta > 0 && !ctx.state.adjustingFromInitialMount && totalSize < nextScroll + viewportSize;
++      if (needsTemporaryPadding) {
++        const currentInlinePaddingEnd = contentNode.style[axis.paddingEndProp];
++        const previousTemporaryPadding = temporaryPaddingRef.current;
++        const baselinePaddingEnd = (previousTemporaryPadding == null ? void 0 : previousTemporaryPadding.value) === currentInlinePaddingEnd ? previousTemporaryPadding.baseline : currentInlinePaddingEnd;
++        const pad = (nextScroll + viewportSize - totalSize) * 2;
++        const currentPaddingEnd = Number.parseFloat(
++          window.getComputedStyle(contentNode)[axis.paddingEndProp]
++        );
++        const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
++        contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++        temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
++        void contentNode.offsetHeight;
++        scrollBy();
++        if (resetPaddingRafRef.current !== void 0) {
++          cancelAnimationFrame(resetPaddingRafRef.current);
++        }
++        resetPaddingRafRef.current = requestAnimationFrame(() => {
++          const temporaryPadding = temporaryPaddingRef.current;
++          resetPaddingRafRef.current = void 0;
++          temporaryPaddingRef.current = void 0;
++          if (contentNode.style[axis.paddingEndProp] === (temporaryPadding == null ? void 0 : temporaryPadding.value)) {
++            contentNode.style[axis.paddingEndProp] = temporaryPadding.baseline;
++          }
++        });
++      } else {
++        scrollBy();
++      }
++    } else {
++      scrollBy();
++    }
++  }, [ctx]);
+   const callback = React3__namespace.useCallback(() => {
+     const scrollAdjust = peek$(ctx, "scrollAdjust");
+     const scrollAdjustUserOffset = peek$(ctx, "scrollAdjustUserOffset");
+@@ -6423,55 +6602,53 @@ function ScrollAdjust() {
+       const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
+       if (target) {
+         const horizontal = !!ctx.state.props.horizontal;
+-        const axis = getScrollAdjustAxis(horizontal);
+         const { contentNode, scrollElement: el } = target;
+-        const currentScroll = horizontal ? el.scrollLeft : el.scrollTop;
++        const deferral = deferScrollAdjustDuringTouchScroll ? ctx.state.touchScrollDeferral : void 0;
++        const currentScroll = (horizontal ? el.scrollLeft : el.scrollTop) + (deferral ? deferral.offset : 0);
+         const userOffsetDelta = (scrollAdjustUserOffset || 0) - lastScrollAdjustUserOffsetRef.current;
+         const intendedScroll = userOffsetDelta !== 0 ? currentScroll + userOffsetDelta : ctx.state.scroll;
+         const scrollDelta = intendedScroll - currentScroll;
+-        const shouldScroll = Math.abs(scrollDelta) > 0.01;
+-        const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
+         contentNodeRef.current = contentNode;
+-        if (shouldScroll && contentNode) {
+-          const totalSize = contentNode[axis.contentSizeKey];
+-          const viewportSize = el[axis.viewportSizeKey];
+-          const nextScroll = currentScroll + scrollDelta;
+-          const needsTemporaryPadding = scrollDelta > 0 && !ctx.state.adjustingFromInitialMount && totalSize < nextScroll + viewportSize;
+-          if (needsTemporaryPadding) {
+-            const currentInlinePaddingEnd = contentNode.style[axis.paddingEndProp];
+-            const previousTemporaryPadding = temporaryPaddingRef.current;
+-            const baselinePaddingEnd = (previousTemporaryPadding == null ? void 0 : previousTemporaryPadding.value) === currentInlinePaddingEnd ? previousTemporaryPadding.baseline : currentInlinePaddingEnd;
+-            const pad = (nextScroll + viewportSize - totalSize) * 2;
+-            const currentPaddingEnd = Number.parseFloat(
+-              window.getComputedStyle(contentNode)[axis.paddingEndProp]
+-            );
+-            const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
 -            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
-             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
-+            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
-             void contentNode.offsetHeight;
-             scrollBy();
-             if (resetPaddingRafRef.current !== void 0) {
+-            contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
+-            void contentNode.offsetHeight;
+-            scrollBy();
+-            if (resetPaddingRafRef.current !== void 0) {
+-              cancelAnimationFrame(resetPaddingRafRef.current);
+-            }
+-            resetPaddingRafRef.current = requestAnimationFrame(() => {
+-              const temporaryPadding = temporaryPaddingRef.current;
+-              resetPaddingRafRef.current = void 0;
+-              temporaryPaddingRef.current = void 0;
+-              if (contentNode.style[axis.paddingEndProp] === (temporaryPadding == null ? void 0 : temporaryPadding.value)) {
+-                contentNode.style[axis.paddingEndProp] = temporaryPadding.baseline;
+-              }
+-            });
++        if (Math.abs(scrollDelta) > 0.01) {
++          if (contentNode && (deferral == null ? void 0 : deferral.active)) {
++            deferral.offset += scrollDelta;
++            setDeferredScrollTransform(deferral, contentNode, horizontal);
+           } else {
+-            scrollBy();
++            applyScrollDelta(target, scrollDelta);
+           }
+-        } else if (shouldScroll) {
+-          scrollBy();
+         }
+       }
+       lastScrollOffsetRef.current = scrollOffset;
+       lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
+     }
+-  }, [ctx]);
++  }, [applyScrollDelta, ctx]);
++  React3__namespace.useEffect(() => {
++    if (!deferScrollAdjustDuringTouchScroll) {
++      return;
++    }
++    const deferral = getTouchScrollDeferral(ctx.state);
++    const flush = () => {
++      const offset = deferral.offset;
++      deferral.offset = 0;
++      const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
++      if (!target) {
++        return;
++      }
++      if (target.contentNode) {
++        clearDeferredScrollTransform(deferral, target.contentNode);
++      }
++      if (Math.abs(offset) > 0.01) {
++        applyScrollDelta(target, offset, true);
++      }
++    };
++    deferral.flush = flush;
++    return () => {
++      if (deferral.flush === flush) {
++        flush();
++        deferral.flush = void 0;
++      }
++    };
++  }, [applyScrollDelta, ctx]);
+   useValueListener$("scrollAdjust", callback);
+   useValueListener$("scrollAdjustUserOffset", callback);
+   return null;
 diff --git a/react.mjs b/react.mjs
-index 95465f2..cff49dc 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63310f1e4d 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1592,18 +1882,308 @@ index 95465f2..cff49dc 100644
        }
      }
    }
-@@ -6425,8 +6445,8 @@ function ScrollAdjust() {
-               window.getComputedStyle(contentNode)[axis.paddingEndProp]
-             );
-             const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
+@@ -6071,10 +6091,11 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+     if (!scrollElement) {
+       return 0;
+     }
+-    return horizontal ? scrollElement.scrollLeft : scrollElement.scrollTop;
+-  }, [getMaxScrollOffset, horizontal, isWindowScroll]);
++    return (horizontal ? scrollElement.scrollLeft : scrollElement.scrollTop) + getDeferredScrollAdjust(ctx.state);
++  }, [ctx, getMaxScrollOffset, horizontal, isWindowScroll]);
+   const scrollToLocalOffset = useCallback(
+     (offset, animated) => {
++      flushTouchScrollDeferral(ctx.state);
+       const scrollElement = scrollRef.current;
+       const target = getScrollTarget();
+       if (!target || typeof target.scrollTo !== "function") {
+@@ -6102,7 +6123,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+       }
+       target.scrollTo(options);
+     },
+-    [getMaxScrollOffset, getScrollTarget, horizontal, isWindowScroll]
++    [ctx, getMaxScrollOffset, getScrollTarget, horizontal, isWindowScroll]
+   );
+   useImperativeHandle(ref, () => {
+     const api = {
+@@ -6116,6 +6137,7 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+       getScrollResponder: () => resolveScrollableNode(scrollRef.current, isWindowScroll),
+       isWindowScroll: () => isWindowScroll,
+       scrollBy: (x, y) => {
++        flushTouchScrollDeferral(ctx.state);
+         const target = getScrollTarget();
+         if (!target || typeof target.scrollBy !== "function") {
+           return;
+@@ -6216,6 +6238,74 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+       scrollEventCoalescer.cancel();
+     };
+   }, [emitScrollEnd, getScrollTarget, handleScroll, scrollEventCoalescer]);
++  React3.useEffect(() => {
++    const element = scrollRef.current;
++    if (!deferScrollAdjustDuringTouchScroll || isWindowScroll || !element) {
++      return;
++    }
++    const deferral = getTouchScrollDeferral(ctx.state);
++    let scrolledDuringTouch = false;
++    const clearSettle = () => {
++      if (deferral.settleTimer !== void 0) {
++        clearTimeout(deferral.settleTimer);
++        deferral.settleTimer = void 0;
++      }
++    };
++    const settle = () => {
++      clearSettle();
++      if (deferral.touching || !deferral.active) {
++        return;
++      }
++      deferral.active = false;
++      flushTouchScrollDeferral(ctx.state);
++    };
++    const scheduleSettle = () => {
++      clearSettle();
++      deferral.settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
++    };
++    const onTouchStart = () => {
++      clearSettle();
++      deferral.touching = true;
++      deferral.active = true;
++      scrolledDuringTouch = false;
++    };
++    const onTouchEnd = (event) => {
++      if (event.touches.length > 0) {
++        return;
++      }
++      deferral.touching = false;
++      if (scrolledDuringTouch) {
++        scheduleSettle();
++      } else {
++        settle();
++      }
++    };
++    const onScroll = () => {
++      if (!deferral.active) {
++        return;
++      }
++      scrolledDuringTouch = true;
++      if (!deferral.touching) {
++        scheduleSettle();
++      }
++    };
++    element.addEventListener("touchstart", onTouchStart, { passive: true });
++    element.addEventListener("touchend", onTouchEnd, { passive: true });
++    element.addEventListener("touchcancel", onTouchEnd, { passive: true });
++    element.addEventListener("scroll", onScroll, { passive: true });
++    element.addEventListener("scrollend", settle);
++    return () => {
++      element.removeEventListener("touchstart", onTouchStart);
++      element.removeEventListener("touchend", onTouchEnd);
++      element.removeEventListener("touchcancel", onTouchEnd);
++      element.removeEventListener("scroll", onScroll);
++      element.removeEventListener("scrollend", settle);
++      clearSettle();
++      deferral.touching = false;
++      deferral.active = false;
++      flushTouchScrollDeferral(ctx.state);
++    };
++  }, [ctx, isWindowScroll]);
+   useEffect(() => {
+     const doScroll = () => {
+       if (contentOffset) {
+@@ -6383,6 +6473,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
+   }
+   return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
+ }
++// iOS WebKit scrolls an overflow element outside the page: a scrollBy from
++// script while a finger drags it is overwritten by the drag, and one during
++// momentum lands twice, so every size correction made while scrolling jumps
++// the content by its size. While a touch scroll runs, corrections move the
++// content container with a transform instead, and the scroll offset takes
++// them in one absolute step once the scroll has ended (a relative step there
++// can still land twice). Scroll events pause while the page is busy during
++// momentum, so a quiet period only stands in for scrollend where it is missing
++// or never arrives.
++var TOUCH_SCROLL_SETTLE_FALLBACK_MS = 600;
++var deferScrollAdjustDuringTouchScroll = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-touch-callout", "none");
++function getTouchScrollDeferral(state) {
++  if (!state.touchScrollDeferral) {
++    state.touchScrollDeferral = {
++      active: false,
++      baselineTransform: void 0,
++      flush: void 0,
++      offset: 0,
++      settleTimer: void 0,
++      touching: false
++    };
++  }
++  return state.touchScrollDeferral;
++}
++function getDeferredScrollAdjust(state) {
++  const deferral = state == null ? void 0 : state.touchScrollDeferral;
++  return deferral ? deferral.offset : 0;
++}
++function flushTouchScrollDeferral(state) {
++  const deferral = state == null ? void 0 : state.touchScrollDeferral;
++  if (deferral == null ? void 0 : deferral.flush) {
++    deferral.flush();
++  }
++}
++function setDeferredScrollTransform(deferral, contentNode, horizontal) {
++  if (deferral.baselineTransform === void 0) {
++    deferral.baselineTransform = contentNode.style.transform;
++  }
++  const offset = deferral.offset;
++  contentNode.style.transform = Math.abs(offset) < 0.01 ? deferral.baselineTransform : `${deferral.baselineTransform ? `${deferral.baselineTransform} ` : ""}${horizontal ? "translateX" : "translateY"}(${-offset}px)`;
++}
++function clearDeferredScrollTransform(deferral, contentNode) {
++  if (deferral.baselineTransform !== void 0) {
++    contentNode.style.transform = deferral.baselineTransform;
++    deferral.baselineTransform = void 0;
++  }
++}
+ function scrollAdjustBy(el, left, top) {
+   el.scrollBy({ behavior: "auto", left, top });
+ }
+@@ -6393,6 +6530,48 @@ function ScrollAdjust() {
+   const resetPaddingRafRef = React3.useRef(void 0);
+   const temporaryPaddingRef = React3.useRef(void 0);
+   const contentNodeRef = React3.useRef(null);
++  const applyScrollDelta = React3.useCallback((target, scrollDelta, absolute) => {
++    const horizontal = !!ctx.state.props.horizontal;
++    const axis = getScrollAdjustAxis(horizontal);
++    const { contentNode, scrollElement: el } = target;
++    const currentScroll = horizontal ? el.scrollLeft : el.scrollTop;
++    const scrollBy = absolute ? () => el.scrollTo({ behavior: "auto", [horizontal ? "left" : "top"]: currentScroll + scrollDelta }) : () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
++    if (contentNode) {
++      const totalSize = contentNode[axis.contentSizeKey];
++      const viewportSize = el[axis.viewportSizeKey];
++      const nextScroll = currentScroll + scrollDelta;
++      const needsTemporaryPadding = scrollDelta > 0 && !ctx.state.adjustingFromInitialMount && totalSize < nextScroll + viewportSize;
++      if (needsTemporaryPadding) {
++        const currentInlinePaddingEnd = contentNode.style[axis.paddingEndProp];
++        const previousTemporaryPadding = temporaryPaddingRef.current;
++        const baselinePaddingEnd = (previousTemporaryPadding == null ? void 0 : previousTemporaryPadding.value) === currentInlinePaddingEnd ? previousTemporaryPadding.baseline : currentInlinePaddingEnd;
++        const pad = (nextScroll + viewportSize - totalSize) * 2;
++        const currentPaddingEnd = Number.parseFloat(
++          window.getComputedStyle(contentNode)[axis.paddingEndProp]
++        );
++        const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
++        contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
++        temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
++        void contentNode.offsetHeight;
++        scrollBy();
++        if (resetPaddingRafRef.current !== void 0) {
++          cancelAnimationFrame(resetPaddingRafRef.current);
++        }
++        resetPaddingRafRef.current = requestAnimationFrame(() => {
++          const temporaryPadding = temporaryPaddingRef.current;
++          resetPaddingRafRef.current = void 0;
++          temporaryPaddingRef.current = void 0;
++          if (contentNode.style[axis.paddingEndProp] === (temporaryPadding == null ? void 0 : temporaryPadding.value)) {
++            contentNode.style[axis.paddingEndProp] = temporaryPadding.baseline;
++          }
++        });
++      } else {
++        scrollBy();
++      }
++    } else {
++      scrollBy();
++    }
++  }, [ctx]);
+   const callback = React3.useCallback(() => {
+     const scrollAdjust = peek$(ctx, "scrollAdjust");
+     const scrollAdjustUserOffset = peek$(ctx, "scrollAdjustUserOffset");
+@@ -6402,55 +6581,53 @@ function ScrollAdjust() {
+       const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
+       if (target) {
+         const horizontal = !!ctx.state.props.horizontal;
+-        const axis = getScrollAdjustAxis(horizontal);
+         const { contentNode, scrollElement: el } = target;
+-        const currentScroll = horizontal ? el.scrollLeft : el.scrollTop;
++        const deferral = deferScrollAdjustDuringTouchScroll ? ctx.state.touchScrollDeferral : void 0;
++        const currentScroll = (horizontal ? el.scrollLeft : el.scrollTop) + (deferral ? deferral.offset : 0);
+         const userOffsetDelta = (scrollAdjustUserOffset || 0) - lastScrollAdjustUserOffsetRef.current;
+         const intendedScroll = userOffsetDelta !== 0 ? currentScroll + userOffsetDelta : ctx.state.scroll;
+         const scrollDelta = intendedScroll - currentScroll;
+-        const shouldScroll = Math.abs(scrollDelta) > 0.01;
+-        const scrollBy = () => scrollAdjustBy(el, axis.x * scrollDelta, axis.y * scrollDelta);
+         contentNodeRef.current = contentNode;
+-        if (shouldScroll && contentNode) {
+-          const totalSize = contentNode[axis.contentSizeKey];
+-          const viewportSize = el[axis.viewportSizeKey];
+-          const nextScroll = currentScroll + scrollDelta;
+-          const needsTemporaryPadding = scrollDelta > 0 && !ctx.state.adjustingFromInitialMount && totalSize < nextScroll + viewportSize;
+-          if (needsTemporaryPadding) {
+-            const currentInlinePaddingEnd = contentNode.style[axis.paddingEndProp];
+-            const previousTemporaryPadding = temporaryPaddingRef.current;
+-            const baselinePaddingEnd = (previousTemporaryPadding == null ? void 0 : previousTemporaryPadding.value) === currentInlinePaddingEnd ? previousTemporaryPadding.baseline : currentInlinePaddingEnd;
+-            const pad = (nextScroll + viewportSize - totalSize) * 2;
+-            const currentPaddingEnd = Number.parseFloat(
+-              window.getComputedStyle(contentNode)[axis.paddingEndProp]
+-            );
+-            const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
 -            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: temporaryPaddingEnd };
-             contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
-+            temporaryPaddingRef.current = { baseline: baselinePaddingEnd, value: contentNode.style[axis.paddingEndProp] };
-             void contentNode.offsetHeight;
-             scrollBy();
-             if (resetPaddingRafRef.current !== void 0) {
+-            contentNode.style[axis.paddingEndProp] = temporaryPaddingEnd;
+-            void contentNode.offsetHeight;
+-            scrollBy();
+-            if (resetPaddingRafRef.current !== void 0) {
+-              cancelAnimationFrame(resetPaddingRafRef.current);
+-            }
+-            resetPaddingRafRef.current = requestAnimationFrame(() => {
+-              const temporaryPadding = temporaryPaddingRef.current;
+-              resetPaddingRafRef.current = void 0;
+-              temporaryPaddingRef.current = void 0;
+-              if (contentNode.style[axis.paddingEndProp] === (temporaryPadding == null ? void 0 : temporaryPadding.value)) {
+-                contentNode.style[axis.paddingEndProp] = temporaryPadding.baseline;
+-              }
+-            });
++        if (Math.abs(scrollDelta) > 0.01) {
++          if (contentNode && (deferral == null ? void 0 : deferral.active)) {
++            deferral.offset += scrollDelta;
++            setDeferredScrollTransform(deferral, contentNode, horizontal);
+           } else {
+-            scrollBy();
++            applyScrollDelta(target, scrollDelta);
+           }
+-        } else if (shouldScroll) {
+-          scrollBy();
+         }
+       }
+       lastScrollOffsetRef.current = scrollOffset;
+       lastScrollAdjustUserOffsetRef.current = scrollAdjustUserOffset || 0;
+     }
+-  }, [ctx]);
++  }, [applyScrollDelta, ctx]);
++  React3.useEffect(() => {
++    if (!deferScrollAdjustDuringTouchScroll) {
++      return;
++    }
++    const deferral = getTouchScrollDeferral(ctx.state);
++    const flush = () => {
++      const offset = deferral.offset;
++      deferral.offset = 0;
++      const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
++      if (!target) {
++        return;
++      }
++      if (target.contentNode) {
++        clearDeferredScrollTransform(deferral, target.contentNode);
++      }
++      if (Math.abs(offset) > 0.01) {
++        applyScrollDelta(target, offset, true);
++      }
++    };
++    deferral.flush = flush;
++    return () => {
++      if (deferral.flush === flush) {
++        flush();
++        deferral.flush = void 0;
++      }
++    };
++  }, [applyScrollDelta, ctx]);
+   useValueListener$("scrollAdjust", callback);
+   useValueListener$("scrollAdjustUserOffset", callback);
+   return null;
 diff --git a/reanimated.d.ts b/reanimated.d.ts
-index e504332..2ce6383 100644
+index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
 +++ b/reanimated.d.ts
 @@ -294,6 +294,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -1620,7 +2200,7 @@ index e504332..2ce6383 100644
       * Number of columns to render items in.
       * @default 1
 diff --git a/reanimated.js b/reanimated.js
-index f1265fa..fc03be2 100644
+index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7868d0cec 100644
 --- a/reanimated.js
 +++ b/reanimated.js
 @@ -115,8 +115,10 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
@@ -1783,7 +2363,7 @@ index f1265fa..fc03be2 100644
          renderScrollComponent: renderReanimatedScrollComponent,
          ...IsNewArchitecture ? { stickyPositionComponentInternal } : {}
 diff --git a/reanimated.mjs b/reanimated.mjs
-index 29a00d5..6ab9292 100644
+index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..6ab929250c8924e2d9919ee09a4f774238fbb90a 100644
 --- a/reanimated.mjs
 +++ b/reanimated.mjs
 @@ -1,7 +1,7 @@
