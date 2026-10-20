@@ -657,10 +657,10 @@ function queuedRunModelSelection(
     : run.modelSelection;
 }
 
-function usageLimitHoldsQueue(
+function usageLimitHoldingRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
-): boolean {
+): OrchestrationV2Run | null {
   let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
   for (const session of projection.providerSessions) {
     if (
@@ -671,10 +671,19 @@ function usageLimitHoldsQueue(
       latestSession = session;
     }
   }
-  return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
-      ?.providerInstanceId === providerInstanceId
+  const run = usageLimitBlockedRun(
+    projection.runs,
+    projection.turnItems,
+    latestSession?.lastError ?? null,
   );
+  return run?.providerInstanceId === providerInstanceId ? run : null;
+}
+
+function usageLimitHoldsQueue(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
+  providerInstanceId: ModelSelection["instanceId"],
+): boolean {
+  return usageLimitHoldingRun(projection, providerInstanceId) !== null;
 }
 
 function latestStableRun(
@@ -4881,7 +4890,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (run) => run.id === command.restartContinuationOfRunId,
     )?.delegatedTaskId;
 
-    if (projection.thread.settledOverride !== null) {
+    let dispatchMode = resolveMessageDispatchIntent(
+      projection,
+      command.dispatchMode,
+      command.deliveryIntent,
+    );
+    let limitedRun =
+      dispatchMode.type === "queue_after_active"
+        ? usageLimitHoldingRun(
+            projection,
+            (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+          )
+        : null;
+    if (limitedRun !== null) {
+      const failure = latestRootProviderFailure(limitedRun, projection.turnItems);
+      const resetMs = Date.parse(failure?.resetAt ?? "");
+      const recovery = projection.thread.limitRecovery;
+      const autoResumePending =
+        recovery?.autoResume === true &&
+        recovery.runId === limitedRun.id &&
+        recovery.resetAt === failure?.resetAt &&
+        resetMs > DateTime.toEpochMillis(limitedRun.completedAt ?? projection.thread.updatedAt) &&
+        projection.thread.archivedAt === null &&
+        projection.thread.deletedAt === null &&
+        projection.thread.settledOverride !== "settled" &&
+        projection.thread.providerInstanceId === limitedRun.providerInstanceId &&
+        !projection.runtimeRequests.some((request) => request.status === "pending");
+      // After a known reset, only a valid pending continuation takes priority
+      // over new work. Unknown reset times keep the existing queue protection.
+      if (
+        Number.isFinite(resetMs) &&
+        resetMs <= DateTime.toEpochMillis(yield* DateTime.now) &&
+        !autoResumePending
+      ) {
+        limitedRun = null;
+      }
+    }
+    if (projection.thread.settledOverride !== null && limitedRun === null) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
@@ -4905,7 +4950,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
-    if (projection.thread.snoozedUntil != null) {
+    if (projection.thread.snoozedUntil != null && limitedRun === null) {
       const now = yield* DateTime.now;
       const thread: OrchestrationV2AppThread = {
         ...projection.thread,
@@ -4963,11 +5008,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection = yield* getProjectionWithPendingEvents(command.threadId, events);
     }
     const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
-    let dispatchMode = resolveMessageDispatchIntent(
-      projection,
-      command.dispatchMode,
-      command.deliveryIntent,
-    );
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
       const target = projection.runs.find((run) => run.id === targetRunId);
@@ -5187,7 +5227,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? limitedRun ?? undefined;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
