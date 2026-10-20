@@ -7041,12 +7041,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
     }),
   );
 
-  it.effect.each([
-    "snoozed",
-    "snoozed, other provider",
-    "settled",
-    "settled after reset",
-  ] as const)(
+  it.effect.each(["snoozed", "snoozed, other provider", "settled", "settled after reset"] as const)(
     "handles background wakes on a %s usage-limited thread",
     (scenario) =>
       Effect.gen(function* () {
