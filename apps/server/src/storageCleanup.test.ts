@@ -635,6 +635,13 @@ it.live("keeps unpushed submodule history after checkout and deinitialization", 
         (yield* command(worktree, ["--git-dir", childGit, "show", "local-only:tracked.txt"]))
           .stdout,
       ).toBe("unpublished work\n");
+      yield* command(worktree, ["--git-dir", childGit, "branch", "-D", "local-only"]);
+      expect(
+        (yield* service.runNow).entries.find((entry) => entry.path === worktree),
+      ).toMatchObject({ outcome: "kept", reason: expect.stringContaining("remote-tracking") });
+      expect(
+        (yield* command(worktree, ["--git-dir", childGit, "show", `${local}:tracked.txt`])).stdout,
+      ).toBe("unpublished work\n");
     }),
   ),
 );

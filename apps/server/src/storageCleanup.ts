@@ -592,6 +592,7 @@ const make = Effect.gen(function* () {
             "--max-count=1",
             "HEAD",
             "--all",
+            "--reflog",
             "--not",
             "--remotes",
           ]);
