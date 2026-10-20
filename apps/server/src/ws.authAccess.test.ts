@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
-  AuthAdministrativeScopes,
+  AuthStandardClientScopes,
   type AuthAccessStreamEvent,
   WS_METHODS,
   WsRpcGroup,
@@ -37,6 +37,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
@@ -44,6 +45,7 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
@@ -116,6 +118,8 @@ const layerUnusedAuthAccessRpcServices = Layer.mergeAll(
   Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
+  Layer.mock(CommandOutputHub.CommandOutputHub)({}),
+  Layer.mock(DatabaseStorage.DatabaseStorage)({}),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(DirectEndpoints.DirectEndpoints)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
@@ -189,7 +193,7 @@ const layerAuth = EnvironmentAuth.layer.pipe(
 );
 
 it.effect(
-  "keeps an access change made before the snapshot ACK, then releases both subscriptions",
+  "keeps an access change made while the snapshot loads, then releases both subscriptions",
   () =>
     Effect.gen(function* () {
       const auth = yield* EnvironmentAuth.EnvironmentAuth;
@@ -207,6 +211,20 @@ it.effect(
         );
       const pairingLinkChanges = tracked(pairingLinks.subscribeChanges);
       const clientChanges = tracked(sessions.subscribeChanges);
+      const snapshotRead = yield* Deferred.make<void>();
+      const releaseSnapshot = yield* Deferred.make<void>();
+      // Hold the snapshot after its session read so a change lands between the
+      // read and the snapshot reaching the client.
+      const listClientSessions: typeof auth.listClientSessions = (sessionId) =>
+        auth
+          .listClientSessions(sessionId)
+          .pipe(
+            Effect.tap(() =>
+              Deferred.succeed(snapshotRead, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseSnapshot)),
+              ),
+            ),
+          );
       const responses = yield* Queue.unbounded<AuthAccessStreamEvent>();
       const exited = yield* Deferred.make<void>();
       const server = yield* RpcServer.makeNoSerialization(group, {
@@ -227,7 +245,7 @@ it.effect(
                 sessionId: current.sessionId,
                 subject: "current-client",
                 method: "browser-session-cookie",
-                scopes: AuthAdministrativeScopes,
+                scopes: AuthStandardClientScopes,
               },
               {},
               {},
@@ -237,7 +255,7 @@ it.effect(
               Layer.provide(
                 Layer.mergeAll(
                   layerUnusedAuthAccessRpcServices,
-                  Layer.succeed(EnvironmentAuth.EnvironmentAuth, auth),
+                  Layer.succeed(EnvironmentAuth.EnvironmentAuth, { ...auth, listClientSessions }),
                   Layer.succeed(PairingGrantStore.PairingGrantStore, {
                     ...pairingLinks,
                     streamChanges: Stream.unwrap(pairingLinkChanges),
@@ -251,7 +269,7 @@ it.effect(
                 ),
               ),
             ),
-            RpcAuthorization.layer(AuthAdministrativeScopes),
+            RpcAuthorization.layer(AuthStandardClientScopes),
           ),
         ),
       );
@@ -265,11 +283,13 @@ it.effect(
         headers: Headers.empty,
       });
 
+      yield* Deferred.await(snapshotRead);
+      yield* sessions.markConnected(current.sessionId);
+      yield* Deferred.succeed(releaseSnapshot, undefined);
       const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
       assert.isFalse(snapshot.payload.clientSessions[0]?.connected);
-      yield* sessions.markConnected(current.sessionId);
       yield* acknowledge;
       yield* Queue.take(subscribed);
       yield* Queue.take(subscribed);

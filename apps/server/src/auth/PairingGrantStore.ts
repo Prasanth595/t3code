@@ -617,9 +617,7 @@ export const make = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-    get subscribeChanges() {
-      return PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription));
-    },
+    subscribeChanges: PubSub.subscribe(changesPubSub).pipe(Effect.map(Stream.fromSubscription)),
     revoke,
     consume,
   });
