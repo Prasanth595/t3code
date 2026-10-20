@@ -1167,7 +1167,8 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* reloadSettings;
+      // A migration write here wakes the watcher, whose reload must not overlap this one.
+      yield* writeSemaphore.withPermits(1)(reloadSettings);
     });
 
     const startupExit = yield* Effect.exit(startup);
