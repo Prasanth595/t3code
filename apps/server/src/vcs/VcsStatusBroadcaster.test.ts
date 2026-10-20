@@ -248,14 +248,12 @@ describe("VcsStatusBroadcaster", () => {
         const snapshot = yield* Deferred.make<VcsStatusStreamEvent>();
         const remoteUpdated = yield* Deferred.make<VcsStatusStreamEvent>();
         const remoteCalls = state.remoteStatusCalls;
-        yield* Stream.runForEach(
-          broadcaster.streamStatus({ cwd: "/active-repo" }),
-          (event) =>
-            event._tag === "snapshot"
-              ? Deferred.succeed(snapshot, event)
-              : event._tag === "remoteUpdated"
-                ? Deferred.succeed(remoteUpdated, event)
-                : Effect.void,
+        yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/active-repo" }), (event) =>
+          event._tag === "snapshot"
+            ? Deferred.succeed(snapshot, event)
+            : event._tag === "remoteUpdated"
+              ? Deferred.succeed(remoteUpdated, event)
+              : Effect.void,
         ).pipe(Effect.forkScoped);
 
         assert.deepStrictEqual(yield* Deferred.await(snapshot), {
@@ -311,14 +309,12 @@ describe("VcsStatusBroadcaster", () => {
         yield* broadcaster.getStatus({ cwd: "/active-repo" });
         const initial = yield* Deferred.make<void>();
         const remoteUpdated = yield* Deferred.make<VcsStatusStreamEvent>();
-        yield* Stream.runForEach(
-          broadcaster.streamStatus({ cwd: "/active-repo" }),
-          (event) =>
-            event._tag === "snapshot"
-              ? Deferred.succeed(initial, undefined)
-              : event._tag === "remoteUpdated"
-                ? Deferred.succeed(remoteUpdated, event)
-                : Effect.void,
+        yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/active-repo" }), (event) =>
+          event._tag === "snapshot"
+            ? Deferred.succeed(initial, undefined)
+            : event._tag === "remoteUpdated"
+              ? Deferred.succeed(remoteUpdated, event)
+              : Effect.void,
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(initial);
         for (let index = 0; index < 1_000; index += 1) {
@@ -378,9 +374,8 @@ describe("VcsStatusBroadcaster", () => {
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(initial);
         const foregroundReady = yield* Deferred.make<void>();
-        yield* Stream.runForEach(
-          broadcaster.streamStatus({ cwd: "/active-repo" }),
-          () => Deferred.succeed(foregroundReady, undefined),
+        yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/active-repo" }), () =>
+          Deferred.succeed(foregroundReady, undefined),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(foregroundReady);
         for (let index = 0; index < 1_000; index += 1) {
