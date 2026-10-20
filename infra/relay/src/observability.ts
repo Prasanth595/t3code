@@ -2,7 +2,6 @@ import * as Alchemy from "alchemy";
 import * as Axiom from "alchemy/Axiom";
 import * as Output from "alchemy/Output";
 import * as Cause from "effect/Cause";
-import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
@@ -10,6 +9,7 @@ import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
+import { RelayMonitoring } from "./monitoring.ts";
 
 const relayRecentSpansQuery = (dataset: string) =>
   [
@@ -21,78 +21,6 @@ const relayRecentSpansQuery = (dataset: string) =>
     `| order by _time desc`,
     `| limit 200`,
   ].join("\n");
-
-// `/connect` answers 502 for every offline host (~150k/hour), so error counts
-// leave it out. Status codes, not span errors: a request cut off by the relay
-// deadline ends as an interrupted span with no error flag, but still a 504.
-const serverSpans = (dataset: string) => `['${dataset}']\n| where kind == "server"`;
-
-// Thresholds sit well above the busiest healthy 10-minute window of
-// 2026-10-16..18 and far below the #16810 outage, which is noted per monitor.
-interface RelayMonitor {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly query: (dataset: string) => string;
-  readonly operator: "AboveOrEqual" | "Below";
-  readonly threshold: number;
-  readonly alertOnNoData?: boolean;
-  readonly triggerFromNRuns?: number;
-}
-
-const relayMonitors: ReadonlyArray<RelayMonitor> = [
-  {
-    id: "RelayCloudflareRateLimitedMonitor",
-    name: "T3 Connect relay: Cloudflare API rate limited",
-    description:
-      "Cloudflare API 429s from tunnel and DNS provisioning. Healthy: ~0. #16810: thousands. Sustained 429s stall every link and tunnel recovery.",
-    query: (dataset: string) =>
-      `['${dataset}']\n| where ['attributes.url.full'] startswith "https://api.cloudflare.com" and ['attributes.http.response.status_code'] == 429\n| summarize rate_limited = count()`,
-    operator: "AboveOrEqual",
-    threshold: 200,
-  },
-  {
-    id: "RelayLinkFailuresMonitor",
-    name: "T3 Connect relay: environment link failures",
-    description:
-      "5xx from POST /v1/client/environment-links (turning on T3 Connect). Healthy: median 6, max 45. #16810: 250-500.",
-    query: (dataset: string) =>
-      `${serverSpans(dataset)} and ['attributes.http.route'] == "/v1/client/environment-links" and ['attributes.http.request.method'] == "POST" and ['attributes.http.response.status_code'] >= 500\n| summarize failed_links = count()`,
-    operator: "AboveOrEqual",
-    threshold: 100,
-  },
-  {
-    id: "RelayTunnelRecoveryFailuresMonitor",
-    name: "T3 Connect relay: tunnel recovery failures",
-    description:
-      "5xx from host tunnel recovery and registration, including relay deadline 504s. Healthy: median 42, max 272. #16810: 4k-9k.",
-    query: (dataset: string) =>
-      `${serverSpans(dataset)} and ['attributes.http.route'] in ("/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery") and ['attributes.http.response.status_code'] >= 500\n| summarize failed_recoveries = count()`,
-    operator: "AboveOrEqual",
-    threshold: 1000,
-  },
-  {
-    id: "RelayServerErrorsMonitor",
-    name: "T3 Connect relay: elevated 5xx",
-    description:
-      "All relay 5xx except /connect 502s for offline hosts. Healthy: median ~210, max ~510. #16810: 5k-10k.",
-    query: (dataset: string) =>
-      `${serverSpans(dataset)} and ['attributes.http.response.status_code'] >= 500\n| where not(['attributes.http.route'] == "/v1/environments/:environmentId/connect" and ['attributes.http.response.status_code'] == 502)\n| summarize server_errors = count()`,
-    operator: "AboveOrEqual",
-    threshold: 2000,
-  },
-  {
-    id: "RelayTrafficDroppedMonitor",
-    name: "T3 Connect relay: traffic dropped",
-    description:
-      "Relay request volume collapsed: Worker down, broken deploy, or trace export stopped. Healthy minimum: ~69k per 10 minutes.",
-    query: (dataset: string) => `${serverSpans(dataset)}\n| summarize requests = count()`,
-    operator: "Below",
-    threshold: 10_000,
-    alertOnNoData: true,
-    triggerFromNRuns: 2,
-  },
-];
 
 export const RelayObservability = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
@@ -135,29 +63,7 @@ export const RelayObservability = Effect.gen(function* () {
     aplQuery: Output.map(traces.name, relayRecentSpansQuery),
   });
 
-  // Personal stages and forks leave this unset, so only a deployment that
-  // names a notifier (incident.io for prod) gets monitors that can page.
-  const alertNotifierId = yield* Config.String("RELAY_ALERT_NOTIFIER_ID").pipe(
-    Config.option,
-    Config.map(Option.flatMap((value) => Option.liftPredicate(value.trim(), Boolean))),
-  );
-  if (Option.isSome(alertNotifierId)) {
-    for (const monitor of relayMonitors) {
-      yield* Axiom.Monitor(monitor.id, {
-        name: stage === "prod" ? monitor.name : `[${stage}] ${monitor.name}`,
-        description: monitor.description,
-        type: "Threshold",
-        aplQuery: Output.map(traces.name, monitor.query),
-        operator: monitor.operator,
-        threshold: monitor.threshold,
-        intervalMinutes: 5,
-        rangeMinutes: 10,
-        triggerFromNRuns: monitor.triggerFromNRuns ?? 1,
-        alertOnNoData: monitor.alertOnNoData ?? false,
-        notifierIds: [alertNotifierId.value],
-      });
-    }
-  }
+  yield* RelayMonitoring(traces);
 
   return { traces, workerIngestToken, mobileIngestToken, clientIngestToken } as const;
 });
