@@ -41,7 +41,7 @@ import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -131,7 +131,7 @@ interface FilePreviewPanelProps {
   availableEditors: ReadonlyArray<EditorId>;
   openInShortcutEnabled: boolean;
   revealLine: number | null;
-  revealRequestId: number;
+  revealRequest: { readonly id: number } | null;
   onOpenFile: (relativePath: string) => void;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
@@ -401,31 +401,60 @@ const REVEAL_MAX_ATTEMPTS = 30;
 const REVEAL_GUARD_FRAMES = 20;
 const REVEAL_GUARD_TOLERANCE_PX = 2;
 
+interface FileScrollPosition {
+  top: number;
+}
+
+// Survives panel unmounts without retaining closed threads or editor instances.
+const fileScrollPositions = new Map<string, FileScrollPosition>();
+const MAX_FILE_SCROLL_POSITIONS = 200;
+const handledFileReveals = new WeakSet<object>();
+
+function fileScrollPosition(key: string): FileScrollPosition {
+  const position = fileScrollPositions.get(key) ?? { top: 0 };
+  fileScrollPositions.delete(key);
+  fileScrollPositions.set(key, position);
+  if (fileScrollPositions.size > MAX_FILE_SCROLL_POSITIONS) {
+    const oldestKey = fileScrollPositions.keys().next().value;
+    if (oldestKey !== undefined) fileScrollPositions.delete(oldestKey);
+  }
+  return position;
+}
+
 interface FileRevealState {
   frameId: number | null;
   cancelGuard: (() => void) | null;
-  handledRequestId: number | null;
+  stopTrackingScroll: (() => void) | null;
   latestRequestId: number | null;
 }
 
 function useFileLineReveal(
-  relativePath: string | null,
+  scrollKey: string | null,
   revealLine: number | null,
-  revealRequestId: number,
+  revealRequest: FilePreviewPanelProps["revealRequest"],
 ): FilePostRender {
-  const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
+  const revealRequestId = revealRequest?.id ?? 0;
+  const [revealStates] = useState(() => new WeakMap<HTMLElement, FileRevealState>());
+  const rememberScroll = useRef<(() => void) | null>(null);
+  useLayoutEffect(
+    () => () => {
+      // Read before descendant refs tear down Pierre and clamp the viewport.
+      rememberScroll.current?.();
+    },
+    [],
+  );
 
   return (fileContainer, instance, phase) => {
-    if (relativePath === null) return;
+    if (scrollKey === null) return;
 
-    const existingState = revealStatesByPath.get(relativePath);
+    const existingState = revealStates.get(fileContainer);
     const state: FileRevealState = existingState ?? {
       frameId: null,
       cancelGuard: null,
-      handledRequestId: null,
+      stopTrackingScroll: null,
       latestRequestId: null,
     };
-    if (!existingState) revealStatesByPath.set(relativePath, state);
+    if (!existingState) revealStates.set(fileContainer, state);
 
     const cancelPendingReveal = () => {
       if (state.frameId !== null) {
@@ -437,6 +466,8 @@ function useFileLineReveal(
 
     if (phase === "unmount") {
       cancelPendingReveal();
+      state.stopTrackingScroll?.();
+      revealStates.delete(fileContainer);
       return;
     }
 
@@ -450,12 +481,6 @@ function useFileLineReveal(
     if (state.latestRequestId !== revealRequestId) {
       cancelPendingReveal();
       state.latestRequestId = revealRequestId;
-      state.handledRequestId = null;
-    }
-
-    if (revealLine === null) {
-      fileContainer.style.minHeight = "";
-      return;
     }
 
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
@@ -464,8 +489,19 @@ function useFileLineReveal(
       Math.max(instance.height, scrollContainer.clientHeight),
     )}px`;
 
-    if (state.handledRequestId === revealRequestId || state.frameId !== null) {
-      return;
+    const position = fileScrollPosition(scrollKey);
+    const restoreTop = position.top;
+    const attach = state.stopTrackingScroll === null;
+    if (attach) {
+      const remember = () => {
+        fileScrollPosition(scrollKey).top = scrollContainer.scrollTop;
+      };
+      scrollContainer.addEventListener("scroll", remember, { passive: true });
+      rememberScroll.current = remember;
+      state.stopTrackingScroll = () => {
+        if (rememberScroll.current === remember) rememberScroll.current = null;
+        scrollContainer.removeEventListener("scroll", remember);
+      };
     }
 
     const resolveScrollTarget = (line: number): number | null => {
@@ -499,7 +535,9 @@ function useFileLineReveal(
       });
     };
 
-    const guardScrollTarget = (line: number) => {
+    const guardScrollTarget = (resolveTarget: () => number | null) => {
+      const initialTop = resolveTarget();
+      if (initialTop !== null) scrollContainer.scrollTop = initialTop;
       let framesLeft = REVEAL_GUARD_FRAMES;
       let guardFrameId: number | null = null;
       const cancelGuard = () => {
@@ -529,7 +567,7 @@ function useFileLineReveal(
           cancelGuard();
           return;
         }
-        const targetTop = resolveScrollTarget(line);
+        const targetTop = resolveTarget();
         if (
           targetTop !== null &&
           Math.abs(scrollContainer.scrollTop - targetTop) > REVEAL_GUARD_TOLERANCE_PX
@@ -541,6 +579,12 @@ function useFileLineReveal(
       guardFrameId = requestAnimationFrame(holdTarget);
       state.cancelGuard = cancelGuard;
     };
+
+    if (revealLine === null || revealRequest === null || handledFileReveals.has(revealRequest)) {
+      if (attach) guardScrollTarget(() => restoreTop);
+      return;
+    }
+    if (state.frameId !== null) return;
 
     const scheduleReveal = (attempt: number) => {
       state.frameId = requestAnimationFrame(() => {
@@ -563,8 +607,9 @@ function useFileLineReveal(
         updateFileLinkReveal(fileContainer, line);
 
         scrollContainer.scrollTop = targetTop;
-        state.handledRequestId = revealRequestId;
-        guardScrollTarget(line);
+        fileScrollPosition(scrollKey).top = scrollContainer.scrollTop;
+        handledFileReveals.add(revealRequest);
+        guardScrollTarget(() => resolveScrollTarget(line));
       });
     };
 
@@ -901,6 +946,37 @@ function EditableFileSurface({
   );
 }
 
+function FileSourceSurface({
+  scrollKey,
+  readOnly,
+  revealLine,
+  revealRequest,
+  ...props
+}: Omit<EditableFileSurfaceProps, "onPostRender" | "revealRequestId"> & {
+  scrollKey: string | null;
+  readOnly: boolean;
+  revealLine: number | null;
+  revealRequest: FilePreviewPanelProps["revealRequest"];
+}) {
+  const onPostRender = useFileLineReveal(scrollKey, revealLine, revealRequest);
+  return readOnly ? (
+    <SourceFilePreview
+      name={props.relativePath}
+      text={props.contents}
+      cacheKey={projectFileCacheKey(props.cwd, props.relativePath, props.contents)}
+      onPostRender={onPostRender}
+    />
+  ) : (
+    <DiffWorkerPoolProvider>
+      <EditableFileSurface
+        {...props}
+        revealRequestId={revealRequest?.id ?? 0}
+        onPostRender={onPostRender}
+      />
+    </DiffWorkerPoolProvider>
+  );
+}
+
 function RenderedMarkdownSurface({
   environmentId,
   cwd,
@@ -983,7 +1059,7 @@ export default function FilePreviewPanel({
   availableEditors,
   openInShortcutEnabled,
   revealLine,
-  revealRequestId,
+  revealRequest,
   onOpenFile,
   onNavigateFolder,
   folderTrail,
@@ -991,6 +1067,7 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
+  const revealRequestId = revealRequest?.id ?? 0;
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -1074,9 +1151,7 @@ export default function FilePreviewPanel({
     true,
     Schema.Boolean,
   );
-  // Paired with the path on purpose: each file surface counts its reveals from
-  // one, so a bare id would let a dismissed reveal on one file swallow the first
-  // reveal on the next.
+  // A fresh line link must show source even when rendered mode is preferred.
   const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
     null,
   );
@@ -1133,7 +1208,6 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
       attachment === undefined &&
@@ -1418,29 +1492,26 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
-              <SourceFilePreview
-                name={relativePath}
-                text={file.data.contents}
-                cacheKey={projectFileCacheKey(cwd, relativePath, file.data.contents)}
-                onPostRender={onFilePostRender}
-              />
             ) : (
-              <DiffWorkerPoolProvider>
-                <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
-                  environmentId={environmentId}
-                  cwd={cwd}
-                  relativePath={relativePath}
-                  composerDraftTarget={composerDraftTarget}
-                  contents={file.data.contents}
-                  resolvedTheme={resolvedTheme}
-                  revealRequestId={revealRequestId}
-                  wordWrap={wordWrap}
-                  onPostRender={onFilePostRender}
-                  onPendingChange={onPendingChange}
-                />
-              </DiffWorkerPoolProvider>
+              <FileSourceSurface
+                key={`${relativePath}:${resolvedTheme}:${file.data.truncated || isHostFile || !canWriteFiles ? `readonly:${file.data.contents.length}` : "editable"}`}
+                scrollKey={
+                  absolutePath === null
+                    ? null
+                    : JSON.stringify([environmentId, threadRef.threadId, absolutePath])
+                }
+                readOnly={file.data.truncated || isHostFile || !canWriteFiles}
+                environmentId={environmentId}
+                cwd={cwd}
+                relativePath={relativePath}
+                composerDraftTarget={composerDraftTarget}
+                contents={file.data.contents}
+                resolvedTheme={resolvedTheme}
+                revealLine={revealLine}
+                revealRequest={revealRequest}
+                wordWrap={wordWrap}
+                onPendingChange={onPendingChange}
+              />
             )
           ) : null}
         </div>
