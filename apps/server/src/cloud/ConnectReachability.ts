@@ -86,7 +86,7 @@ export function classifyReachability(
     return {
       status: "reachable",
       checkedAt,
-      readyConnections: connector.readyConnections ?? 0,
+      readyConnections: connector.readyConnections,
       protocol: connector.protocol,
     };
   }

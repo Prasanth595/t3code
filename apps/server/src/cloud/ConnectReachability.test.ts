@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - reads the user guide to check its anchors.
 import * as NodeFS from "node:fs";
 
-import { T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
+import { formatConnectReachable, T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 
 import {
@@ -109,6 +109,19 @@ describe("classifyReachability", () => {
     expect(
       classifyReachability(facts({ endpoint: { kind: "status", status: 200 } }), checkedAt),
     ).toEqual({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
+  });
+
+  it("leaves out the connection count when cloudflared did not report one", () => {
+    const result = classifyReachability(
+      facts({
+        connector: { readyConnections: null, hostname: "env.example.test", protocol: null },
+        endpoint: { kind: "status", status: 200 },
+      }),
+      checkedAt,
+    );
+    expect(result.status === "reachable" && formatConnectReachable(result)).toBe(
+      "Tunnel connected",
+    );
   });
 
   it("does not probe a tunnel that was never set up", () => {

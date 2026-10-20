@@ -12,9 +12,10 @@ and select **Details**. The first part marked as failed is the cause. Find its
 section below.
 
 To see the host's side, run `t3 connect status` on the host, or open
-**Settings > Connections** on the host. Both check that other devices can reach
-the host through T3 Connect, and say why not. `t3 connect` runs the same check
-when it finishes setup.
+**Settings > Connections** on the host. Both check the host's T3 Connect
+address from the host, and say why it fails. `t3 connect` runs the same check
+when it finishes setup. This check cannot test another device's network. For a
+problem on one device, use **Details** on that device.
 
 ## The host's tunnel is offline
 
@@ -80,7 +81,9 @@ Fix:
 
 ## This device can't reach T3 Connect
 
-The problem is on this device, not on the host. The host was not checked.
+The problem is on this device's network, not on the host. This device could
+not reach T3 Connect, or it reached T3 Connect but not the host's tunnel
+address.
 
 Fix:
 
@@ -90,6 +93,9 @@ Fix:
    Connect. Turn it off for a moment to test.
 3. On iPhone, Connectivity Assist in the Wi-Fi settings can break T3 Connect.
    Turn it off to test.
+4. Try another network, or add a direct route to the host, such as its
+   Tailscale address. See
+   [Reach one machine several ways](./remote-access.md#reach-one-machine-several-ways).
 
 ## Sign-in, account, or link problems
 
@@ -103,7 +109,8 @@ T3 Connect does not have an active link between your account and the host.
   run `t3 connect`.
 - **The host was linked, but the server did not apply the link yet.** Run
   `t3 service restart` on the host, or restart `t3 serve`.
-- **This device's sign-in expired.** Sign out of T3 Connect and sign in again.
+- **This device's sign-in expired, or the host no longer accepts this
+  device.** Sign out of T3 Connect and sign in again.
 - **Your account reached its tunnel limit.** Remove an environment you do not
   use from your T3 account's T3 Connect page, then restart T3 Code on the host.
 

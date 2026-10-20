@@ -255,7 +255,9 @@ function helpSection(
     case "tunnel":
       return onThisDevice ? "this-device-cant-reach-t3-connect" : "the-hosts-tunnel-is-offline";
     case "server":
-      return "the-tunnel-works-but-t3-code-does-not-answer";
+      return failure?.reason === "authentication" || failure?.reason === "permission"
+        ? "sign-in-account-or-link-problems"
+        : "the-tunnel-works-but-t3-code-does-not-answer";
   }
 }
 

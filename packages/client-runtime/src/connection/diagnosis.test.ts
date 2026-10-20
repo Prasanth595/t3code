@@ -15,6 +15,7 @@ import {
 import {
   AVAILABLE_CONNECTION_STATE,
   type ConnectionAttemptError,
+  ConnectionBlockedError,
   type SupervisorConnectionState,
 } from "./model.ts";
 import { ManagedRelayRequestFailedError } from "../relay/managedRelay.ts";
@@ -72,6 +73,16 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnosis?.moreInfoUrl).toMatch(
       /t3-connect-troubleshooting\.md#the-hosts-tunnel-is-offline$/,
     );
+  });
+
+  it("links a host that rejects this device to the sign-in section", () => {
+    const failure = new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "rejected",
+      hop: "server",
+      via: "relay",
+    });
+    expect(diagnose(backoff(failure))?.moreInfoUrl).toMatch(/#sign-in-account-or-link-problems$/);
   });
 
   it("links the guide only for T3 Connect routes", () => {

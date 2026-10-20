@@ -426,7 +426,8 @@ export const EnvironmentConnectReachability = Schema.Union([
   Schema.Struct({
     status: Schema.Literal("reachable"),
     checkedAt: Schema.String,
-    readyConnections: Schema.Int,
+    /** Null when cloudflared did not report a count. */
+    readyConnections: Schema.NullOr(Schema.Int),
     protocol: Schema.NullOr(Schema.String),
   }),
   Schema.Struct({
@@ -444,10 +445,10 @@ export type EnvironmentConnectReachability = typeof EnvironmentConnectReachabili
 export function formatConnectReachable(
   result: Extract<EnvironmentConnectReachability, { status: "reachable" }>,
 ): string {
-  const connections = `${result.readyConnections} connection${result.readyConnections === 1 ? "" : "s"}`;
+  const count = result.readyConnections;
   return [
     "Tunnel connected",
-    connections,
+    ...(count === null ? [] : [`${count} connection${count === 1 ? "" : "s"}`]),
     ...(result.protocol ? [result.protocol.toUpperCase()] : []),
   ].join(" · ");
 }
