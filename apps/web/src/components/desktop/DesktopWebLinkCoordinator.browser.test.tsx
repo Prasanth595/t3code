@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   projects: [] as never[],
-  navigate: vi.fn(async () => undefined),
+  navigate: vi.fn(async (): Promise<void> => undefined),
   openScratchProject: vi.fn(async () => null),
 }));
 
@@ -129,7 +129,13 @@ it("holds a launch PR link until project discovery settles, then opens the PR vi
   expect(state.openScratchProject).not.toHaveBeenCalled();
 
   state.projects = [project];
-  await act(async () => appAtomRegistry.set(discoverySettled, true));
+  const navigated = new Promise<void>((resolve) => {
+    state.navigate.mockImplementationOnce(async () => resolve());
+  });
+  await act(async () => {
+    appAtomRegistry.set(discoverySettled, true);
+    await navigated;
+  });
   expect(state.navigate).toHaveBeenCalledExactlyOnceWith(pullRequestView);
   expect(state.openScratchProject).not.toHaveBeenCalled();
 });

@@ -4,6 +4,9 @@ import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { useRouter } from "@tanstack/react-router";
+import * as Effect from "effect/Effect";
+import { AtomRegistry } from "effect/reactivity";
+import * as Stream from "effect/Stream";
 import { useEffect, useEffectEvent, useRef } from "react";
 
 import { openFileInPreview, openUrlInPreview } from "../../browser/openFileInPreview";
@@ -33,16 +36,14 @@ const externalClick = {
 };
 
 /** Resolves once every reachable environment has reported its projects or settled offline. */
-function projectsSettled(): Promise<void> {
-  if (appAtomRegistry.get(allReachableShellsLiveAtom)) return Promise.resolve();
-  return new Promise((resolve) => {
-    const unsubscribe = appAtomRegistry.subscribe(allReachableShellsLiveAtom, (settled) => {
-      if (!settled) return;
-      unsubscribe();
-      resolve();
-    });
-  });
-}
+const projectsSettled = (): Promise<void> =>
+  Effect.runPromise(
+    AtomRegistry.toStream(appAtomRegistry, allReachableShellsLiveAtom).pipe(
+      Stream.filter((settled) => settled),
+      Stream.runHead,
+      Effect.asVoid,
+    ),
+  );
 
 /**
  * HTML files are served by this machine's environment, so only its threads can
