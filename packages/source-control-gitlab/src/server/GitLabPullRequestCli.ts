@@ -1334,7 +1334,7 @@ export const make = Effect.gen(function* () {
       mergeRequestDetail(input).pipe(
         Effect.flatMap((mergeRequest) => {
           // Like `reviewer_ids`, `assignee_ids` replaces the whole set.
-          const current = mergeRequest.assigneeUsers.map((user) => user.id);
+          const current = mergeRequest.assigneeIds;
           const chosen = input.assignees.flatMap((assignee) => {
             const id = Number(assignee);
             return Number.isSafeInteger(id) && id > 0 ? [id] : [];

@@ -1252,4 +1252,26 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(JSON.parse(callAt(3).stdin ?? "")).toEqual({ assignee_ids: [0] });
     }),
   );
+
+  it.effect("keeps an assignee it cannot show when writing the set back", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ assignees: [{ id: 3, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setAssignees({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        assignees: ["9"],
+        assigned: true,
+      });
+
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ assignee_ids: [9, 3] });
+    }),
+  );
+
 });

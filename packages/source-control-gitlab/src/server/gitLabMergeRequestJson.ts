@@ -201,10 +201,9 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly viewerCanMerge: boolean;
   readonly reviewerIds: ReadonlyArray<number>;
-  /**
-   * The assignees with the ids GitLab writes the set back with. The candidate list leads with
-   * them too, since one page of project users need not reach them.
-   */
+  /** Every assignee id, even one without a username to show, since writes replace the set. */
+  readonly assigneeIds: ReadonlyArray<number>;
+  /** The candidate list leads with these, since one page of project users need not reach them. */
   readonly assigneeUsers: ReadonlyArray<PullRequestActor & { readonly id: number }>;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
@@ -350,6 +349,9 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
     viewerCanMerge: raw.user?.can_merge !== false,
     reviewerIds: (raw.reviewers ?? []).flatMap((reviewer) =>
       reviewer.id === undefined ? [] : [reviewer.id],
+    ),
+    assigneeIds: (raw.assignees ?? []).flatMap((assignee) =>
+      assignee.id === undefined ? [] : [assignee.id],
     ),
     assigneeUsers: (raw.assignees ?? []).flatMap((assignee) => {
       const actor = toActor(assignee);

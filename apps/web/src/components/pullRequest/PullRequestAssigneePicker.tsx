@@ -42,6 +42,8 @@ export function PullRequestAssigneePicker({
   // Past the first page the host is asked, since what was loaded cannot answer for the rest.
   const searchQuery = useDebouncedValue(query.trim(), 250);
   const searchesHost = candidatesQuery.data?.truncated === true && searchQuery.length > 0;
+  // Only once the debounce has caught up, or rows matching the previous text would linger.
+  const searched = searchesHost && searchQuery === query.trim();
   const searchResult = useEnvironmentQuery(
     open && searchesHost
       ? pullRequestEnvironment.assigneeSearch({
@@ -56,7 +58,7 @@ export function PullRequestAssigneePicker({
 
   const candidates = mergeAssigneeCandidates(
     candidatesQuery.data?.candidates ?? [],
-    searchesHost ? (searchResult.data?.candidates ?? []) : [],
+    searched ? (searchResult.data?.candidates ?? []) : [],
     query,
   );
 
@@ -112,7 +114,7 @@ export function PullRequestAssigneePicker({
       error={
         candidatesQuery.data === null
           ? candidatesQuery.error
-          : searchesHost && candidates.length === 0
+          : searched && candidates.length === 0
             ? searchResult.error
             : null
       }
@@ -120,8 +122,15 @@ export function PullRequestAssigneePicker({
       emptyLabel="Nobody can be assigned on this repository."
       noMatchLabel="Nobody who can be assigned matches that."
       errorLabel="The people who can be assigned could not be read."
-      truncated={candidatesQuery.data?.truncated === true && query.trim().length === 0}
-      truncatedLabel="This repository has more people who can be assigned than are listed here. Search to find them."
+      truncated={
+        candidatesQuery.data?.truncated === true &&
+        (query.trim().length === 0 || (searched && searchResult.error !== null))
+      }
+      truncatedLabel={
+        searched && searchResult.error !== null
+          ? `Only the people already listed are matched: the host search failed. ${searchResult.error}`
+          : "This repository has more people who can be assigned than are listed here. Search to find them."
+      }
       candidateKey={(candidate) => candidate.id}
       disabled={pending !== null}
       onSelect={(candidate) => void toggle(candidate)}
