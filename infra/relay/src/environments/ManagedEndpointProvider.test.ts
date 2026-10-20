@@ -9,6 +9,7 @@ import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayConfiguration from "../Config.ts";
+import * as CloudflareApiPause from "./CloudflareApiPause.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
@@ -365,6 +366,17 @@ function layerProvider(
   );
 }
 
+function makeSharedCloudflareApiPause() {
+  let pausedUntilMillis = 0;
+  return CloudflareApiPause.CloudflareApiPause.of({
+    pausedUntilMillis: Effect.sync(() => pausedUntilMillis),
+    pauseUntil: (untilMillis) =>
+      Effect.sync(() => {
+        pausedUntilMillis = Math.max(pausedUntilMillis, untilMillis);
+      }),
+  });
+}
+
 const MANAGED_ENDPOINT_HASHES: Record<string, string> = {
   "user_ABC:env_ABC": "d101ac68108a423e",
   "user_ABC:env_shared": "d7e6356aaf8863aa",
@@ -414,6 +426,9 @@ describe("ManagedEndpointProvider", () => {
         Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
       ),
       Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
+      Layer.provide(
+        Layer.succeed(CloudflareApiPause.CloudflareApiPause, makeSharedCloudflareApiPause()),
+      ),
     );
 
     return Effect.gen(function* () {
@@ -828,7 +843,7 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("stops calling Cloudflare until a rate limit has passed", () => {
+  it.effect("pauses Cloudflare calls in every isolate until a rate limit has passed", () => {
     let listCalls = 0;
     const tunnelClient = {
       list: () =>
@@ -837,43 +852,47 @@ describe("ManagedEndpointProvider", () => {
           return Effect.fail({ _tag: "TooManyRequests", message: "Rate limited" });
         }),
     } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
-    const layer = ManagedEndpointProvider.layerCloudflareBindings(
-      tunnelClient,
-      {} as Cloudflare.DNS.ReadWriteDnsClient,
-      {} as Alchemy.BaseRuntimeContext,
-    ).pipe(
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provide(RelayConfiguration.layer(config)),
-      Layer.provide(
-        Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
-      ),
-      Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
-    );
-
-    return Effect.gen(function* () {
-      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-      const provision = provider
-        .provision({
+    const sharedPause = makeSharedCloudflareApiPause();
+    const isolate = () =>
+      ManagedEndpointProvider.layerCloudflareBindings(
+        tunnelClient,
+        {} as Cloudflare.DNS.ReadWriteDnsClient,
+        {} as Alchemy.BaseRuntimeContext,
+      ).pipe(
+        Layer.provideMerge(NodeServices.layer),
+        Layer.provide(RelayConfiguration.layer(config)),
+        Layer.provide(
+          Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
+        ),
+        Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
+        Layer.provide(Layer.succeed(CloudflareApiPause.CloudflareApiPause, sharedPause)),
+      );
+    const provision = ManagedEndpointProvider.ManagedEndpointProvider.pipe(
+      Effect.flatMap((provider) =>
+        provider.provision({
           userId: "user_ABC",
           environmentId: "env_ABC",
           origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-        })
-        .pipe(Effect.flip);
+        }),
+      ),
+      Effect.flip,
+    );
 
-      const rateLimited = yield* provision;
-      const paused = yield* provision;
+    return Effect.gen(function* () {
+      const rateLimited = yield* provision.pipe(Effect.provide(isolate()));
+      const pausedElsewhere = yield* provision.pipe(Effect.provide(isolate()));
       expect(listCalls).toBe(1);
       expect(ManagedEndpointProvider.isCloudflareRateLimited(rateLimited)).toBe(true);
-      expect(paused).toMatchObject({
+      expect(pausedElsewhere).toMatchObject({
         _tag: "ManagedEndpointProvisioningFailed",
         stage: "ensure-tunnel",
         cause: { cause: { _tag: "CloudflareApiPaused" } },
       });
 
       yield* TestClock.adjust("30 seconds");
-      yield* provision;
+      yield* provision.pipe(Effect.provide(isolate()));
       expect(listCalls).toBe(2);
-    }).pipe(Effect.provide(layer));
+    });
   });
 
   it.effect("recreates a checkpointed DNS record when it was removed externally", () => {

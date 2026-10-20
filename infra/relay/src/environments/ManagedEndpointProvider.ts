@@ -27,6 +27,7 @@ import {
   managedEndpointHostname,
   managedEndpointTunnelName,
 } from "../deploymentConfig.ts";
+import * as CloudflareApiPause from "./CloudflareApiPause.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
 
@@ -445,44 +446,48 @@ const withoutRateLimitRetries: CloudflareRetry.Factory = (lastError) => {
   };
 };
 
+// Every isolate rereads the shared pause at most this often, so a quiet
+// period costs one query per isolate rather than one per Cloudflare call.
+const CLOUDFLARE_PAUSE_REFRESH_MILLIS = 5_000;
+
 /**
  * The rate limit is account-wide, so once one call is rejected every other
- * call in this isolate is too. Failing them without a request leaves the
+ * call is too, from any isolate. Failing them without a request leaves the
  * account room to recover instead of extending the limit.
  */
 const makeCloudflareApiGate = (alchemyRuntimeContext: Alchemy.BaseRuntimeContext) => {
   let pausedUntilMillis = 0;
-  return <A, E>(
-    call: Effect.Effect<A, E, Alchemy.RuntimeContext>,
-  ): Effect.Effect<A, E | CloudflareApiPaused | Cause.TimeoutError> =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      if (now < pausedUntilMillis) {
-        return yield* new CloudflareApiPaused({ retryAfterMillis: pausedUntilMillis - now });
-      }
-      return yield* call.pipe(
-        Effect.provideService(CloudflareRetry.Retry, withoutRateLimitRetries),
-        Effect.timeout("8 seconds"),
-        Effect.tapError((cause) =>
-          isCloudflareRateLimited(cause)
-            ? Clock.currentTimeMillis.pipe(
-                Effect.tap((failedAt) =>
-                  Effect.sync(() => {
-                    pausedUntilMillis = Math.max(
-                      pausedUntilMillis,
-                      failedAt + cloudflareRateLimitPauseMillis(cause),
-                    );
-                  }),
-                ),
-                Effect.andThen(
-                  Effect.annotateCurrentSpan({ "relay.cloudflare.rate_limited": true }),
-                ),
-              )
-            : Effect.void,
-        ),
-        Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
-      );
-    });
+  let checkedAtMillis = Number.NEGATIVE_INFINITY;
+  return (pause: CloudflareApiPause.CloudflareApiPause["Service"]) => {
+    const recordRateLimit = (cause: unknown) =>
+      Effect.gen(function* () {
+        const until = (yield* Clock.currentTimeMillis) + cloudflareRateLimitPauseMillis(cause);
+        pausedUntilMillis = Math.max(pausedUntilMillis, until);
+        yield* Effect.annotateCurrentSpan({ "relay.cloudflare.rate_limited": true });
+        yield* pause.pauseUntil(until);
+      });
+    return <A, E>(
+      call: Effect.Effect<A, E, Alchemy.RuntimeContext>,
+    ): Effect.Effect<A, E | CloudflareApiPaused | Cause.TimeoutError> =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        if (now >= pausedUntilMillis && now - checkedAtMillis >= CLOUDFLARE_PAUSE_REFRESH_MILLIS) {
+          checkedAtMillis = now;
+          pausedUntilMillis = Math.max(pausedUntilMillis, yield* pause.pausedUntilMillis);
+        }
+        if (now < pausedUntilMillis) {
+          return yield* new CloudflareApiPaused({ retryAfterMillis: pausedUntilMillis - now });
+        }
+        return yield* call.pipe(
+          Effect.provideService(CloudflareRetry.Retry, withoutRateLimitRetries),
+          Effect.timeout("8 seconds"),
+          Effect.tapError((cause) =>
+            isCloudflareRateLimited(cause) ? recordRateLimit(cause) : Effect.void,
+          ),
+          Effect.provideService(Alchemy.RuntimeContext, alchemyRuntimeContext),
+        );
+      });
+  };
 };
 
 /**
@@ -1507,132 +1512,139 @@ export const layerCloudflareBindings = (
   dnsClient: Cloudflare.DNS.ReadWriteDnsClient,
   alchemyRuntimeContext: Alchemy.BaseRuntimeContext,
 ) => {
+  // Created once per isolate so its cached pause survives layer rebuilds.
   const cloudflare = makeCloudflareApiGate(alchemyRuntimeContext);
   return layer.pipe(
     Layer.provideMerge(
-      Layer.mergeAll(
-        layerTunnelClient({
-          get: (tunnelId) =>
-            cloudflare(tunnelClient.get(tunnelId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "get",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-            ),
-          list: (request) =>
-            cloudflare(tunnelClient.list(request)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "list",
-                    ...(request.name === undefined ? {} : { tunnelName: request.name }),
-                    cause,
-                  }),
-              ),
-            ),
-          create: (request) =>
-            cloudflare(tunnelClient.create(request)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "create",
-                    tunnelName: request.name,
-                    cause,
-                  }),
-              ),
-            ),
-          putConfiguration: (tunnelId, config) =>
-            cloudflare(tunnelClient.putConfiguration(tunnelId, config)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "put-configuration",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-            ),
-          getToken: (tunnelId) =>
-            cloudflare(tunnelClient.getToken(tunnelId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "get-token",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-            ),
-          delete: (tunnelId) =>
-            cloudflare(tunnelClient.delete(tunnelId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointTunnelClientError({
-                    operation: "delete",
-                    tunnelId,
-                    cause,
-                  }),
-              ),
-            ),
-        }),
-        layerDnsClient({
-          listRecords: (hostname) =>
-            cloudflare(dnsClient.listDnsRecords({ search: hostname })).pipe(
-              Effect.map((response) =>
-                response.result.filter(
-                  (record): record is typeof record & { readonly id: string } =>
-                    typeof record.id === "string" &&
-                    normalizeHostname(record.name) === normalizeHostname(hostname),
+      Layer.unwrap(
+        Effect.gen(function* () {
+          const pause = yield* CloudflareApiPause.CloudflareApiPause;
+          const gate = cloudflare(pause);
+          return Layer.mergeAll(
+            layerTunnelClient({
+              get: (tunnelId) =>
+                gate(tunnelClient.get(tunnelId)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "get",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
                 ),
-              ),
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "list-records",
-                    hostname,
-                    cause,
-                  }),
-              ),
-            ),
-          createRecord: (request) =>
-            cloudflare(dnsClient.createDnsRecord(request)).pipe(
-              Effect.map((response) => ({ id: response.id })),
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "create-record",
-                    hostname: request.name,
-                    cause,
-                  }),
-              ),
-            ),
-          updateRecord: (dnsRecordId, request) =>
-            cloudflare(dnsClient.updateDnsRecord(dnsRecordId, request)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "update-record",
-                    hostname: request.name,
-                    dnsRecordId,
-                    cause,
-                  }),
-              ),
-            ),
-          deleteRecord: (dnsRecordId) =>
-            cloudflare(dnsClient.deleteDnsRecord(dnsRecordId)).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ManagedEndpointDnsClientError({
-                    operation: "delete-record",
-                    dnsRecordId,
-                    cause,
-                  }),
-              ),
-            ),
+              list: (request) =>
+                gate(tunnelClient.list(request)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "list",
+                        ...(request.name === undefined ? {} : { tunnelName: request.name }),
+                        cause,
+                      }),
+                  ),
+                ),
+              create: (request) =>
+                gate(tunnelClient.create(request)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "create",
+                        tunnelName: request.name,
+                        cause,
+                      }),
+                  ),
+                ),
+              putConfiguration: (tunnelId, config) =>
+                gate(tunnelClient.putConfiguration(tunnelId, config)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "put-configuration",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                ),
+              getToken: (tunnelId) =>
+                gate(tunnelClient.getToken(tunnelId)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "get-token",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                ),
+              delete: (tunnelId) =>
+                gate(tunnelClient.delete(tunnelId)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointTunnelClientError({
+                        operation: "delete",
+                        tunnelId,
+                        cause,
+                      }),
+                  ),
+                ),
+            }),
+            layerDnsClient({
+              listRecords: (hostname) =>
+                gate(dnsClient.listDnsRecords({ search: hostname })).pipe(
+                  Effect.map((response) =>
+                    response.result.filter(
+                      (record): record is typeof record & { readonly id: string } =>
+                        typeof record.id === "string" &&
+                        normalizeHostname(record.name) === normalizeHostname(hostname),
+                    ),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointDnsClientError({
+                        operation: "list-records",
+                        hostname,
+                        cause,
+                      }),
+                  ),
+                ),
+              createRecord: (request) =>
+                gate(dnsClient.createDnsRecord(request)).pipe(
+                  Effect.map((response) => ({ id: response.id })),
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointDnsClientError({
+                        operation: "create-record",
+                        hostname: request.name,
+                        cause,
+                      }),
+                  ),
+                ),
+              updateRecord: (dnsRecordId, request) =>
+                gate(dnsClient.updateDnsRecord(dnsRecordId, request)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointDnsClientError({
+                        operation: "update-record",
+                        hostname: request.name,
+                        dnsRecordId,
+                        cause,
+                      }),
+                  ),
+                ),
+              deleteRecord: (dnsRecordId) =>
+                gate(dnsClient.deleteDnsRecord(dnsRecordId)).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ManagedEndpointDnsClientError({
+                        operation: "delete-record",
+                        dnsRecordId,
+                        cause,
+                      }),
+                  ),
+                ),
+            }),
+          );
         }),
       ),
     ),
