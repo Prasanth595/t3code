@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
 import * as DateTime from "effect/DateTime";
 
-import type { PendingSubagentRequest } from "./models.ts";
+import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts";
 
 interface SettlementRunLike {
   readonly turnId?: unknown;
@@ -71,6 +71,7 @@ export function hasQueuedTurnStart(
 }
 
 export interface ThreadSnoozeShell extends QueuedThreadShell {
+  readonly source?: Pick<EnvironmentThreadShell["source"], "pendingRuntimeRequest">;
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
   readonly hasPendingApprovals: boolean;
@@ -79,37 +80,52 @@ export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
 }
 
+function pendingQuestionAt(shell: ThreadSnoozeShell): string | null {
+  const request = shell.source?.pendingRuntimeRequest;
+  return (
+    shell.pendingUserInputAt ??
+    (request?.kind === "user_input" ? DateTime.formatIso(request.createdAt) : null)
+  );
+}
+
+/**
+ * Only a request for the user or a fresh failure ends a snooze early. Completed runs never do:
+ * a snoozed long-running thread keeps waking itself for background work and stays hidden
+ * until its timer.
+ */
 export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean {
-  if (shell.hasPendingApprovals) return true;
+  const request = shell.source?.pendingRuntimeRequest;
+  if (shell.hasPendingApprovals || (request != null && request.kind !== "user_input")) return true;
+  const questionAt = pendingQuestionAt(shell);
   // Snoozing an existing question means "ask me later". Only a new question
   // wakes it early; missing or invalid timestamps keep the request visible.
   if (
-    shell.hasPendingUserInput &&
+    (shell.hasPendingUserInput || request?.kind === "user_input") &&
     (shell.snoozedAt == null ||
-      shell.pendingUserInputAt == null ||
-      !(Date.parse(shell.pendingUserInputAt) <= Date.parse(shell.snoozedAt)))
+      questionAt == null ||
+      !(Date.parse(questionAt) <= Date.parse(shell.snoozedAt)))
   ) {
     return true;
   }
   if (shell.pendingSubagentRequest != null) return true;
-  const runtime = shell.runtime ?? shell.session ?? null;
-  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
-  if (
-    (runtime?.status === "error" || runtime?.status === "failed") &&
+  const failedAt = failureEdgeAt(shell);
+  return (
+    failedAt !== undefined &&
     (shell.snoozedAt == null ||
-      (runtime.updatedAt != null && Date.parse(runtime.updatedAt) > Date.parse(shell.snoozedAt)))
-  ) {
-    return true;
+      (failedAt != null && Date.parse(failedAt) > Date.parse(shell.snoozedAt)))
+  );
+}
+
+// V2 runtime.updatedAt includes metadata writes; prefer the failed run's completion.
+// Legacy sessions only expose the runtime timestamp.
+function failureEdgeAt(shell: ThreadSnoozeShell): string | null | undefined {
+  const runtime = shell.runtime ?? shell.session ?? null;
+  if (runtime?.status !== "error" && runtime?.status !== "failed") return undefined;
+  const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+  if (latestRun?.status === "failed" && latestRun.completedAt != null) {
+    return latestRun.completedAt;
   }
-  if (
-    shell.snoozedAt != null &&
-    (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-    latestRun.completedAt != null &&
-    Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-  ) {
-    return true;
-  }
-  return false;
+  return runtime.updatedAt ?? null;
 }
 
 export function canSnooze(
@@ -123,10 +139,13 @@ export function canSnooze(
     | "latestRun"
     | "session"
     | "runtime"
+    | "source"
   >,
   options: { readonly now: string },
 ): boolean {
   if (shell.hasPendingApprovals) return false;
+  const request = shell.source?.pendingRuntimeRequest;
+  if (request != null && request.kind !== "user_input") return false;
   if (shell.pendingSubagentRequest != null) return false;
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
@@ -155,31 +174,20 @@ export function threadWokeAt(
   // indicator the user already cleared by visiting (snoozedUntil is newer
   // than that visit's lastVisitedAt).
   if (threadRaisedHandWhileSnoozed(shell)) {
-    const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
+    const failedAt = failureEdgeAt(shell);
+    const questionAt = pendingQuestionAt(shell);
+    const freshFailure =
+      failedAt != null &&
+      (shell.snoozedAt == null || Date.parse(failedAt) > Date.parse(shell.snoozedAt));
+    const freshQuestion =
+      questionAt != null &&
+      shell.snoozedAt != null &&
+      Date.parse(questionAt) > Date.parse(shell.snoozedAt);
+    if (freshFailure && (!freshQuestion || Date.parse(failedAt) >= Date.parse(questionAt))) {
+      return failedAt;
+    }
+    if (freshQuestion) return questionAt;
     const runtime = shell.runtime ?? shell.session ?? null;
-    if (
-      shell.snoozedAt != null &&
-      (latestRun?.state === "completed" || latestRun?.status === "completed") &&
-      latestRun.completedAt != null &&
-      Date.parse(latestRun.completedAt) > Date.parse(shell.snoozedAt)
-    ) {
-      return latestRun.completedAt;
-    }
-    if (
-      shell.hasPendingUserInput &&
-      shell.pendingUserInputAt != null &&
-      shell.snoozedAt != null &&
-      Date.parse(shell.pendingUserInputAt) > Date.parse(shell.snoozedAt)
-    ) {
-      if (
-        (runtime?.status === "error" || runtime?.status === "failed") &&
-        runtime.updatedAt != null &&
-        Date.parse(runtime.updatedAt) > Date.parse(shell.pendingUserInputAt)
-      ) {
-        return runtime.updatedAt;
-      }
-      return shell.pendingUserInputAt;
-    }
     return runtime?.updatedAt ?? shell.snoozedAt ?? null;
   }
   return wakeAtMs <= Date.parse(options.now) ? shell.snoozedUntil : null;
