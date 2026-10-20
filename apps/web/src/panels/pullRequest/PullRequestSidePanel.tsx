@@ -1,10 +1,10 @@
-import type { PullRequestDetailTab, PullRequestRef } from "@t3tools/contracts";
+import type { PullRequestRef } from "@t3tools/contracts";
 
 import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "~/components/pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "~/components/pullRequest/PullRequestsUnavailableState";
 import type { ShortcutMatchContext } from "~/keybindings";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
 
 import { usePanelHost } from "../panelHost";
