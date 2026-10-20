@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
+import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -219,3 +220,42 @@ it("keeps the action when an upward drag extends into the header", async () => {
   const text = new URL(markdown.slice(markdown.indexOf("](") + 2, -1)).searchParams.get("text");
   expect(text).toBe(source.textContent);
 });
+
+for (const neighbor of [
+  "preceding user message",
+  "following timestamp",
+  "following user message",
+]) {
+  it.each(["forward", "backward"] as const)(
+    `cites only assistant text when a %s selection includes a ${neighbor}`,
+    async (direction) => {
+      source.textContent = "The selected assistant response.";
+      const adjacent = document.createElement("p");
+      adjacent.textContent = neighbor === "following timestamp" ? "1:50 AM" : "A user message.";
+      const before = neighbor === "preceding user message";
+      if (before) source.before(adjacent);
+      else source.after(adjacent);
+      const first = before ? adjacent.firstChild! : source.firstChild!;
+      const last = before ? source.firstChild! : adjacent.firstChild!;
+      await mount();
+      await act(async () => {
+        if (direction === "forward")
+          window.getSelection()!.setBaseAndExtent(first, 0, last, last.textContent!.length);
+        else window.getSelection()!.setBaseAndExtent(last, last.textContent!.length, first, 0);
+      });
+
+      await vi.waitFor(() => expectInside(cite()));
+      expect(window.getSelection()!.toString()).toContain(adjacent.textContent);
+      await act(async () => userEvent.click(cite()!));
+      await vi.waitFor(() => expectInside(popup()));
+      const markdown = document
+        .querySelector("[data-assistant-citation-chip]")!
+        .getAttribute("data-markdown-copy")!;
+      const citation = parseAssistantCitationHref(markdown.slice(markdown.indexOf("](") + 2, -1));
+      expect(citation).toMatchObject({
+        messageId: source.dataset.assistantCitationSource,
+        text: source.textContent,
+      });
+    },
+  );
+}

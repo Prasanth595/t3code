@@ -198,6 +198,8 @@ function selectedTextBoundary(range: Range, node: Node, last: boolean): Text | n
   if (!range.intersectsNode(node)) return null;
   if (node.nodeType === 3) {
     const text = node as Text;
+    // A selection can begin on metadata or a user message beside the response.
+    if (!text.parentElement?.closest("[data-assistant-citation-source]")) return null;
     const start = node === range.startContainer ? range.startOffset : 0;
     const end = node === range.endContainer ? range.endOffset : text.length;
     // Triple-click ranges run through unselectable rows (tool calls, timestamps,
