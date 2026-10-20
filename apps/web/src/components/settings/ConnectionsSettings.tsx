@@ -15,6 +15,7 @@ import {
   type ReactNode,
   memo,
   useEffect,
+  useEffectEvent,
   useId,
   useRef,
   useState,
@@ -1811,6 +1812,13 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
       ? "Your session does not have permission to manage T3 Connect access."
       : null;
   const isBusy = isUpdating || isUpdatingPreference;
+  const refreshLinkState = useEffectEvent(primaryCloudLinkState.refresh);
+  // The server rechecks reachability when the tunnel's 30 s readiness poll changes.
+  useEffect(() => {
+    if (!managedTunnelActive) return;
+    const interval = window.setInterval(() => refreshLinkState(), 30_000);
+    return () => window.clearInterval(interval);
+  }, [managedTunnelActive]);
   const reachability = managedTunnelActive ? primaryCloudLinkState.data?.reachability : undefined;
   const reachabilityStatus =
     reachability?.status === "reachable" ? (
