@@ -51,6 +51,7 @@ import { requestConfirmDialog } from "../../confirmDialog";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { Link } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
@@ -108,7 +109,6 @@ import {
   SettingsRow,
   SettingsSection,
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  useRelativeTimeTick,
 } from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
@@ -179,7 +179,11 @@ function splitModelKey(value: string): ModelSelection | null {
   };
 }
 
-export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
+function scheduleTimeZoneLabel(timeZone: string | undefined) {
+  return timeZone === "Etc/UTC" ? "UTC" : timeZone;
+}
+
+export function scheduleLabel(schedule: ScheduledTaskSchedule, timeZone?: string): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
@@ -194,7 +198,8 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
       : weekdays.length === 5 && weekdays.every((day) => day >= 1 && day <= 5)
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
-  return `${days} at ${schedule.timeOfDay}`;
+  const zone = scheduleTimeZoneLabel(timeZone);
+  return `${days} at ${schedule.timeOfDay}${zone === undefined ? "" : ` ${zone}`}`;
 }
 
 /**
@@ -202,11 +207,11 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
  * instant — render "in 5m" style labels for upcoming runs instead of a
  * misleading "just now".
  */
-export function relativeLabel(value: string | null): string {
+function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
-  const diffMs = new Date(value).getTime() - Date.now();
+  const diffMs = new Date(value).getTime() - nowMs;
   if (diffMs <= 0) {
-    const relative = formatRelativeTime(value);
+    const relative = formatRelativeTime(value, nowMs);
     if (!relative) return "Not scheduled";
     return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
   }
@@ -216,6 +221,13 @@ export function relativeLabel(value: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `in ${hours}h`;
   return `in ${Math.round(hours / 24)}d`;
+}
+
+// The clock is the label's own minute tick: the React Compiler caches a
+// `Date.now()` read in render on the timestamp alone.
+export function ScheduledRelativeLabel(props: { value: string | null }) {
+  const nowMinute = useNowMinute();
+  return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));
 }
 
 const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
@@ -357,6 +369,7 @@ function ScheduledTaskEnvironmentList({
     return {
       environment,
       connected: index >= 0,
+      timeZone: data?.timeZone,
       tasks: data?.tasks.filter((task) =>
         matchesScheduledTaskScope(scope, environment.environmentId, task.projectId),
       ),
@@ -372,7 +385,6 @@ function ScheduledTaskEnvironmentList({
       onEdit(environmentId, linkedTask);
     }
   }, [environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
 
   const loaded = states.filter((state) => state.connected && state.error === null && state.tasks);
   const populated = loaded.filter((state) => state.tasks && state.tasks.length > 0);
@@ -399,7 +411,7 @@ function ScheduledTaskEnvironmentList({
 
   return (
     <SettingsGroup>
-      {populated.map(({ environment, tasks }) => {
+      {populated.map(({ environment, tasks, timeZone }) => {
         const { primary, secondary } = settingsScopeEnvironmentLabels(environment, environments);
         const transport = environmentTransportLabel(environment);
         return (
@@ -429,6 +441,7 @@ function ScheduledTaskEnvironmentList({
                 key={task.id}
                 environmentId={environment.environmentId}
                 task={task}
+                timeZone={timeZone}
                 onEdit={() => onEdit(environment.environmentId, task)}
               />
             ))}
@@ -504,7 +517,6 @@ function ScheduledTaskEnvironmentSection({
       onEdit(environment.environmentId, linkedTask);
     }
   }, [environment.environmentId, linkedTask, onEdit]);
-  useRelativeTimeTick(60_000);
   return (
     <SettingsSection
       title={environment.label}
@@ -545,6 +557,7 @@ function ScheduledTaskEnvironmentSection({
                 key={task.id}
                 environmentId={environment.environmentId}
                 task={task}
+                timeZone={tasksQuery.data?.timeZone}
                 onEdit={() => onEdit(environment.environmentId, task)}
               />
             ))
@@ -558,10 +571,12 @@ function ScheduledTaskEnvironmentSection({
 function ScheduledTaskRow({
   environmentId,
   task,
+  timeZone,
   onEdit,
 }: {
   readonly environmentId: EnvironmentId;
   readonly task: ScheduledTask;
+  readonly timeZone: string | undefined;
   readonly onEdit: () => void;
 }) {
   const canOperate = useAtomValue(
@@ -606,14 +621,18 @@ function ScheduledTaskRow({
       status={
         <div className="flex flex-wrap items-center gap-2">
           <span>
-            {scheduleLabel(task.schedule)} ·{" "}
-            {!task.enabled
-              ? "Paused"
-              : isWebhook
-                ? "Listening"
-                : task.nextRunAt
-                  ? `Next run ${relativeLabel(task.nextRunAt)}`
-                  : "Not scheduled"}
+            {scheduleLabel(task.schedule, timeZone)} ·{" "}
+            {!task.enabled ? (
+              "Paused"
+            ) : isWebhook ? (
+              "Listening"
+            ) : task.nextRunAt ? (
+              <>
+                Next run <ScheduledRelativeLabel value={task.nextRunAt} />
+              </>
+            ) : (
+              "Not scheduled"
+            )}
           </span>
           {task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
@@ -730,7 +749,7 @@ function WebhookDeliveriesDialog({
                   {DELIVERY_OUTCOME_LABELS[selected.outcome]}
                 </Badge>
                 <span>
-                  {selected.method} · {relativeLabel(selected.receivedAt)}
+                  {selected.method} · <ScheduledRelativeLabel value={selected.receivedAt} />
                 </span>
                 {selected.signatureVerified ? (
                   <span className="text-muted-foreground">Signature verified</span>
@@ -777,7 +796,7 @@ function WebhookDeliveriesDialog({
                     </Badge>
                     <span>{delivery.method}</span>
                     <span className="text-muted-foreground">
-                      {relativeLabel(delivery.receivedAt)}
+                      <ScheduledRelativeLabel value={delivery.receivedAt} />
                     </span>
                     {delivery.missingFields.length > 0 ? (
                       <span className="text-muted-foreground">
@@ -989,6 +1008,7 @@ function ScheduledTaskEditorForm({
     draft.editingId !== null &&
     tasksQuery.data !== null &&
     !tasksQuery.data.tasks.some((entry) => entry.id === draft.editingId);
+  const runAtZone = scheduleTimeZoneLabel(tasksQuery.data?.timeZone);
   const liveTask = tasksQuery.data
     ? (tasksQuery.data.tasks.find((entry) => entry.id === draft.editingId) ?? null)
     : task;
@@ -1492,6 +1512,9 @@ function ScheduledTaskEditorForm({
                       setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
                     }
                   />
+                  {runAtZone === undefined ? null : (
+                    <span className="text-xs text-muted-foreground">{runAtZone}</span>
+                  )}
                   <span className="text-xs text-muted-foreground">on</span>
                 </div>
                 <ToggleGroup
