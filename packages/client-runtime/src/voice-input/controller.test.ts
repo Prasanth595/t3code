@@ -637,4 +637,25 @@ describe("VoiceInputController", () => {
     expect(harness.recorder.record).not.toHaveBeenCalled();
     expect(harness.controller.currentState.error).toContain("background");
   });
+
+  it("keeps preparing while the permission prompt reports background", async () => {
+    const permission = deferred<{ granted: boolean; canAskAgain: boolean }>();
+    const permissionEntered = deferred<void>();
+    const harness = createHarness({
+      requestPermission: async () => {
+        permissionEntered.resolve(undefined);
+        return permission.promise;
+      },
+    });
+    const starting = harness.controller.start();
+    await permissionEntered.promise;
+    harness.controller.appMovedToBackground();
+    expect(harness.controller.currentState.phase).toBe("preparing");
+    expect(harness.controller.currentState.error).toBeNull();
+    permission.resolve({ granted: true, canAskAgain: true });
+    await starting;
+
+    expect(harness.recorder.record).toHaveBeenCalledOnce();
+    expect(harness.controller.currentState.phase).toBe("recording");
+  });
 });

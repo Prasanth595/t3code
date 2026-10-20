@@ -184,9 +184,11 @@ function useVoiceInputRuntime() {
 
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      // iOS reports `inactive` while its permission dialog is open. Only the
-      // real background state cancels preparation; recorder status handles
-      // calls and route interruptions during capture.
+      // iOS reports `inactive` while its permission dialog is open; Android
+      // reports `background` for the same dialog (ignored while awaiting
+      // permission inside the controller). Only a real background cancel
+      // preparation; recorder status handles calls and route interruptions
+      // during capture.
       if (nextState === "background") controller.appMovedToBackground();
     });
     return () => subscription.remove();

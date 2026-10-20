@@ -203,6 +203,8 @@ export class VoiceInputController {
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
   private finishing = false;
+  /** Android reports `background` while the system mic permission dialog is open. */
+  private awaitingPermission = false;
 
   constructor(dependencies: VoiceInputControllerDependencies) {
     this.dependencies = dependencies;
@@ -247,7 +249,13 @@ export class VoiceInputController {
         return;
       }
 
-      const permission = await this.dependencies.requestPermission();
+      this.awaitingPermission = true;
+      let permission: { readonly granted: boolean; readonly canAskAgain: boolean };
+      try {
+        permission = await this.dependencies.requestPermission();
+      } finally {
+        this.awaitingPermission = false;
+      }
       if (!this.isCurrent(operationToken)) return;
       if (!permission.granted) {
         this.setError(
@@ -334,6 +342,9 @@ export class VoiceInputController {
   }
 
   appMovedToBackground(): Promise<void> | void {
+    // Android AppState goes to `background` for the mic permission dialog; iOS uses
+    // `inactive` which the mobile provider already ignores. Do not cancel for that.
+    if (this.awaitingPermission) return;
     if (this.state.phase === "preparing") {
       this.invalidateOperation();
       this.setError("Voice input stopped when the app moved to the background.", "retry");
