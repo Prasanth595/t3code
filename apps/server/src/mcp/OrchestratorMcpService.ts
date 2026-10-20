@@ -1453,6 +1453,13 @@ const make = Effect.gen(function* () {
           null);
     const resultTransfer = taskResultTransfer(parentProjection, childProjection, task) ?? null;
     const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
+    const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
+      ? terminalRun.id === childRun?.id
+        ? derivedResult
+        : subagentResultForRun(childProjection, terminalRun).text
+      : null;
+    const resultContextTransferId = resultTransfer?.id ?? null;
+    const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
     const response = {
       taskId: task.id,
       childThreadId: task.childThreadId,
@@ -1464,16 +1471,15 @@ const make = Effect.gen(function* () {
       providerInstanceId: task.providerInstanceId,
       model: task.model,
       summary: derivedResult,
-      resultContextTransferId: resultTransfer?.id ?? null,
+      resultContextTransferId,
       latestTerminalRunId: terminalRun?.id ?? null,
       latestTerminalStatus:
         terminalStatus !== null && isTerminalTaskStatus(terminalStatus) ? terminalStatus : null,
-      latestTerminalSummary: canExposeTaskRunResult(terminalRun)
-        ? terminalRun.id === childRun?.id
-          ? derivedResult
-          : subagentResultForRun(childProjection, terminalRun).text
-        : null,
-      latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
+      latestTerminalSummary: latestTerminalSummary === derivedResult ? null : latestTerminalSummary,
+      latestTerminalResultContextTransferId:
+        latestTerminalResultContextTransferId === resultContextTransferId
+          ? null
+          : latestTerminalResultContextTransferId,
       hasPendingQuestion:
         !isTerminalTaskStatus(status) &&
         childControls.runtimeRequests.some(
@@ -1507,124 +1513,11 @@ const make = Effect.gen(function* () {
               ? observingRun.id
               : null,
         })
-        .pipe(Effect.mapError(threadManagementFailure));
-      const childProjection = {
-        ...childControls,
-        messages: [...childControls.messages, ...resultRecords.messages],
-        turnItems: resultRecords.turnItems,
-      };
-      const heldForRestart =
-        task.result === null &&
-        taskWorkState === "result_available" &&
-        (yield* threadManagement
-          .delegatedTaskResultPending(task.childThreadId, childRun?.delegatedTaskId)
-          .pipe(Effect.mapError(threadManagementFailure)));
-      const workState =
-        task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
-      const status =
-        task.result !== null
-          ? taskStatusForRun(
-              task.status === "completed" ||
-                task.status === "failed" ||
-                task.status === "cancelled" ||
-                task.status === "interrupted"
-                ? { status: task.status }
-                : childRun,
-            )
-          : workState === "result_available"
-            ? taskStatusForRun(taskResultRun ?? childRun)
-            : taskStatusForRun(taskResultRun ?? childRun) === "queued"
-              ? "queued"
-              : "running";
-      const derivedResult =
-        task.result !== null
-          ? task.result
-          : taskResultRun !== undefined && isTerminalTaskStatus(status)
-            ? subagentResultForRun(childProjection, taskResultRun).text
-            : null;
-      const resultTransfers = parentProjection.contextTransfers.filter(
-        (transfer) =>
-          transfer.type === "subagent_result" &&
-          transfer.sourceThreadId === task.childThreadId &&
-          transfer.targetThreadId === scope.thread.threadId,
-      );
-      const resultTransferForRun = (run: OrchestrationV2Run | undefined) =>
-        !canExposeTaskRunResult(run)
-          ? null
-          : (resultTransfers.find((transfer) => transfer.sourcePoint.runId === run.id) ??
-            (run.id === childRun?.id
-              ? resultTransfers.find((transfer) => transfer.sourcePoint.runId === undefined)
-              : undefined) ??
-            null);
-      const resultTransfer = taskResultTransfer(parentProjection, childProjection, task) ?? null;
-      const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
-      const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
-        ? terminalRun.id === childRun?.id
-          ? derivedResult
-          : subagentResultForRun(childProjection, terminalRun).text
-        : null;
-      const resultContextTransferId = resultTransfer?.id ?? null;
-      const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
-      const response = {
-        taskId: task.id,
-        childThreadId: task.childThreadId,
-        childRunId: childRun?.id ?? null,
-        childNodeId: task.id,
-        status,
-        workState,
-        hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
-        providerInstanceId: task.providerInstanceId,
-        model: task.model,
-        summary: derivedResult,
-        resultContextTransferId,
-        latestTerminalRunId: terminalRun?.id ?? null,
-        latestTerminalStatus:
-          terminalStatus !== null && isTerminalTaskStatus(terminalStatus) ? terminalStatus : null,
-        latestTerminalSummary:
-          latestTerminalSummary === derivedResult ? null : latestTerminalSummary,
-        latestTerminalResultContextTransferId:
-          latestTerminalResultContextTransferId === resultContextTransferId
-            ? null
-            : latestTerminalResultContextTransferId,
-        hasPendingQuestion:
-          !isTerminalTaskStatus(status) &&
-          childControls.runtimeRequests.some(
-            (request) =>
-              request.kind === "user_input" &&
-              request.status === "pending" &&
-              request.responseCapability.type === "live",
-          ),
-        waitTimedOut,
-      } satisfies OrchestratorMcpDelegateTaskResult;
-      if (
-        acknowledgeTerminal &&
-        isTerminalTaskStatus(status) &&
-        task.completionDelivery?.state !== "acknowledged" &&
-        task.completionDelivery?.state !== "disposed"
-      ) {
-        const observingRun = ThreadManagementService.latestActiveRun(parentProjection);
-        const acknowledgementRequestKey = yield* requestKey(undefined);
-        yield* threadManagement
-          .dispatch({
-            type: "delegated_task.completion-delivery.acknowledge",
-            commandId: stableCommandId({
-              scope,
-              requestKey: acknowledgementRequestKey,
-              operation: acknowledgementOperation,
-            }),
-            parentThreadId: scope.thread.threadId,
-            taskId,
-            observedByRunId:
-              observingRun?.providerInstanceId === scope.thread.providerInstanceId
-                ? observingRun.id
-                : null,
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "orchestration_error",
-                `Unable to acknowledge delegated task ${taskId}: ${errorMessage(error)}`,
-              ),
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to acknowledge delegated task ${taskId}: ${errorMessage(error)}`,
             ),
           ),
         );
