@@ -26,6 +26,10 @@ describe("cloneUrlForProtocol", () => {
 
   it("refuses rewrites that would guess wrong", () => {
     expect(cloneUrlForProtocol("ssh://git@host.example:2222/a/b.git", "https")).toBeNull();
+    expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "ssh")).toBeNull();
+    expect(cloneUrlForProtocol("https://host.example:8443/a/b.git", "https")).toBe(
+      "https://host.example:8443/a/b.git",
+    );
     expect(cloneUrlForProtocol("/srv/git/repo.git", "https")).toBeNull();
     expect(cloneUrlProtocol("file:///srv/git/repo.git")).toBeNull();
   });

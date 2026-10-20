@@ -18,7 +18,7 @@ export const COPYABLE_FILE_MAX_BYTES = 1024 * 1024;
 
 const SCP_LIKE_URL = /^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)(.+)$/;
 const SSH_URL = /^ssh:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
-const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^/\s]+)\/(.+)$/;
+const HTTPS_URL = /^https?:\/\/(?:[^@/\s]+@)?([^:/\s]+)(:\d+)?\/(.+)$/;
 
 function parseCloneUrl(
   url: string,
@@ -27,7 +27,7 @@ function parseCloneUrl(
   const ssh = SSH_URL.exec(trimmed);
   if (ssh) return { protocol: "ssh", host: ssh[1]!, path: ssh[3]!, customPort: !!ssh[2] };
   const https = HTTPS_URL.exec(trimmed);
-  if (https) return { protocol: "https", host: https[1]!, path: https[2]!, customPort: false };
+  if (https) return { protocol: "https", host: https[1]!, path: https[3]!, customPort: !!https[2] };
   const scp = SCP_LIKE_URL.exec(trimmed);
   if (scp) return { protocol: "ssh", host: scp[1]!, path: scp[2]!, customPort: false };
   return null;
@@ -40,7 +40,7 @@ export function cloneUrlProtocol(url: string): CloneProtocol | null {
 /**
  * Rewrites a clone URL to the other protocol, because the target machine may
  * only have SSH keys or only an HTTPS credential helper. Returns null when the
- * URL cannot be rewritten safely, such as SSH on a custom port.
+ * URL cannot be rewritten safely, such as a custom port.
  */
 export function cloneUrlForProtocol(url: string, protocol: CloneProtocol): string | null {
   const parsed = parseCloneUrl(url);
