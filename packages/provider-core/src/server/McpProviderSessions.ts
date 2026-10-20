@@ -81,18 +81,17 @@ const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
   return McpProviderSessions.of({
-    set: (config) =>
-      Effect.gen(function* () {
-        const current = yield* Ref.get(sessions);
-        if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
-          yield* Ref.update(htmlRenders, (kept) => {
-            const next = new Map(kept);
-            next.delete(config.threadId);
-            return next;
-          });
-        }
-        yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
-      }),
+    set: Effect.fn("McpProviderSessions.set")(function* (config) {
+      const current = yield* Ref.get(sessions);
+      if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
+        yield* Ref.update(htmlRenders, (kept) => {
+          const next = new Map(kept);
+          next.delete(config.threadId);
+          return next;
+        });
+      }
+      yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
+    }),
     read: (threadId) => Ref.get(sessions).pipe(Effect.map((current) => current.get(threadId))),
     clear: (threadId) =>
       Ref.update(sessions, (current) => {
