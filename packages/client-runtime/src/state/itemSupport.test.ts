@@ -18,6 +18,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
 import {
   EMPTY_V2_ITEM_SUPPORT,
+  formatV2ProviderOriginLabel,
   resolveV2ItemSupport,
   resolveV2ItemProviderOrigin,
   v2ItemSupportEqual,
@@ -355,4 +356,50 @@ it("rejects support from a different projected source", () => {
       sourceItemId: TurnItemId.make("other"),
     }),
   ).toBeNull();
+});
+
+describe("formatV2ProviderOriginLabel", () => {
+  const codex = ProviderDriverKind.make("codex");
+  const custom = ProviderDriverKind.make("custom-driver");
+  const catalog = (driver: ProviderDriverKind, displayName?: string) => [
+    { instanceId: providerInstanceId, driver, displayName },
+    { instanceId: ProviderInstanceId.make("selection-b"), driver, displayName: "Selection B" },
+  ];
+  it.each([
+    [{ providerInstanceId, driver: codex }, catalog(codex, " Mine "), "Codex · Instance: Mine"],
+    [
+      { providerInstanceId, driver: custom },
+      catalog(custom),
+      "custom-driver · Instance label unavailable",
+    ],
+    [{ providerInstanceId, driver: custom }, null, "custom-driver · Instance label unavailable"],
+    [
+      { providerInstanceId, driver: custom },
+      catalog(custom, "Mine"),
+      "custom-driver · Instance: Mine",
+    ],
+    [
+      { providerInstanceId, driver: codex },
+      catalog(custom, "Mine"),
+      "Codex · Instance label unavailable",
+    ],
+    [
+      { providerInstanceId, driver: codex },
+      catalog(codex, "   "),
+      "Codex · Instance label unavailable",
+    ],
+    [{ providerInstanceId, driver: null }, catalog(codex, "Mine"), "Codex · Instance: Mine"],
+    [
+      { providerInstanceId, driver: null },
+      catalog(custom),
+      "custom-driver · Instance label unavailable",
+    ],
+    [{ providerInstanceId, driver: null }, [], "Provider origin unavailable"],
+    [null, catalog(codex, "Mine"), "Provider origin unavailable"],
+  ] as const)("formats %j with %j", (origin, providers, expected) => {
+    const label = formatV2ProviderOriginLabel(origin, providers);
+    expect(label).toBe(expected);
+    expect(label).not.toContain("selection-b");
+    expect(label).not.toContain("Selection B");
+  });
 });

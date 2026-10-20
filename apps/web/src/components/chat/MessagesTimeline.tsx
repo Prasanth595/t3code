@@ -1,6 +1,8 @@
 import { useRenderedAppearance } from "../../hooks/useTheme";
-import { resolveV2ItemProviderOrigin } from "@t3tools/client-runtime/state/item-support";
-import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import {
+  formatV2ProviderOriginLabel,
+  resolveV2ItemProviderOrigin,
+} from "@t3tools/client-runtime/state/item-support";
 import { serverEnvironment } from "../../state/server";
 import type { Root, RootContent } from "mdast";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
@@ -5335,18 +5337,7 @@ function QuotaFailureOrigin({
     serverEnvironment.providersValueAtom(ctx.activeThreadEnvironmentId),
   );
   const origin = resolveV2ItemProviderOrigin(support, projectedItem);
-  const provider = origin
-    ? providers?.find((candidate) => candidate.instanceId === origin.providerInstanceId)
-    : undefined;
-  const matchesDriver = origin?.driver == null || provider?.driver === origin.driver;
-  const driver = origin?.driver ?? provider?.driver;
-  const driverLabel = driver ? PROVIDER_DISPLAY_NAMES[driver] : undefined;
-  const instanceLabel = matchesDriver ? provider?.displayName?.trim() : undefined;
-  const label = instanceLabel
-    ? `${driverLabel ?? "Provider"} · Instance: ${instanceLabel}`
-    : driverLabel
-      ? `${driverLabel} · Instance label unavailable`
-      : "Provider origin unavailable";
+  const label = formatV2ProviderOriginLabel(origin, providers);
   return <p className="ms-7 whitespace-pre-wrap break-words text-sm text-foreground/80">{label}</p>;
 }
 

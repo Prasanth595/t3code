@@ -1875,6 +1875,25 @@ describe("quota origin", () => {
     expect(container.textContent).toContain("Codex · Instance label unavailable");
     expect(container.textContent).toContain(quotaMessage);
   });
+  it("names an unmapped driver by its slug without exposing an instance ID", async () => {
+    const fixture = originFixture();
+    const customDriver = ProviderDriverKind.make("custom-driver");
+    fixture.projection = {
+      ...fixture.projection,
+      providerThreads: fixture.projection.providerThreads.map((p) => ({
+        ...p,
+        driver: customDriver,
+      })),
+    };
+    fixture.providers = fixture.providers.map((p) =>
+      p.instanceId === originInstance ? { ...p, driver: customDriver, displayName: undefined } : p,
+    );
+    await renderOrigin(fixture);
+    expect(container.textContent).toContain("custom-driver · Instance label unavailable");
+    expect(container.textContent).not.toContain("opaque-a-123");
+    expect(container.textContent).not.toContain("instance-b");
+    expect(container.textContent).not.toContain("Current selection");
+  });
   it("uses the child's provider even when it shares the root run", async () => {
     const fixture = originFixture();
     fixture.item = { ...fixture.item, nodeId: NodeId.make("child-node") };

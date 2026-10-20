@@ -1,7 +1,9 @@
-import type {
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ProjectedTurnItem,
-  TurnItemId,
+import {
+  PROVIDER_DISPLAY_NAMES,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ProjectedTurnItem,
+  type ServerProvider,
+  type TurnItemId,
 } from "@t3tools/contracts";
 
 type Projection = OrchestrationV2ThreadProjection;
@@ -157,6 +159,24 @@ export function resolveV2ItemProviderOrigin(
   )
     return { providerInstanceId: run.providerInstanceId, driver: null };
   return null;
+}
+
+// The instance ID is only a lookup key: it is opaque and must never become label text.
+export function formatV2ProviderOriginLabel(
+  origin: ReturnType<typeof resolveV2ItemProviderOrigin>,
+  providers: ReadonlyArray<Pick<ServerProvider, "instanceId" | "driver" | "displayName">> | null,
+): string {
+  if (origin === null) return "Provider origin unavailable";
+  const provider = providers?.find(
+    (candidate) => candidate.instanceId === origin.providerInstanceId,
+  );
+  const driver = origin.driver ?? provider?.driver;
+  if (driver === undefined) return "Provider origin unavailable";
+  const driverLabel = PROVIDER_DISPLAY_NAMES[driver] ?? driver;
+  const instanceLabel = provider?.driver === driver ? provider.displayName?.trim() : undefined;
+  return instanceLabel
+    ? `${driverLabel} · Instance: ${instanceLabel}`
+    : `${driverLabel} · Instance label unavailable`;
 }
 
 function sameEntities<A>(left: ReadonlyArray<A>, right: ReadonlyArray<A>): boolean {

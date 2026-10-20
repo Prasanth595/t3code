@@ -1,5 +1,8 @@
-import { resolveV2ItemProviderOrigin } from "@t3tools/client-runtime/state/item-support";
-import { PROVIDER_DISPLAY_NAMES, type OrchestrationV2TurnItem } from "@t3tools/contracts";
+import {
+  formatV2ProviderOriginLabel,
+  resolveV2ItemProviderOrigin,
+} from "@t3tools/client-runtime/state/item-support";
+import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { useV2ItemSupport } from "../../state/v2-item-support";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../../components/ui/Button";
@@ -867,18 +870,7 @@ function QuotaFailureRow(props: FailureRowProps) {
   });
   const providers = useAtomValue(serverEnvironment.providersValueAtom(props.environmentId));
   const origin = resolveV2ItemProviderOrigin(support, projectedItem);
-  const provider = origin
-    ? providers?.find((candidate) => candidate.instanceId === origin.providerInstanceId)
-    : undefined;
-  const matchesDriver = origin?.driver == null || provider?.driver === origin.driver;
-  const driver = origin?.driver ?? provider?.driver;
-  const driverLabel = driver ? PROVIDER_DISPLAY_NAMES[driver] : undefined;
-  const instanceLabel = matchesDriver ? provider?.displayName?.trim() : undefined;
-  const originLabel = instanceLabel
-    ? `${driverLabel ?? "Provider"} · Instance: ${instanceLabel}`
-    : driverLabel
-      ? `${driverLabel} · Instance label unavailable`
-      : "Provider origin unavailable";
+  const originLabel = formatV2ProviderOriginLabel(origin, providers);
   return <FailureRow {...props} originLabel={originLabel} />;
 }
 
