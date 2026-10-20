@@ -88,6 +88,24 @@ describe("selectGitHubBaseRepository", () => {
     }
   });
 
+  it("preserves selection behavior for real hosts with explicit ports", () => {
+    const input = {
+      remotes: remotes(["origin", "https://github.example.com:8443/me/web.git"]),
+      resolved: "remote.origin.gh-resolved acme/other",
+    };
+    assert.strictEqual(
+      selectGitHubBaseRepository({ ...input, host: "github.example.com:8443" }),
+      null,
+    );
+    assert.deepStrictEqual(
+      resolveGitHubRepository({ ...input, hostHint: undefined, defaultHost: "github.com" }),
+      {
+        host: "github.example.com:8443",
+        locator: { host: "github.example.com:8443", owner: "me", name: "web" },
+      },
+    );
+  });
+
   it("leaves gh to choose when it might weigh the remotes differently", () => {
     for (const input of [
       { remotes: "" },
