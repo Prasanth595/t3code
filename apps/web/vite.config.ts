@@ -111,7 +111,7 @@ const browserTestProject = {
       screenshotFailures: false,
       commands: {
         // Playwright's mouse outlives each test, so whatever mounts under its last
-        // position starts hovered. test/browserSetup.ts parks it off the page after each test.
+        // position starts hovered. test/browserSetup.ts parks it off the page before each test.
         resetPointer: async ({ page }) => {
           await page.mouse.move(-1, -1);
         },
