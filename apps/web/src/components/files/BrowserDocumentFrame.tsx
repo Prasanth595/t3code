@@ -155,7 +155,9 @@ export function HtmlRenderDocument(props: {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [src] = useState(() => {
     const url = new URL(props.src, window.location.href);
-    if (props.selectionBridge) url.searchParams.set("t3-html-selection", "1");
+    if (props.selectionBridge && (url.protocol === "http:" || url.protocol === "https:")) {
+      url.searchParams.set("t3-html-selection", "1");
+    }
     return `${url.href.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`;
   });
   const [loaded, setLoaded] = useState(false);
