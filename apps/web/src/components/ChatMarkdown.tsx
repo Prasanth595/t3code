@@ -266,6 +266,7 @@ interface ChatMarkdownProps {
   /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
       uploads need; without it those images and videos load unauthenticated and 404. */
   githubMedia?: boolean | undefined;
+  githubMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -2383,6 +2384,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  githubMediaRepository,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -2394,6 +2396,7 @@ function useChatMarkdownState({
     explicitEnvironmentId,
     cwd,
     imageBaseDir,
+    githubMediaRepository,
   ].join("\u0000");
   // Tagged with the scope it was opened in: a request from the previous scope can
   // resolve before the effect cleanup below invalidates it, and must stay hidden.
@@ -2820,6 +2823,7 @@ function useChatMarkdownState({
     expandMedia,
     fileLinkChip,
     githubMedia,
+    githubMediaRepository,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -3281,6 +3285,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       cwd,
       environmentId,
       githubMedia,
+      githubMediaRepository,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -3324,7 +3329,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={{
+            _tag: "github-media",
+            cwd,
+            url: githubMediaUrl,
+            ...(githubMediaRepository !== undefined ? { repository: githubMediaRepository } : {}),
+          }}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
