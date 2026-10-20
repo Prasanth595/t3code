@@ -1138,6 +1138,7 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           },
         });
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          nativeSpawningDisabled: true,
           runtimeMode: "auto-accept-edits",
           interactionMode: "default",
           cwd: "/workspace",
@@ -1167,6 +1168,15 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
           }),
         );
         assert.equal(openedOptions?.permissionMode, "acceptEdits");
+        assert.deepEqual(openedOptions?.disallowedTools, [
+          "Agent",
+          "Task",
+          "TeamCreate",
+          "Teammate",
+          "SendMessage",
+          "Workflow",
+          "RemoteTrigger",
+        ]);
         const canUseTool = openedOptions?.canUseTool;
         assert.isFunction(canUseTool);
 
@@ -2697,6 +2707,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
@@ -2850,12 +2861,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         threadId,
         providerSessionId: ProviderSessionId.make("provider-session-claude-wake"),
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        runtimePolicy: options?.runtimePolicy ?? CLAUDE_TEST_RUNTIME_POLICY,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        runtimePolicy: options?.runtimePolicy ?? CLAUDE_TEST_RUNTIME_POLICY,
       });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       yield* runtime.events.pipe(
@@ -3378,6 +3389,119 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
     );
   });
+
+  it.effect.each([true, false])(
+    "enforces native launch and resume tools at the SDK boundary (governed=%s)",
+    (governed) =>
+      Effect.gen(function* () {
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: "/workspace",
+          ...(governed ? { nativeSpawningDisabled: true } : {}),
+        });
+        const harness = yield* makeWakeHarnessWithOptions({ runtimePolicy });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-native-launch-policy"),
+            text: "Inspect the task.",
+            attachments: [],
+            runtimePolicy,
+          }),
+        );
+        const options = harness.getOpenedOptions()!;
+        assert.equal(options.permissionMode, "bypassPermissions");
+        assert.equal(options.allowDangerouslySkipPermissions, true);
+        const launchTools = [
+          ["Agent", { prompt: "Do work" }],
+          ["Task", { prompt: "Do work" }],
+          ["TeamCreate", { team_name: "workers" }],
+          ["Teammate", { operation: "spawn" }],
+          ["SendMessage", { to: "completed-agent", message: "Resume work" }],
+          [
+            "Workflow",
+            {
+              script:
+                'export const meta = { name: "work", description: "Work", phases: [] }; await agent("Do work");',
+            },
+          ],
+          ["Workflow", { scriptPath: "/workspace/workflow.js", resumeFromRunId: "prior-run" }],
+          ["RemoteTrigger", { action: "run", trigger_id: "remote-agent" }],
+          ["RemoteTrigger", { action: "create", body: { prompt: "Do work" } }],
+        ] as const;
+        const statusTools = ["ListAgents", "TaskStop", "TaskOutput", "TaskList", "TaskGet"];
+        if (governed) {
+          assert.deepEqual(options.disallowedTools, [
+            ...new Set(launchTools.map(([name]) => name)),
+          ]);
+        } else {
+          assert.isUndefined(options.disallowedTools);
+        }
+        const approveForwarded = Effect.fn("test.approveForwarded")(function* (
+          toolName: string,
+          toolInput: Record<string, unknown>,
+          toolUseID: string,
+        ) {
+          const pending = yield* Effect.promise(() =>
+            options.canUseTool!(toolName, toolInput, {
+              signal: new AbortController().signal,
+              toolUseID,
+              requestId: `request-${toolUseID}`,
+            }),
+          ).pipe(Effect.forkScoped);
+          const request = yield* Queue.take(harness.runtimeRequestReceipts);
+          yield* harness.runtime.respondToRuntimeRequest({
+            requestId: request.runtimeRequest.id,
+            decision: "accept",
+          });
+          return yield* Fiber.join(pending);
+        });
+        const eventsBeforeLaunch = harness.events.length;
+        for (const [index, [name, input]] of launchTools.entries()) {
+          const toolUseID = `launch-${index}`;
+          const decision = yield* governed
+            ? Effect.promise(() =>
+                options.canUseTool!(name, input, {
+                  signal: new AbortController().signal,
+                  toolUseID,
+                  requestId: `request-${toolUseID}`,
+                }),
+              )
+            : approveForwarded(name, input, toolUseID);
+          assert.equal(decision?.behavior, governed ? "deny" : "allow", name);
+          if (governed) {
+            assert.deepEqual(decision, {
+              behavior: "deny",
+              message: "Native spawning is disabled by server policy.",
+              toolUseID,
+            });
+          }
+        }
+        if (governed) {
+          assert.deepEqual(harness.events.slice(eventsBeforeLaunch), []);
+        }
+        for (const name of statusTools) {
+          assert.isFalse(options.disallowedTools?.includes(name) ?? false);
+          const decision = yield* approveForwarded(
+            name,
+            { task_id: "existing-agent" },
+            `status-${name}`,
+          );
+          assert.equal(decision?.behavior, "allow", name);
+        }
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "native-policy-result", result: "Done." }),
+        );
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
 
   describe("Plan-mode tool approval", () => {
     const openPlanTurn = Effect.fn("openPlanTurn")(function* (
@@ -18107,5 +18231,33 @@ describe("ClaudeAdapterV2 query message stream", () => {
       yield* Scope.close(scope, Exit.void);
       assert.isTrue(closed);
     }),
+  );
+});
+
+it("keeps the SDK spawning denylist in bypassPermissions and changes the query reuse key", () => {
+  const runtimePolicy = {
+    runtimeMode: "full-access" as const,
+    interactionMode: "default" as const,
+    cwd: null,
+  };
+  const unrestricted = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy);
+  const governed = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy({
+    ...runtimePolicy,
+    nativeSpawningDisabled: true,
+  });
+  assert.equal(governed.permissionMode, "bypassPermissions");
+  assert.deepEqual(governed.disallowedTools, [
+    "Agent",
+    "Task",
+    "TeamCreate",
+    "Teammate",
+    "SendMessage",
+    "Workflow",
+    "RemoteTrigger",
+  ]);
+  assert.isUndefined(unrestricted.disallowedTools);
+  assert.notEqual(
+    ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(governed, {}),
+    ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(unrestricted, {}),
   );
 });

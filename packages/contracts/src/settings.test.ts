@@ -1274,3 +1274,19 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("server-owned delegation policy", () => {
+  it("defaults off, accepts bounded limits, and cannot be changed by a settings patch", () => {
+    expect(decodeServerSettings({}).delegationPolicy).toBeNull();
+    const delegationPolicy = { maxDepth: 1, maxActive: 4, maxTotal: 16 };
+    expect(decodeServerSettings({ delegationPolicy }).delegationPolicy).toEqual(delegationPolicy);
+    expect(decodeServerSettingsPatch({ delegationPolicy })).not.toHaveProperty("delegationPolicy");
+    for (const invalid of [
+      { ...delegationPolicy, maxDepth: 2 },
+      { ...delegationPolicy, maxActive: 0 },
+      { ...delegationPolicy, maxTotal: 1.5 },
+    ]) {
+      expect(() => decodeServerSettings({ delegationPolicy: invalid })).toThrow();
+    }
+  });
+});

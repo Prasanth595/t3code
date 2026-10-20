@@ -1,3 +1,4 @@
+import * as ServerSettings from "../../../serverSettings.ts";
 import {
   EnvironmentId,
   ProjectId,
@@ -169,6 +170,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const layerDependencies = Layer.mergeAll(
+    ServerSettings.layerTest(),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),

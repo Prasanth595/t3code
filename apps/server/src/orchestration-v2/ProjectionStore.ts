@@ -384,6 +384,10 @@ export interface ShellSnapshotOptions {
 }
 
 export interface ProjectionStoreV2Shape {
+  /** Includes deleted/archived threads and terminal tasks: accepted launches never refund total. */
+  readonly getDelegationBudget: (
+    rootThreadId: ThreadId,
+  ) => Effect.Effect<{ readonly active: number; readonly total: number }, ProjectionStoreV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -6458,7 +6462,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })));
 
+    const getDelegationBudget: ProjectionStoreV2Shape["getDelegationBudget"] = (rootThreadId) =>
+      sql<{ active: number; total: number }>`
+        SELECT COUNT(DISTINCT task.child_thread_id) AS total,
+          COUNT(DISTINCT CASE WHEN task.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN task.child_thread_id END) AS active
+        FROM orchestration_v2_projection_subagents AS task
+        JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = task.thread_id
+        WHERE task.origin = 'app_owned'
+          AND json_extract(thread.payload_json, '$.lineage.rootThreadId') = ${rootThreadId}
+      `.pipe(
+        Effect.map((rows) => ({
+          active: Number(rows[0]?.active ?? 0),
+          total: Number(rows[0]?.total ?? 0),
+        })),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId: rootThreadId, cause })),
+      );
+
     return {
+      getDelegationBudget,
       apply,
       getShellSnapshot,
       readShellSnapshot,
@@ -6510,6 +6531,29 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const sequence = yield* Ref.make(0);
 
     const service: ProjectionStoreV2Shape = {
+      getDelegationBudget: (rootThreadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            const tasks = Array.from(state.projections.values())
+              .filter((projection) => projection.thread.lineage.rootThreadId === rootThreadId)
+              .flatMap((projection) => projection.subagents)
+              .filter((task) => task.origin === "app_owned" && task.childThreadId !== null);
+            return {
+              total: new Set(tasks.map((task) => task.childThreadId)).size,
+              active: new Set(
+                tasks
+                  .filter(
+                    (task) =>
+                      task.status !== "completed" &&
+                      task.status !== "failed" &&
+                      task.status !== "cancelled" &&
+                      task.status !== "interrupted",
+                  )
+                  .map((task) => task.childThreadId),
+              ).size,
+            };
+          }),
+        ),
       apply:
         /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
         Effect.fnUntraced(function* (event) {

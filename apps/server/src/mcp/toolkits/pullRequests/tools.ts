@@ -1,3 +1,4 @@
+import * as ServerSettings from "../../../serverSettings.ts";
 import {
   McpCapabilityUnavailableError,
   OrchestratorMcpFailure,
@@ -21,6 +22,7 @@ import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequest
 
 const dependencies = [
   McpInvocationContext.McpInvocationContext,
+  ServerSettings.ServerSettingsService,
   ThreadManagementService.ThreadManagementService,
   Orchestrator.OrchestratorV2,
   ProjectService.ProjectService,

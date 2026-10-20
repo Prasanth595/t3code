@@ -266,6 +266,11 @@ export function layerWithRegistry<Error>(
       SqlClient.SqlClient,
       MigrationError | PlatformError.PlatformError | SqlError
     >;
+    readonly delegationPolicy?: {
+      readonly maxDepth: 1;
+      readonly maxActive: number;
+      readonly maxTotal: number;
+    };
     readonly runEffectWorker?: boolean;
     readonly runContinuationWorker?: boolean;
     readonly recoverOnStartup?: boolean;
@@ -299,6 +304,9 @@ export function layerWithRegistry<Error>(
   );
   const layerServerSettings = ServerSettings.layerTest({
     responseStreamingMode: "turn",
+    ...(options.delegationPolicy === undefined
+      ? {}
+      : { delegationPolicy: options.delegationPolicy }),
     ...(options.continueThreadsAfterServerUpdate === undefined
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),

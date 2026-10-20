@@ -37,6 +37,7 @@ const shared = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ServerSettings.ServerSettingsService,
     ThreadManagementService.ThreadManagementService,
     ProjectService.ProjectService,
     Crypto.Crypto,

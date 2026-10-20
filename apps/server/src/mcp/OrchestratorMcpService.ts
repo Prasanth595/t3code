@@ -1,4 +1,5 @@
 import {
+  ProviderDriverKind,
   CommandId,
   type RunId,
   isProviderAvailable,
@@ -57,6 +58,7 @@ import {
   ProviderRequestKind,
   type RuntimeMode,
   type ScheduledTask,
+  type ServerSettings as ServerSettingsValue,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
   ThreadId,
@@ -230,6 +232,20 @@ export const isLiveCallerShell = (
       (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
     ) ??
       false));
+
+/** Shared decision; each transport keeps its own settings-read failure mapping. */
+export const refuseGovernedThreadLaunch = (
+  scope: McpInvocationScope,
+  policy: ServerSettingsValue["delegationPolicy"],
+) =>
+  scope.thread !== undefined && policy !== null
+    ? Effect.fail(
+        failure(
+          "delegation_depth_exceeded",
+          "Governed agents must launch through delegate_task; alternate app launch paths are disabled.",
+        ),
+      )
+    : Effect.void;
 
 function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
@@ -1718,8 +1734,19 @@ const make = Effect.gen(function* () {
     return task;
   });
 
+  const refuseAlternateLaunch = Effect.fn("OrchestratorMcpService.refuseAlternateLaunch")(
+    function* (scope: McpInvocationScope) {
+      if (scope.thread === undefined) return;
+      const policy = (yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      )).delegationPolicy;
+      yield* refuseGovernedThreadLaunch(scope, policy);
+    },
+  );
+
   return OrchestratorMcpService.of({
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
+      yield* refuseAlternateLaunch(scope);
       const { parent, limits } = yield* loadCaller(scope);
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
@@ -1795,6 +1822,7 @@ const make = Effect.gen(function* () {
     ),
     updateScheduledTask: Effect.fn("OrchestratorMcpService.updateScheduledTask")(
       function* (scope, input) {
+        yield* refuseAlternateLaunch(scope);
         const { parent, limits } = yield* loadCaller(scope);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
@@ -1994,7 +2022,22 @@ const make = Effect.gen(function* () {
         Effect.map((settings) => settings.providerModelPreferences ?? {}),
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
+      const delegationPolicy = (yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      )).delegationPolicy;
       return {
+        delegationPolicy:
+          delegationPolicy === null
+            ? null
+            : {
+                ...delegationPolicy,
+                budgetScope: "root_thread_lifetime" as const,
+                nativeSpawning: "disabled" as const,
+                supportedDriverKinds: [
+                  ProviderDriverKind.make("codex"),
+                  ProviderDriverKind.make("claudeAgent"),
+                ],
+              },
         parentThreadId: parent?.thread.id ?? null,
         inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
         inheritedModel: parent?.thread.modelSelection.model ?? null,
@@ -2138,12 +2181,14 @@ const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError((error) =>
-            error._tag === "ThreadManagementProviderInstanceDisabledError"
-              ? threadManagementFailure(error)
-              : failure(
-                  "orchestration_error",
-                  `Unable to create delegated task: ${errorMessage(error)}`,
-                ),
+            error._tag === "DelegationPolicyError"
+              ? failure(error.code, error.message)
+              : error._tag === "ThreadManagementProviderInstanceDisabledError"
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to create delegated task: ${errorMessage(error)}`,
+                  ),
           ),
         );
       const taskEvent = result.storedEvents.find(
@@ -2396,6 +2441,7 @@ const make = Effect.gen(function* () {
     }),
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
+        yield* refuseAlternateLaunch(callerScope);
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
@@ -2700,6 +2746,8 @@ const make = Effect.gen(function* () {
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId);
+      if (scope.thread !== undefined && target.thread.id !== scope.thread.threadId)
+        yield* refuseAlternateLaunch(scope);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* resolveRuntimeMode(limits.runtimeMode, target.thread.runtimeMode);
       yield* resolveInteractionMode(limits.interactionMode, target.thread.interactionMode);

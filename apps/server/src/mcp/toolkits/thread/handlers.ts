@@ -113,6 +113,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   t3_thread_fork: writesThread((input) =>
     Effect.gen(function* () {
+      yield* McpToolAccess.refuseGovernedLaunch;
       const { threads, projection } = yield* readThread(input.threadId);
       const commandId = yield* newCommandId();
       const targetThreadId = ThreadId.make(`${commandId}:fork`);

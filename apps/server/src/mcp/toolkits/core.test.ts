@@ -175,6 +175,7 @@ it.effect("checks capability through the production registration", () =>
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
       ),
@@ -216,6 +217,7 @@ it.effect("returns a bounded public failure without serializing storage causes",
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -293,6 +295,7 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(McpProviderSessions.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
@@ -330,6 +333,7 @@ it.effect("returns invalid parameter errors through the production registration"
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
       ),
@@ -355,6 +359,7 @@ it.effect("keeps unexpected handler defects private through the production regis
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -442,6 +447,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -599,6 +605,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -659,6 +666,7 @@ it.effect("a read-only client reads threads and is refused every write before it
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -712,6 +720,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(ServerSettings.layerTest()),
@@ -751,6 +760,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(ServerSettings.layerTest()),
@@ -826,6 +836,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
       Effect.provide(
         layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(ServerSettings.layerTest()),
           Layer.provide(NodeCrypto.layer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -930,6 +941,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
     Effect.provide(
       layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -1000,10 +1012,49 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
     Effect.provide(
       McpHttpServer.layerAttachmentToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
         Layer.provide(ServerSecretStore.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-attachment-" })),
         Layer.provide(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect.each([
+  ["t3_thread_fork", { sourcePoint: { type: "latest_stable" } }],
+  [
+    "t3_queue_promote_to_steer",
+    { threadId: "another-thread", queuedRunId: "queued-run", targetRunId: "target-run" },
+  ],
+  ["run_scheduled_task_now", { taskId: "task:governed" }],
+] as const)("refuses governed alternate launch tool %s before its handler runs", ([name, args]) =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name, arguments: args })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(result)).toMatchObject({ code: "delegation_depth_exceeded" });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(
+          ServerSettings.layerTest({
+            delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 },
+          }),
+        ),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            // An unexpected dispatch is a defect, so denial must happen before preparation/dispatch.
+          }),
+        ),
       ),
     ),
   ),

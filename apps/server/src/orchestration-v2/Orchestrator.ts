@@ -1,3 +1,8 @@
+import {
+  DelegationPolicyError,
+  delegationAdmissionError,
+  nativeSpawnEnforcementError,
+} from "./DelegationPolicy.ts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -279,6 +284,7 @@ export function canReplayCommandReceipt(
 }
 
 export const OrchestratorV2Error = Schema.Union([
+  DelegationPolicyError,
   OrchestratorDispatchError,
   OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
@@ -6919,6 +6925,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
+      const delegationPolicy = (yield* serverSettings.getSettings.pipe(mapDispatchError(command)))
+        .delegationPolicy;
+      if (delegationPolicy !== null) {
+        // Walk all ancestors so a user-created fork of a child retains its depth.
+        let ancestor = parentProjection.thread;
+        const seen = new Set<ThreadId>();
+        let child = false;
+        while (true) {
+          if (seen.has(ancestor.id))
+            return yield* new DelegationPolicyError({ code: "delegation_depth_exceeded" });
+          seen.add(ancestor.id);
+          if (ancestor.lineage.relationshipToParent === "subagent") child = true;
+          if (ancestor.lineage.parentThreadId === null) break;
+          ancestor = yield* projectionStore
+            .getThread(ancestor.lineage.parentThreadId)
+            .pipe(mapDispatchError(command));
+        }
+        const budget = yield* projectionStore
+          .getDelegationBudget(parentProjection.thread.lineage.rootThreadId)
+          .pipe(mapDispatchError(command));
+        const refusal = delegationAdmissionError(delegationPolicy, { ...budget, child });
+        if (refusal !== undefined) return yield* refusal;
+      }
+
       const targetAdapter = yield* providerAdapters.get(command.modelSelection.instanceId).pipe(
         Effect.mapError(
           (cause) =>
@@ -6929,6 +6959,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             }),
         ),
       );
+
+      if (delegationPolicy !== null) {
+        const refusal = nativeSpawnEnforcementError(targetAdapter.driver);
+        if (refusal !== undefined) return yield* refusal;
+      }
 
       const now = command.createdAt ?? (yield* DateTime.now);
       const taskNodeId = idAllocator.derive.delegatedTaskNode({
@@ -11514,7 +11549,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
       Effect.catch((cause) =>
         Effect.gen(function* () {
-          if (cause._tag === "OrchestratorThreadAboveModeLimitError") return yield* cause;
+          if (
+            cause._tag === "OrchestratorThreadAboveModeLimitError" ||
+            cause._tag === "DelegationPolicyError"
+          )
+            return yield* cause;
           const rejectedAt = yield* DateTime.now;
           const receipt = yield* eventSink
             .commitRejectedCommand({
@@ -11630,6 +11669,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
+    if (command.type === "delegated_task.request") {
+      const policy = (yield* serverSettings.getSettings.pipe(mapDispatchError(command)))
+        .delegationPolicy;
+      if (policy !== null) {
+        const parent = yield* projectionStore
+          .getThread(command.parentThreadId)
+          .pipe(mapDispatchError(command));
+        const rootThreadId = parent.lineage.rootThreadId;
+        // Admission and receipt replay share the durable root's lock, including forks.
+        return yield* rootThreadId === command.parentThreadId
+          ? dispatch
+          : threadDispatch.withLock(rootThreadId, dispatch);
+      }
+    }
     if (
       command.type !== "message.dispatch" ||
       (command.createdBy !== "user" && command.creationSource !== "mcp")

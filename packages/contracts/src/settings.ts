@@ -1091,6 +1091,15 @@ export const StorageCleanupSettings = Schema.Struct({
 export type StorageCleanupSettings = typeof StorageCleanupSettings.Type;
 
 export const ServerSettings = Schema.Struct({
+  // Server-owned: deliberately absent from ServerSettingsPatch and project overrides.
+  // A root is the existing lineage.rootThreadId, including its user-created forks.
+  delegationPolicy: Schema.NullOr(
+    Schema.Struct({
+      maxDepth: Schema.Literal(1),
+      maxActive: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+      maxTotal: Schema.Number.check(Schema.isInt(), Schema.isGreaterThan(0)),
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   // Null means no client has migrated this preference yet; an empty value is
   // authoritative so another device cannot resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),

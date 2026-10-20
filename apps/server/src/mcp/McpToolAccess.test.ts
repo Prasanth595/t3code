@@ -1,3 +1,4 @@
+import * as ServerSettings from "../serverSettings.ts";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -104,6 +105,7 @@ const probe = {
   failureMode: "return" as const,
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    ServerSettings.ServerSettingsService,
     ThreadManagement.ThreadManagementService,
   ],
 };
@@ -185,10 +187,18 @@ export const refusedAtCompileTime = () => {
   );
 };
 
-const probeServer = (threads: Layer.Layer<ThreadManagement.ThreadManagementService>) =>
+const probeServer = (
+  threads: Layer.Layer<ThreadManagement.ThreadManagementService>,
+  governed = false,
+) =>
   McpHttpServer.toolkitRegistration(ProbeToolkit, layerProbeHandlers).pipe(
     Layer.provideMerge(McpServer.McpServer.layer),
     Layer.provideMerge(threads),
+    Layer.provideMerge(
+      ServerSettings.layerTest(
+        governed ? { delegationPolicy: { maxDepth: 1, maxActive: 4, maxTotal: 16 } } : {},
+      ),
+    ),
   );
 
 const decodeOutcome = Schema.decodeUnknownEffect(
@@ -341,6 +351,29 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
           getThreadShell: (threadId) =>
             Effect.fail(new OrchestratorProjectionError({ threadId, cause: "unreadable" })),
         }),
+      ),
+    ),
+  ),
+);
+
+// Real registered tools execute the same gates for root and child thread credentials.
+it.effect.each([
+  ["starts_threads", fullAccess, {}, "delegation_depth_exceeded"],
+  ["writes_threads", fullAccess, { threadId: supervisedThreadId }, "delegation_depth_exceeded"],
+  ["writes", fullAccess, {}, "ran"],
+  ["writes_environment", fullAccess, {}, "delegation_depth_exceeded"],
+  ["acts_as_caller", fullAccess, {}, "ran"],
+  ["writes_threads", fullAccess, {}, "ran"],
+  ["starts_threads", fullAccessClient, {}, "full-access/default"],
+] as const)("governed %s: %s", ([tool, scope, args, expected]) =>
+  call(tool, scope, args).pipe(
+    Effect.map((outcome) => expect(outcome).toBe(expected)),
+    Effect.provide(
+      probeServer(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+        }),
+        true,
       ),
     ),
   ),

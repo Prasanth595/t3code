@@ -526,6 +526,18 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
 export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
+  delegationPolicy: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        maxDepth: Schema.Literal(1),
+        maxActive: Schema.Number,
+        maxTotal: Schema.Number,
+        budgetScope: Schema.Literal("root_thread_lifetime"),
+        nativeSpawning: Schema.Literal("disabled"),
+        supportedDriverKinds: Schema.Array(ProviderDriverKind),
+      }),
+    ),
+  ),
   parentThreadId: Schema.NullOr(ThreadId),
   inheritedProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   inheritedModel: Schema.NullOr(Schema.String),
@@ -672,6 +684,9 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
   "OrchestratorMcpFailure",
   {
     code: Schema.Literals([
+      "delegation_depth_exceeded",
+      "delegation_budget_exceeded",
+      "delegation_enforcement_unsupported",
       "capability_denied",
       "parent_not_active",
       "provider_unavailable",

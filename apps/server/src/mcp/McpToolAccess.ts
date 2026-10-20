@@ -15,8 +15,13 @@ import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { resolveInteractionMode, resolveRuntimeMode } from "./OrchestratorMcpService.ts";
+import {
+  refuseGovernedThreadLaunch,
+  resolveInteractionMode,
+  resolveRuntimeMode,
+} from "./OrchestratorMcpService.ts";
 import {
   assertFullAccess,
   assertLiveCaller,
@@ -100,6 +105,20 @@ const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(
   Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "This tool")),
 );
 
+/** Agent launches must go through delegate_task admission; user/UI calls have no thread credential. */
+export const refuseGovernedLaunch = McpInvocationContext.McpInvocationContext.pipe(
+  Effect.flatMap((scope) =>
+    scope.thread === undefined
+      ? Effect.void
+      : Effect.gen(function* () {
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const policy = (yield* settings.getSettings.pipe(Effect.mapError(unavailable)))
+            .delegationPolicy;
+          yield* refuseGovernedThreadLaunch(scope, policy);
+        }),
+  ),
+);
+
 export const reads = <P, A, E, R>(handle: (params: P) => Effect.Effect<A, E, R>) =>
   declare((params: P) => handle(params));
 
@@ -133,6 +152,7 @@ export const writesThreads = <P, A, E, R>(
       const caller = yield* writingCaller;
       for (const threadId of threads(params)) {
         if (threadId === undefined || threadId === caller.scope.thread?.threadId) continue;
+        yield* refuseGovernedLaunch;
         const target = yield* caller.threads
           .getThreadShell(threadId)
           .pipe(Effect.mapError(unavailable));
@@ -181,6 +201,7 @@ export const startsThreads = <P, A, E, R>(
   declare((params: P) =>
     Effect.gen(function* () {
       const { limits } = yield* writingCaller;
+      yield* refuseGovernedLaunch;
       const requested = modes(params);
       const started: StartedModes = {
         runtimeMode: yield* resolveRuntimeMode(limits.runtimeMode, requested.runtimeMode),
@@ -208,11 +229,14 @@ export const writesEnvironment = <P, A, E, R>(
 ) => {
   const check = orchestratingCaller.pipe(
     Effect.tap((caller) => assertFullAccess(caller, fullAccessRequired)),
+    Effect.tap(() => refuseGovernedLaunch),
   );
   return declare((params: P) => check.pipe(Effect.flatMap(() => handle(params, check))));
 };
 
-type CheckServices = Effect.Services<typeof orchestratingCaller>;
+type CheckServices =
+  | Effect.Services<typeof orchestratingCaller>
+  | ServerSettings.ServerSettingsService;
 
 type Declarations<Handlers> = {
   readonly [Name in keyof Handlers]: Declaration<Handlers[Name]> & NotCallable;
