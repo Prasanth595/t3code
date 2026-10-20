@@ -1,104 +1,189 @@
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
-import Animated from "react-native-reanimated";
 import { useState } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
+import Animated from "react-native-reanimated";
 import { AppText as Text } from "../../components/ui/AppText";
-import { PR_ROW_LAYOUT, PR_ROW_ENTER, PR_ROW_EXIT } from "./pullRequestAnimations";
-import { PullRequestDiffStats, PullRequestReadStatus } from "./PullRequestPresentation";
-import { usePullRequestFilesData } from "./usePullRequestFilesData";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { RowPressable } from "../../components/ui/RowPressable";
+import { Toolbar } from "../../components/ui/Toolbar";
+import type { ReviewRenderableFile } from "../review/reviewModel";
+import { PR_ROW_ENTER, PR_ROW_EXIT, PR_ROW_LAYOUT } from "./pullRequestAnimations";
 import {
+  PullRequestFileRow,
+  PullRequestFileRowSkeleton,
   PullRequestFilesEmptyState,
+  PullRequestFilesFilterMenu,
   PullRequestFilesFooter,
-  type FilesData,
-} from "./PullRequestFilesShared";
-function PullRequestFilesSheetHeader({ data }: { readonly data: FilesData }) {
-  const { parsed, loading, fileCount, summary, viewed, filter } = data;
+  PullRequestFilesSummary,
+  pullRequestFileSkeletonCount,
+} from "./PullRequestFileList";
+import { PullRequestDiffStats, PullRequestReadStatus } from "./PullRequestPresentation";
+import { PullRequestSheetContent } from "./PullRequestSheetContent";
+import type { PullRequestDiffParams } from "./usePullRequestDiff";
+import { fileDirectory, usePullRequestFiles } from "./usePullRequestFiles";
+
+type SheetItem =
+  | { readonly kind: "directory"; readonly key: string; readonly directory: string }
+  | { readonly kind: "file"; readonly key: string; readonly file: ReviewRenderableFile }
+  | { readonly kind: "skeleton"; readonly key: string; readonly index: number };
+
+function directoryItems(
+  files: ReadonlyArray<ReviewRenderableFile>,
+  collapsed: ReadonlySet<string>,
+): SheetItem[] {
+  const sorted = files
+    .map((file) => ({ file, directory: fileDirectory(file.path) }))
+    .sort(
+      (a, b) => a.directory.localeCompare(b.directory) || a.file.path.localeCompare(b.file.path),
+    );
+  const items: SheetItem[] = [];
+  sorted.forEach(({ file, directory }, index) => {
+    if (index === 0 || directory !== sorted[index - 1]?.directory) {
+      items.push({ kind: "directory", key: `directory:${directory}`, directory });
+    }
+    if (!collapsed.has(directory)) items.push({ kind: "file", key: file.id, file });
+  });
+  return items;
+}
+
+function PullRequestDirectoryRow(props: {
+  readonly directory: string;
+  readonly collapsed: boolean;
+  readonly onPress: () => void;
+}) {
+  const label = props.directory || "Repository root";
   return (
-    <>
-      <PullRequestReadStatus pending={false} error={data.result.error} />
-      {loading ? (
-        <View
-          accessible
-          accessibilityLabel="Loading changed files"
-          accessibilityState={{ busy: true }}
-          className="flex-row items-center gap-2 py-2"
-        >
-          <View className="flex-1">
-            {fileCount !== undefined ? (
-              <Text textRole="caption" className="text-foreground-muted">
-                {fileCount} {fileCount === 1 ? "file" : "files"}
-              </Text>
-            ) : (
-              <View className="h-2.5 w-28 rounded bg-subtle-strong" />
-            )}
-          </View>
-          {summary ? (
-            <PullRequestDiffStats
-              additions={summary.additions}
-              deletions={summary.deletions}
-              compact
-            />
-          ) : null}
-        </View>
-      ) : parsed.kind === "files" ? (
-        <View className="flex-row items-center gap-2 py-2">
-          <Text textRole="caption" className="min-w-0 flex-1 text-foreground-muted">
-            {parsed.fileCount} {filter.hiddenCount ? "visible" : "changed"}{" "}
-            {parsed.fileCount === 1 ? "file" : "files"}
-            {viewed.supported
-              ? ` · ${parsed.files.filter((file) => viewed.isViewed(file.path)).length} viewed`
-              : ""}
-            {filter.hideTestFiles
-              ? ` · ${filter.hiddenCount} test ${filter.hiddenCount === 1 ? "file" : "files"} hidden`
-              : ""}
-          </Text>
-          <PullRequestDiffStats additions={parsed.additions} deletions={parsed.deletions} compact />
-        </View>
-      ) : null}
-      <PullRequestFilesEmptyState data={data} />
-    </>
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ expanded: !props.collapsed }}
+      onPress={props.onPress}
+      className="min-h-11 flex-row items-center gap-2 pt-4 pb-2"
+    >
+      <SymbolView
+        name={props.collapsed ? "chevron.right" : "chevron.down"}
+        size={11}
+        tintColorClassName="accent-icon-muted"
+      />
+      <SymbolView name="folder" size={16} tintColorClassName="accent-icon-muted" />
+      <Text textRole="label" className="min-w-0 flex-1 text-foreground-muted" numberOfLines={2}>
+        {label}
+      </Text>
+    </RowPressable>
   );
 }
 
-export function usePullRequestFilesSheetContent(
-  props: Parameters<typeof usePullRequestFilesData>[0],
-) {
-  const data = usePullRequestFilesData(props);
-  return {
-    filter: data.filter,
-    rows: data.rows,
-    header: <PullRequestFilesSheetHeader data={data} />,
-    footer: <PullRequestFilesFooter data={data} />,
-  };
-}
-
-export function PullRequestFilesSheet({
-  content,
-}: {
-  readonly content: ReturnType<typeof usePullRequestFilesSheetContent>;
+/** Changed-file picker presented over a file diff; files are grouped by directory. */
+export function PullRequestFilesSheet(props: {
+  readonly params: PullRequestDiffParams;
+  readonly onSelectFile: (path: string) => void;
 }) {
+  const { params } = props;
+  const state = usePullRequestFiles(params);
+  const { diff, parsed, filter, loading } = state;
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [animationsReady, setAnimationsReady] = useState(false);
+  const stats = parsed.kind === "files" ? parsed : state.expectedStats;
+  const toggleDirectory = (directory: string) =>
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (!next.delete(directory)) next.add(directory);
+      return next;
+    });
+  const items: SheetItem[] = loading
+    ? Array.from({ length: pullRequestFileSkeletonCount(state) }, (_, index) => ({
+        kind: "skeleton",
+        key: `loading-file:${index}`,
+        index,
+      }))
+    : directoryItems(state.files, collapsed);
+
   return (
-    <AnimatedLegendList
-      data={content.rows}
-      keyExtractor={(row) => row.key}
-      itemLayoutAnimation={PR_ROW_LAYOUT}
-      onLoad={() => setAnimationsReady(true)}
-      renderItem={({ item }) => (
-        <Animated.View
-          key={item.key}
-          entering={animationsReady ? PR_ROW_ENTER : undefined}
-          exiting={animationsReady ? PR_ROW_EXIT : undefined}
-        >
-          {item.content}
-        </Animated.View>
-      )}
-      contentInsetAdjustmentBehavior="automatic"
-      recycleItems={false}
-      estimatedItemSize={64}
-      ListHeaderComponent={content.header}
-      ListFooterComponent={content.footer}
-      contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
-    />
+    <PullRequestSheetContent
+      title="Changed files"
+      subtitle={`#${params.number} · ${params.commit ? params.commit.slice(0, 7) : params.repository}`}
+      scrollable={false}
+      trailing={
+        Platform.OS === "android" ? <PullRequestFilesFilterMenu filter={filter} /> : undefined
+      }
+    >
+      {Platform.OS === "ios" ? (
+        <Toolbar placement="right">
+          <Toolbar.Menu
+            title="Review files"
+            accessibilityLabel="Filter review files"
+            icon="line.3.horizontal.decrease"
+          >
+            <Toolbar.MenuAction
+              icon="line.3.horizontal.decrease"
+              isOn={filter.hideTestFiles}
+              onPress={filter.toggle}
+            >
+              <Toolbar.Label>Hide test files</Toolbar.Label>
+            </Toolbar.MenuAction>
+          </Toolbar.Menu>
+        </Toolbar>
+      ) : null}
+      <AnimatedLegendList
+        data={items}
+        keyExtractor={(item) => item.key}
+        getItemType={(item) => item.kind}
+        itemLayoutAnimation={PR_ROW_LAYOUT}
+        onLoad={() => setAnimationsReady(true)}
+        renderItem={({ item }) => (
+          <Animated.View
+            entering={animationsReady ? PR_ROW_ENTER : undefined}
+            exiting={animationsReady ? PR_ROW_EXIT : undefined}
+          >
+            {item.kind === "directory" ? (
+              <PullRequestDirectoryRow
+                directory={item.directory}
+                collapsed={collapsed.has(item.directory)}
+                onPress={() => toggleDirectory(item.directory)}
+              />
+            ) : item.kind === "file" ? (
+              <PullRequestFileRow
+                file={item.file}
+                showDirectory={false}
+                viewed={state.viewed.isViewed(item.file.path)}
+                onPress={() => props.onSelectFile(item.file.path)}
+              />
+            ) : (
+              <PullRequestFileRowSkeleton index={item.index} />
+            )}
+          </Animated.View>
+        )}
+        contentInsetAdjustmentBehavior="automatic"
+        recycleItems={false}
+        estimatedItemSize={64}
+        ListHeaderComponent={
+          <>
+            <PullRequestReadStatus pending={false} error={diff.error} />
+            {loading || parsed.kind === "files" ? (
+              <View
+                accessible={loading}
+                accessibilityLabel={loading ? "Loading changed files" : undefined}
+                accessibilityState={loading ? { busy: true } : undefined}
+                className="flex-row items-center gap-2 py-2"
+              >
+                <View className="min-w-0 flex-1">
+                  <PullRequestFilesSummary state={state} />
+                </View>
+                {stats ? (
+                  <PullRequestDiffStats
+                    additions={stats.additions}
+                    deletions={stats.deletions}
+                    compact
+                  />
+                ) : null}
+              </View>
+            ) : null}
+            <PullRequestFilesEmptyState state={state} />
+          </>
+        }
+        ListFooterComponent={<PullRequestFilesFooter state={state} />}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 20 }}
+      />
+    </PullRequestSheetContent>
   );
 }

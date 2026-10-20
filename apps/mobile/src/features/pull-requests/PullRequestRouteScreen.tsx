@@ -1,5 +1,3 @@
-import { usePullRequestFilesSection } from "./PullRequestFilesSection";
-import { PullRequestFilesFilter } from "./PullRequestFilesShared";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
@@ -107,8 +105,8 @@ import {
   PullRequestDiffStats,
   PullRequestReadStatus,
 } from "./PullRequestPresentation";
-import { PullRequestFilesSheet, usePullRequestFilesSheetContent } from "./PullRequestFilesSheet";
-import { PullRequestSheetContent } from "./PullRequestSheetContent";
+import { PullRequestFilesSheet } from "./PullRequestFilesSheet";
+import { usePullRequestFilesSection } from "./PullRequestFilesSection";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
 import {
@@ -298,7 +296,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const requestedSection = useRef(section);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const filesContent = usePullRequestFilesSection({ params });
+  const filesContent = usePullRequestFilesSection(params);
   const guidesEnabled = useReviewGuidesEnabled(params);
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>(DEFAULT_ACTIVITY_FILTER);
   const activityContent = usePullRequestActivityRows(params, activityFilter);
@@ -754,46 +752,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
 export function PullRequestFilesRouteScreen({ route }: StaticScreenProps<PullRequestDiffParams>) {
   const navigation = useNavigation();
   const fileSelectionId = useRoute().key;
-  const content = usePullRequestFilesSheetContent({
-    params: route.params,
-    groupByDirectory: true,
-    onSelectFile: (path) =>
-      navigation.dispatch(
-        StackActions.popTo("PullRequestFile", {
-          ...route.params,
-          path,
-          fileSelectionId,
-        }),
-      ),
-  });
   return (
-    <PullRequestSheetContent
-      title="Changed files"
-      scrollable={false}
-      subtitle={`#${route.params.number}${route.params.commit ? ` · ${route.params.commit.slice(0, 7)}` : ` · ${route.params.repository}`}`}
-      trailing={
-        Platform.OS === "android" ? <PullRequestFilesFilter filter={content.filter} /> : undefined
+    <PullRequestFilesSheet
+      params={route.params}
+      onSelectFile={(path) =>
+        navigation.dispatch(
+          StackActions.popTo("PullRequestFile", { ...route.params, path, fileSelectionId }),
+        )
       }
-    >
-      {Platform.OS === "ios" ? (
-        <Toolbar placement="right">
-          <Toolbar.Menu
-            title="Review files"
-            accessibilityLabel="Filter review files"
-            icon="line.3.horizontal.decrease"
-          >
-            <Toolbar.MenuAction
-              icon="line.3.horizontal.decrease"
-              isOn={content.filter.hideTestFiles}
-              onPress={content.filter.toggle}
-            >
-              <Toolbar.Label>Hide test files</Toolbar.Label>
-            </Toolbar.MenuAction>
-          </Toolbar.Menu>
-        </Toolbar>
-      ) : null}
-      <PullRequestFilesSheet content={content} />
-    </PullRequestSheetContent>
+    />
   );
 }
 
