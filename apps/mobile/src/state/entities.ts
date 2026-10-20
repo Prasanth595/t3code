@@ -16,18 +16,19 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import {
   hasThreadLinks,
   relabelThreadLinks,
   resolveThreadLinkRef,
 } from "@t3tools/shared/threadLinks";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { useMemo } from "react";
 
 import { threadChipTargets } from "../lib/enrichedLinkPresentation";
-import { resolveProjectIconGlyph } from "../lib/projectIcon";
+import { resolveProjectChipIcon } from "../lib/projectIcon";
+import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
@@ -76,7 +77,7 @@ const decodeThreadChipTargets = Schema.decodeUnknownSync(
   ),
 );
 
-const threadProjectFaviconAtom = Atom.family((key: string) => {
+const threadProjectChipIconAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
   return Atom.make((get): string | null => {
     const shell = get(environmentThreadShells.threadShellAtom(ref));
@@ -88,18 +89,24 @@ const threadProjectFaviconAtom = Atom.family((key: string) => {
           }),
         )
       : null;
-    if (!project || resolveProjectIconGlyph(project.projectIcon, project.title) !== null) {
-      return null;
-    }
-    const url = get(
-      projectFaviconUrlAtom({
-        environmentId: ref.environmentId,
-        cwd: project.workspaceRoot,
-        faviconPath: project.faviconPath,
-      }),
+    const icon = resolveProjectChipIcon(
+      project,
+      get(serverEnvironment.configValueAtom(ref.environmentId))?.scratchWorkspaceRoot,
+      () =>
+        project
+          ? get(
+              projectFaviconUrlAtom({
+                environmentId: ref.environmentId,
+                cwd: project.workspaceRoot,
+                faviconPath: project.faviconPath,
+              }),
+            )
+          : null,
     );
-    return isProjectFaviconFallbackUrl(url) ? null : url;
-  }).pipe(Atom.withLabel(`mobile-thread-project-favicon:${key}`));
+    if (!icon) return null;
+    if (icon.kind === "favicon") return icon.uri;
+    return Option.getOrNull(AsyncResult.value(get(projectGlyphImageAtom(projectGlyphKey(icon)))));
+  }).pipe(Atom.withLabel(`mobile-thread-project-chip-icon:${key}`));
 });
 
 const EMPTY_THREAD_CHIP_ICONS: ReadonlyMap<string, string> = new Map();
@@ -116,7 +123,9 @@ const threadChipIconsAtom = Atom.family((key: string) => {
       const ref = target.link
         ? (resolveThreadLinkRef(source, get(environmentThreadShells.threadRefsAtom)) ?? source)
         : source;
-      const icon = get(threadProjectFaviconAtom(JSON.stringify([ref.environmentId, ref.threadId])));
+      const icon = get(
+        threadProjectChipIconAtom(JSON.stringify([ref.environmentId, ref.threadId])),
+      );
       if (icon) icons.set(target.href, icon);
     }
     return icons;
