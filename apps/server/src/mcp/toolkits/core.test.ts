@@ -13,11 +13,15 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
@@ -49,6 +53,7 @@ import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
 import { dispatchFailure } from "../threadAccess.ts";
+import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
@@ -362,6 +367,131 @@ it.effect("keeps unexpected handler defects private through the production regis
   ),
 );
 
+it.effect("records the calling agent and the agent a tool acted on", () => {
+  // Recording runs detached from the tool response, so each expected event is awaited.
+  const recorded = [
+    Deferred.makeUnsafe<{ event: string; properties: object }>(),
+    Deferred.makeUnsafe<{ event: string; properties: object }>(),
+  ];
+  let recordedCount = 0;
+  const shell = (id: ThreadId, instanceId: string, model: string) =>
+    ({
+      id,
+      projectId: "mcp-core-project",
+      providerInstanceId: ProviderInstanceId.make(instanceId),
+      modelSelection: { instanceId: ProviderInstanceId.make(instanceId), model },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      archivedAt: null,
+      deletedAt: null,
+      activeRunId: "mcp-core-run",
+      createdBy: "agent",
+      creationSource: "mcp",
+      lineage: {
+        parentThreadId: id === threadId ? ThreadId.make("mcp-core-parent") : null,
+        relationshipToParent: id === threadId ? "subagent" : null,
+        rootThreadId: ThreadId.make("mcp-core-parent"),
+      },
+    }) as never;
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    yield* server
+      .callTool({ name: "t3_thread_fork", arguments: { sourcePoint: { type: "latest_stable" } } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    const { event, properties } = yield* Deferred.await(recorded[0]!);
+    expect(event).toBe("mcp.tool.invoked");
+    expect(properties).toMatchObject({
+      tool: "t3_thread_fork",
+      outcome: "ok",
+      callerProvider: "codex",
+      callerModel: "gpt-5.5",
+      callerOrigin: "agent",
+      callerDepth: 1,
+      targetProvider: "claudeAgent",
+      targetModel: "claude-opus-5-5",
+      targetRuntimeMode: "full-access",
+      targetInteractionMode: "default",
+      crossProvider: true,
+    });
+    expect(properties).toHaveProperty("durationMs");
+    expect(Object.values(properties).some((value) => String(value).includes("mcp-core"))).toBe(
+      false,
+    );
+
+    // Queue tools return only a sequence, so the receiving thread comes from the input.
+    yield* server
+      .callTool({
+        name: "t3_queue_edit",
+        arguments: { threadId: "mcp-core-other", queuedRunId: "mcp-core-queued", text: "secret" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    // The fork recorded a single event, so the next one is the queue edit.
+    expect((yield* Deferred.await(recorded[1]!)).properties).toMatchObject({
+      tool: "t3_queue_edit",
+      outcome: "ok",
+      callerProvider: "codex",
+      targetProvider: "claudeAgent",
+      crossProvider: true,
+    });
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) =>
+              Effect.succeed(
+                id === threadId
+                  ? shell(threadId, "codex", "gpt-5.5")
+                  : shell(id, "claudeAgent", "claude-opus-5-5"),
+              ),
+            getThreadRecords: () => Effect.succeed({ runs: [], messages: [] } as never),
+            getProjectThreadRecords: () =>
+              Effect.succeed({ thread: shell(threadId, "codex", "gpt-5.5") } as never),
+            dispatch: () => Effect.succeed({ sequence: 1 } as never),
+          }),
+        ),
+        Layer.provide(
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([
+              {
+                instanceId: ProviderInstanceId.make("codex"),
+                driver: "codex",
+                models: [{ slug: "gpt-5.5", isCustom: false }],
+              } as never,
+              {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                driver: "claudeAgent",
+                models: [{ slug: "claude-opus-5-5", isCustom: false }],
+              } as never,
+            ]),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(
+            AnalyticsService.AnalyticsService,
+            AnalyticsService.AnalyticsService.of({
+              record: (event, properties) =>
+                Deferred.succeed(recorded[recordedCount++]!, {
+                  event,
+                  properties: properties ?? {},
+                }).pipe(Effect.asVoid),
+              flush: Effect.void,
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+});
+
 it("keeps MCP preference output allowlisted and Unicode-bounded", () => {
   const settings = {
     ...DEFAULT_SERVER_SETTINGS,
@@ -491,6 +621,186 @@ it.effect("a client caller targets any thread within its ceiling and cannot act 
     ),
   ),
 );
+
+it.effect("lists, reads and resolves approvals with offered decisions and caller limits", () => {
+  const targetId = ThreadId.make("other-project-thread");
+  let target = McpToolAccessTestkit.liveThreadShell(targetId, { runtimeMode: "auto" });
+  const projection = {
+    ...McpToolAccessTestkit.idleThreadProjection(target),
+    runtimeRequests: [] as Array<OrchestrationV2RuntimeRequest>,
+    turnItems: [] as Array<OrchestrationV2TurnItem>,
+  };
+  const options = [
+    { decision: "accept" as const, label: "Allow" },
+    { decision: "decline" as const, label: "Deny" },
+    { decision: "cancel" as const, label: "Cancel" },
+  ];
+  for (const id of ["approve", "approve-client", "decline", "cancel", "question"]) {
+    const requestId = RuntimeRequestId.make(id);
+    projection.runtimeRequests.push({
+      id: requestId,
+      nodeId: NodeId.make("node:approval"),
+      providerTurnId: null,
+      nativeRequestRef: null,
+      kind: id === "question" ? "user_input" : "command",
+      status: "pending",
+      responseCapability: { type: "message" },
+      createdAt: target.updatedAt,
+      resolvedAt: null,
+    });
+    if (id !== "question") {
+      projection.turnItems.push({
+        id: TurnItemId.make(id),
+        threadId: targetId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: projection.turnItems.length,
+        status: "running",
+        title: null,
+        startedAt: target.updatedAt,
+        completedAt: null,
+        updatedAt: target.updatedAt,
+        type: "approval_request",
+        requestId,
+        requestKind: "command",
+        prompt:
+          id === "approve-client" ? `${"🙂".repeat(3999)}🚀hidden warning` : "Run the command?",
+        ...(id === "approve-client" ? { appName: "Fixture app" } : {}),
+        options,
+      });
+    }
+  }
+  const responses: Array<string> = [];
+  let caller = McpToolAccessTestkit.liveThreadShell(threadId);
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (
+      name: string,
+      args: Record<string, unknown> = {},
+      invocation = clientScope("read-only"),
+    ) =>
+      server
+        .callTool({ name, arguments: { threadId: targetId, ...args } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    expect((yield* call("t3_pending_request_list")).structuredContent).toEqual({
+      requestIds: ["question"],
+      requests: [
+        { requestId: "approve", kind: "command" },
+        { requestId: "approve-client", kind: "command" },
+        { requestId: "decline", kind: "command" },
+        { requestId: "cancel", kind: "command" },
+        { requestId: "question", kind: "user_input" },
+      ],
+    });
+    expect(
+      (yield* call("t3_pending_request_read", { requestId: "approve" })).structuredContent,
+    ).toEqual({ requestId: "approve", kind: "command", prompt: "Run the command?", options });
+
+    const clipped = (yield* call("t3_pending_request_read", { requestId: "approve-client" }))
+      .structuredContent;
+    expect(clipped).toEqual({
+      requestId: "approve-client",
+      kind: "command",
+      prompt: `${"🙂".repeat(3999)}🚀`,
+      promptTruncated: true,
+      appName: "Fixture app",
+      options,
+    });
+
+    const respond = (
+      requestId: string,
+      decision: string,
+      invocation: McpInvocationContext.McpInvocationScope,
+    ) => call("t3_pending_request_respond", { requestId, decision }, invocation);
+    expect(declaredFailure(yield* respond("approve", "accept", clientScope("auto")))).toMatchObject(
+      {
+        code: "capability_denied",
+      },
+    );
+    expect(
+      declaredFailure(yield* respond("decline", "decline", clientScope("read-only"))),
+    ).toMatchObject({
+      code: "capability_denied",
+    });
+    expect(
+      declaredFailure(yield* respond("approve", "acceptForSession", clientScope("full-access"))),
+    ).toMatchObject({
+      code: "invalid_request",
+    });
+    caller = { ...caller, interactionMode: "plan" };
+    target = { ...target, interactionMode: "plan" };
+    expect(declaredFailure(yield* respond("approve", "accept", scope))).toMatchObject({
+      code: "capability_denied",
+    });
+    target = { ...target, interactionMode: "default" };
+    expect(responses).toEqual([]);
+
+    expect((yield* respond("decline", "decline", clientScope("auto"))).isError).toBe(false);
+    expect((yield* respond("cancel", "cancel", clientScope("auto"))).isError).toBe(false);
+    caller = { ...caller, interactionMode: "default" };
+    expect((yield* respond("approve", "accept", scope)).isError).toBe(false);
+    expect((yield* respond("approve-client", "accept", clientScope("full-access"))).isError).toBe(
+      false,
+    );
+    expect(responses).toEqual(["decline", "cancel", "accept", "accept"]);
+    expect((yield* call("t3_pending_request_list")).structuredContent).toEqual({
+      requestIds: ["question"],
+      requests: [{ requestId: "question", kind: "user_input" }],
+    });
+    expect(
+      declaredFailure(yield* call("t3_pending_request_read", { requestId: "approve" })),
+    ).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(
+      declaredFailure(yield* respond("approve", "accept", clientScope("full-access"))),
+    ).toMatchObject({
+      code: "invalid_request",
+    });
+    expect(responses).toHaveLength(4);
+  }).pipe(
+    Effect.provide(
+      layerThreadToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.sync(() => (id === threadId ? caller : target)),
+            getProjectThreadRecords: (_input, _fields, query) =>
+              Effect.sync(() => ({
+                ...projection,
+                turnItems: projection.turnItems.filter((item) =>
+                  query?.turnItemTypes?.includes(item.type),
+                ),
+              })),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                if (command.type !== "runtime-request.respond" || command.decision === undefined)
+                  throw new Error("Expected an approval response");
+                const request = projection.runtimeRequests.find(
+                  (request) => request.id === command.requestId,
+                )!;
+                projection.runtimeRequests = projection.runtimeRequests.map((candidate) =>
+                  candidate === request
+                    ? { ...candidate, status: "resolved", decision: command.decision }
+                    : candidate,
+                );
+                responses.push(command.decision);
+                return { sequence: responses.length, storedEvents: [] };
+              }),
+          }),
+        ),
+      ),
+    ),
+  );
+});
 
 it.effect("a read-only client reads threads and is refused every write before it runs", () =>
   Effect.gen(function* () {
