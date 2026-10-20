@@ -1,4 +1,3 @@
-// @vitest-environment jsdom
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { makeThreadShellFixture } from "../../test-fixtures";
 import type { VcsStatusResult } from "@t3tools/contracts";
