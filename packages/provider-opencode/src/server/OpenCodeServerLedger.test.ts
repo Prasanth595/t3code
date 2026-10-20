@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeReadline from "node:readline";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -10,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -38,20 +40,43 @@ const killGroup = (pgid: number) =>
     }
   });
 
+// libuv ignores a failed setsid(), which happens when the new pid equals the id of a group
+// that still has members (such as a sleep orphaned by an earlier test). The child would then
+// share the test worker's group, so the script first confirms it leads its own group and exits
+// with 97 before starting anything if it does not.
+const groupLeaderGuard = `[ "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" ] || exit 97; echo grouped; `;
+
+const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
+  Effect.gen(function* () {
+    const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
+      detached: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const pid = child.pid;
+    if (pid === undefined) return yield* Effect.die("spawn failed");
+    const grouped = yield* Deferred.make<boolean>();
+    const exited = yield* Deferred.make<NodeJS.Signals | null>();
+    const printed = yield* Deferred.make<void>();
+    child.once("exit", (code, signal) => {
+      if (code === 97) Deferred.doneUnsafe(grouped, Effect.succeed(false));
+      Deferred.doneUnsafe(exited, Effect.succeed(signal));
+    });
+    NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
+      if (line === "grouped") Deferred.doneUnsafe(grouped, Effect.succeed(true));
+      if (line === "ready") Deferred.doneUnsafe(printed, Effect.void);
+    });
+    return (yield* Deferred.await(grouped))
+      ? Option.some({ pid, exited: Deferred.await(exited), printed: Deferred.await(printed) })
+      : Option.none();
+  });
+
 const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      const child = NodeChildProcess.spawn("/bin/sh", ["-c", script, ...args], {
-        detached: true,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const exited = yield* Deferred.make<NodeJS.Signals | null>();
-      const printed = yield* Deferred.make<void>();
-      child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
-      child.stdout.once("data", () => Deferred.doneUnsafe(printed, Effect.void));
-      const pid = child.pid;
-      if (pid === undefined) return yield* Effect.die("spawn failed");
-      return { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) };
+      while (true) {
+        const group = yield* spawnGroupLeader(args, script);
+        if (Option.isSome(group)) return group.value;
+      }
     }),
     ({ pid }) => killGroup(pid),
   );
@@ -64,7 +89,7 @@ const recordFromDeadServer = (stateDir: string, server: { readonly pid: number }
       ownerPid: previousServer.pid,
     });
     yield* Effect.asVoid(previousLedger.track({ pid: server.pid, port: 4096, args: SERVE_ARGS }));
-    process.kill(-previousServer.pid, "SIGKILL");
+    yield* killGroup(previousServer.pid);
     yield* previousServer.exited;
   });
 
