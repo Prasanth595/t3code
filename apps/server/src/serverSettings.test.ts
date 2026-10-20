@@ -19,9 +19,11 @@ import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -63,6 +65,49 @@ const layerServerSettingsWithSecrets = () =>
       ),
     ),
   );
+
+// Reports each read of settings.json, so a test knows when the watcher has reloaded the file.
+const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
+  ServerSettingsModule.layer.pipe(
+    Layer.provide(ServerSecretStore.layer),
+    Layer.provide(
+      Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const { settingsPath } = yield* ServerConfig.ServerConfig;
+          return FileSystem.FileSystem.of({
+            ...fs,
+            readFileString: (path, encoding) =>
+              fs
+                .readFileString(path, encoding)
+                .pipe(
+                  Effect.ensuring(
+                    path === settingsPath ? Queue.offer(reads, undefined) : Effect.void,
+                  ),
+                ),
+          });
+        }),
+      ),
+    ),
+    Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3code-server-settings-test-",
+        }),
+      ),
+    ),
+  );
+
+const usageScript = {
+  id: "usage",
+  name: "Usage",
+  command: "echo usage",
+  icon: "debug",
+  runOnWorktreeCreate: false,
+} as const;
+const perfLabScript = { ...usageScript, id: "perf-lab", name: "Perf lab" } as const;
 
 const layerFailingSecretStore = (cause: ServerSecretStore.SecretStoreError) =>
   Layer.succeed(
@@ -322,6 +367,136 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.equal(Option.getOrUndefined(change)?.responseStreamingMode, "paragraph");
       }),
     ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("publishes a default project script that another program adds to settings.json", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({ defaultProjectScripts: [usageScript] }),
+        );
+        yield* service.start;
+        const changes = yield* service.subscribeChanges;
+
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({ defaultProjectScripts: [usageScript, perfLabScript] }),
+        );
+
+        const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+        assert.deepEqual(
+          Option.getOrUndefined(change)?.defaultProjectScripts.map((script) => script.id),
+          ["usage", "perf-lab"],
+        );
+        assert.lengthOf((yield* service.getSettings).defaultProjectScripts, 2);
+      }),
+    ).pipe(TestClock.withLive, Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("keeps the last good settings while settings.json is invalid and warns once", () => {
+    const messages: string[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+    return Effect.gen(function* () {
+      const reads = yield* Queue.unbounded<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({ responseStreamingMode: "turn", defaultProjectScripts: [usageScript] }),
+          );
+          yield* service.start;
+          yield* Queue.clear(reads);
+          const changes = yield* service.subscribeChanges;
+
+          // A write caught halfway, then one the schema rejects.
+          for (const contents of [
+            `{ "responseStreamingMode": "turn", "defaultProjectScripts": [`,
+            JSON.stringify({ defaultProjectScripts: [{ ...perfLabScript, icon: "no-such-icon" }] }),
+          ]) {
+            yield* fs.writeFileString(config.settingsPath, contents);
+            yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+            // The reload holds the write lock, so this snapshot waits for it to finish.
+            const kept = yield* service.withSettingsSnapshot(Effect.succeed);
+            assert.equal(kept.responseStreamingMode, "turn");
+            assert.deepEqual(
+              kept.defaultProjectScripts.map((script) => script.id),
+              ["usage"],
+            );
+          }
+          assert.lengthOf(
+            messages.filter((message) => message.includes("failed to parse settings.json")),
+            1,
+          );
+
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({
+              responseStreamingMode: "turn",
+              defaultProjectScripts: [usageScript, perfLabScript],
+            }),
+          );
+          const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+          assert.deepEqual(
+            Option.getOrUndefined(change)?.defaultProjectScripts.map((script) => script.id),
+            ["usage", "perf-lab"],
+          );
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerServerSettingsReportingReads(reads),
+            Logger.layer([logger], { mergeWithExisting: false }),
+          ),
+        ),
+      );
+    }).pipe(TestClock.withLive);
+  });
+
+  it.effect("publishes a settings save once, not again when the watcher sees the write", () =>
+    Effect.gen(function* () {
+      const reads = yield* Queue.unbounded<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fs.writeFileString(config.settingsPath, "{}");
+          yield* service.start;
+          yield* Queue.clear(reads);
+          const changes = yield* service.subscribeChanges;
+
+          yield* service.updateSettings({ responseStreamingMode: "turn" });
+          // One read is the save's own; the next is the watcher reloading the saved file.
+          yield* Queue.take(reads);
+          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({ responseStreamingMode: "turn", defaultProjectScripts: [usageScript] }),
+          );
+
+          const [saved, edited] = yield* changes.pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.timeout("2 seconds"),
+          );
+          assert.equal(saved?.responseStreamingMode, "turn");
+          assert.deepEqual(saved?.defaultProjectScripts, []);
+          assert.deepEqual(
+            edited?.defaultProjectScripts.map((script) => script.id),
+            ["usage"],
+          );
+        }),
+      ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
+    }).pipe(TestClock.withLive),
   );
 
   it.effect("preserves context when reading a provider environment secret fails", () => {

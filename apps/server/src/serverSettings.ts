@@ -572,9 +572,16 @@ const make = Effect.gen(function* () {
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
+  // What subscribers last received. A reload that finds the same settings, such as our own
+  // write coming back through the watcher, publishes nothing.
+  const publishedRef = yield* Ref.make(Option.none<ServerSettings>());
+  const parseFailureLoggedRef = yield* Ref.make(false);
 
   const emitChange = (settings: ServerSettings) =>
-    PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
+    Ref.set(publishedRef, Option.some(settings)).pipe(
+      Effect.andThen(PubSub.publish(changesPubSub, settings)),
+      Effect.asVoid,
+    );
 
   const readConfigExists = fs.exists(settingsPath).pipe(
     Effect.mapError(
@@ -675,15 +682,24 @@ const make = Effect.gen(function* () {
         settings = { ...DEFAULT_SERVER_SETTINGS, continueThreadsAfterServerUpdate: false };
         if (failure._tag === "Failure") {
           parseFailure = Option.some(Cause.squash(failure.cause));
-          yield* Effect.logWarning("failed to parse settings.json, using defaults", {
-            path: settingsPath,
-            issues: Cause.pretty(failure.cause),
-            cause: failure.cause,
-          });
+          // An editor or agent can leave the file invalid across several reloads.
+          if (!(yield* Ref.getAndSet(parseFailureLoggedRef, true))) {
+            yield* Effect.logWarning(
+              "failed to parse settings.json, ignoring it until it is fixed",
+              {
+                path: settingsPath,
+                issues: Cause.pretty(failure.cause),
+                cause: failure.cause,
+              },
+            );
+          }
         }
       } else {
         settings = decoded.value;
       }
+    }
+    if (Option.isNone(parseFailure)) {
+      yield* Ref.set(parseFailureLoggedRef, false);
     }
 
     // A file that failed to decode must stay on disk for the user to repair.
@@ -796,9 +812,17 @@ const make = Effect.gen(function* () {
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey).pipe(
     Effect.map((loaded) => loaded.settings),
   );
-  const reloadSettings = Cache.invalidate(settingsCache, cacheKey).pipe(
-    Effect.andThen(Cache.get(settingsCache, cacheKey)),
-  );
+  // A file caught mid-write or left invalid keeps the settings that last loaded instead of
+  // resetting them to defaults. Its parse failure still blocks saves.
+  const reloadSettings = Effect.gen(function* () {
+    const previous = yield* Cache.getSuccess(settingsCache, cacheKey);
+    yield* Cache.invalidate(settingsCache, cacheKey);
+    const loaded = yield* Cache.get(settingsCache, cacheKey);
+    if (Option.isNone(loaded.parseFailure) || Option.isNone(previous)) return loaded;
+    const kept = { settings: previous.value.settings, parseFailure: loaded.parseFailure };
+    yield* Cache.set(settingsCache, cacheKey, kept);
+    return kept;
+  });
 
   const materializeSettingsSecrets = Effect.fn("serverSettings.materializeSettingsSecrets")(
     function* (settings: ServerSettings): Effect.fn.Return<ServerSettings, ServerSettingsError> {
@@ -1045,6 +1069,8 @@ const make = Effect.gen(function* () {
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
       const { settings } = yield* reloadSettings;
+      const published = yield* Ref.get(publishedRef);
+      if (Option.isSome(published) && Equal.equals(published.value, settings)) return;
       yield* emitChange(settings);
     }),
   );
@@ -1133,7 +1159,12 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* reloadSettings;
+      const { settings } = yield* reloadSettings;
+      // Clients start from a snapshot of these, so they count as published.
+      yield* Ref.update(
+        publishedRef,
+        Option.orElseSome(() => settings),
+      );
     });
 
     const startupExit = yield* Effect.exit(startup);
