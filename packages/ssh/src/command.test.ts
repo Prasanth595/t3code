@@ -8,13 +8,13 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import {
   baseSshArgs,
   getLastNonEmptyOutputLine,
   parseSshResolveOutput,
-  resolveRemoteT3CliPackageSpec,
+  remoteStateKey,
   runSshCommand,
 } from "./command.ts";
 import { SshCommandError } from "./errors.ts";
@@ -99,39 +99,51 @@ describe("ssh command", () => {
     }),
   );
 
-  it.effect("resolves the remote t3 package spec from the desktop release channel", () =>
-    Effect.sync(() => {
+  it.effect("passes an option-shaped alias to ssh as the destination", () => {
+    const spawned: Array<ReadonlyArray<string>> = [];
+    const spawner = ChildProcessSpawner.make((command) => {
+      if (ChildProcess.isStandardCommand(command)) spawned.push(command.args);
+      return Effect.succeed(makeFailedProcess({ stdout: "", stderr: "bad hostname\n" }));
+    });
+    return runSshCommand(
+      { alias: "-oProxyCommand=false", hostname: "devbox", username: null, port: null },
+      { remoteCommandArgs: ["sh", "-s"] },
+    ).pipe(
+      Effect.flip,
+      Effect.map(() => {
+        assert.deepEqual(spawned[0]?.slice(-4), ["--", "-oProxyCommand=false", "sh", "-s"]);
+      }),
+      Effect.provide(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+  });
+
+  // Remote servers store state under this key, so it must not change across releases.
+  it.effect("derives a stable remote state key", () =>
+    Effect.gen(function* () {
       assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17",
-          updateChannel: "latest",
+        yield* remoteStateKey({
+          alias: "devbox",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 2222,
         }),
-        "t3@0.0.17",
+        "711bc738002d72fd",
       );
       assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.17-nightly.20260415.44",
-          updateChannel: "nightly",
+        yield* remoteStateKey({
+          alias: "fixture",
+          hostname: "fixture",
+          username: null,
+          port: null,
         }),
-        "t3@0.0.17-nightly.20260415.44",
+        "326264c4f08c8a0c",
       );
-      assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
-          updateChannel: "nightly",
-          isDevelopment: true,
-        }),
-        "t3@nightly",
-      );
-      assert.equal(
-        resolveRemoteT3CliPackageSpec({
-          appVersion: "0.0.0-dev",
-          updateChannel: "latest",
-          isDevelopment: true,
-        }),
-        "t3@nightly",
-      );
-    }),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reads the last non-empty ssh output line", () =>
@@ -149,8 +161,8 @@ describe("ssh command", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: "Pairing token creation failed\n" })),
     );
-    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner);
 
     return Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -172,15 +184,63 @@ describe("ssh command", () => {
         assert.equal(result.failure.stdout, "Pairing token creation failed\n");
         assert.equal(result.failure.stderr, "");
       }
-    }).pipe(Effect.provide(processLayer));
+    }).pipe(Effect.provide(layerProcess));
   });
+
+  it.live.each([
+    { name: "default head", keepErrorOutputTail: undefined, exitCode: 1, stderr: "" },
+    {
+      name: "opt-in tail",
+      keepErrorOutputTail: true,
+      exitCode: 1,
+      stderr: "stderr failure ".repeat(400),
+    },
+    { name: "successful output", keepErrorOutputTail: true, exitCode: 0, stderr: "" },
+  ])("preserves process output: $name", ({ keepErrorOutputTail, exitCode, stderr }) =>
+    Effect.gen(function* () {
+      const prefix = `HEAD\n${"verbose-prefix ".repeat(400)}`;
+      const secret = "synthetic-secret".repeat(400);
+      const diagnostic = "\nPANIC: emulator SDK is broken\n";
+      const stdout = `${prefix}{"credential":"${secret}"}${diagnostic}`;
+      const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      // Replace only the SSH endpoint with a real, deterministic process.
+      const spawner = ChildProcessSpawner.make(() =>
+        nativeSpawner.spawn(
+          ChildProcess.make(process.execPath, [
+            "-e",
+            `process.stdout.write(${JSON.stringify(stdout)}); process.stderr.write(${JSON.stringify(stderr)}); process.exitCode = ${exitCode};`,
+          ]),
+        ),
+      );
+      const command = runSshCommand(
+        { alias: "synthetic-fixture", hostname: "synthetic-fixture", username: null, port: null },
+        keepErrorOutputTail === undefined ? {} : { keepErrorOutputTail },
+      ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      if (exitCode === 0) {
+        assert.deepEqual(yield* command, { stdout, stderr });
+        return;
+      }
+      const failure = yield* Effect.flip(command);
+      assert.instanceOf(failure, SshCommandError);
+      assert.equal(failure.exitCode, 1);
+      assert.equal(failure.stderr, stderr);
+      assert.equal(failure.message, stderr.trim() || failure.stdout?.trim());
+      const redacted = `${prefix}{"credential":"[redacted]"}${diagnostic}`;
+      assert.equal(
+        failure.stdout,
+        keepErrorOutputTail
+          ? `[truncated]\n${redacted.slice(-4_000)}`
+          : `${redacted.slice(0, 4_000)}\n[truncated]`,
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("redacts credentials from stdout in non-zero command failures", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(makeFailedProcess({ stdout: '{"credential":"pairing-secret"}\n' })),
     );
-    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer);
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner);
 
     return Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -201,13 +261,13 @@ describe("ssh command", () => {
         assert.equal(result.failure.message, '{"credential":"[redacted]"}');
         assert.equal(result.failure.stdout, '{"credential":"[redacted]"}\n');
       }
-    }).pipe(Effect.provide(processLayer));
+    }).pipe(Effect.provide(layerProcess));
   });
 
   it.effect("fails commands that never finish", () => {
     const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeNeverFinishingProcess()));
-    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
-    const processLayer = Layer.mergeAll(NodeServices.layer, spawnerLayer, TestClock.layer());
+    const layerSpawner = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const layerProcess = Layer.mergeAll(NodeServices.layer, layerSpawner, TestClock.layer());
 
     return Effect.gen(function* () {
       const fiber = yield* Effect.forkChild(
@@ -232,6 +292,6 @@ describe("ssh command", () => {
       if (Result.isFailure(result)) {
         assert.include(result.failure.message, "SSH command timed out after 1ms.");
       }
-    }).pipe(Effect.provide(processLayer));
+    }).pipe(Effect.provide(layerProcess));
   });
 });

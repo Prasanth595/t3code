@@ -91,10 +91,11 @@ it.effect("derives direct Clerk OAuth endpoints from statically injected public 
 
     assert.deepEqual(config, {
       tokenEndpoint: "https://clerk.example.test/oauth/token",
+      deviceAuthorizationEndpoint: "https://clerk.example.test/oauth/device_authorization",
       clientId: "oauth_client_embedded",
       loopbackPort: 34338,
       redirectUri: "http://127.0.0.1:34338/callback",
-      scopes: ["openid", "profile", "email"],
+      scopes: ["openid", "profile", "email", "offline_access"],
     });
   }),
 );
@@ -171,6 +172,32 @@ it("resolves relay client tracing from runtime config with build-time fallback",
     resolveRelayClientTracingConfig(
       {
         T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "http://insecure.example.test/v1/traces",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
+      },
+      fallback,
+    ),
+    null,
+  );
+});
+
+it("product opt-out disables relay tracing with either built-in or runtime credentials", () => {
+  const fallback = {
+    tracesUrl: "https://embedded.example.test/v1/traces",
+    tracesDataset: "embedded-dataset",
+    tracesToken: "embedded-token",
+  };
+  const env = {
+    T3CODE_TELEMETRY_ENABLED: "false",
+    T3CODE_OTEL_SDK_DISABLED: "false",
+  };
+
+  assert.equal(resolveRelayClientTracingConfig(env, fallback), null);
+  assert.equal(
+    resolveRelayClientTracingConfig(
+      {
+        ...env,
+        T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: "https://runtime.example.test/v1/traces",
         T3CODE_RELAY_CLIENT_OTLP_TRACES_DATASET: "runtime-dataset",
         T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN: "runtime-token",
       },

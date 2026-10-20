@@ -1,13 +1,66 @@
 import { describe, expect, it, vi } from "@effect/vitest";
 import {
   makeWorkspaceFileDropHandlers,
+  splitTransferredFiles,
   type WorkspaceFileDragEvent,
   type WorkspaceFileDropHost,
 } from "./workspaceFileDrop";
 
+describe("splitTransferredFiles", () => {
+  it("separates copied folders from files before attachment validation", () => {
+    const folder = new File([], "photos.png");
+    const emptyFile = new File([], "empty.txt");
+    const image = new File(["image"], "photo.png", { type: "image/png" });
+
+    expect(
+      splitTransferredFiles({
+        files: [folder, emptyFile, image],
+        items: [
+          {
+            kind: "string",
+            getAsFile: () => null,
+            webkitGetAsEntry: () => null,
+          },
+          {
+            kind: "file",
+            getAsFile: () => folder,
+            webkitGetAsEntry: () => ({ isDirectory: true }),
+          },
+          {
+            kind: "file",
+            getAsFile: () => emptyFile,
+            webkitGetAsEntry: () => ({ isDirectory: false }),
+          },
+          {
+            kind: "file",
+            getAsFile: () => image,
+            webkitGetAsEntry: () => null,
+          },
+        ],
+      }),
+    ).toEqual({ files: [emptyFile, image], folders: [folder] });
+  });
+
+  it("ignores clipboard file items that cannot provide a file", () => {
+    expect(
+      splitTransferredFiles({
+        files: [],
+        items: [
+          {
+            kind: "file",
+            getAsFile: () => null,
+            webkitGetAsEntry: () => ({ isDirectory: true }),
+          },
+        ],
+      }),
+    ).toEqual({ files: [], folders: [] });
+  });
+});
+
 function makeDragEvent(options?: {
   types?: string[];
   files?: File[];
+  items?: NonNullable<WorkspaceFileDragEvent["dataTransfer"]["items"]>;
   movedWithinTarget?: boolean;
 }) {
   const preventDefault = vi.fn();
@@ -16,6 +69,7 @@ function makeDragEvent(options?: {
       types: options?.types ?? ["Files"],
       files: options?.files ?? [],
       dropEffect: "none",
+      ...(options?.items === undefined ? {} : { items: options.items }),
     },
     relatedTarget: options?.movedWithinTarget ? ({} as EventTarget) : null,
     currentTarget: {
@@ -29,8 +83,9 @@ function makeDragEvent(options?: {
 function makeHost() {
   const setDragActive = vi.fn();
   const addFiles = vi.fn();
-  const host = { setDragActive, addFiles } satisfies WorkspaceFileDropHost;
-  return { host, setDragActive, addFiles };
+  const addFolders = vi.fn();
+  const host = { setDragActive, addFiles, addFolders } satisfies WorkspaceFileDropHost;
+  return { host, setDragActive, addFiles, addFolders };
 }
 
 describe("makeWorkspaceFileDropHandlers", () => {
@@ -67,12 +122,55 @@ describe("makeWorkspaceFileDropHandlers", () => {
 
   it("forwards dropped files and clears the active state", () => {
     const file = new File(["contents"], "example.txt", { type: "text/plain" });
-    const { host, setDragActive, addFiles } = makeHost();
+    const { host, setDragActive, addFiles, addFolders } = makeHost();
     const { event } = makeDragEvent({ files: [file] });
 
     makeWorkspaceFileDropHandlers(host).onDrop(event);
 
     expect(setDragActive).toHaveBeenCalledWith(false);
     expect(addFiles).toHaveBeenCalledWith([file]);
+    expect(addFolders).not.toHaveBeenCalled();
+  });
+
+  it("routes mixed drops to files and folders", () => {
+    const file = new File(["contents"], "example.txt", { type: "text/plain" });
+    const folder = new File([], "project", { type: "" });
+    const directory = {
+      kind: "file",
+      getAsFile: () => folder,
+      webkitGetAsEntry: () => ({ isDirectory: true }),
+    };
+    const { host, addFiles, addFolders } = makeHost();
+    const { event } = makeDragEvent({
+      items: [
+        directory,
+        {
+          kind: "file",
+          getAsFile: () => file,
+          webkitGetAsEntry: () => ({ isDirectory: false }),
+        },
+      ],
+    });
+
+    makeWorkspaceFileDropHandlers(host).onDrop(event);
+
+    expect(addFiles).toHaveBeenCalledWith([file]);
+    expect(addFolders).toHaveBeenCalledWith([folder]);
+  });
+
+  it("routes a folder-only drop without attaching files", () => {
+    const folder = new File([], "project", { type: "" });
+    const directory = {
+      kind: "file",
+      getAsFile: () => folder,
+      webkitGetAsEntry: () => ({ isDirectory: true }),
+    };
+    const { host, addFiles, addFolders } = makeHost();
+    const { event } = makeDragEvent({ items: [directory] });
+
+    makeWorkspaceFileDropHandlers(host).onDrop(event);
+
+    expect(addFiles).not.toHaveBeenCalled();
+    expect(addFolders).toHaveBeenCalledWith([folder]);
   });
 });
