@@ -28,13 +28,7 @@ import {
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
-import Animated, {
-  FadeInDown,
-  ReduceMotion,
-  useSharedValue,
-  withSpring,
-  type EntryExitAnimationFunction,
-} from "react-native-reanimated";
+import Animated, { FadeInDown, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
@@ -80,9 +74,7 @@ import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/us
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
-import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
-
 import {
   ComposerDictationCancelAction,
   ComposerDictationPrimaryAction,
@@ -150,30 +142,7 @@ import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 
-const MATERIAL_FAST_SPATIAL_SPRING = {
-  stiffness: 1400,
-  damping: 67.3,
-  reduceMotion: ReduceMotion.System,
-};
-const MATERIAL_FAST_EFFECTS_SPRING = {
-  stiffness: 3800,
-  damping: 123.3,
-  reduceMotion: ReduceMotion.System,
-};
-const MATERIAL_MENU_ENTERING: EntryExitAnimationFunction = () => {
-  "worklet";
-  return {
-    initialValues: { opacity: 0, transform: [{ scale: 0.8 }] },
-    animations: {
-      opacity: withSpring(1, MATERIAL_FAST_EFFECTS_SPRING),
-      transform: [{ scale: withSpring(1, MATERIAL_FAST_SPATIAL_SPRING) }],
-    },
-  };
-};
-const COMPOSER_POPOVER_ENTERING =
-  Platform.OS === "android"
-    ? MATERIAL_MENU_ENTERING
-    : FadeInDown.duration(180).reduceMotion(ReduceMotion.System);
+const COMPOSER_POPOVER_ENTERING = FadeInDown.duration(180).reduceMotion(ReduceMotion.System);
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -503,7 +472,6 @@ export function NewTaskDraftScreen(props: {
       ? selectedProject?.workspaceRoot
       : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
   const stripAttachments = composerStripAttachments(flow.attachments);
-  const composerPopoverHeight = useSharedValue(0);
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
     ownerKey: flow.draftKey,
@@ -1597,6 +1565,15 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const composerPopover = composerMenu.trigger ? (
+    <ComposerCommandPopover
+      items={composerMenu.items}
+      triggerKind={composerMenu.trigger.kind}
+      isLoading={composerMenu.isLoading}
+      error={composerMenu.error}
+      onSelect={composerMenu.onSelect}
+    />
+  ) : null;
   const composerDock = (
     <View
       className={
@@ -1607,22 +1584,15 @@ export function NewTaskDraftScreen(props: {
       {!voiceInput.isBusy &&
       composerMenu.trigger &&
       (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
-        <View>
-          <ComposerPopoverAnchor>
-            <Animated.View
-              entering={COMPOSER_POPOVER_ENTERING}
-              style={{ transformOrigin: "bottom" }}
-            >
-              <ComposerCommandPopover
-                items={composerMenu.items}
-                triggerKind={composerMenu.trigger.kind}
-                isLoading={composerMenu.isLoading}
-                error={composerMenu.error}
-                onSelect={composerMenu.onSelect}
-              />
-            </Animated.View>
-          </ComposerPopoverAnchor>
-        </View>
+        Platform.OS === "ios" ? (
+          <View>
+            <ComposerPopoverAnchor>
+              <Animated.View entering={COMPOSER_POPOVER_ENTERING}>{composerPopover}</Animated.View>
+            </ComposerPopoverAnchor>
+          </View>
+        ) : (
+          <View className="mb-2">{composerPopover}</View>
+        )
       ) : null}
       {projectClone && projectClone.phase !== "done" && selectedProject ? (
         <View className="px-1 pb-2">
@@ -1835,18 +1805,10 @@ export function NewTaskDraftScreen(props: {
           {heroViewport}
 
           <KeyboardStickyView
-            pointerEvents="box-none"
-            style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
+            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
             offset={{ closed: 0, opened: keyboardOpenedOffset }}
           >
-            <ComposerPopoverHost hidden={false} popoverHeight={composerPopoverHeight}>
-              <View
-                pointerEvents="box-none"
-                style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-              >
-                {composerDock}
-              </View>
-            </ComposerPopoverHost>
+            {composerDock}
           </KeyboardStickyView>
         </ScreenContent>
       </View>
@@ -1874,15 +1836,13 @@ export function NewTaskDraftScreen(props: {
         style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0 }}
         offset={{ closed: 0, opened: keyboardOpenedOffset }}
       >
-        <ComposerPopoverHost hidden={false} popoverHeight={composerPopoverHeight}>
-          <Animated.View
-            layout={COMPOSER_LAYOUT_TRANSITION}
-            pointerEvents="box-none"
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
-          >
-            {composerDock}
-          </Animated.View>
-        </ComposerPopoverHost>
+        <Animated.View
+          layout={COMPOSER_LAYOUT_TRANSITION}
+          pointerEvents="box-none"
+          style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
+        >
+          {composerDock}
+        </Animated.View>
       </KeyboardStickyView>
     </View>
   );
