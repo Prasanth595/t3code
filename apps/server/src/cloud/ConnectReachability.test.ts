@@ -63,6 +63,27 @@ describe("classifyReachability", () => {
     );
   });
 
+  it("keeps the endpoint cause when the TCP edge test cannot explain it", () => {
+    // QUIC (UDP) can connect while TCP 7844 is blocked.
+    expect(
+      classifyReachability(
+        facts({ endpoint: { kind: "status", status: 502 }, edgeReachable: false }),
+        checkedAt,
+      ),
+    ).toMatchObject({ cause: "origin_unreachable" });
+    // Failed DNS also fails the edge lookups.
+    expect(
+      classifyReachability(
+        facts({
+          connector: { readyConnections: null, hostname: "env.example.test", protocol: null },
+          endpoint: { kind: "dns_failed" },
+          edgeReachable: false,
+        }),
+        checkedAt,
+      ),
+    ).toMatchObject({ cause: "dns_failed" });
+  });
+
   it("waits on a connector that has not connected while the edge answers", () => {
     expect(
       classifyReachability(facts({ connector: notConnected, edgeReachable: true }), checkedAt),

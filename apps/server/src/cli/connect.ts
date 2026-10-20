@@ -148,7 +148,8 @@ interface CloudCliStatus {
   readonly relayUrl: string | null;
   readonly publishAgentActivity: boolean;
   readonly relayClient: RelayClient.RelayClientStatus;
-  /** `null` when no server answered the live check, or none ran because T3 Connect is off. */
+  readonly linkMode: CliState.CliDesiredLinkMode;
+  /** `null` when no server answered the live check, or none ran because no tunnel is wanted. */
   readonly reachability: EnvironmentConnectReachability | null;
 }
 
@@ -207,7 +208,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
-    ...(!status.desired
+    ...(!status.desired || status.linkMode !== "managed"
       ? []
       : status.reachability === null
         ? [
@@ -656,7 +657,7 @@ const connectStatusCommand = Command.make("status", {
           publishAgentActivity,
           revoked,
           executable,
-          reachability,
+          linkMode,
         ] = yield* Effect.all(
           [
             CliState.readCliDesiredCloudLink,
@@ -666,14 +667,13 @@ const connectStatusCommand = Command.make("status", {
             secrets.get(PUBLISH_AGENT_ACTIVITY_SECRET),
             secrets.get(CLOUD_LINK_REVOKED),
             relayClient.resolve,
-            CliState.readCliDesiredCloudLink.pipe(
-              Effect.flatMap((desired) =>
-                desired ? checkLiveReachability() : Effect.succeed(null),
-              ),
-            ),
+            CliState.readCliDesiredLinkMode,
           ],
           { concurrency: "unbounded" },
         );
+        // A publish-only link has no tunnel for other devices to reach.
+        const reachability =
+          desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
         const status: CloudCliStatus = {
           desired,
           authenticated,
@@ -685,6 +685,7 @@ const connectStatusCommand = Command.make("status", {
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
           ),
           relayClient: executable,
+          linkMode,
           reachability,
         };
         yield* Console.log(formatCloudStatus(status, { json: flags.json }));

@@ -1907,7 +1907,9 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
               : managedTunnelActive
                 ? reachability?.status === "unreachable"
                   ? "T3 Connect is on, but other devices cannot reach this environment."
-                  : "This environment is available to your other devices through T3 Connect."
+                  : reachability?.status === "reachable"
+                    ? "This environment is available to your other devices through T3 Connect."
+                    : "T3 Connect is on. Reachability has not been checked yet."
                 : managedTunnelOutOfSync
                   ? "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it."
                   : "Make this environment available to your other devices through T3 Connect."

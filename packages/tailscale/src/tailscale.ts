@@ -323,10 +323,11 @@ export const parseTailscaleExitNode = (
       const peer = Object.values(parsed.Peer ?? {}).find(
         (candidate) => candidate.ExitNode === true,
       );
-      const hostName = typeof peer?.HostName === "string" ? peer.HostName.trim() : "";
+      // The DNS label is the tailnet machine name; HostName is the OS name and ignores renames.
       const dnsLabel = typeof peer?.DNSName === "string" ? (peer.DNSName.split(".")[0] ?? "") : "";
+      const hostName = typeof peer?.HostName === "string" ? peer.HostName.trim() : "";
       return {
-        name: hostName || dnsLabel || null,
+        name: dnsLabel || hostName || null,
         online: parsed.ExitNodeStatus.Online === true,
       };
     }),

@@ -84,7 +84,13 @@ export function classifyReachability(
       protocol: connector.protocol,
     };
   }
-  if (facts.edgeReachable === false) {
+  // The edge test is TCP only. With QUIC connections up, or with DNS already failing, a
+  // failed TCP test would hide the real cause.
+  if (
+    facts.edgeReachable === false &&
+    !(connector.readyConnections && connector.readyConnections > 0) &&
+    endpoint?.kind !== "dns_failed"
+  ) {
     return fail(
       "edge_unreachable",
       `Cloudflare's tunnel port (${TUNNEL_EDGE_PORT}) times out from this machine.`,

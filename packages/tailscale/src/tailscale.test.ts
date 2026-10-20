@@ -155,7 +155,11 @@ describe("tailscale", () => {
           ExitNodeStatus: { ID: "nX", Online: true, TailscaleIPs: ["100.101.102.103/32"] },
           Peer: {
             "nodekey:a": { HostName: "laptop", DNSName: "laptop.tail.ts.net.", ExitNode: false },
-            "nodekey:b": { HostName: "home-pi", DNSName: "home-pi.tail.ts.net.", ExitNode: true },
+            "nodekey:b": {
+              HostName: "raspberrypi",
+              DNSName: "home-pi.tail.ts.net.",
+              ExitNode: true,
+            },
           },
         }),
       );
