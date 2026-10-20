@@ -37,6 +37,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type RunId,
 } from "@t3tools/contracts";
+import { renderCodexCitationsAsMarkdown } from "@t3tools/shared/codexCitations";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref, resolveThreadLinkRef } from "@t3tools/shared/threadLinks";
@@ -64,6 +65,7 @@ import {
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
+  renderCodexDirectivesForCopy,
   splitCodexArtifactTemplateMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
@@ -805,6 +807,7 @@ function ArtifactTemplateCard(props: {
 
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
+  readonly isStreaming: boolean;
   readonly environmentId: EnvironmentId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
@@ -812,7 +815,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const citationMarkdown = useMemo(
+    () => renderCodexCitationsAsMarkdown(props.markdown, { isStreaming: props.isStreaming }),
+    [props.markdown, props.isStreaming],
+  );
+  const liveMarkdown = useLiveThreadLinkLabels(citationMarkdown, props.environmentId);
   const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
 
   return segments.map((segment) => {
@@ -1001,7 +1008,7 @@ function renderFeedEntry(
     readonly markdownLinkHandlers: MarkdownLinkHandlers;
     readonly renderMarkdownImage: MarkdownImageRenderer;
     readonly renderViewedImage: MarkdownImageRenderer;
-    readonly renderReasoning: (text: string) => ReactNode;
+    readonly renderReasoning: (text: string, isStreaming: boolean) => ReactNode;
     readonly iconSubtleColor: string | import("react-native").ColorValue;
     readonly screenColor: string;
     readonly userBubbleColor: string | import("react-native").ColorValue;
@@ -1387,6 +1394,7 @@ function renderFeedEntry(
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
             <AssistantMarkdownContent
               markdown={renderedText}
+              isStreaming={message.streaming}
               environmentId={props.environmentId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
@@ -1423,7 +1431,7 @@ function renderFeedEntry(
           <View className="mt-1 flex-row items-center gap-1">
             <CopyTextButton
               accessibilityLabel="Copy message"
-              text={renderedText}
+              text={renderCodexDirectivesForCopy(renderCodexCitationsAsMarkdown(renderedText))}
               tintColor={iconSubtleColor}
               buttonSize={28}
               iconSize={13}
@@ -2028,9 +2036,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     ) : null;
   };
   const markdownStyles = useMarkdownStyles();
-  const renderReasoning = (text: string) => (
+  const renderReasoning = (text: string, isStreaming: boolean) => (
     <AssistantMarkdownContent
       markdown={text}
+      isStreaming={isStreaming}
       environmentId={props.environmentId}
       markdownStyles={markdownStyles.assistant}
       linkHandlers={markdownLinkHandlers}
