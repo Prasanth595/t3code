@@ -427,6 +427,25 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("reports a download timeout and cleans the staging directory", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const stall = Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never));
+    const h = yield* makeHarness({
+      body: Stream.concat(Stream.succeed(archive.subarray(0, 10)), Stream.fromEffect(stall)),
+    });
+    yield* h.installation.start;
+    yield* Deferred.await(started);
+    yield* TestClock.adjust("45 minutes");
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "failed",
+      message: "The Codex download timed out. Retry installation.",
+    });
+    expect(h.downloads()).toBe(1);
+    expect(yield* h.fs.readDirectory(h.installation.managedDirectory)).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("cancels an in-flight download and cleans the staging directory", () =>
   Effect.gen(function* () {
     const downloading = yield* Deferred.make<void>();

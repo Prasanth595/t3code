@@ -542,6 +542,14 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         ),
         Stream.run(fs.sink(archivePath, { flag: "wx", mode: 0o600 })),
         Effect.timeout("45 minutes"),
+        Effect.catchTags({
+          TimeoutError: (cause) =>
+            installationError(
+              "download",
+              "The Codex download timed out. Retry installation.",
+              cause,
+            ),
+        }),
       );
       if (downloadedBytes !== release.archiveBytes || hash.digest("hex") !== release.sha256)
         return yield* installationError(
