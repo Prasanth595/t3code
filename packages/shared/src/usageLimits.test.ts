@@ -1517,6 +1517,27 @@ describe("/usage-limits", () => {
       "codex",
       "hub-environment:remote-hub:pooled",
     ]);
+
+    // A readable local copy without a credit stays, but redeems the remote copy's credit.
+    const creditOnlyRemote = collectProviderUsageLimits(
+      selected.instanceId,
+      [selected],
+      composerUsageLimitSources(
+        threadEnvironment,
+        [{ ...sources[0]!, accounts: [{ ...pooled, usageLimits: limits }] }],
+        byEnvironment,
+      ),
+      now,
+    );
+    expect(creditOnlyRemote?.accounts.map((account) => account.id)).toEqual([
+      "codex",
+      "hub:pooled",
+    ]);
+    expect(creditOnlyRemote?.accounts[1]).toMatchObject({
+      resetCreditInput: { sourceId: "remote-hub", accountId: "pooled", creditId: "pooled-credit" },
+      resetCreditEnvironmentId: hubEnvironment,
+      limits: { resetCredits: { nextCreditId: "pooled-credit" } },
+    });
   });
 
   it("advertises global and workspace commands only for providers present in Limits", () => {

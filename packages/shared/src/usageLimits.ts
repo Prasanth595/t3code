@@ -778,22 +778,33 @@ export function collectProviderUsageLimits(
     });
   }
   // The same subscription can sit in hubs on several environments. The first readable one
-  // listed wins; an unreadable one is shown only when no hub can read that account.
-  const hubPicks = new Map<
-    string,
-    { source: ComposerUsageLimitSource; account: UsageLimitSourceSnapshot["accounts"][number] }
-  >();
+  // listed is shown; an unreadable one only when no hub can read that account. Its reset
+  // credit comes from the newest readable copy that has one, as on the Usage page.
+  type HubEntry = {
+    source: ComposerUsageLimitSource;
+    account: UsageLimitSourceSnapshot["accounts"][number];
+  };
+  const hubPicks = new Map<string, { shown: HubEntry; credit?: HubEntry }>();
   for (const source of sources) {
     for (const account of source.accounts) {
       const key = resolveKey(account);
       if (account.driver !== selected.driver || !key || nativeAccountKeys.has(key)) continue;
+      const entry = { source, account };
       const picked = hubPicks.get(key);
-      if (
+      const shown =
         !picked ||
-        (limitsNotice(picked.account.usageLimits) && !limitsNotice(account.usageLimits))
-      ) {
-        hubPicks.set(key, { source, account });
-      }
+        (limitsNotice(picked.shown.account.usageLimits) && !limitsNotice(account.usageLimits))
+          ? entry
+          : picked.shown;
+      const credit =
+        account.usageLimits.resetCredits?.nextCreditId &&
+        !limitsNotice(account.usageLimits) &&
+        (!picked?.credit ||
+          Date.parse(account.usageLimits.checkedAt) >
+            Date.parse(picked.credit.account.usageLimits.checkedAt))
+          ? entry
+          : picked?.credit;
+      hubPicks.set(key, credit ? { shown, credit } : { shown });
     }
   }
   for (const source of sources) {
@@ -801,26 +812,33 @@ export function collectProviderUsageLimits(
     for (const account of matching) {
       const key = resolveKey(account);
       const picked = key ? hubPicks.get(key) : undefined;
-      if (key && (picked?.source !== source || picked.account !== account)) continue;
+      if (key && (picked?.shown.source !== source || picked.shown.account !== account)) continue;
+      const credit = picked?.credit ?? { source, account };
+      const creditId = credit.account.usageLimits.resetCredits?.nextCreditId;
       accounts.push({
         // Hub ids come from the hub URL, so two environments' loopback hubs can share one.
         id: `${source.environmentId ? `${source.environmentId}:` : ""}${source.id}:${account.id}`,
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
-        ...(account.usageLimits.resetCredits?.nextCreditId
+        ...(creditId
           ? {
               resetCreditInput: {
-                sourceId: source.id,
-                accountId: account.id,
-                creditId: account.usageLimits.resetCredits.nextCreditId,
+                sourceId: credit.source.id,
+                accountId: credit.account.id,
+                creditId,
               },
-              ...(source.environmentId ? { resetCreditEnvironmentId: source.environmentId } : {}),
+              ...(credit.source.environmentId
+                ? { resetCreditEnvironmentId: credit.source.environmentId }
+                : {}),
             }
           : {}),
         ...(account.plan ? { plan: account.plan } : {}),
         ...(account.email ? { email: account.email } : {}),
-        limits: account.usageLimits,
+        limits:
+          credit.account === account
+            ? account.usageLimits
+            : { ...account.usageLimits, resetCredits: credit.account.usageLimits.resetCredits },
       });
     }
     if (source.error && (matching.length > 0 || source.accounts.length === 0)) {
