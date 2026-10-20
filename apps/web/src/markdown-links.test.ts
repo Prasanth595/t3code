@@ -322,7 +322,7 @@ describe("chat file chip paths", () => {
     );
     expect(markdownFileCopyPaths(meta, hostPath, cwd)).toEqual({
       fullPath: String.raw`C:\Users\alice\project\src\discord\events\user.ts:261:7`,
-      relativePath: "project/src/discord/events/user.ts:261:7",
+      relativePath: "src/discord/events/user.ts:261:7",
     });
   });
 
@@ -340,7 +340,7 @@ describe("chat file chip paths", () => {
     );
     expect(markdownFileCopyPaths(meta, hostPath, cwd)).toEqual({
       fullPath: String.raw`C:\Users\alice\project\missing.ts:12:3`,
-      relativePath: "project/missing.ts:12:3",
+      relativePath: "missing.ts:12:3",
     });
   });
 });

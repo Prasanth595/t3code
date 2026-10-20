@@ -1,6 +1,6 @@
 import { formatFilePathPosition, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 
-import { formatWorkspaceRelativePath } from "./filePathDisplay";
+import { workspaceRelativeFilePath } from "@t3tools/shared/path";
 import type { MarkdownFileLinkMeta } from "./markdown-links";
 
 interface MarkdownFileHostPath {
@@ -15,8 +15,8 @@ export async function resolveMarkdownFileHostPath(input: {
 }) {
   const { meta, cwd } = input;
   const match =
-    meta.workspaceRelativePath && cwd
-      ? await input.findWorkspaceMatch(meta.workspaceRelativePath)
+    meta.workspaceLookupPath && cwd
+      ? await input.findWorkspaceMatch(meta.workspaceLookupPath)
       : null;
   return match && cwd
     ? { absolutePath: resolvePathLinkTarget(match, cwd), matched: true }
@@ -40,6 +40,9 @@ export function markdownFileCopyPaths(
   const fullPath = markdownFileEditorTarget(meta, hostPath);
   return {
     fullPath,
-    relativePath: hostPath.matched ? formatWorkspaceRelativePath(fullPath, cwd) : meta.displayPath,
+    relativePath: formatFilePathPosition({
+      ...meta,
+      path: workspaceRelativeFilePath(hostPath.absolutePath, cwd) ?? meta.filePath,
+    }),
   };
 }
