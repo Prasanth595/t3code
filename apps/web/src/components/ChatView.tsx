@@ -8289,7 +8289,9 @@ export default function ChatView(props: ChatViewProps) {
                 progressive: serverConfig?.threadFindProgressive === true,
                 thread: activeThreadRef,
                 enabled:
-                  isServerThread && serverConfig?.threadFind === true && !paintOnlyDisplayedTimeline,
+                  isServerThread &&
+                  serverConfig?.threadFind === true &&
+                  !paintOnlyDisplayedTimeline,
                 content: serverProjection ?? undefined,
               }}
               controlsRef={threadFindControlsRef}
@@ -8565,8 +8567,8 @@ export default function ChatView(props: ChatViewProps) {
                                 reportedModelSelection={reportedModelSelection}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
-                                  serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===
-                                  true
+                                  serverConfig?.environment.capabilities
+                                    .requiredWorktreeBootstrap === true
                                 }
                                 onMultipleModelSelectionsChange={setMultipleModelSelectionsStable}
                                 composerRef={composerRef}
@@ -8675,13 +8677,17 @@ export default function ChatView(props: ChatViewProps) {
                                 pullRequestRepository={
                                   supportsPullRequests ? activeProjectRepository : null
                                 }
-                                threadPullRequests={(activeThreadShell ?? activeThread)?.pullRequests}
+                                threadPullRequests={
+                                  (activeThreadShell ?? activeThread)?.pullRequests
+                                }
                                 restingControlsHost={restingComposerControlsHost}
                                 restingControlsHaveLeadingContext={
                                   mountComposerContextStrip &&
                                   (isGitRepo || showComposerEnvironmentIndicator)
                                 }
-                                onRestingControlsVisibilityChange={setRestingComposerControlsVisible}
+                                onRestingControlsVisibilityChange={
+                                  setRestingComposerControlsVisible
+                                }
                                 getTimelineScrollableNode={getTimelineScrollableNodeStable}
                                 isTimelineAtLogicalEnd={isTimelineAtLogicalEndStable}
                                 timelineOverflows={timelineOverflows}
@@ -8872,7 +8878,9 @@ export default function ChatView(props: ChatViewProps) {
                     ? onAutoEnvironmentStable
                     : undefined
                 }
-                {...(canChangeEnvironment ? { onEnvironmentChange: onEnvironmentChangeStable } : {})}
+                {...(canChangeEnvironment
+                  ? { onEnvironmentChange: onEnvironmentChangeStable }
+                  : {})}
                 onEnvModeChange={onEnvModeChangeStable}
                 envMode={envMode}
                 {...(canOverrideServerThreadEnvMode
