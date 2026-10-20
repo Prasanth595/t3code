@@ -233,6 +233,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             <span id={previewId} inert className="min-w-0 flex-1" data-pending-user-input-preview>
               <ChatMarkdown
                 text={activeQuestion.question}
+                parseRawHtml={false}
                 cwd={cwd}
                 threadRef={threadRef}
                 className="line-clamp-1 max-h-lh text-xs/4 text-secondary-label"

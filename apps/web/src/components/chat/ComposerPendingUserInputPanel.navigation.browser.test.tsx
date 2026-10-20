@@ -236,7 +236,8 @@ it("keeps the collapsed Markdown preview readable and skips its links when tabbi
         questions={[
           {
             ...prompt.questions[0]!,
-            question: "Read [help][guide] and **confirm**.\n\n[guide]: https://example.com/guide",
+            question:
+              "Read [help][guide] and **confirm** Promise<void>.\n\n[guide]: https://example.com/guide",
           },
         ]}
       />,
@@ -245,7 +246,9 @@ it("keeps the collapsed Markdown preview readable and skips its links when tabbi
   const toggle = page.getByRole("button", { name: "Question 1", exact: true });
   await act(async () => toggle.click());
   await expect.element(page.getByRole("button", { name: "Incremental" })).not.toBeInTheDocument();
-  expect(container.innerText.replace(/\s+/g, " ")).toContain("Read help and confirm.");
+  expect(container.innerText.replace(/\s+/g, " ")).toContain(
+    "Read help and confirm Promise<void>.",
+  );
   expect(container.innerText).not.toContain("https://");
   expect(container.innerText).not.toContain("**");
   const after = document.createElement("button");
