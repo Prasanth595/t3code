@@ -1157,7 +1157,7 @@ describe("orchestrator MCP toolkit", () => {
             const remainder = yield* decodeThreadReadResult(remainderCall.structuredContent).pipe(
               Effect.orDie,
             );
-            expect(remainder.items[0]?.nextTextOffset).toBeNull();
+            expect(remainder.items[0]?.nextTextOffset).toBeUndefined();
             expect(firstChunk.text + (remainder.items[0]?.text ?? "")).toBe(
               "Claude completed: Complete before a parent reads this child result directly.",
             );
@@ -1237,6 +1237,38 @@ describe("orchestrator MCP toolkit", () => {
               acknowledgedByDirectRead.subagents.find((task) => task.id === directRead.task.id)
                 ?.completionDelivery,
             ).toMatchObject({ state: "acknowledged", observedByRunId: parentRun.id });
+            yield* Ref.set(continuationOffers, []);
+
+            // A default read previews messages at 4,000 chars, so a longer
+            // child result stays unacknowledged until it is read whole.
+            const overBudget = yield* queueAutomaticCompletion(
+              "default-budget-over",
+              "o".repeat(4_001 - "Claude completed: ".length),
+            );
+            const readOverBudgetResult = (maxCharsPerItem?: number) =>
+              invoke("t3_thread_read", {
+                threadId: overBudget.task.childThreadId!,
+                ...(maxCharsPerItem === undefined ? {} : { maxCharsPerItem }),
+              }).pipe(
+                Effect.flatMap((call) => decodeThreadReadResult(call.structuredContent)),
+                Effect.orDie,
+                Effect.map((read) => read.items.find((item) => item.type === "assistant_message")),
+              );
+            expect(yield* readOverBudgetResult()).toMatchObject({
+              textTruncated: true,
+              nextTextOffset: 4_000,
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === overBudget.task.id,
+              )?.completionDelivery?.state,
+            ).toBe("claimed");
+            expect(yield* readOverBudgetResult(4_001)).toMatchObject({ textTruncated: false });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === overBudget.task.id,
+              )?.completionDelivery?.state,
+            ).toBe("acknowledged");
             yield* Ref.set(continuationOffers, []);
 
             const queueRace = yield* queueAutomaticCompletion(
