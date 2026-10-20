@@ -153,6 +153,7 @@ function SettingsIndexSections() {
   return (
     <>
       <SettingsSection title="Interface">
+        <SettingsRow icon="gearshape" label="General" target="SettingsGeneral" />
         <SettingsRow icon="paintbrush" label="Appearance" target="SettingsAppearance" />
         {Platform.OS === "ios" ? (
           <>

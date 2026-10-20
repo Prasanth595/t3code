@@ -1,5 +1,7 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { VoiceInputPhase, VoiceInputState } from "@t3tools/client-runtime/voice-input";
+import { AsyncResult } from "effect/reactivity";
 import { memo, useCallback, useLayoutEffect, useState, type ReactNode } from "react";
 import {
   Linking,
@@ -24,8 +26,16 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { cn } from "../../lib/cn";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import type { VoiceComposerPresentation } from "./voiceInputPresentation";
 import { VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
+
+function useVoiceInputEnabled(): boolean {
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  return AsyncResult.isSuccess(preferencesResult)
+    ? preferencesResult.value.voiceInputEnabled !== false
+    : true;
+}
 
 const DICTATION_TIMING = {
   duration: 220,
@@ -440,6 +450,8 @@ export function ComposerDictationStartAction(props: {
   readonly onCancel: () => void;
 }) {
   const navigation = useNavigation();
+  const voiceInputEnabled = useVoiceInputEnabled();
+  if (!voiceInputEnabled) return null;
   if (!props.isAvailable) {
     return (
       <VoiceActionButton
@@ -449,7 +461,7 @@ export function ComposerDictationStartAction(props: {
         onPress={() =>
           navigation.navigate("SettingsSheet", {
             screen: "SettingsContent",
-            params: { screen: "SettingsMicrophone" },
+            params: { screen: "SettingsGeneral" },
           })
         }
       />
