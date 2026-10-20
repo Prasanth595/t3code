@@ -196,6 +196,8 @@ describe("scheduleFromDraft", () => {
 
   it.each([
     ["1.5", 90_000],
+    ["2,5", 150_000],
+    [" 2,5 ", 150_000],
     ["1000001", 60_000_060_000],
     [String(60_001 / 60_000), 60_001],
     [String(65_000 / 60_000), 65_000],
@@ -207,7 +209,7 @@ describe("scheduleFromDraft", () => {
     });
   });
 
-  it.each(["NaN", "Infinity", "9007199254740991", "0.5"])(
+  it.each(["NaN", "Infinity", "9007199254740991", "0.5", "0,5", "2,5,0"])(
     "rejects intervals that cannot be written as safe whole milliseconds: %s",
     (intervalMinutes) => {
       expect(
