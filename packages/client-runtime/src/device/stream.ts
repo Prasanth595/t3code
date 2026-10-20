@@ -944,20 +944,27 @@ export function createDeviceStreamClient(
     };
     try {
       await connection.setLocalDescription(await connection.createOffer());
-      await new Promise<void>((resolve) => {
-        if (connection.iceGatheringState === "complete") return resolve();
-        const timer = setTimeout(done, ICE_GATHERING_TIMEOUT_MS);
-        function done() {
+      const gathered = await new Promise<boolean>((resolve) => {
+        if (connection.iceGatheringState === "complete") return resolve(true);
+        const timer = setTimeout(() => done(false), ICE_GATHERING_TIMEOUT_MS);
+        function done(complete: boolean) {
           clearTimeout(timer);
           connection.removeEventListener("icegatheringstatechange", changed);
-          resolve();
+          resolve(complete);
         }
         function changed() {
-          if (connection.iceGatheringState === "complete") done();
+          if (connection.iceGatheringState === "complete") done(true);
         }
         connection.addEventListener("icegatheringstatechange", changed);
       });
       if (!isCurrent()) return;
+      // serve-sim takes the offer's candidates as the whole set; none trickle
+      // later. Host candidates gather at once and reach a simulator on this
+      // network, so an offer cut short with some is still sent; one with none
+      // could never connect, so it is retried instead.
+      if (!gathered && !/^a=candidate:/m.test(connection.localDescription?.sdp ?? "")) {
+        return retry("Device stream found no network candidates yet. Retrying…");
+      }
       const response = await fetch(httpUrl(`/helper/${device}/webrtc/offer`), {
         method: "POST",
         headers: { "content-type": "application/json" },

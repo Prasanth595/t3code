@@ -930,7 +930,12 @@ describe("WebRTC-only iOS devices", () => {
     vi.unstubAllGlobals();
   });
 
-  function webRtcFixture(options: { webCodecs: boolean; offerStatuses?: number[] }) {
+  function webRtcFixture(options: {
+    webCodecs: boolean;
+    offerStatuses?: number[];
+    /** The fake peer's ICE gathering state; `gathering` never completes. */
+    iceGatheringState?: "complete" | "gathering";
+  }) {
     vi.useFakeTimers();
     if (options.webCodecs) {
       vi.stubGlobal("VideoDecoder", vi.fn());
@@ -949,7 +954,7 @@ describe("WebRTC-only iOS devices", () => {
     vi.stubGlobal("WebSocket", FakeSocket);
     const peers: FakePeer[] = [];
     class FakePeer {
-      iceGatheringState = "complete";
+      iceGatheringState = options.iceGatheringState ?? "complete";
       connectionState = "new";
       localDescription: { type: string; sdp: string } | null = null;
       remoteDescription: unknown = null;
@@ -1126,6 +1131,27 @@ describe("WebRTC-only iOS devices", () => {
     await fixture.settle();
     expect(fixture.peers).toHaveLength(2);
     expect(fixture.peers[1]!.remoteDescription).toEqual({ type: "answer", sdp: "v=0 answer" });
+    fixture.client.stop();
+  });
+
+  it("retries instead of offering when ICE gathering times out without a candidate", async () => {
+    const fixture = webRtcFixture({ webCodecs: true, iceGatheringState: "gathering" });
+    fixture.client.start();
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(1);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(0);
+    // The gathering deadline passes with no candidate in the offer: no offer is
+    // sent, the attempt is retried.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fixture.peers[0]!.closed).toBe(true);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(0);
+    expect(fixture.events.onStatus).toHaveBeenLastCalledWith(
+      "connecting",
+      "Device stream found no network candidates yet. Retrying…",
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
     fixture.client.stop();
   });
 
