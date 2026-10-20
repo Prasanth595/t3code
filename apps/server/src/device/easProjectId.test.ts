@@ -353,6 +353,25 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config spreads the config but replaces extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: {} });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config spreads the config but replaces eas",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({
+        ...config,
+        extra: { ...config.extra, eas: { build: { experimental: true } } },
+      });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "reads app.json's project id through a config that only spreads the config itself",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({

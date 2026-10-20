@@ -247,6 +247,20 @@ describe("Expo API", () => {
       )
         .stop("session-1")
         .pipe(Effect.flip);
+      const echoed = yield* makeExpoApi(
+        respond(
+          Response.json({
+            errors: [{ message: `Session session-secret is not yours (${"x".repeat(400)})` }],
+          }),
+        ),
+        credential,
+      )
+        .stop("session-1")
+        .pipe(Effect.flip);
+      // A message that echoes the credential loses it, and is bounded.
+      expect(echoed.message).toContain("Session [redacted] is not yours");
+      expect(echoed.message).not.toContain("session-secret");
+      expect(echoed.message.length).toBeLessThan(400);
       const userError = yield* makeExpoApi(
         respond(
           Response.json({

@@ -196,7 +196,14 @@ const toExpoApiError = (
       status < 500 &&
       !uncertain &&
       (status >= 400 || reason._tag === "ResponseError"));
-  const failure = (detail: string) => new ExpoApiError({ operation, detail, rejected });
+  // Expo's own messages are the reason the user acts on, but nothing promises
+  // they never echo a request: the credential is cut out, and they are bounded.
+  const secret = Redacted.value(credential.header.value);
+  const token = secret.replace(/^Bearer /, "");
+  const scrub = (text: string) =>
+    text.replaceAll(secret, "[redacted]").replaceAll(token, "[redacted]").slice(0, 300);
+  const failure = (detail: string) =>
+    new ExpoApiError({ operation, detail: scrub(detail), rejected });
   if (status === 401 || status === 403) {
     const what = credential.source === "eas-login" ? "eas login session" : "access token";
     return failure(`the ${what} was rejected (HTTP ${status})`);

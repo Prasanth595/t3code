@@ -71,6 +71,34 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
   }
 };
 const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
+// An `extra:` or `eas:` entry in a config that takes its id from app.json:
+// unless its value is an object that starts by spreading `config`'s own,
+// it replaces app.json's (`extra: {}` drops the id).
+const EXTRA_OR_EAS = /\b(?:extra|eas)\s*:\s*/g;
+const keepsStaticExtra = (source: string): boolean => {
+  for (const entry of source.matchAll(EXTRA_OR_EAS)) {
+    let at = entry.index + entry[0].length;
+    if (source[at] !== "{") return false;
+    at++;
+    for (;;) {
+      SPREAD_FILLER.lastIndex = at;
+      const filler = SPREAD_FILLER.exec(source);
+      if (!filler) break;
+      at += filler[0].length;
+    }
+    if (!source.startsWith("...", at)) return false;
+    at += 3;
+    for (;;) {
+      SPREAD_FILLER.lastIndex = at;
+      const filler = SPREAD_FILLER.exec(source);
+      if (!filler) break;
+      at += filler[0].length;
+    }
+    CONFIG_AT.lastIndex = at;
+    if (!CONFIG_AT.test(source)) return false;
+  }
+  return true;
+};
 
 const Extra = Schema.optional(
   Schema.Struct({
@@ -125,7 +153,10 @@ const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: stri
     }
     // Only a config shown to spread `config` and nothing else carries app.json's
     // entry through unchanged; any other shape could use or replace it.
-    if (!quoted.some((id) => UUID.test(id)) && staticConfigUse(source) !== "spreads") {
+    if (
+      !quoted.some((id) => UUID.test(id)) &&
+      (staticConfigUse(source) !== "spreads" || !keepsStaticExtra(source))
+    ) {
       return null;
     }
     ids.push(...quoted.filter((id) => UUID.test(id)).map((id) => id.toLowerCase()));
