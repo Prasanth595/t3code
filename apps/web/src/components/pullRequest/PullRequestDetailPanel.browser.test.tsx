@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  GitCommandError,
+  GitManagerError,
   ProjectId,
   SourceControlProviderKind,
   ThreadId,
@@ -7,6 +9,7 @@ import {
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -15,11 +18,16 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
 import "~/index.css";
 
-const { newThread, prepareThread, refresh } = vi.hoisted(() => ({
-  newThread: vi.fn(),
-  prepareThread: vi.fn(),
-  refresh: vi.fn(),
-}));
+const { newThread, prepareThread, refresh, addToast, updateToast, checkoutState } = vi.hoisted(
+  () => ({
+    newThread: vi.fn(),
+    prepareThread: vi.fn(),
+    refresh: vi.fn(),
+    addToast: vi.fn(),
+    updateToast: vi.fn(),
+    checkoutState: { error: null as Error | null },
+  }),
+);
 
 vi.mock(import("~/state/session"), async (original) => ({
   ...(await original()),
@@ -39,7 +47,7 @@ vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
   usePreparePullRequestThreadAction: (() => ({
     run: prepareThread,
     isAllowed: true,
-    error: null,
+    error: checkoutState.error,
   })) as never,
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
@@ -146,6 +154,14 @@ vi.mock(import("./PullRequestCodeTab"), async (original) => ({
   )) as never,
 }));
 
+vi.mock(import("../ui/toast"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    toastManager: { ...actual.toastManager, add: addToast, update: updateToast } as never,
+  };
+});
+
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
 
@@ -244,6 +260,9 @@ beforeEach(() => {
   newThread
     .mockReset()
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
+  addToast.mockReset().mockReturnValue("checkout-toast");
+  updateToast.mockReset();
+  checkoutState.error = null;
   prepareThread.mockReset().mockResolvedValue({
     _tag: "Success",
     value: { branch: "feature", worktreePath: "/workspace/pr" },
@@ -385,4 +404,70 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(false));
   await tab("Code").click();
   await vi.waitFor(() => expect(titleFold()).toBe(true));
+});
+
+it("stays collapsed at the bottom after native scroll clamping and reopens at the top", async () => {
+  await render();
+  const title = page.getByRole("heading", { level: 1, name: "Test pull request" });
+  await expect.element(title).toBeVisible();
+  const scroller = page.getByTestId("summary-scroller").element() as HTMLElement;
+  const content = scroller.lastElementChild as HTMLElement;
+  // Leave only a short scroll range so folding the header makes the browser clamp it.
+  content.style.height = `${scroller.clientHeight - 24}px`;
+  const expandedHeight = scroller.clientHeight;
+  const expandedBottom = scroller.scrollHeight - scroller.clientHeight;
+
+  await act(async () => {
+    const scrolled = new Promise<void>((resolve) =>
+      scroller.addEventListener("scroll", () => resolve(), { once: true }),
+    );
+    scroller.scrollTop = scroller.scrollHeight;
+    await scrolled;
+  });
+
+  await vi.waitFor(() => {
+    expect(title.element().closest("[inert]")).not.toBeNull();
+    expect(scroller.clientHeight).toBeGreaterThan(expandedHeight);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    expect(scroller.scrollTop).toBeLessThan(expandedBottom);
+    expect(scroller.scrollTop).toBe(scroller.scrollHeight - scroller.clientHeight);
+  });
+
+  await act(async () => {
+    const scrolled = new Promise<void>((resolve) =>
+      scroller.addEventListener("scroll", () => resolve(), { once: true }),
+    );
+    scroller.scrollTop = 0;
+    await scrolled;
+  });
+  await vi.waitFor(() => expect(title.element().closest("[inert]")).toBeNull());
+});
+
+it("shows the current checkout recovery detail on the first failure and on retry", async () => {
+  const first = new GitManagerError({
+    cwd: "/workspace",
+    operation: "preparePullRequestThread",
+    detail: "This PR branch is already checked out in the main repo. Use Local.",
+  });
+  const second = new GitCommandError({
+    cwd: "/workspace",
+    operation: "GitVcsDriver.createWorktree",
+    command: "git worktree add",
+    detail: "The worktree directory already exists. Choose another directory.",
+  });
+  await render();
+
+  for (const [index, error] of [first, second].entries()) {
+    prepareThread.mockImplementationOnce(async () => {
+      checkoutState.error = error;
+      return { _tag: "Failure", cause: Cause.fail(error) };
+    });
+    await page.getByRole("button", { name: "Check out", exact: true }).click();
+    await page.getByRole("menuitem", { name: /In a separate worktree/ }).click();
+    await vi.waitFor(() => expect(updateToast).toHaveBeenCalledTimes(index + 1));
+  }
+  expect(updateToast.mock.calls.map(([, toast]) => toast.description)).toEqual([
+    expect.stringContaining(first.detail),
+    second.detail,
+  ]);
 });
