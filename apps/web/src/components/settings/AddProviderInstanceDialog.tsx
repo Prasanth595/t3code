@@ -334,7 +334,7 @@ export function AddProviderInstanceDialog({
       return;
     }
     onCreated?.(brandedId);
-    if (isAcpRegistry && !isLocalAcp) {
+    if ((isAcpRegistry && !isLocalAcp) || driverOption.listsInventory) {
       setCreatedInstanceId(brandedId);
       setIsSaving(false);
       setWizardStep(2);
@@ -380,7 +380,7 @@ export function AddProviderInstanceDialog({
               currentStep={wizardStep}
               summaries={wizardStepSummaries}
               instanceIdError={instanceIdError}
-              disabled={isSaving || isPreparingRegistryAgent}
+              disabled={isSaving || isPreparingRegistryAgent || createdInstanceId !== null}
               onNavigation={applyWizardNavigation}
             />
           )}
@@ -391,6 +391,23 @@ export function AddProviderInstanceDialog({
             environmentId={environmentId}
             environmentLabel={environmentLabel}
             instanceId={createdInstanceId}
+            instance={settings.providerInstances?.[createdInstanceId]}
+            onInstanceChange={(instance) => {
+              void persistProviderInstance({
+                operation: "upsert",
+                instanceId: createdInstanceId,
+                instance,
+              }).then((result) => {
+                if (result._tag !== "Failure") return;
+                const error = squashAtomCommandFailure(result);
+                toastManager.add({
+                  type: "error",
+                  title: "Could not save provider settings",
+                  description:
+                    error instanceof Error ? error.message : "The settings update failed.",
+                });
+              });
+            }}
             onFinish={() => onOpenChange(false)}
           />
         ) : (

@@ -1,4 +1,5 @@
 import { AuthProvidersManageScope } from "@t3tools/contracts";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -10,7 +11,10 @@ import {
 import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  useEnvironmentSettings,
+  usePersistEnvironmentProviderInstanceMutation,
+} from "../../hooks/useSettings";
 import { randomUUID } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -19,6 +23,8 @@ import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
 import { SettingsRow } from "./settingsLayout";
+import { ProviderInventoryList } from "./ProviderInventorySection";
+import { toastManager } from "../ui/toast";
 
 export function AddCodexAccountDialog({
   environmentId,
@@ -37,16 +43,22 @@ export function AddCodexAccountDialog({
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const update = useAtomCommand(serverEnvironment.updateSettings, "Add ChatGPT account");
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const [name, setName] = useState("Personal");
   const displayName = `ChatGPT - ${name.trim()}`;
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
   const [pending, setPending] = useState(false);
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
   const connected = usesChatGptSharing(provider);
+  // Saving a switch rebuilds the provider and briefly clears its auth status.
+  const [showInventory, setShowInventory] = useState(false);
+  if (!showInventory && connected && provider?.supportsInventory) setShowInventory(true);
+  const closeOnConnection = connected && !provider?.supportsInventory;
   const closeAfterConnection = useEffectEvent(onClose);
   useEffect(() => {
-    if (connected) closeAfterConnection();
-  }, [connected]);
+    if (closeOnConnection) closeAfterConnection();
+  }, [closeOnConnection]);
+  const instance = instanceId ? settings.providerInstances?.[instanceId] : undefined;
 
   const createAccount = async () => {
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
@@ -71,19 +83,15 @@ export function AddCodexAccountDialog({
       },
     });
     if (result._tag === "Success") {
-      if (onAccountCreated) {
-        onAccountCreated(id, displayName);
-        onClose();
-      } else {
-        setInstanceId(id);
-      }
+      onAccountCreated?.(id, displayName);
+      setInstanceId(id);
     }
     setPending(false);
   };
 
   return (
     <Dialog
-      open={!connected}
+      open={!closeOnConnection}
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
@@ -91,11 +99,46 @@ export function AddCodexAccountDialog({
       <WizardPopup size="wide">
         <WizardHeader
           title={instanceId ? displayName : "Add ChatGPT account"}
-          description="Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          description={
+            showInventory
+              ? "Choose which connectors, plugins and skills this account uses in T3."
+              : "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          }
         />
         <WizardPanel>
           {instanceId ? (
-            provider?.setup ? (
+            showInventory && instance ? (
+              <div className="max-h-96 overflow-y-auto">
+                <ProviderInventoryList
+                  environmentId={environmentId}
+                  instanceId={instanceId}
+                  disabled={instance.disabledInventory}
+                  onDisabledChange={
+                    canManageProviders
+                      ? (next) => {
+                          const { disabledInventory: _omit, ...rest } = instance;
+                          void persistProviderInstance({
+                            operation: "upsert",
+                            instanceId,
+                            instance: next ? { ...rest, disabledInventory: next } : rest,
+                          }).then((result) => {
+                            if (result._tag !== "Failure") return;
+                            const error = squashAtomCommandFailure(result);
+                            toastManager.add({
+                              type: "error",
+                              title: "Could not save provider settings",
+                              description:
+                                error instanceof Error
+                                  ? error.message
+                                  : "The settings update failed.",
+                            });
+                          });
+                        }
+                      : undefined
+                  }
+                />
+              </div>
+            ) : provider?.setup ? (
               renderSetup(instanceId, provider)
             ) : (
               <SettingsRow title="Codex runtime" description="Preparing managed setup." />
@@ -126,8 +169,8 @@ export function AddCodexAccountDialog({
         </WizardPanel>
         <WizardFooter>
           {instanceId ? (
-            <Button variant="outline" onClick={onClose}>
-              Finish later
+            <Button variant={showInventory ? "default" : "outline"} onClick={onClose}>
+              {showInventory ? "Done" : "Finish later"}
             </Button>
           ) : (
             <>

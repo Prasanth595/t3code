@@ -21,6 +21,7 @@ import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "
 import {
   isProviderDriverKind,
   resolveProviderInstanceEnabled,
+  type ProviderDisabledInventory,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type ProviderInstanceId,
@@ -61,6 +62,7 @@ import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
+import { ProviderInventorySection } from "./ProviderInventorySection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
@@ -753,6 +755,11 @@ export function ProviderInstanceCard({
     );
   };
 
+  const updateDisabledInventory = (next: ProviderDisabledInventory | undefined) => {
+    const { disabledInventory: _omit, ...rest } = instance;
+    onUpdate(next ? { ...rest, disabledInventory: next } : rest);
+  };
+
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
     const { config: _omit, ...rest } = instance;
     onUpdate(
@@ -1248,6 +1255,18 @@ export function ProviderInstanceCard({
           provider={liveProvider}
           projects={acpProjects}
           readOnly={readOnly}
+        />
+      ) : null}
+
+      {environmentId !== undefined &&
+      projectOverride === undefined &&
+      enabled &&
+      liveProvider?.supportsInventory === true ? (
+        <ProviderInventorySection
+          environmentId={environmentId}
+          instanceId={instanceId}
+          disabled={instance.disabledInventory}
+          onDisabledChange={readOnly ? undefined : updateDisabledInventory}
         />
       ) : null}
 

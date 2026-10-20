@@ -266,6 +266,7 @@ const createAdapterEntryFromConfigEntry = Effect.fn(
       accentColor: input.entry.accentColor,
       environment: input.entry.environment ?? [],
       enabled: input.entry.enabled ?? decodedConfigEnabled(typedConfig) ?? true,
+      disabledInventory: input.entry.disabledInventory ?? {},
       config: typedConfig,
     })
     .pipe(
