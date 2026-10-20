@@ -80,6 +80,9 @@ export function PullRequestReviewerPicker({
       });
       return;
     }
+    // The command reads the loaded list again only for somebody it lacked, and a search result
+    // is keyed by what was typed, so the one on screen is read here or it keeps the old request.
+    if (searchesHost) searchResult.refresh();
     toastManager.add({
       type: "success",
       title: candidate.isRequested
@@ -107,7 +110,13 @@ export function PullRequestReviewerPicker({
           query.trim().length > 0 &&
           (searchQuery !== query.trim() || searchResult.isPending))
       }
-      error={candidatesQuery.data === null ? candidatesQuery.error : null}
+      error={
+        candidatesQuery.data === null
+          ? candidatesQuery.error
+          : searchesHost && candidates.length === 0
+            ? searchResult.error
+            : null
+      }
       candidates={candidates}
       emptyLabel="Nobody else has access to this repository."
       noMatchLabel="Nobody with access matches that."
