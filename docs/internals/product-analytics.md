@@ -12,8 +12,9 @@ else the Claude machine id, else the install's anonymous id. It can change when
 someone logs in, and a Codex Team shares one, but keeping it means PostHog charts
 and history never break. Do not change it; add a field instead.
 
-Every event also carries `installId`: the hash of a random id saved in the
-server's state directory, which never changes for the install. Count installs
+Every event also carries `installId` when the server can save its state: the hash
+of a random id in the state directory, which never changes for the install. If
+that file cannot be written, events still go out under `distinct_id`, as before. Count installs
 with it. Who an install belongs to is a separate fact, sent as
 `install.owner_observed`. Owners are resolved at query time in our own store, so
 a rule can change and apply to all history.

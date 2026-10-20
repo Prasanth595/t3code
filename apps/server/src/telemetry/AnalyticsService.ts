@@ -47,7 +47,9 @@ const FLUSH_INTERVAL_MS = 10_000;
 const SEND_TIMEOUT = "10 seconds";
 const MAX_BATCH_ATTEMPTS = 5;
 const RETRY_BASE_DELAY_MS = 2_000;
-// A client could send any number of owner ids; past this many, new ones are not sent.
+// Clients can report any number of owner ids; past this many per observer, new ones
+// are not sent. Each observer has its own cap, so client reports never crowd out the
+// server's own.
 const MAX_RECORDED_OWNERS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 // The endpoint answers these when the batch itself is wrong (bad body, wrong
@@ -145,7 +147,9 @@ export const make = Effect.gen(function* () {
     failures: 0,
     retryAt: 0,
   });
-  const recordedOwnersRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+  const recordedOwnersRef = yield* Ref.make<
+    Readonly<Record<"server" | "client", ReadonlySet<string>>>
+  >({ server: new Set(), client: new Set() });
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
@@ -299,15 +303,18 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const recordOwners: AnalyticsService["Service"]["recordOwners"] = (owners, observedBy) =>
+  const recordOwners: AnalyticsService["Service"]["recordOwners"] = Effect.fn(
+    "AnalyticsService.recordOwners",
+  )((owners, observedBy) =>
     Effect.forEach(
       owners,
       ({ source, ownerId }) =>
         Ref.modify(recordedOwnersRef, (recorded) => {
-          const key = `${observedBy}:${source}:${ownerId}`;
-          return recorded.has(key) || recorded.size >= MAX_RECORDED_OWNERS
+          const key = `${source}:${ownerId}`;
+          const seen = recorded[observedBy];
+          return seen.has(key) || seen.size >= MAX_RECORDED_OWNERS
             ? [false, recorded]
-            : [true, new Set(recorded).add(key)];
+            : [true, { ...recorded, [observedBy]: new Set(seen).add(key) }];
         }).pipe(
           Effect.flatMap((isNew) =>
             isNew
@@ -316,7 +323,8 @@ export const make = Effect.gen(function* () {
           ),
         ),
       { discard: true },
-    );
+    ),
+  );
 
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
     disableYield: true,
