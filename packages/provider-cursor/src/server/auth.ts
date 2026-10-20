@@ -48,7 +48,6 @@ export interface CursorAuthOptions {
   readonly login?: (options: SdkLoginOptions) => Promise<SdkLoginResult>;
 }
 
-/** Each instance owns its browser credential; explicit API keys always take precedence. */
 export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: CursorAuthOptions) {
   const scope = yield* Scope.Scope;
   const crypto = yield* Crypto.Crypto;
@@ -111,7 +110,6 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     return apiKey;
   });
 
-  // Keep SDK sessions and one-shot text generation inside instance-owned scopes.
   // Closing admission before draining these scopes prevents cached credentials surviving sign-out.
   const withAccess: CursorAuth["withAccess"] = (task) =>
     Effect.uninterruptibleMask((restore) =>
@@ -156,8 +154,8 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
     }),
   );
 
-  const runLogin = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
-    Effect.gen(function* () {
+  const runLogin = Effect.fn("CursorAuth.runLogin")(
+    function* (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) {
       yield* stopSessions.pipe(Effect.ensuring(stopSessionsWithCredentials));
       // The SDK first writes into memory. Cancellation must not save a late login result.
       const pendingStore = new InMemoryCredentialStore();
@@ -245,50 +243,56 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           });
         }).pipe(Effect.uninterruptible),
       );
-    }).pipe(
-      Effect.scoped,
-      Effect.timeoutOrElse({
-        duration: AUTH_TIMEOUT_MS,
-        orElse: () =>
-          Effect.fail(
-            new ProviderSetupError({
-              instanceId: options.instanceId,
-              operation: "start",
-              detail: "Cursor sign-in expired. Start sign-in again.",
+    },
+    (effect, flow, stopSessions) =>
+      effect.pipe(
+        Effect.scoped,
+        Effect.timeoutOrElse({
+          duration: AUTH_TIMEOUT_MS,
+          orElse: () =>
+            Effect.fail(
+              new ProviderSetupError({
+                instanceId: options.instanceId,
+                operation: "start",
+                detail: "Cursor sign-in expired. Start sign-in again.",
+              }),
+            ),
+        }),
+        Effect.exit,
+        Effect.flatMap((result) =>
+          lock.withPermits(1)(
+            Effect.gen(function* () {
+              if (active !== flow) return;
+              active = undefined;
+              operation = "idle";
+              yield* publish(flow, {
+                phase: Exit.isSuccess(result) ? "succeeded" : "failed",
+                authorizationUrl: null,
+                expiresAt: null,
+                message: Exit.isSuccess(result)
+                  ? "Signed in with Cursor."
+                  : "Cursor sign-in failed or expired. Start sign-in again.",
+              });
             }),
           ),
-      }),
-      Effect.exit,
-      Effect.flatMap((result) =>
-        lock.withPermits(1)(
-          Effect.gen(function* () {
-            if (active !== flow) return;
-            active = undefined;
-            operation = "idle";
-            yield* publish(flow, {
-              phase: Exit.isSuccess(result) ? "succeeded" : "failed",
-              authorizationUrl: null,
-              expiresAt: null,
-              message: Exit.isSuccess(result)
-                ? "Signed in with Cursor."
-                : "Cursor sign-in failed or expired. Start sign-in again.",
-            });
-          }),
         ),
       ),
-    );
+  );
 
-  const requireFlow = (owner: string, id: string, name: string) =>
-    Effect.gen(function* () {
-      if (!active || active.owner !== owner || active.id !== id) {
-        return yield* new ProviderSetupError({
-          instanceId: options.instanceId,
-          operation: name,
-          detail: "This sign-in is no longer active in this client.",
-        });
-      }
-      return active;
-    });
+  const requireFlow = Effect.fn("CursorAuth.requireFlow")(function* (
+    owner: string,
+    id: string,
+    name: string,
+  ) {
+    if (!active || active.owner !== owner || active.id !== id) {
+      return yield* new ProviderSetupError({
+        instanceId: options.instanceId,
+        operation: name,
+        detail: "This sign-in is no longer active in this client.",
+      });
+    }
+    return active;
+  });
 
   const controller: ProviderAuthController = {
     credentialBinding: options.credentialBinding ?? {

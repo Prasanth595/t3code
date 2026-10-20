@@ -1,9 +1,3 @@
-/**
- * PiTextGeneration — commit messages, PR content, branch names, and thread
- * titles generated through an ephemeral `pi --mode rpc --no-session` process.
- * No session file is written; the user's Pi configuration (default model,
- * auth, custom providers) still applies.
- */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -27,9 +21,10 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const runPiJson: TextGenerationOperations.Runner = (request) => {
-    const { operation, cwd, prompt, modelSelection } = request;
-    return Effect.gen(function* () {
+  const runPiJson: TextGenerationOperations.Runner = Effect.fn("PiTextGeneration.runPiJson")(
+    function* (request) {
+      const { operation, cwd, prompt, modelSelection } = request;
+
       const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
         return yield* new TextGenerationError({
@@ -43,16 +38,12 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         mcpSession: undefined,
         extensionPath: undefined,
         ephemeral: true,
-        // No user is present to answer a text-generation extension dialog.
         disableExtensions: true,
         // Background naming/content helpers must never mutate the workspace.
         disableTools: true,
       });
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
-        // Extensions and tools are disabled because no user is present to
-        // answer a dialog and background text generation is read-only. User
-        // model config and auth still apply.
         args: launch.args,
         cwd,
         env: launch.env,
@@ -97,27 +88,31 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         });
       }
       return yield* TextGenerationOperations.decodeJsonReply(request, "Pi", text);
-    }).pipe(
-      Effect.timeoutOption(PI_TIMEOUT_MS),
-      Effect.flatMap(
-        Option.match({
-          onNone: () =>
-            Effect.fail(new TextGenerationError({ operation, detail: "Pi request timed out." })),
-          onSome: (value) => Effect.succeed(value),
-        }),
-      ),
-      Effect.mapError((cause) =>
-        isTextGenerationError(cause)
-          ? cause
-          : new TextGenerationError({
-              operation,
-              detail: "Pi text generation failed.",
-              cause,
-            }),
-      ),
-      Effect.scoped,
-    );
-  };
+    },
+    (effect, request) => {
+      const { operation } = request;
+      return effect.pipe(
+        Effect.timeoutOption(PI_TIMEOUT_MS),
+        Effect.flatMap(
+          Option.match({
+            onNone: () =>
+              Effect.fail(new TextGenerationError({ operation, detail: "Pi request timed out." })),
+            onSome: (value) => Effect.succeed(value),
+          }),
+        ),
+        Effect.mapError((cause) =>
+          isTextGenerationError(cause)
+            ? cause
+            : new TextGenerationError({
+                operation,
+                detail: "Pi text generation failed.",
+                cause,
+              }),
+        ),
+        Effect.scoped,
+      );
+    },
+  );
 
   return TextGenerationOperations.fromRunner(
     "PiTextGeneration",
