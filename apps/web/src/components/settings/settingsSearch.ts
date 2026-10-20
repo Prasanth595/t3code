@@ -245,6 +245,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
+    id: "fast-mode-indicator",
+    title: "Fast mode indicator",
+    to: "/settings/appearance",
+    searchTerms: ["speed lightning bolt icon text ultrafast composer reasoning"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

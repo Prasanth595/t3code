@@ -1,4 +1,5 @@
 import {
+  type FastModeIndicator,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderDriverKind,
@@ -62,6 +63,7 @@ type TraitsRenderInput = {
   hidden?: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
+  fastModeIndicator?: FastModeIndicator;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -237,6 +239,7 @@ function renderTraitsControl(
     hidden,
     triggerClassName,
     isComposerOwned,
+    fastModeIndicator,
   } = input;
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   const { selections: resolvedModelOptions } = resolveComposerOptionSelections(
@@ -276,6 +279,7 @@ function renderTraitsControl(
       {...(hidden !== undefined ? { hidden } : {})}
       {...(triggerClassName !== undefined ? { triggerClassName } : {})}
       {...(isComposerOwned ? { isComposerOwned } : {})}
+      {...(fastModeIndicator !== undefined ? { fastModeIndicator } : {})}
     />
   );
 }

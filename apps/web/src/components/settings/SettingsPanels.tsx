@@ -29,6 +29,7 @@ import {
   type ChatWidth,
   type DiffLayout,
   type EnvironmentIdentificationMode,
+  type FastModeIndicator,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
@@ -207,6 +208,11 @@ const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
   wide: "Wide",
   full: "Full",
+};
+
+const FAST_MODE_INDICATOR_LABELS: Record<FastModeIndicator, string> = {
+  text: "Text",
+  icon: "Lightning icon",
 };
 
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
@@ -546,6 +552,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),
+    ...(settings.fastModeIndicator !== DEFAULT_UNIFIED_SETTINGS.fastModeIndicator
+      ? ["Fast mode indicator"]
+      : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? ["Panel animations"]
       : []),
@@ -721,6 +730,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+      fastModeIndicator: DEFAULT_UNIFIED_SETTINGS.fastModeIndicator,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1401,6 +1411,47 @@ export function AppearanceSettingsPanel() {
               }
               aria-label="Render math"
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("fast-mode-indicator")}
+          description="Show Fast mode on the composer's reasoning button as text or as a lightning icon."
+          resetAction={
+            settings.fastModeIndicator !== DEFAULT_UNIFIED_SETTINGS.fastModeIndicator ? (
+              <SettingResetButton
+                label="fast mode indicator"
+                onClick={() =>
+                  updateSettings({
+                    fastModeIndicator: DEFAULT_UNIFIED_SETTINGS.fastModeIndicator,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.fastModeIndicator}
+                onValueChange={(value) => {
+                  if (value === "text" || value === "icon")
+                    updateSettings({ fastModeIndicator: value });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full min-w-0"
+                  aria-label="Fast mode indicator"
+                >
+                  <SelectValue>
+                    {FAST_MODE_INDICATOR_LABELS[settings.fastModeIndicator]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="text">Text (default)</SelectItem>
+                  <SelectItem value="icon">Lightning icon</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
       </SettingsSection>
@@ -3233,6 +3284,7 @@ export function GeneralSettingsPanel() {
                       settings.planModeEnabled || selectsPlanAgent(textGenModelOptions)
                     }
                     triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                    fastModeIndicator={settings.fastModeIndicator}
                     onModelOptionsChange={(nextOptions) => {
                       updateSettings({
                         textGenerationModelSelection: resolveAppModelSelectionState(
