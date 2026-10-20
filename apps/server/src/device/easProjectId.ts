@@ -84,11 +84,12 @@ const REPLACES_HOLDER =
 // or computed; a shorthand `extra` or `eas` entry replaces it too. More
 // entries than mentions are allowed are not read.
 const EXTRA_OR_EAS = /(?:\b(extra|eas)|["'`](extra|eas)["'`]\s*\]?)\s*:\s*/g;
-const EXTRA_OF_CONFIG = String.raw`config(?:\s*\??\.\s*extra|\s*\[\s*["'\x60]extra["'\x60]\s*\])`;
+const EXTRA_OF_CONFIG = String.raw`config(?:\s*\??\.\s*extra|\s*(?:\?\.)?\s*\[\s*["'\x60]extra["'\x60]\s*\])`;
 const EAS_OF_CONFIG =
-  EXTRA_OF_CONFIG + String.raw`(?:\s*\??\.\s*eas|\s*\[\s*["'\x60]eas["'\x60]\s*\])`;
-// The holder, and nothing more of it: no further property, call or operator.
-const HOLDER_END = String.raw`(?![\p{ID_Continue}$\u200c\u200d\\]|\s*[.?\[(])`;
+  EXTRA_OF_CONFIG + String.raw`(?:\s*\??\.\s*eas|\s*(?:\?\.)?\s*\[\s*["'\x60]eas["'\x60]\s*\])`;
+// The holder, and nothing more of it: no further property, call or operator
+// (`?? {}` keeps it, so it may follow).
+const HOLDER_END = String.raw`(?![\p{ID_Continue}$\u200c\u200d\\]|\s*(?:[.\[(]|\?(?!\?)))`;
 const HOLDER_AT = {
   extra: new RegExp(EXTRA_OF_CONFIG + HOLDER_END, "uy"),
   eas: new RegExp(EAS_OF_CONFIG + HOLDER_END, "uy"),
