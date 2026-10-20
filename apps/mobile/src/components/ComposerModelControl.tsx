@@ -5,11 +5,11 @@ import {
   composerModelOptionSummary,
   resolveProviderOptionDescriptors,
 } from "../lib/providerOptions";
-import { AppText as Text } from "./AppText";
-import { SymbolView } from "./AppSymbol";
+import { AppText as Text } from "./ui/AppText";
+import { SymbolView } from "./ui/AppSymbol";
 import { ComposerInlineControl } from "./ComposerToolbar";
 import { ProviderIcon } from "./ProviderIcon";
-import { useAndroidControlSizing } from "./useAndroidControlSizing";
+import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 /** Keeps option indicators fixed while the model name yields space in a narrow toolbar. */
 export function ComposerModelControl(props: {
