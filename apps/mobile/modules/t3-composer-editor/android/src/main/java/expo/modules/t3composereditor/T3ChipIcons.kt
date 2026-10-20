@@ -17,30 +17,35 @@ internal object T3ChipIcons {
 
   fun cached(uri: String): Bitmap? = images[uri]
 
-  fun load(context: Context, uri: String, onLoaded: (String) -> Unit): Bitmap? {
-    if (uri.isEmpty()) return null
-    images[uri]?.let { return it }
-    if (uri.startsWith("http://") || uri.startsWith("https://")) {
-      pending[uri]?.let {
-        it.add(onLoaded)
-        return null
+  fun load(context: Context, uri: String, onLoaded: (String) -> Unit): Bitmap? =
+    images[uri] ?: when {
+      uri.isEmpty() -> null
+      uri.startsWith("http://") || uri.startsWith("https://") -> {
+        download(uri, onLoaded)
+        null
       }
-      pending[uri] = mutableSetOf(onLoaded)
-      downloads.execute {
-        val bitmap = runCatching {
-          URL(uri).openStream().use(BitmapFactory::decodeStream)
-        }.getOrNull()
-        main.post {
-          val waiting = pending.remove(uri).orEmpty()
-          if (bitmap != null) {
-            images[uri] = bitmap
-            waiting.forEach { it(uri) }
-          }
+      else -> decodeLocal(context, uri)?.also { images[uri] = it }
+    }
+
+  private fun download(uri: String, onLoaded: (String) -> Unit) {
+    val waiting = pending[uri]
+    if (waiting != null) {
+      waiting.add(onLoaded)
+      return
+    }
+    pending[uri] = mutableSetOf(onLoaded)
+    downloads.execute {
+      val bitmap = runCatching {
+        URL(uri).openStream().use(BitmapFactory::decodeStream)
+      }.getOrNull()
+      main.post {
+        val callbacks = pending.remove(uri).orEmpty()
+        if (bitmap != null) {
+          images[uri] = bitmap
+          callbacks.forEach { it(uri) }
         }
       }
-      return null
     }
-    return decodeLocal(context, uri)?.also { images[uri] = it }
   }
 
   private fun decodeLocal(context: Context, uri: String): Bitmap? = runCatching {
