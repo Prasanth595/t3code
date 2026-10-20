@@ -31,6 +31,9 @@ const RUNS_EVERYTHING = [
 // Paths outside a package, or files inside one that other packages read
 // through relative imports rather than a package.json dependency.
 const EXTRA_OWNERS = [
+  // Terminal Manager tests read these files through relative paths.
+  [/^packages\/client-runtime\/src\/state\/terminalSession\.ts$/, ["t3"]],
+  [/^apps\/web\/src\/terminal\/ghostty\/vendor\/ghostty-vt\.wasm$/, ["t3"]],
   // Vite configs and tsconfigs of these apps import scripts/lib directly.
   [/^scripts\/lib\//, ["@t3tools/desktop", "@t3tools/mobile", "@t3tools/web", "t3"]],
   // scripts/build-desktop-artifact.ts reads the GNOME extension manifest.
