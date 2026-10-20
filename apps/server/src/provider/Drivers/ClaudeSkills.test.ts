@@ -231,7 +231,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
       assert.deepEqual(
         planClaudeSkillDispatch(
           "$plugin:alias focus on auth",
-          new Set(skills.map((skill) => skill.name)),
+          new Map(skills.map((skill) => [skill.name, skill])),
         ),
         {
           leadingText: undefined,
