@@ -39,9 +39,9 @@ const SPREAD_LATER = /\.\.\./;
 // Space, a comment, or an opening parenthesis: what may sit between `...`
 // and the thing spread. Sticky, so the scan moves through the file once.
 const SPREAD_FILLER = /(?:\s+|\/\/[^\n\r\u2028\u2029]*|\/\*(?:[^*]|\*(?!\/))*\*\/|\()/y;
-// `config` and no more of an identifier after it (`$` and Unicode letters
-// continue one, where `\b` would not).
-const CONFIG_AT = /config(?![\p{ID_Continue}$\u200c\u200d])/uy;
+// `config` and no more of an identifier after it (`$`, Unicode letters and
+// a `\u` escape continue one, where `\b` would not).
+const CONFIG_AT = /config(?![\p{ID_Continue}$\u200c\u200d\\])/uy;
 
 /**
  * How a dynamic config with no EAS id of its own relates to app.json's:
