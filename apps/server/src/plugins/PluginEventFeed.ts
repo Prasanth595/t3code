@@ -379,23 +379,25 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       worker.cursor = cursor;
       yield* publish({ _tag: "Started", installationId, generation, cursor });
       /** Stops at the cursor until `resume`, a re-enable, or a restart. */
-      const quarantine = (attempts: number, reason: string) =>
-        Effect.gen(function* () {
-          yield* setState(installationId, worker, {
-            _tag: "quarantined",
-            failures: attempts,
-            reason,
-          });
-          yield* publish({
-            _tag: "Quarantined",
-            installationId,
-            generation,
-            cursor,
-            failures: attempts,
-            reason,
-          });
-          return yield* Effect.never;
+      const quarantine = Effect.fn("PluginEventFeed.quarantine")(function* (
+        attempts: number,
+        reason: string,
+      ) {
+        yield* setState(installationId, worker, {
+          _tag: "quarantined",
+          failures: attempts,
+          reason,
         });
+        yield* publish({
+          _tag: "Quarantined",
+          installationId,
+          generation,
+          cursor,
+          failures: attempts,
+          reason,
+        });
+        return yield* Effect.never;
+      });
       while (true) {
         const head = yield* eventSink.latestSequence();
         if (cursor >= head) {
