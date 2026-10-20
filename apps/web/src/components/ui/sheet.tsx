@@ -108,7 +108,6 @@ function SheetPopup({
             className,
           )}
           data-slot="sheet-popup"
-          // Kept-mounted content stays live so it can react to closing, like RightPanelSheet.
           render={keepMounted ? undefined : renderRetainedPopup}
           style={{ ...transitionStyle, ...style }}
           {...props}
