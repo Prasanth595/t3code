@@ -31,20 +31,17 @@ export const makeSettingsChanges = Effect.gen(function* () {
       );
     }),
   };
-  const publish = (settings: ServerSettings) =>
-    Effect.gen(function* () {
-      current = settings;
-      let remaining = subscribers;
-      const handled = yield* Deferred.make<void>();
-      yield* PubSub.publish(changes, {
-        settings,
-        acknowledge: Effect.suspend(() =>
-          --remaining === 0
-            ? Deferred.succeed(handled, undefined).pipe(Effect.asVoid)
-            : Effect.void,
-        ),
-      });
-      if (subscribers > 0) yield* Deferred.await(handled);
+  const publish = Effect.fn("SettingsChanges.publish")(function* (settings: ServerSettings) {
+    current = settings;
+    let remaining = subscribers;
+    const handled = yield* Deferred.make<void>();
+    yield* PubSub.publish(changes, {
+      settings,
+      acknowledge: Effect.suspend(() =>
+        --remaining === 0 ? Deferred.succeed(handled, undefined).pipe(Effect.asVoid) : Effect.void,
+      ),
     });
+    if (subscribers > 0) yield* Deferred.await(handled);
+  });
   return { service, publish, subscribers: () => subscribers };
 });

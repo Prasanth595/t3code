@@ -50,6 +50,7 @@ import {
   MuseDelta,
   MuseItemEvent,
   MuseSessionResult,
+  MuseSubscriptionUsage,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseTurnRetryScheduled,
@@ -61,6 +62,7 @@ import {
   museApprovalOptions,
   type MuseItem,
 } from "./protocol.ts";
+import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
   museApprovalMode,
@@ -255,6 +257,7 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/tokenUsage",
   "session/todoListChanged",
   "turn/retryScheduled",
+  "usage/changed",
 ]);
 const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
 const responseAnswerSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
@@ -321,10 +324,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       let hostEpoch = 0;
       let closed = false;
       let broken = false;
+      // Only idle host failures can be retried on this runtime.
+      let relaunchable = false;
       let nativeSessionId: string | undefined;
       let thread: OrchestrationV2ProviderThread | undefined;
       let active: ActiveTurn | undefined;
       let lastProviderTurn: OrchestrationV2ProviderTurn | undefined;
+      // Meta's newest subscription windows, for when a turn stopped at a usage limit can resume.
+      let latestSubscriptionUsage: MuseSubscriptionUsage | undefined;
       const agentEndedAt = new Map<string, DateTime.Utc>();
       const resolveModel = Effect.fnUntraced(function* (selection: ModelSelection) {
         if (selection.model !== MUSE_DEFAULT_MODEL) return selection.model;
@@ -934,6 +941,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         status: "completed" | "cancelled" | "interrupted" | "failed",
         detail?: string,
         disposition: "reusable" | "broken" = "reusable",
+        quota?: { readonly resetsAtMs: number },
       ) {
         if (active !== turn || seenTerminals.has(turn.nativeId)) return;
         seenTerminals.add(turn.nativeId);
@@ -969,9 +977,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         yield* updateSession(disposition === "broken" ? "error" : "ready", detail ?? null);
         active = undefined;
         if (status === "failed") {
+          const usageLimited =
+            disposition === "reusable" && (quota !== undefined || isMuseUsageLimitFailure(detail));
           const failure = makeProviderFailure({
-            class: disposition === "broken" ? "transport_error" : "provider_error",
+            class:
+              disposition === "broken"
+                ? "transport_error"
+                : usageLimited
+                  ? "usage_limit"
+                  : "provider_error",
             message: detail ?? "Muse turn failed.",
+            ...(usageLimited
+              ? {
+                  resetAt: museUsageLimitResetAt(
+                    latestSubscriptionUsage,
+                    DateTime.toEpochMillis(completedAt),
+                    { quota, message: detail },
+                  ),
+                }
+              : {}),
           });
           const base = baseItem(turn, `failure:${turn.nativeId}`, completedAt);
           yield* emit({
@@ -981,7 +1005,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               ...base,
               type: "error",
               status: "failed",
-              title: null,
+              title: usageLimited ? "Usage limit reached" : null,
               completedAt,
               failure,
             },
@@ -1013,7 +1037,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const failHost = Effect.fnUntraced(function* (cause: unknown) {
         if (closed || broken) return;
+        hostEpoch++;
+        // Registration can replace the host while failure events are consumed.
+        const failed = host;
+        const turn = active;
         broken = true;
+        relaunchable = !turn;
+        wake = undefined;
         const rootCause = Cause.isCause(cause) ? Cause.squash(cause) : cause;
         const failure = isOpenSessionError(rootCause) ? rootCause.cause : rootCause;
         const detail = isProtocolError(failure)
@@ -1021,14 +1051,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           : failure instanceof Error
             ? failure.message
             : "Muse transport failed.";
-        if (active) yield* finish(active, "failed", detail, "broken");
+        if (turn) yield* finish(turn, "failed", detail, "broken");
         else {
           yield* updateThread({ status: "error" });
           yield* updateSession("error", detail);
         }
         yield* settleObservedChildren("failed");
-        yield* Queue.fail(events, protocolError(detail, cause));
-        const failed = host;
+        if (turn) yield* Queue.fail(events, protocolError(detail, cause));
         yield* Effect.tryPromise(() => failed.close()).pipe(Effect.ignore, Effect.forkIn(scope));
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
@@ -1245,6 +1274,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const handleNotification = Effect.fnUntraced(function* (method: string, data: unknown) {
         const params = yield* decode(recordSchema, data);
+        // Account-wide, so it names no session: Meta's subscription windows after a response.
+        if (method === "usage/changed") {
+          latestSubscriptionUsage = yield* decode(MuseSubscriptionUsage, params);
+          return;
+        }
         if (params.sessionId !== nativeSessionId) return;
         if (method === "view/gap")
           return yield* protocolError("Muse delivery gap requires session recovery");
@@ -1416,7 +1450,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "interrupted"
                     : "cancelled"
                   : "failed";
-            yield* finish(turn, status, result.error?.message ?? result.reason);
+            yield* finish(
+              turn,
+              status,
+              result.error?.message ?? result.reason,
+              "reusable",
+              result.error?.quota,
+            );
             break;
           }
           case "approval/requested":
@@ -1703,8 +1743,17 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const register = Effect.fnUntraced(function* (
         args: ProviderAdapter.ProviderAdapterV2EnsureThreadInput,
       ) {
-        if (broken || closed)
+        if (closed || (broken && !relaunchable))
           return yield* protocolError("Muse host is unavailable; reopen the session");
+        if (broken) {
+          yield* Effect.logWarning("Relaunching the Muse host after a failure");
+          yield* launchHost();
+          broken = false;
+          relaunchable = false;
+          thread = undefined;
+          nativeSessionId = undefined;
+          yield* updateSession("ready", null);
+        }
         if (active)
           return yield* protocolError("Cannot change Muse sessions during an active turn");
         const existing = args.existingProviderThread;
@@ -1871,9 +1920,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (!validateThread(turnInput.providerThread) || broken || closed)
           return yield* protocolError("Muse thread is not attached to this host");
         if (active)
-          return yield* protocolError(
-            "Muse already has an active turn; queue through the orchestrator",
-          );
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: MUSE_PROVIDER,
+            detail: "Muse already has an active turn; queue through the orchestrator",
+            reason: "previous_turn_active",
+          });
         if (turnInput.runtimePolicy.interactionMode === "plan")
           return yield* protocolError("Muse does not support dedicated Plan mode");
         if (turnInput.runtimePolicy.runtimeMode !== input.runtimePolicy.runtimeMode)
@@ -2106,8 +2157,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             ),
           ),
         compactThread: (args) => start(args, true).pipe(commands.withPermits(1)),
-        steerTurn: (args) =>
-          Effect.gen(function* () {
+        steerTurn: Effect.fn("MuseAdapter.steerTurn")(
+          function* (args) {
             const turn = active;
             if (
               !turn ||
@@ -2123,20 +2174,23 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             }).pipe(Effect.flatMap((value) => decode(MuseTurnStartResult, value)));
             if (result.turnId !== turn.nativeId)
               return yield* protocolError("Muse steering targeted a different turn");
-          }).pipe(
-            commands.withPermits(1),
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterSteerRunError({
-                  driver: MUSE_PROVIDER,
-                  providerThreadId: args.providerThread.id,
-                  providerTurnId: args.providerTurnId,
-                  cause,
-                }),
+          },
+          (effect, args) =>
+            effect.pipe(
+              commands.withPermits(1),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterSteerRunError({
+                    driver: MUSE_PROVIDER,
+                    providerThreadId: args.providerThread.id,
+                    providerTurnId: args.providerTurnId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        interruptTurn: (args) =>
-          Effect.gen(function* () {
+        ),
+        interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
+          function* (args) {
             const turn = active;
             if (
               !turn ||
@@ -2172,20 +2226,23 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               Effect.mapError((cause) => protocolError("Muse did not confirm interruption", cause)),
               Effect.onError((cause) => eventPermit.withPermits(1)(failHost(cause))),
             );
-          }).pipe(
-            commands.withPermits(1),
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterInterruptError({
-                  driver: MUSE_PROVIDER,
-                  providerThreadId: args.providerThread.id,
-                  providerTurnId: args.providerTurnId,
-                  cause,
-                }),
+          },
+          (effect, args) =>
+            effect.pipe(
+              commands.withPermits(1),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterInterruptError({
+                    driver: MUSE_PROVIDER,
+                    providerThreadId: args.providerThread.id,
+                    providerTurnId: args.providerTurnId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
-        respondToRuntimeRequest: (args) =>
-          Effect.gen(function* () {
+        ),
+        respondToRuntimeRequest: Effect.fn("MuseAdapter.respondToRuntimeRequest")(
+          function* (args) {
             const entry = pending.get(args.requestId);
             if (!entry) return yield* protocolError("This Muse request is no longer pending");
             if (entry.native.type === "approval") yield* decideApproval(entry, args.decision);
@@ -2226,16 +2283,19 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 answers,
               }).pipe(Effect.tapError(() => Effect.sync(() => delete entry.response)));
             }
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
-                  driver: MUSE_PROVIDER,
-                  requestId: args.requestId,
-                  cause,
-                }),
+          },
+          (effect, args) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterRuntimeRequestResponseError({
+                    driver: MUSE_PROVIDER,
+                    requestId: args.requestId,
+                    cause,
+                  }),
+              ),
             ),
-          ),
+        ),
         readThreadSnapshot: (args) =>
           (!validateThread(args.providerThread)
             ? protocolError("Snapshot requested for a different Muse thread")
