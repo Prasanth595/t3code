@@ -69,9 +69,8 @@ export function contextCompactionTokenCounts(
 
 export function contextCompactionLabel(item: CompactionLabelItem): string {
   if (item.status === "failed") return "Context compaction failed";
-  if (item.status === "cancelled" || item.status === "interrupted") {
+  if (item.status === "cancelled" || item.status === "interrupted")
     return "Context compaction stopped";
-  }
   if (isOrchestrationV2WorkActive(item.status)) return "Compacting context";
   const tokens = contextCompactionTokenCounts(item);
   return tokens
