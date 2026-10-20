@@ -11,27 +11,36 @@ const {
   hasSwitchMock,
   registerSchemesMock,
   setDesktopNameMock,
+  setNameMock,
+  appState,
   mkdirSyncMock,
   writeFileSyncMock,
   copyFileSyncMock,
   execFileSyncMock,
+  readFileSyncMock,
 } = vi.hoisted(() => ({
   appendSwitchMock: vi.fn(),
   getSwitchValueMock: vi.fn(),
   hasSwitchMock: vi.fn(),
   registerSchemesMock: vi.fn(),
   setDesktopNameMock: vi.fn(),
+  setNameMock: vi.fn(),
+  appState: { version: "0.0.37", isPackaged: true },
   mkdirSyncMock: vi.fn(),
   writeFileSyncMock: vi.fn(),
   copyFileSyncMock: vi.fn(),
   execFileSyncMock: vi.fn(),
+  readFileSyncMock: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
   app: {
     setDesktopName: setDesktopNameMock,
-    getVersion: () => "0.0.37",
-    isPackaged: true,
+    setName: setNameMock,
+    getVersion: () => appState.version,
+    get isPackaged() {
+      return appState.isPackaged;
+    },
     getAppPath: () => "/tmp/.mount_T3/resources/app.asar",
     commandLine: {
       appendSwitch: appendSwitchMock,
@@ -45,7 +54,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("node:fs", () => ({
-  readFileSync: () => "{}",
+  readFileSync: readFileSyncMock,
   mkdirSync: mkdirSyncMock,
   writeFileSync: writeFileSyncMock,
   copyFileSync: copyFileSyncMock,
@@ -64,10 +73,73 @@ describe("DesktopPreReadyPlatform", () => {
     hasSwitchMock.mockReset();
     registerSchemesMock.mockReset();
     setDesktopNameMock.mockReset();
+    setNameMock.mockReset();
+    appState.version = "0.0.37";
+    appState.isPackaged = true;
     mkdirSyncMock.mockReset();
     writeFileSyncMock.mockReset();
     copyFileSyncMock.mockReset();
     execFileSyncMock.mockReset();
+    readFileSyncMock.mockReset().mockReturnValue("{}");
+  });
+
+  it.effect("persists Linux scaling synchronously across relaunches and settings rewrites", () => {
+    vi.stubEnv("T3CODE_HOME", "/isolated");
+    vi.stubEnv("VITE_DEV_SERVER_URL", "");
+    const settingsPath = "/isolated/userdata/desktop-settings.json";
+    const files = new Map([[settingsPath, "{}"]]);
+    const commandLine = new Map<string, string>();
+    readFileSyncMock.mockImplementation((path: string) => {
+      const contents = files.get(path);
+      if (contents === undefined) throw new Error("ENOENT");
+      return contents;
+    });
+    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
+      files.set(path, contents);
+    });
+    hasSwitchMock.mockImplementation((name: string) => commandLine.has(name));
+    getSwitchValueMock.mockImplementation((name: string) => commandLine.get(name) ?? "");
+    appendSwitchMock.mockImplementation((name: string, value: string) => {
+      commandLine.set(name, value);
+    });
+    const launch = Effect.gen(function* () {
+      const startup = Promise.resolve().then(() => commandLine.get("force-device-scale-factor"));
+      yield* DesktopPreReadyPlatform.make;
+      return yield* Effect.promise(() => startup);
+    });
+
+    return Effect.gen(function* () {
+      for (const explicitScale of ["1.75", "1"]) {
+        commandLine.clear();
+        commandLine.set("force-device-scale-factor", explicitScale);
+        appendSwitchMock.mockClear();
+        assert.equal(yield* launch, explicitScale);
+        assert.isFalse(
+          appendSwitchMock.mock.calls.some(([name]) => name === "force-device-scale-factor"),
+        );
+
+        // The settings service discards fields it does not own when rewriting its document.
+        files.set(settingsPath, JSON.stringify({ linuxPasswordStore: "basic" }));
+        commandLine.clear();
+        assert.equal(yield* launch, explicitScale);
+      }
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "linux"),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
+
+  it.effect.each(["darwin", "win32"] as const)("leaves device scaling alone on %s", (platform) => {
+    readFileSyncMock.mockReturnValue("1.75");
+    hasSwitchMock.mockImplementation((name: string) => name === "force-device-scale-factor");
+    getSwitchValueMock.mockReturnValue("2");
+
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      assert.deepEqual(readFileSyncMock.mock.calls, []);
+      assert.deepEqual(writeFileSyncMock.mock.calls, []);
+      assert.deepEqual(appendSwitchMock.mock.calls, []);
+    }).pipe(Effect.provideService(HostProcess.Platform, platform));
   });
 
   it.effect("preserves an explicit Linux password-store switch", () => {
@@ -174,7 +246,7 @@ describe("DesktopPreReadyPlatform", () => {
         );
         const identity = yield* Effect.promise(() => portalIdentity);
         assert.equal(identity.desktopName, "com.t3tools.T3Code.desktop");
-        assert.include(identity.desktopEntry ?? "", 'Exec="/Applications/current.AppImage" %U');
+        assert.include(identity.desktopEntry ?? "", "Exec=/Applications/current.AppImage %U");
         assert.include(identity.desktopEntry ?? "", "Name=T3 Code (Beta)");
         assert.include(identity.desktopEntry ?? "", "MimeType=x-scheme-handler/t3code;");
         assert.include(
@@ -185,6 +257,37 @@ describe("DesktopPreReadyPlatform", () => {
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
+
+  it.effect.each([
+    { platform: "linux" as const, version: "0.1.0", isPackaged: true },
+    { platform: "darwin" as const, version: "0.1.1-preview.20261017.3", isPackaged: false },
+    { platform: "win32" as const, version: "0.1.0", isPackaged: true },
+  ])(
+    "preserves the $platform encryption identity before startup yields",
+    ({ platform, version, isPackaged }) => {
+      appState.version = version;
+      appState.isPackaged = isPackaged;
+      getSwitchValueMock.mockReturnValue("");
+      let appName = "T3 Code (Beta)";
+      setNameMock.mockImplementation((name: string) => {
+        appName = name;
+      });
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const nameBeforeYield = Promise.resolve().then(() => appName);
+          yield* Layer.build(
+            DesktopPreReadyPlatform.layer.pipe(
+              Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
+            ),
+          );
+          assert.equal(
+            yield* Effect.promise(() => nameBeforeYield),
+            platform === "win32" ? "T3 Code (Beta)" : "T3 Code (Alpha)",
+          );
+        }),
+      );
+    },
+  );
 
   it.effect("keeps startup available when the early desktop entry cannot be written", () => {
     getSwitchValueMock.mockReturnValue("");
