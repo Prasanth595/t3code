@@ -6,6 +6,7 @@ import {
   AgentScope,
   agentScopeCommand,
   type AgentScopeShape,
+  type AgentServerLink,
   type AgentSystemdScope,
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -201,6 +202,22 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // Some setpriv implementations lack --pdeathsig, so probe support once.
+  const serverLink = yield* Effect.cached(
+    Effect.gen(function* () {
+      const setpriv = yield* resolve("setpriv", hostEnvironment);
+      const probe =
+        setpriv === null
+          ? undefined
+          : yield* run(setpriv, ["--pdeathsig", "TERM", "--", "/bin/sh", "-c", "exit 0"]);
+      if (setpriv === null || probe?._tag !== "Some" || probe.value.code !== 0) {
+        yield* Effect.logWarning("Agents will outlive a crashed server: setpriv is unavailable");
+        return undefined;
+      }
+      return { setpriv, serverPid: process.pid } satisfies AgentServerLink;
+    }),
+  );
+
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 
   const readScope = Effect.fn("agentScope.readScope")(function* (systemctl: string, unit: string) {
@@ -318,8 +335,9 @@ export const make = Effect.gen(function* () {
     }) {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       if (resolved === null) return { command, args };
+      const server = survivesRestart === true ? undefined : yield* serverLink;
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      if (scope === undefined) return agentScopeCommand({ command: resolved, args, server });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
       // Clear the launch thread's previous scope instead.
@@ -341,7 +359,7 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      return agentScopeCommand({ command: resolved, args, scope: systemdScope });
+      return agentScopeCommand({ command: resolved, args, scope: systemdScope, server });
     }),
     oomKilled,
     clear,
