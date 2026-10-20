@@ -41,8 +41,12 @@ export function resolveThreadProviderInstance(
   return {
     ...entry,
     showBadge: shouldShowInstanceBadge(
-      entry,
-      providers.map((provider) => ({ driverKind: provider.driver, icon: provider.icon })),
+      { ...entry, enabled: snapshot.enabled },
+      providers.map((provider) => ({
+        driverKind: provider.driver,
+        enabled: provider.enabled,
+        icon: provider.icon,
+      })),
     ),
   };
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   normalizeProviderAccentColor,
+  providerAccentForegroundColor,
   providerInstanceInitials,
   providerInstanceInitialsGlyphScale,
   resolveProviderInstanceBadgeLabel,
@@ -120,16 +121,26 @@ describe("normalizeProviderAccentColor", () => {
   });
 });
 
+describe("providerAccentForegroundColor", () => {
+  it.each([
+    ["#b5f23d", "#000000"],
+    ["#2563eb", "#ffffff"],
+    ["#777777", "#000000"],
+  ])("chooses the higher WCAG contrast foreground for %s", (accent, foreground) => {
+    expect(providerAccentForegroundColor(accent)).toBe(foreground);
+  });
+});
+
 describe("shouldShowInstanceBadge", () => {
   it("hides badges for distinct ACP agents sharing the registry driver", () => {
-    const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe" };
-    const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin" };
+    const mistral = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe", enabled: true };
+    const devin = { driverKind: acpRegistry, acpRegistryAgentId: "devin", enabled: true };
     expect(shouldShowInstanceBadge(mistral, [mistral, devin])).toBe(false);
     expect(shouldShowInstanceBadge(devin, [mistral, devin])).toBe(false);
   });
 
   it("shows badges for multiple instances of the same ACP agent", () => {
-    const first = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe" };
+    const first = { driverKind: acpRegistry, acpRegistryAgentId: "mistral-vibe", enabled: true };
     const second = { ...first };
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
@@ -139,59 +150,77 @@ describe("shouldShowInstanceBadge", () => {
       driverKind: acpRegistry,
       acpRegistryAgentId: "mistral-vibe",
       accentColor: "#ff8800",
+      enabled: true,
     };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
   it("distinguishes registry instances whose agent identity is unavailable", () => {
-    const entry = { driverKind: acpRegistry };
+    const entry = { driverKind: acpRegistry, enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry, { ...entry }])).toBe(true);
   });
 
   it("shows the badge when the entry has an accent color", () => {
-    const entry = { driverKind: codex, accentColor: "#ff8800" };
+    const entry = { driverKind: codex, accentColor: "#ff8800", enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
   it("shows the badge when two entries share a driver, even without an accent", () => {
-    const first = { driverKind: codex, accentColor: undefined };
-    const second = { driverKind: codex, accentColor: undefined };
+    const first = { driverKind: codex, accentColor: undefined, enabled: true };
+    const second = { driverKind: codex, accentColor: undefined, enabled: true };
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
 
+  it("ignores disabled siblings for enabled instances while distinguishing historical owners", () => {
+    const enabled = { driverKind: codex, enabled: true };
+    const disabled = { driverKind: codex, enabled: false };
+
+    expect(shouldShowInstanceBadge(enabled, [enabled, disabled])).toBe(false);
+    expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
+    expect(shouldShowInstanceBadge(disabled, [disabled, { ...disabled }])).toBe(true);
+    expect(shouldShowInstanceBadge(disabled, [disabled])).toBe(false);
+  });
+
   it("hides the badge for a single instance of a driver with no accent", () => {
-    const entry = { driverKind: codex, accentColor: undefined };
-    const other = { driverKind: claude, accentColor: undefined };
+    const entry = { driverKind: codex, accentColor: undefined, enabled: true };
+    const other = { driverKind: claude, accentColor: undefined, enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry, other])).toBe(false);
   });
 
   it("shows the badge when the entry has a badge label", () => {
-    const entry = { driverKind: claude, badgeLabel: "KI" };
+    const entry = { driverKind: claude, enabled: true, badgeLabel: "KI" };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
   it("compares chosen glyphs rather than drivers", () => {
-    const claudeLogo = { driverKind: claude };
-    const openAiLogo = { driverKind: claude, icon: "codex" };
-    const codexDefault = { driverKind: codex };
+    const claudeLogo = { driverKind: claude, enabled: true };
+    const openAiLogo = { driverKind: claude, enabled: true, icon: "codex" };
+    const codexDefault = { driverKind: codex, enabled: true };
     expect(shouldShowInstanceBadge(claudeLogo, [claudeLogo, openAiLogo])).toBe(false);
     expect(shouldShowInstanceBadge(openAiLogo, [claudeLogo, openAiLogo, codexDefault])).toBe(true);
   });
 
+  it("ignores disabled accounts sharing a chosen logo for an enabled instance", () => {
+    const enabled = { driverKind: claude, icon: "codex", enabled: true };
+    const disabled = { driverKind: codex, enabled: false };
+    expect(shouldShowInstanceBadge(enabled, [enabled, disabled])).toBe(false);
+    expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
+  });
+
   it("treats an unknown chosen icon as the driver glyph it falls back to", () => {
-    const claudeDefault = { driverKind: claude };
-    const futureLogo = { driverKind: claude, icon: "future-logo" };
+    const claudeDefault = { driverKind: claude, enabled: true };
+    const futureLogo = { driverKind: claude, enabled: true, icon: "future-logo" };
     expect(shouldShowInstanceBadge(futureLogo, [claudeDefault, futureLogo])).toBe(true);
   });
 
   it("never badges an initials glyph, which already shows the label", () => {
-    const entry = { driverKind: claude, icon: "initials", accentColor: "#ff8800" };
+    const entry = { driverKind: claude, enabled: true, icon: "initials", accentColor: "#ff8800" };
     expect(shouldShowInstanceBadge(entry, [entry, { ...entry }])).toBe(false);
   });
 
   it("does not count an initials glyph as sharing its driver's logo", () => {
-    const claudeLogo = { driverKind: claude };
-    const initials = { driverKind: claude, icon: "initials" };
+    const claudeLogo = { driverKind: claude, enabled: true };
+    const initials = { driverKind: claude, enabled: true, icon: "initials" };
     expect(shouldShowInstanceBadge(claudeLogo, [claudeLogo, initials])).toBe(false);
   });
 });
