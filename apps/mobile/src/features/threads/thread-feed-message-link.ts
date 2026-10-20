@@ -26,13 +26,12 @@ export function resolveLinkedMessageStep(input: {
   /** The last load through the message finished without changing the feed. */
   readonly lastLoadChangedNothing: boolean;
 }): "scroll" | "expand" | "wait" | "load" | "missing" | "failed" {
-  // History lands in stages, so a message shown mid-load can still move.
-  if (input.historyLoading) return "wait";
+  // A sync snapshot or history page can replace a cached row before scrolling.
+  if (input.historyLoading || !input.synced) return "wait";
   if (input.presented) return "scroll";
   if (input.foldedRunId !== null) return "expand";
   // Loaded but hidden by something other than a fold: more history cannot reveal it.
   if (input.inFeed) return "missing";
-  if (!input.synced) return "wait";
   if (input.historyError !== null) return "failed";
   if (!input.hasMoreHistory) return "missing";
   // Older history remains, so a load that returned nothing failed rather than ran out.

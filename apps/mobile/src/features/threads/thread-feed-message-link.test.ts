@@ -14,8 +14,17 @@ const absent = {
 };
 
 describe("resolveLinkedMessageStep", () => {
-  it("scrolls to a message the feed shows, even before the thread syncs", () => {
-    expect(resolveLinkedMessageStep({ ...absent, presented: true, synced: false })).toBe("scroll");
+  it("waits for sync before consuming a cached target, then follows the replacement snapshot", () => {
+    expect(resolveLinkedMessageStep({ ...absent, presented: true, synced: false })).toBe("wait");
+    expect(resolveLinkedMessageStep({ ...absent, hasMoreHistory: true })).toBe("load");
+    expect(resolveLinkedMessageStep({ ...absent, presented: true })).toBe("scroll");
+  });
+
+  it("waits for sync before expanding or rejecting cached rows", () => {
+    expect(
+      resolveLinkedMessageStep({ ...absent, inFeed: true, foldedRunId: "run-1", synced: false }),
+    ).toBe("wait");
+    expect(resolveLinkedMessageStep({ ...absent, inFeed: true, synced: false })).toBe("wait");
   });
 
   it("expands the turn that hides the message", () => {
