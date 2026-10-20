@@ -38,4 +38,17 @@ describe("preparationSteps", () => {
       { id: "agent", status: "pending" },
     ]);
   });
+
+  it.each([true, false])(
+    "shows a connection wait after delivery while preparingWorktree=%s",
+    (preparingWorktree) => {
+      expect(
+        preparationSteps({ ...input, sent: true, connected: false, preparingWorktree }),
+      ).toMatchObject([
+        { id: "send", status: "done", detail: null },
+        { id: "workspace", status: "running", detail: "Waiting for connection" },
+        { id: "agent", status: "pending", detail: null },
+      ]);
+    },
+  );
 });

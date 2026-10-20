@@ -31,9 +31,7 @@ export function WorktreeSetupSheet({
           >
             <AndroidSheetHeader
               title={title}
-              actions={[
-                { accessibilityLabel: "Close setup details", icon: "xmark", onPress: onClose },
-              ]}
+              actions={[{ accessibilityLabel: `Close ${title}`, icon: "xmark", onPress: onClose }]}
             />
             {children}
           </View>

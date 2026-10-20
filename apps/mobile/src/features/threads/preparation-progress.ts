@@ -39,7 +39,13 @@ export function preparationSteps(input: PreparationProgressInput): ReadonlyArray
       id: "workspace",
       label: input.preparingWorktree ? "Set up worktree" : "Prepare workspace",
       status: input.sent ? "running" : "pending",
-      detail: input.sent && input.preparingWorktree ? "Waiting for progress" : null,
+      detail: input.sent
+        ? !input.connected
+          ? "Waiting for connection"
+          : input.preparingWorktree
+            ? "Waiting for progress"
+            : null
+        : null,
     },
     { id: "agent", label: "Start agent", status: "pending", detail: null },
   ];
