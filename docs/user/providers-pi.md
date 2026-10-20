@@ -27,7 +27,10 @@ Pi models on OpenAI-compatible chat completion gateways receive every T3 Code to
 request, because some gateways drop calls to tools the request does not declare. If your gateway
 runs tools that Pi loads through `tool_search`, turn off **Load every T3 tool on completion
 gateways** in the Pi instance's settings to send smaller requests. Pi then declares the orchestration
-tools, `tool_search`, and T3 Code tools the conversation has already called.
+tools, `tool_search`, the T3 Code tools `tool_search` loaded, and any T3 Code tool the conversation
+has already called. An existing thread keeps every tool it already loaded, including the full set
+loaded before you turned the switch off, so the smaller requests apply to new threads and to tools
+not yet loaded.
 
 On a remote or headless server, connect to that machine over SSH and run `pi`, then `/login`.
 Open the authorization URL on your own computer. If the callback cannot reach the server,

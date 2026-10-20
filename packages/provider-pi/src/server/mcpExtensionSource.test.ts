@@ -265,7 +265,7 @@ describe("Pi MCP tool exposure", () => {
     const event = { systemPrompt: "" };
     const gatewayContext = {
       model: { api: "openai-completions" },
-      sessionManager: { buildSessionContext: () => ({ messages }) },
+      sessionManager: { buildSessionProjection: () => ({ messages }) },
       ui: { notify: assert.fail },
     };
     await bridge.handlers.get("session_start")!(event, gatewayContext);

@@ -418,11 +418,13 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   await ensureStarted().catch(() => undefined);
 
   // Instances whose gateway runs tools found through tool_search opt out of
-  // the full catalog and keep only T3 tools already called in this branch.
+  // the full catalog and keep only T3 tools already called in this branch,
+  // plus whatever tool_search loaded into the active loadout. Tools already
+  // active stay, including ones eagerly loaded before the opt-out.
   const eagerGatewayTools = env(GATEWAY_TOOLS_ENV) !== "called";
   const calledToolNames = (ctx: Pick<ExtensionContext, "sessionManager">) => {
     const names = new Set<string>();
-    for (const message of ctx.sessionManager.buildSessionContext().messages) {
+    for (const message of ctx.sessionManager.buildSessionProjection().messages) {
       if (message.role !== "assistant") continue;
       for (const part of message.content) {
         if (part.type === "toolCall") names.add(part.name);

@@ -36,7 +36,7 @@ type AgentStartHook = (
   ctx: {
     model?: { api: string };
     sessionManager?: {
-      buildSessionContext: () => {
+      buildSessionProjection: () => {
         messages: ReadonlyArray<{
           role: string;
           content: ReadonlyArray<{ type: string; name?: string }>;
