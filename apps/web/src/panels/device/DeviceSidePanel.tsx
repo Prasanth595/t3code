@@ -44,11 +44,6 @@ export default function DeviceSidePanel(props: {
     readonly pending: DeviceSummary | null;
     readonly error: string | null;
   } | null>(null);
-  const [operationScope, setOperationScope] = useState(scope);
-  if (operationScope !== scope) {
-    setOperationScope(scope);
-    setOperation(null);
-  }
   const pendingDevice = operation?.scope === scope ? operation.pending : null;
   const operationError = operation?.scope === scope ? operation.error : null;
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
