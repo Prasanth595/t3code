@@ -147,7 +147,7 @@ import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
   makeManagedTunnelRecovery,
   managedTunnelStartupAction,
-  relayRetrySchedule,
+  retryDesiredLinkReconcile,
   retryManagedTunnelRegistration,
 } from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
@@ -974,12 +974,13 @@ const layerMakeServer = Layer.unwrap(
               const reconciledMode = yield* cloudLink
                 .reconcileDesiredLinkIfStillDesired(localOrigin)
                 .pipe(
-                  // Retries never give up: a headless host has nobody to
-                  // restart it once the relay comes back.
-                  Effect.retry({
-                    while: CloudLink.shouldRetryCloudLink,
-                    schedule: relayRetrySchedule,
-                  }),
+                  (reconcile) =>
+                    retryDesiredLinkReconcile(reconcile, CloudLink.shouldRetryCloudLink, (cause) =>
+                      Effect.logWarning(
+                        "T3 Connect relay is still unavailable; retrying the desired link in the background",
+                        { cause },
+                      ),
+                    ),
                   Effect.tap((mode) =>
                     mode === null
                       ? Effect.void

@@ -39,8 +39,12 @@ export function relayRequestError(cause: unknown): RelayRequestError {
 export const shouldRetryRelayRequest = (error: unknown): boolean =>
   !isRelayRequestError(error) || error.rejection === "unavailable";
 
+/** The relay answered and asked to be retried later; nothing local is wrong. */
+export const isRelayUnavailable = (error: unknown): boolean =>
+  isRelayRequestError(error) && error.rejection === "unavailable";
+
 // Retry-After is either delay-seconds or an HTTP date (RFC 9110 §10.2.3).
-const MAX_RELAY_RETRY_AFTER_MILLIS = 60 * 60 * 1000;
+const MAX_RELAY_RETRY_AFTER_MILLIS = 15 * 60 * 1000;
 function parseRetryAfterMillis(value: string | undefined, nowMillis: number): number | undefined {
   if (value === undefined) return undefined;
   const trimmed = value.trim();

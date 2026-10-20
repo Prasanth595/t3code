@@ -12,6 +12,7 @@ import {
   managedTunnelStartupAction,
   nextManagedTunnelRecoveryCooldown,
   relayRetrySchedule,
+  retryDesiredLinkReconcile,
   retryManagedTunnelRegistration,
 } from "./managedTunnelStartup.ts";
 import { RelayRequestError } from "./relayResponse.ts";
@@ -256,6 +257,65 @@ describe("retryManagedTunnelRegistration fallback", () => {
       yield* TestClock.adjust("15 minutes");
       expect(fallbackAtMillis).toBeDefined();
       expect(fallbackAtMillis).toBeLessThanOrEqual(10 * 60_000 + 1_000);
+    }),
+  );
+});
+
+describe("retryDesiredLinkReconcile", () => {
+  const relayUnavailable = new RelayRequestError({
+    rejection: "unavailable",
+    description: "relay unavailable",
+  });
+
+  it.effect("gives up on a local failure once the retry window ends", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      let windowLogs = 0;
+      const fiber = yield* Effect.forkChild(
+        Effect.flip(
+          retryDesiredLinkReconcile(
+            Effect.suspend(() => {
+              attempts += 1;
+              return Effect.fail("cloudflared cannot run" as const);
+            }),
+            () => true,
+            () =>
+              Effect.sync(() => {
+                windowLogs += 1;
+              }),
+          ),
+        ),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("2 hours");
+      expect(yield* Fiber.join(fiber)).toBe("cloudflared cannot run");
+      expect(attempts).toBeLessThan(20);
+      expect(windowLogs).toBe(0);
+    }),
+  );
+
+  it.effect("keeps relinking while the relay is down and succeeds when it returns", () =>
+    Effect.gen(function* () {
+      let windowLogs = 0;
+      const reconcile = Effect.gen(function* () {
+        return (yield* Clock.currentTimeMillis) < 30 * 60_000
+          ? yield* Effect.fail(relayUnavailable)
+          : "managed";
+      });
+      const fiber = yield* Effect.forkChild(
+        retryDesiredLinkReconcile(
+          reconcile,
+          () => true,
+          () =>
+            Effect.sync(() => {
+              windowLogs += 1;
+            }),
+        ),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("45 minutes");
+      expect(yield* Fiber.join(fiber)).toBe("managed");
+      expect(windowLogs).toBe(1);
     }),
   );
 });

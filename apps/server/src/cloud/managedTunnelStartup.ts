@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
-import { relayRetryAfterMillis } from "./relayResponse.ts";
+import { isRelayUnavailable, relayRetryAfterMillis } from "./relayResponse.ts";
 
 // "revoked" leads to no action: relinking a deregistered environment is the
 // user's call, so startup neither retries nor relinks it.
@@ -51,10 +51,10 @@ const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 const RELAY_RETRY_MAX_DELAY = Duration.minutes(5);
 
 export const relayRetrySchedule = Schedule.exponential("1 second").pipe(
+  Schedule.jittered,
   Schedule.modifyDelay(({ duration }) =>
     Effect.succeed(Duration.min(duration, RELAY_RETRY_MAX_DELAY)),
   ),
-  Schedule.jittered,
   Schedule.modifyDelay(({ duration, input }) => {
     const retryAfterMillis = relayRetryAfterMillis(input);
     return Effect.succeed(
@@ -65,20 +65,19 @@ export const relayRetrySchedule = Schedule.exponential("1 second").pipe(
   }),
 );
 
-export const retryManagedTunnelRegistration = <A, E, R>(
-  registration: Effect.Effect<A, E, R>,
+const windowMillis = Duration.toMillis(MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW);
+
+const retryWithinWindow = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
   isRetryable: (error: E) => boolean,
-  onRetryWindowExhausted?: Effect.Effect<void, never, R>,
-) => {
-  const schedule = relayRetrySchedule;
-  const windowMillis = Duration.toMillis(MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW);
-  const withinWindow = registration.pipe(
+) =>
+  effect.pipe(
     Effect.retry({
       while: isRetryable,
-      // A backed-off sleep can outlast the window; trim it so the fallback
-      // still starts the stored connector when the window ends. At least 1 ms,
-      // so time moves past the window and `upTo` stops.
-      schedule: schedule.pipe(
+      // A backed-off sleep can outlast the window; trim it so whatever follows
+      // the window starts on time. At least 1 ms, so time moves past the
+      // window and `upTo` stops.
+      schedule: relayRetrySchedule.pipe(
         Schedule.modifyDelay(({ duration, elapsed }) =>
           Effect.succeed(
             Duration.min(duration, Duration.millis(Math.max(1, windowMillis - elapsed))),
@@ -88,15 +87,45 @@ export const retryManagedTunnelRegistration = <A, E, R>(
       ),
     }),
   );
+
+export const retryManagedTunnelRegistration = <A, E, R>(
+  registration: Effect.Effect<A, E, R>,
+  isRetryable: (error: E) => boolean,
+  onRetryWindowExhausted?: Effect.Effect<void, never, R>,
+) => {
+  const withinWindow = retryWithinWindow(registration, isRetryable);
   if (onRetryWindowExhausted === undefined) return withinWindow;
   return withinWindow.pipe(
     Effect.catchIf(isRetryable, () =>
       onRetryWindowExhausted.pipe(
-        Effect.andThen(registration.pipe(Effect.retry({ while: isRetryable, schedule }))),
+        Effect.andThen(
+          registration.pipe(Effect.retry({ while: isRetryable, schedule: relayRetrySchedule })),
+        ),
       ),
     ),
   );
 };
+
+/**
+ * Relinks a desired link at startup. Past the retry window it keeps going only
+ * while the relay itself is unavailable: a headless host has nobody to restart
+ * it once the relay recovers, but a local failure (cloudflared that cannot run)
+ * would otherwise relink, and provision a tunnel, forever.
+ */
+export const retryDesiredLinkReconcile = <A, E, R>(
+  reconcile: Effect.Effect<A, E, R>,
+  isRetryable: (error: E) => boolean,
+  onRetryWindowExhausted: (error: E) => Effect.Effect<void, never, R>,
+) =>
+  retryWithinWindow(reconcile, isRetryable).pipe(
+    Effect.catchIf(isRelayUnavailable, (error) =>
+      onRetryWindowExhausted(error).pipe(
+        Effect.andThen(
+          reconcile.pipe(Effect.retry({ while: isRelayUnavailable, schedule: relayRetrySchedule })),
+        ),
+      ),
+    ),
+  );
 
 // Every managed host shares one relay, so a host stuck in a bad loop must not
 // turn into a fleet-wide request storm.
