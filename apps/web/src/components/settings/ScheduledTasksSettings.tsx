@@ -1496,7 +1496,8 @@ function ScheduledTaskEditorForm({
                 minute.
               </p>
             ) : null}
-            <div className="flex items-center justify-between gap-2">
+            {/* Wraps the toggle below the label when both don't fit, as on phones. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <Label>Schedule</Label>
               <ToggleGroup
                 aria-label="Schedule type"
