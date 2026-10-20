@@ -138,10 +138,15 @@ export interface DeviceOperations {
 export interface DeviceHostReady {
   readonly nodePath: string;
   /**
-   * Ends an agent-device session. Present only while the host's shared daemon
-   * runs, so cleanup never starts it.
+   * Ends an agent-device session on the daemon that serves `deviceId`. Hosts
+   * with a shared daemon provide it only while that daemon runs; hosts with a
+   * daemon per device succeed when the device's daemon is gone. Cleanup never
+   * starts a daemon or a device.
    */
-  readonly releaseAgentSession?: (session: string) => Effect.Effect<void, DeviceOperationError>;
+  readonly releaseAgentSession?: (
+    session: string,
+    deviceId: string,
+  ) => Effect.Effect<void, DeviceOperationError>;
   readonly hub: DeviceHubEndpoint;
   readonly devices: DeviceOperations;
   readonly run: (

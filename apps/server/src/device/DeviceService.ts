@@ -750,7 +750,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                 session.hostId,
                 session.deviceId,
               ).pipe(Effect.provideService(Crypto.Crypto, crypto));
-              yield* ready.releaseAgentSession(name);
+              yield* ready.releaseAgentSession(name, session.deviceId);
             }
             // Keep the record until cleanup succeeds so a failed remote close can be retried.
             if (input.shutdown) {
