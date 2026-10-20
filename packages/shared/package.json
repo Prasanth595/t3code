@@ -427,6 +427,10 @@
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
     },
+    "./voiceDictionary": {
+      "types": "./src/voiceDictionary.ts",
+      "import": "./src/voiceDictionary.ts"
+    },
     "./codexArtifactTemplates": {
       "types": "./src/codexArtifactTemplates.ts",
       "import": "./src/codexArtifactTemplates.ts"

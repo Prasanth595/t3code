@@ -842,6 +842,34 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
+export const VoiceDictionaryEntry = Schema.Struct({
+  term: TrimmedNonEmptyString,
+  aliases: Schema.Array(TrimmedNonEmptyString),
+});
+export type VoiceDictionaryEntry = typeof VoiceDictionaryEntry.Type;
+
+export const VoiceDictionary = Schema.Struct({
+  prompt: TrimmedString,
+  entries: Schema.Array(VoiceDictionaryEntry),
+});
+export type VoiceDictionary = typeof VoiceDictionary.Type;
+
+export const RealtimeVoice = Schema.Literals([
+  "cove",
+  "sol",
+  "juniper",
+  "maple",
+  "spruce",
+  "ember",
+  "vale",
+  "breeze",
+  "arbor",
+]);
+export type RealtimeVoice = typeof RealtimeVoice.Type;
+
+export const VoiceSubscriptionProvider = Schema.Literals(["chatgpt", "grok"]);
+export type VoiceSubscriptionProvider = typeof VoiceSubscriptionProvider.Type;
+
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
@@ -947,6 +975,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  voiceDictionary: Schema.optionalKey(VoiceDictionary),
+  voiceRealtimeVoice: Schema.optionalKey(RealtimeVoice),
+  voiceSubscriptionProvider: Schema.optionalKey(VoiceSubscriptionProvider),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
   ),
@@ -1059,6 +1090,15 @@ export const ServerSettings = Schema.Struct({
   ),
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
+  ),
+  voiceDictionary: VoiceDictionary.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ prompt: "", entries: [] })),
+  ),
+  voiceRealtimeVoice: RealtimeVoice.pipe(
+    Schema.withDecodingDefault(Effect.succeed("cove" as const)),
+  ),
+  voiceSubscriptionProvider: VoiceSubscriptionProvider.pipe(
+    Schema.withDecodingDefault(Effect.succeed("chatgpt" as const)),
   ),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(

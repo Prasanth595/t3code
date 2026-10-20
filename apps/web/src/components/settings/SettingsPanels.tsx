@@ -3,6 +3,7 @@ import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
+import { VoiceDictionarySettings } from "./VoiceDictionarySettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -2931,6 +2932,8 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <VoiceDictionarySettings />
 
       <SettingsSection id="projects-and-threads" title="Projects & threads">
         <SettingsRow
