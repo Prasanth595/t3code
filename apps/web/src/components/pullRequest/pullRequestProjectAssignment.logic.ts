@@ -194,30 +194,12 @@ export function pullRequestProjectQueries(
     const projectIds = assignment.get(environmentId);
     if (projectIds === undefined) return [];
     if (projectIds.length === totals.get(environmentId)) return [{ environmentId }];
-    const byId = new Map(
-      projects
-        .filter((project) => project.environmentId === environmentId)
-        .map((project) => [project.id, project] as const),
-    );
-    const seen = new Set<string>();
-    const uniqueProjectIds = projectIds.filter((id) => {
-      const project = byId.get(id);
-      const key = project === undefined ? undefined : repositoryKey(project);
-      if (!key) return true;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
     const queries: Array<{ environmentId: EnvironmentId; projectIds: ReadonlyArray<ProjectId> }> =
       [];
-    for (
-      let offset = 0;
-      offset < uniqueProjectIds.length;
-      offset += PULL_REQUEST_LIST_PROJECT_LIMIT
-    ) {
+    for (let offset = 0; offset < projectIds.length; offset += PULL_REQUEST_LIST_PROJECT_LIMIT) {
       queries.push({
         environmentId,
-        projectIds: uniqueProjectIds.slice(offset, offset + PULL_REQUEST_LIST_PROJECT_LIMIT),
+        projectIds: projectIds.slice(offset, offset + PULL_REQUEST_LIST_PROJECT_LIMIT),
       });
     }
     return queries;

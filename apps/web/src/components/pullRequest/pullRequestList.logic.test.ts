@@ -1242,6 +1242,24 @@ describe("merging the environments' own listings", () => {
     },
   );
 
+  it("keeps Azure pull requests from distinct projects with the same repository name and number", () => {
+    const first = entry({
+      provider: SourceControlProviderKind.make("azure-devops"),
+      host: "dev.azure.com",
+      repository: "web",
+      number: 4,
+      projectId: "azure-first" as ProjectId,
+      url: "https://dev.azure.com/acme/first/_git/web/pullrequest/4",
+    });
+    const second = {
+      ...first,
+      projectId: "azure-second" as ProjectId,
+      url: "https://dev.azure.com/acme/second/_git/web/pullrequest/4",
+    };
+    const merged = mergePullRequestLists([[ENV_1, answer({ entries: [first, second] })]]);
+    expect(merged?.entries).toEqual([first, second]);
+  });
+
   it("keeps project errors scoped to the environment that reported them", () => {
     const error = {
       projectId: "project-1" as ProjectId,

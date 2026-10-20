@@ -215,7 +215,7 @@ describe("host read results", () => {
 });
 
 describe("assignment query limits", () => {
-  it("deduplicates worktrees before splitting a partial assignment", () => {
+  it("retains every worktree's credential root in bounded partial batches", () => {
     const healthy = Array.from({ length: 101 }, (_, index) =>
       project(`healthy-${index}`, "env-1", `github.com/acme/repo-${index}`),
     );
@@ -236,9 +236,10 @@ describe("assignment query limits", () => {
       new Map([["env-1" as EnvironmentId, hostAvailability(new Map([["bitbucket.org", false]]))]]),
     );
     const own = queries.filter(({ environmentId }) => environmentId === "env-1");
-    expect(own.map(({ projectIds }) => projectIds?.length)).toEqual([100, 3]);
+    expect(own.map(({ projectIds }) => projectIds?.length)).toEqual([100, 100, 4]);
     expect(own.flatMap(({ projectIds }) => projectIds ?? [])).toEqual([
       ...healthy.map(({ id }) => id),
+      ...worktrees.map(({ id }) => id),
       "unknown",
       "other-unknown",
     ]);

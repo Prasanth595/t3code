@@ -3693,55 +3693,60 @@ it.effect("asks for no search when the reader has typed nothing", () =>
   }),
 );
 
-it.effect("asks another checkout who is signed in when the first one cannot answer", () =>
-  Effect.gen(function* () {
-    const asked: string[] = [];
-    const service = yield* makeService({
-      projects: [
-        project({
-          id: "p1",
-          title: "t3code (stale worktree)",
-          workspaceRoot: "/gone",
-          repository: "pingdotgg/t3code",
-        }),
-        project({
-          id: "p2",
-          title: "t3code",
-          workspaceRoot: "/healthy",
-          repository: "pingdotgg/t3code",
-        }),
-      ],
-      providers: [
-        fakeProvider(SourceControlProviderKind.make("github"), {
-          getViewer: (input) => {
-            asked.push(input.cwd);
-            return input.cwd === "/gone"
-              ? Effect.fail(
-                  new PullRequestProviderError({
-                    provider: SourceControlProviderKind.make("github"),
-                    operation: "getViewer",
-                    reason: "failed",
-                    detail: "not a git repository",
-                  }),
-                )
-              : Effect.succeed("bilal");
-          },
-          listChangeRequests: () =>
-            Effect.succeed({
-              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
-              truncated: false,
-              continues: true,
-            }),
-        }),
-      ],
-    });
+it.effect.each([false, true])(
+  "asks another checkout when the first cannot answer (partial: %s)",
+  (partial) =>
+    Effect.gen(function* () {
+      const asked: string[] = [];
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "t3code (stale worktree)",
+            workspaceRoot: "/gone",
+            repository: "pingdotgg/t3code",
+          }),
+          project({
+            id: "p2",
+            title: "t3code",
+            workspaceRoot: "/healthy",
+            repository: "pingdotgg/t3code",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getViewer: (input) => {
+              asked.push(input.cwd);
+              return input.cwd === "/gone"
+                ? Effect.fail(
+                    new PullRequestProviderError({
+                      provider: SourceControlProviderKind.make("github"),
+                      operation: "getViewer",
+                      reason: "failed",
+                      detail: "not a git repository",
+                    }),
+                  )
+                : Effect.succeed("bilal");
+            },
+            listChangeRequests: () =>
+              Effect.succeed({
+                items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+                truncated: false,
+                continues: true,
+              }),
+          }),
+        ],
+      });
 
-    const result = yield* service.list({ state: "open" });
+      const result = yield* service.list({
+        state: "open",
+        ...(partial ? { projectIds: ["p1" as ProjectId, "p2" as ProjectId] } : {}),
+      });
 
-    assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
-    assert.strictEqual(result.entries.length, 1);
-    assert.strictEqual(result.providers[0]?.configured, true);
-  }),
+      assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
+      assert.strictEqual(result.entries.length, 1);
+      assert.strictEqual(result.providers[0]?.configured, true);
+    }),
 );
 
 it.effect("refuses to ask for a review on a host that cannot, before any call is made", () =>
