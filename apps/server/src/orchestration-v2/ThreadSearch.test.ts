@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  EnvironmentId,
   EventId,
   MessageId,
   ProjectId,
@@ -16,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
+import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -176,6 +178,41 @@ it.layer(layerTest)("ThreadSearch", (it) => {
       );
       assert.lengthOf((yield* search.search({ query: "needle", limit: 1 })).matches, 1);
       assert.deepEqual((yield* search.search({ query: "ne%le" })).matches, []);
+    }),
+  );
+
+  it.effect("shows a quoted assistant message as its text in the snippet", () =>
+    Effect.gen(function* () {
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const search = yield* ThreadSearch.ThreadSearch;
+      const project = ProjectId.make("project:search-quote");
+      const threadId = ThreadId.make("thread:quote");
+      const quote = serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("environment:local"),
+        threadId,
+        messageId: MessageId.make("quote-answer"),
+        text: "A lighthouse guides ships safely through the darkness.",
+        comment: "what are you talking about",
+        start: 0,
+        end: 54,
+        prefix: "",
+        suffix: "",
+      });
+      yield* createProject(project);
+      yield* Effect.forEach(
+        [thread(threadId, project), message(threadId, "quote", "user", `Look here: ${quote}`)],
+        projections.apply,
+        { discard: true },
+      );
+
+      const result = yield* search.search({ query: "talking" });
+      assert.deepEqual(
+        result.matches.map((match) => match.snippet),
+        [
+          "Look here: A lighthouse guides ships safely through the darkness. Comment: what are you talking about",
+        ],
+      );
     }),
   );
 

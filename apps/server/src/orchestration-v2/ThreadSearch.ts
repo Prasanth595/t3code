@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class ThreadSearchError extends Schema.TaggedError<ThreadSearchError>()(
@@ -154,7 +155,7 @@ export const make = Effect.gen(function* () {
           threadId: row.threadId,
           projectId: row.projectId,
           source: row.source,
-          snippet: buildSearchSnippet(row.matchText, input.query),
+          snippet: buildSearchSnippet(assistantCitationsToPlainText(row.matchText), input.query),
           messageCreatedAt: row.messageCreatedAt,
         })),
       };
