@@ -18,12 +18,7 @@ export function DeviceHostUpdates({
     <div className="space-y-2">
       {state.hosts.map((host) => {
         const status = state.hostStatuses[host.id];
-        if (
-          !status ||
-          (!["installing", "starting", "failed"].includes(status.status) &&
-            !(status.status === "ready" && status.androidDiscoveryIncomplete))
-        )
-          return null;
+        if (!status || !["installing", "starting", "failed"].includes(status.status)) return null;
         const failed = status.status === "failed";
         return (
           <div
@@ -37,11 +32,9 @@ export function DeviceHostUpdates({
                 {status.detail ??
                   (failed
                     ? "Device support could not start."
-                    : status.status === "ready"
-                      ? "The Android device list may be incomplete. Refresh devices to try again."
-                      : status.status === "installing"
-                        ? "Installing device tools…"
-                        : "Starting device tools…")}
+                    : status.status === "installing"
+                      ? "Installing device tools…"
+                      : "Starting device tools…")}
               </p>
               {failed ? (
                 <p className="mt-1 text-muted-foreground">
