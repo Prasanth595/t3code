@@ -12,6 +12,7 @@ export function useThreadListV2ShelfPreferences() {
   const settledShelfExpanded =
     loaded && preferencesResult.value.threadListSettledShelfExpanded === true;
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled === true;
+  const sortByLastMessage = loaded && preferencesResult.value.threadListSortByLastMessage === true;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
 
@@ -47,6 +48,8 @@ export function useThreadListV2ShelfPreferences() {
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
+    sortByLastMessage,
+    activeTimeOrdered: workingShelfEnabled || sortByLastMessage,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,

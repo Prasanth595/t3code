@@ -2,6 +2,8 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
 import { useRef } from "react";
@@ -535,6 +537,27 @@ export function useThreadListActions(): {
       const settled = await settleThread(thread);
       appAtomRegistry.set(threadDropBusyAtom, false);
       return settled;
+    }
+    const preferences = appAtomRegistry.get(mobilePreferencesAtom);
+    if (
+      section === "active" &&
+      AsyncResult.isSuccess(preferences) &&
+      preferences.value.threadListSortByLastMessage === true
+    ) {
+      const lifecycle = threadDropLifecycle(thread, section, new Date().toISOString());
+      if (!lifecycle.unpin && !lifecycle.unsettle && !lifecycle.unsnooze) return false;
+      if (lifecycle.unpin && !environmentSupportsPinning(thread.environmentId)) return false;
+      if (lifecycle.unsettle && !environmentSupportsSettlement(thread.environmentId)) return false;
+      if (lifecycle.unsnooze && !environmentSupportsSnooze(thread.environmentId)) return false;
+      appAtomRegistry.set(threadDropBusyAtom, true);
+      try {
+        if (lifecycle.unpin && !(await unpinThread(thread))) return false;
+        if (lifecycle.unsettle && !(await unsettleThread(thread))) return false;
+        if (lifecycle.unsnooze && !(await unsnoozeThread(thread))) return false;
+        return true;
+      } finally {
+        appAtomRegistry.set(threadDropBusyAtom, false);
+      }
     }
     const configs = appAtomRegistry.get(environmentServerConfigsAtom);
     const supportsReorder = (environmentId: EnvironmentThreadShell["environmentId"]) => {

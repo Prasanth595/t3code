@@ -330,6 +330,36 @@ export function sortActiveThreadsByOrderKey<
   });
 }
 
+/** Message sorting ignores arrangement keys without changing them, so switching
+ * back restores the configured order. Match the active row's age label. */
+export function sortActiveThreads<
+  T extends {
+    readonly id: string;
+    readonly createdAt: string;
+    readonly updatedAt?: string;
+    readonly latestUserMessageAt?: string | null;
+    readonly unsettledAt?: string | null;
+    readonly activeOrderKey?: string | null;
+    readonly environmentId?: string;
+  },
+>(threads: readonly T[], sortByLastMessage = false): T[] {
+  if (!sortByLastMessage) return sortActiveThreadsByOrderKey(threads);
+  return threads
+    .map((thread) => ({
+      thread,
+      timestamp:
+        getFirstSortableTimestamp(thread.latestUserMessageAt, thread.updatedAt, thread.createdAt) ??
+        0,
+    }))
+    .sort(
+      (left, right) =>
+        right.timestamp - left.timestamp ||
+        left.thread.id.localeCompare(right.thread.id) ||
+        (left.thread.environmentId ?? "").localeCompare(right.thread.environmentId ?? ""),
+    )
+    .map(({ thread }) => thread);
+}
+
 export function planPinnedMove(input: {
   readonly orderedIds: readonly string[];
   readonly keysById: ReadonlyMap<string, string | null | undefined>;
