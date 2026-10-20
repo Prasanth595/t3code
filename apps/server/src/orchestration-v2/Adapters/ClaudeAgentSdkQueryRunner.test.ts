@@ -151,6 +151,13 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
       );
       assert.include(transcript, '"content":"hello"');
       assert.include(transcript, '"text":"hi"');
+      const inheritedHead = transcript
+        .trim()
+        .split("\n")
+        .findLast((line) => line.includes('"type":"assistant"'))
+        ?.match(/"uuid"\s*:\s*"([^"]+)"/)?.[1];
+      assert.isString(inheritedHead);
+      assert.equal(forked.headMessageId, inheritedHead);
       assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
@@ -218,6 +225,7 @@ it.effect.each(["readable", "unreadable"] as const)(
       const forked = yield* runner.forkSession({
         sessionId: "source-session",
         options: { dir: "/workspace", upToMessageId: "source-assistant" },
+        environment: process.env,
         threadId: ThreadId.make("thread-fork-head"),
         providerSessionId: ProviderSessionId.make("session-fork-head"),
       });

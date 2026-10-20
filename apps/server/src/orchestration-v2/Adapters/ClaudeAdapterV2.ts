@@ -752,7 +752,9 @@ export function makeClaudeAgentSdkProtocolLogger(input: {
 
 const encodeClaudeHistoryOptions = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeClaudeHistoryFork = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ sessionId: Schema.String })),
+  Schema.fromJsonString(
+    Schema.Struct({ sessionId: Schema.String, headMessageId: Schema.optionalKey(Schema.String) }),
+  ),
 );
 
 const claudeConfigDirOf = (
@@ -1084,14 +1086,18 @@ export const layerQueryRunner: Layer.Layer<
         });
         const hostEnvironment = yield* HostProcess.Environment;
         const homeDirectory = yield* HostProcess.HomeDirectory;
-        const fork: Effect.Effect<ForkSessionResult, unknown> =
+        const usesHostConfig =
           claudeConfigDirOf(path, input.environment, homeDirectory) ===
-          claudeConfigDirOf(path, hostEnvironment, homeDirectory)
-            ? Effect.tryPromise(() => forkClaudeSession(input.sessionId, input.options))
-            : forkClaudeSessionInWorker(input).pipe(
-                Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-                Effect.provideService(Path.Path, path),
-              );
+          claudeConfigDirOf(path, hostEnvironment, homeDirectory);
+        const fork: Effect.Effect<
+          ForkSessionResult & { readonly headMessageId?: string },
+          unknown
+        > = usesHostConfig
+          ? Effect.tryPromise(() => forkClaudeSession(input.sessionId, input.options))
+          : forkClaudeSessionInWorker(input).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+              Effect.provideService(Path.Path, path),
+            );
         const result = yield* fork.pipe(
           Effect.mapError((cause) => queryRunnerError(cause, "forkSession")),
         );
@@ -1105,17 +1111,19 @@ export const layerQueryRunner: Layer.Layer<
         });
         // The SDK remaps copied UUIDs. Capture the inherited head before the
         // fork's first run appends messages.
-        const headMessageId = yield* Effect.tryPromise({
-          try: () =>
-            getSessionMessages(
-              result.sessionId,
-              input.options.dir === undefined ? {} : { dir: input.options.dir },
-            ),
-          catch: (cause) => queryRunnerError(cause, "getSessionMessages"),
-        }).pipe(
-          Effect.map((messages) => messages.at(-1)?.uuid),
-          Effect.orElseSucceed(() => undefined),
-        );
+        const headMessageId = usesHostConfig
+          ? yield* Effect.tryPromise({
+              try: () =>
+                getSessionMessages(
+                  result.sessionId,
+                  input.options.dir === undefined ? {} : { dir: input.options.dir },
+                ),
+              catch: (cause) => queryRunnerError(cause, "getSessionMessages"),
+            }).pipe(
+              Effect.map((messages) => messages.at(-1)?.uuid),
+              Effect.orElseSucceed(() => undefined),
+            )
+          : result.headMessageId;
         return headMessageId === undefined ? result : { ...result, headMessageId };
       }),
       subagentLaunchToolUseId: Effect.fn("ClaudeAgentSdkQueryRunner.subagentLaunchToolUseId")(
