@@ -7,12 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import {
-  useCanGoBack,
-  useLocation,
-  useNavigate,
-  useRouter,
-} from "@tanstack/react-router";
+import { useCanGoBack, useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
 
 import { isElectron } from "../env";
