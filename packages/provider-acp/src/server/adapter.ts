@@ -1595,6 +1595,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
+        // Set when the selection was configured before the agent offered a model option.
+        const modelSkippedWithoutOption = yield* Ref.make(false);
         const providerSessionRef = yield* Ref.make<OrchestrationV2ProviderSession | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
@@ -5951,12 +5953,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             updatedAt: yield* DateTime.now,
           };
           yield* Ref.set(providerSessionRef, next);
-          if (supportsModelSwitchInSession) {
-            // The session was configured while it could not switch models, so
-            // the next turn has to configure it again against the live options.
-            yield* Ref.set(activeSelection, null);
-            yield* Ref.set(activeInteractionMode, null);
-          }
           yield* Queue.offer(events, {
             type: "provider_session.updated",
             driver,
@@ -6706,6 +6702,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
         ) {
           yield* Ref.set(activeSelection, null);
+          yield* Ref.set(modelSkippedWithoutOption, false);
           const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
           // Invalid params is the agent refusing the value, and the runtime
           // raises the same code when the session's model option does not offer
@@ -6753,6 +6750,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* runtime.setSessionModel(requestedModel).pipe(Effect.mapError(rejectedModel));
               }
               appliedModel = requestedModel;
+            } else if (modelOption === undefined && modelState == null) {
+              yield* Ref.set(modelSkippedWithoutOption, true);
             }
           }
           if (appliedModel !== undefined) {
@@ -7395,7 +7394,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (
                 configuredSelection === null ||
                 !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode ||
+                ((yield* Ref.get(modelSkippedWithoutOption)) &&
+                  hasModelConfigOption(yield* runtime.getConfigOptions))
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
