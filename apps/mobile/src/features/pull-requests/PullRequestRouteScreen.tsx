@@ -1,3 +1,5 @@
+import { usePullRequestFilesSection } from "./PullRequestFilesSection";
+import { PullRequestFilesFilter } from "./PullRequestFilesShared";
 import { Toolbar } from "../../components/ui/Toolbar";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
@@ -105,11 +107,7 @@ import {
   PullRequestDiffStats,
   PullRequestReadStatus,
 } from "./PullRequestPresentation";
-import {
-  PullRequestFiles,
-  PullRequestFilesFilter,
-  usePullRequestFilesContent,
-} from "./PullRequestFiles";
+import { PullRequestFilesSheet, usePullRequestFilesSheetContent } from "./PullRequestFilesSheet";
 import { PullRequestSheetContent } from "./PullRequestSheetContent";
 import { PullRequestDescription } from "./PullRequestDescription";
 import { PullRequestMarkdownRepository } from "./PullRequestMarkdown";
@@ -300,7 +298,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const requestedSection = useRef(section);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
-  const filesContent = usePullRequestFilesContent({ params });
+  const filesContent = usePullRequestFilesSection({ params });
   const guidesEnabled = useReviewGuidesEnabled(params);
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>(DEFAULT_ACTIVITY_FILTER);
   const activityContent = usePullRequestActivityRows(params, activityFilter);
@@ -756,10 +754,9 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
 export function PullRequestFilesRouteScreen({ route }: StaticScreenProps<PullRequestDiffParams>) {
   const navigation = useNavigation();
   const fileSelectionId = useRoute().key;
-  const content = usePullRequestFilesContent({
+  const content = usePullRequestFilesSheetContent({
     params: route.params,
     groupByDirectory: true,
-    headerInToolbar: true,
     onSelectFile: (path) =>
       navigation.dispatch(
         StackActions.popTo("PullRequestFile", {
@@ -795,7 +792,7 @@ export function PullRequestFilesRouteScreen({ route }: StaticScreenProps<PullReq
           </Toolbar.Menu>
         </Toolbar>
       ) : null}
-      <PullRequestFiles content={content} />
+      <PullRequestFilesSheet content={content} />
     </PullRequestSheetContent>
   );
 }
