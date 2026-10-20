@@ -52,7 +52,11 @@ export const pluginSettingsStream = (installationId: PluginInstallationId) =>
                   session.initialConfig.pipe(
                     Effect.map((config) =>
                       supportsPluginSettings(config.environment.capabilities)
-                        ? subscribe(WS_METHODS.pluginsSettingsSubscribe, { installationId }).pipe(
+                        ? subscribe(
+                            WS_METHODS.pluginsSettingsSubscribe,
+                            { installationId },
+                            { session },
+                          ).pipe(
                             Stream.map((values): PluginSettingsView => ({
                               _tag: "available",
                               values,

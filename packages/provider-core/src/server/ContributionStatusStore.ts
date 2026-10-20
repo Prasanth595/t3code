@@ -246,106 +246,105 @@ export const make = Effect.fn("contributions.status.make")(function* () {
       ),
     );
 
-  const openSource: ContributionStatusStoreShape["openSource"] = (source) =>
-    Effect.gen(function* () {
-      let threadId: ThreadId | null = null;
-      let generation = 0;
-      let retired = false;
+  const openSource: ContributionStatusStoreShape["openSource"] = Effect.fn(
+    "ContributionStatusStore.openSource",
+  )(function* (source) {
+    let threadId: ThreadId | null = null;
+    let generation = 0;
+    let retired = false;
 
-      const slotId = slotKey(source);
+    const slotId = slotKey(source);
 
-      /** The slot this handle still owns, or undefined when it is unbound, replaced, or retired. */
-      const ownedSlot = () => {
-        if (retired || threadId === null) return undefined;
-        const slot = threads.get(threadId)?.get(slotId);
-        return slot?.generation === generation ? slot : undefined;
-      };
+    /** The slot this handle still owns, or undefined when it is unbound, replaced, or retired. */
+    const ownedSlot = () => {
+      if (retired || threadId === null) return undefined;
+      const slot = threads.get(threadId)?.get(slotId);
+      return slot?.generation === generation ? slot : undefined;
+    };
 
-      const release = () => {
-        const slot = ownedSlot();
-        if (slot === undefined || threadId === null) return false;
-        const slots = threads.get(threadId);
-        slots?.delete(slotId);
-        if (slots?.size === 0) threads.delete(threadId);
-        return slot.items.size > 0;
-      };
+    const release = () => {
+      const slot = ownedSlot();
+      if (slot === undefined || threadId === null) return false;
+      const slots = threads.get(threadId);
+      slots?.delete(slotId);
+      if (slots?.size === 0) threads.delete(threadId);
+      return slot.items.size > 0;
+    };
 
-      const handle: ContributionStatusSourceHandle = {
-        bindThread: (nextThreadId) =>
-          update(() => {
-            if (retired) return false;
-            if (nextThreadId !== null && nextThreadId === threadId && ownedSlot() !== undefined) {
-              return false;
-            }
-            const released = release();
-            threadId = nextThreadId;
-            if (nextThreadId === null) return released;
-            let slots = threads.get(nextThreadId);
-            if (slots === undefined) {
-              slots = new Map();
-              threads.set(nextThreadId, slots);
-            }
-            const replaced = slots.get(slotId);
-            generation = ++nextGeneration;
-            slots.set(slotId, { generation, source, items: new Map() });
-            return released || (replaced !== undefined && replaced.items.size > 0);
-          }),
-        set: (input) =>
-          update(() => {
-            const slot = ownedSlot();
-            const key = input.key;
-            if (slot === undefined || threadId === null || !isValidContributionStatusKey(key))
-              return false;
-            const text = normalizeContributionStatusText(
-              input.text,
-              CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
-            );
-            if (text.length === 0) return slot.items.delete(key);
-            const previous = slot.items.get(key);
-            if (previous === undefined && !admitsNewItem(threadId, slot)) return false;
-            const tooltip =
-              input.tooltip === undefined
-                ? ""
-                : normalizeContributionStatusText(
-                    input.tooltip,
-                    CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH,
-                  );
-            const item: ContributionStatusItem = {
-              key,
-              text,
-              ...(input.tone === undefined || input.tone === "neutral" ? {} : { tone: input.tone }),
-              ...(tooltip.length === 0 ? {} : { tooltip }),
-            };
-            if (sameItem(previous, item)) return false;
-            slot.items.set(key, item);
-            return true;
-          }),
-        clear: (key) =>
-          update(() => {
-            const slot = ownedSlot();
-            if (slot === undefined || !isValidContributionStatusKey(key)) return false;
-            return slot.items.delete(key);
-          }),
-        clearAll: update(() => {
+    const handle: ContributionStatusSourceHandle = {
+      bindThread: (nextThreadId) =>
+        update(() => {
+          if (retired) return false;
+          if (nextThreadId !== null && nextThreadId === threadId && ownedSlot() !== undefined) {
+            return false;
+          }
+          const released = release();
+          threadId = nextThreadId;
+          if (nextThreadId === null) return released;
+          let slots = threads.get(nextThreadId);
+          if (slots === undefined) {
+            slots = new Map();
+            threads.set(nextThreadId, slots);
+          }
+          const replaced = slots.get(slotId);
+          generation = ++nextGeneration;
+          slots.set(slotId, { generation, source, items: new Map() });
+          return released || (replaced !== undefined && replaced.items.size > 0);
+        }),
+      set: (input) =>
+        update(() => {
           const slot = ownedSlot();
-          if (slot === undefined || slot.items.size === 0) return false;
-          slot.items.clear();
+          const key = input.key;
+          if (slot === undefined || threadId === null || !isValidContributionStatusKey(key))
+            return false;
+          const text = normalizeContributionStatusText(
+            input.text,
+            CONTRIBUTION_STATUS_TEXT_MAX_LENGTH,
+          );
+          if (text.length === 0) return slot.items.delete(key);
+          const previous = slot.items.get(key);
+          if (previous === undefined && !admitsNewItem(threadId, slot)) return false;
+          const tooltip =
+            input.tooltip === undefined
+              ? ""
+              : normalizeContributionStatusText(
+                  input.tooltip,
+                  CONTRIBUTION_STATUS_TOOLTIP_MAX_LENGTH,
+                );
+          const item: ContributionStatusItem = {
+            key,
+            text,
+            ...(input.tone === undefined || input.tone === "neutral" ? {} : { tone: input.tone }),
+            ...(tooltip.length === 0 ? {} : { tooltip }),
+          };
+          if (sameItem(previous, item)) return false;
+          slot.items.set(key, item);
           return true;
         }),
-        items: mutex.withPermits(1)(
-          Effect.sync(() => Array.from(ownedSlot()?.items.values() ?? [])),
-        ),
-      };
-
-      yield* Effect.addFinalizer(() =>
+      clear: (key) =>
         update(() => {
-          const released = release();
-          retired = true;
-          return released;
+          const slot = ownedSlot();
+          if (slot === undefined || !isValidContributionStatusKey(key)) return false;
+          return slot.items.delete(key);
         }),
-      );
-      return handle;
-    });
+      clearAll: update(() => {
+        const slot = ownedSlot();
+        if (slot === undefined || slot.items.size === 0) return false;
+        slot.items.clear();
+        return true;
+      }),
+      items: mutex.withPermits(1)(Effect.sync(() => Array.from(ownedSlot()?.items.values() ?? []))),
+    };
+
+    yield* Effect.addFinalizer(() =>
+      update(() => {
+        const released = release();
+        retired = true;
+        return released;
+      }),
+    );
+    return handle;
+  });
 
   return ContributionStatusStore.of({
     openSource,

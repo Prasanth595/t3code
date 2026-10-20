@@ -15,6 +15,7 @@ import {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
+import * as Queue from "effect/Queue";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -148,6 +149,34 @@ const startRun = Effect.fn("startRun")(function* (
 
 it.layer(NodeServices.layer)("PluginContextEnrichment", (it) => {
   describe("sources", () => {
+    it.effect("takes its generation snapshot only after catalogue restoration is ready", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { catalog, install } = yield* start(yield* Scope.Scope);
+          const installation = yield* install(yield* pluginDirectory());
+          const milestones = yield* Queue.unbounded<string>();
+          const release = yield* Deferred.make<void>();
+          const restoringCatalog = {
+            ...catalog,
+            ready: Queue.offer(milestones, "ready").pipe(Effect.andThen(Deferred.await(release))),
+            list: Queue.offer(milestones, "list").pipe(Effect.andThen(catalog.list)),
+          };
+          const enricher = yield* PluginContextEnrichment.make.pipe(
+            Effect.provideService(PluginCatalog.PluginCatalog, restoringCatalog),
+            Effect.provideService(
+              ServerEnvironment,
+              ServerEnvironment.of({ getEnvironmentId: Effect.succeed(environmentId) } as never),
+            ),
+          );
+          const sources = yield* enricher.sources.pipe(Effect.forkScoped);
+          expect(yield* Queue.take(milestones)).toBe("ready");
+          yield* Deferred.succeed(release, undefined);
+          expect(yield* Fiber.join(sources)).toMatchObject([
+            { installationId: installation.installationId, generation: installation.generation },
+          ]);
+        }),
+      ),
+    );
     it.effect("lists only enabled plugins whose consent covers a declared enrich transform", () =>
       withDatabase(
         Effect.gen(function* () {
