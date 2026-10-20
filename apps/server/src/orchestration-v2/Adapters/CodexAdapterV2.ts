@@ -900,6 +900,11 @@ export type CodexGoalCommand =
   | { readonly type: "resume" }
   | { readonly type: "set"; readonly objective: string };
 
+const CodexGoalObjective = Schema.String.check(Schema.isMaxCodePoints(4_000));
+const isCodexGoalObjective = Schema.is(CodexGoalObjective);
+const decodeCodexGoalObjective = Schema.decodeEffect(CodexGoalObjective);
+const encodeCodexGoalPath = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+
 export function parseCodexGoalCommand(text: string): CodexGoalCommand | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/u.exec(text.trim());
   if (match === null) return null;
@@ -1658,6 +1663,7 @@ const layer: Layer.Layer<
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
+  | Path.Path
   | ServerConfig
 > = Layer.effect(
   ProviderAdapter.ProviderAdapterV2,
@@ -1709,6 +1715,7 @@ export interface CodexAdapterV2Options {
 export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   adapterOptions: CodexAdapterV2Options,
 ) {
+  const path = yield* Path.Path;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.succeed(undefined) : mcpSessions.read(threadId);
@@ -6419,11 +6426,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               );
             }
             if (command.type === "set") {
+              let nativeObjective = command.objective;
+              // Native goals have a smaller limit than turn input. Retain briefs
+              // in server state, including after clear/replacement, for resume.
+              if (!isCodexGoalObjective(command.objective)) {
+                const directory = path.join(serverConfig.stateDir, "codex-goals");
+                const goalPath = path.join(directory, `${yield* crypto.randomUUIDv4()}.md`);
+                nativeObjective = yield* decodeCodexGoalObjective(
+                  `Complete the full objective in ${encodeCodexGoalPath(goalPath)}. Read that file and satisfy all of its requirements before marking the goal complete.`,
+                );
+                yield* fileSystem.makeDirectory(directory, { recursive: true, mode: 0o700 });
+                yield* fileSystem.writeFileString(goalPath, command.objective, {
+                  flag: "wx",
+                  mode: 0o600,
+                });
+              }
               if (current !== null) yield* client.request("thread/goal/clear", { threadId });
               // Paused until our turn runs, so Codex does not start one first.
               const { goal } = yield* client.request("thread/goal/set", {
                 threadId,
-                objective: command.objective,
+                objective: nativeObjective,
                 status: "paused",
               });
               goalsByNativeThread.set(threadId, providerGoalFromCodex(goal));

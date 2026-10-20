@@ -2020,6 +2020,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    adapterOverrides: Partial<
+      Pick<CodexAdapterV2.CodexAdapterV2Options, "crypto" | "fileSystem" | "serverConfig">
+    > = {},
+    resumeThread?: OrchestrationV2ProviderThread,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2073,6 +2077,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               continuationRequests.push(request);
             }),
         },
+        ...adapterOverrides,
       });
       const threadId = ThreadId.make(`thread-${transcript.scenario}`);
       const runtime = yield* adapter.openSession({
@@ -2081,11 +2086,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         modelSelection: CODEX_TEST_MODEL_SELECTION,
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
-      const providerThread = yield* runtime.ensureThread({
-        threadId,
-        modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-      });
+      const providerThread = yield* resumeThread
+        ? runtime.resumeThread({ providerThread: resumeThread })
+        : runtime.ensureThread({
+            threadId,
+            modelSelection: CODEX_TEST_MODEL_SELECTION,
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
@@ -9301,8 +9308,196 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.isNull(CodexAdapterV2.parseCodexGoalCommand("set a /goal"));
     });
 
-    it.effect("keeps a /goal run open across the turns Codex continues on its own", () =>
+    it.effect(
+      "persists a private long brief before replacement and resumes it in a new session",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const crypto = Crypto.make({
+            randomBytes: (size) => new Uint8Array(size).fill(1),
+            digest: (yield* Crypto.Crypto).digest,
+          });
+          const serverConfig = yield* makeReplayServerConfig("goal-long-objective");
+          const uuid = yield* crypto.randomUUIDv4();
+          const goalPath = path.join(serverConfig.stateDir, "codex-goals", `${uuid}.md`);
+          const brief = `${"a🙂".repeat(2_000)}\nLast requirement.`;
+          const nativeObjective = `Complete the full objective in ${yield* encodeStringJson(goalPath)}. Read that file and satisfy all of its requirements before marking the goal complete.`;
+          const goal = { ...codexGoal("paused", 0), objective: nativeObjective };
+          const thread = { threadId: nativeThreadId };
+          const transcript = makeCodexReplayTranscript({
+            scenario: "goal-long-objective",
+            entries: [
+              ...sessionStart,
+              ...request(3, "thread/goal/get", thread, { goal: codexGoal("paused", 10) }),
+              ...request(4, "thread/goal/clear", thread, { cleared: true }),
+              ...request(
+                5,
+                "thread/goal/set",
+                { ...thread, objective: nativeObjective, status: "paused" },
+                { goal },
+              ),
+              ...withReplayRequestId(
+                codexReplayPreamble({
+                  nativeThreadId,
+                  nativeTurnId: "goal-turn",
+                  prompt: brief,
+                }).slice(5),
+                6,
+              ),
+              ...request(
+                7,
+                "thread/goal/set",
+                { ...thread, status: "active" },
+                { goal: { ...goal, status: "active" } },
+              ),
+              ...request(8, "thread/goal/get", thread, { goal: { ...goal, status: "active" } }),
+              ...request(9, "thread/goal/set", { ...thread, status: "paused" }, { goal }),
+            ],
+          });
+          const savedThread = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const harness = yield* makeCodexReplayHarness(
+                transcript,
+                undefined,
+                (method) =>
+                  Effect.gen(function* () {
+                    if (method !== "thread/goal/clear") return;
+                    assert.equal(yield* fs.readFileString(goalPath), brief);
+                    if ((yield* HostProcess.Platform) !== "win32") {
+                      assert.equal((yield* fs.stat(goalPath)).mode & 0o777, 0o600);
+                      assert.equal((yield* fs.stat(path.dirname(goalPath))).mode & 0o777, 0o700);
+                    }
+                  }).pipe(Effect.orDie),
+                undefined,
+                { serverConfig, crypto },
+              );
+              yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${brief}`));
+              yield* harness.runtime.startTurn(yield* goalTurnInput(harness, "/goal pause"));
+              return harness.providerThread;
+            }),
+          );
+          const resumed = yield* makeCodexReplayHarness(
+            makeCodexReplayTranscript({
+              scenario: "goal-long-objective",
+              entries: [
+                ...sessionStart.slice(0, 3),
+                ...request(
+                  2,
+                  "thread/resume",
+                  { ...thread, excludeTurns: true, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+                  { thread: { id: nativeThreadId, updatedAt: 1782622450 } },
+                ),
+                ...request(3, "thread/goal/get", thread, { goal }),
+                ...request(
+                  4,
+                  "turn/start",
+                  {
+                    ...thread,
+                    input: [],
+                    cwd: "/workspace",
+                    model: "gpt-5.4",
+                    approvalPolicy: "never",
+                    approvalsReviewer: "user",
+                    sandboxPolicy: { type: "dangerFullAccess" },
+                    summary: "detailed",
+                  },
+                  { turn: makeCodexReplayTurn({ id: "goal-resumed", status: "inProgress" }) },
+                ),
+                ...request(
+                  5,
+                  "thread/goal/set",
+                  { ...thread, status: "active" },
+                  { goal: { ...goal, status: "active" } },
+                ),
+              ],
+            }),
+            undefined,
+            undefined,
+            undefined,
+            { serverConfig },
+            savedThread,
+          );
+          yield* resumed.runtime.startTurn(yield* goalTurnInput(resumed, "/goal resume"));
+          assert.isAtMost(Array.from(nativeObjective).length, 4_000);
+          assert.equal(yield* fs.readFileString(goalPath), brief);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect.each(["brief write", "reference length"] as const)(
+      "keeps an existing goal when the long objective's %s fails",
+      (failure) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const serverConfig = yield* makeReplayServerConfig("goal-long-objective-failure");
+          const writeError = PlatformError.systemError({
+            _tag: "PermissionDenied",
+            module: "FileSystem",
+            method: "writeFileString",
+          });
+          const transcript = makeCodexReplayTranscript({
+            scenario: "goal-long-objective-write-failure",
+            entries: [
+              ...sessionStart,
+              ...request(
+                3,
+                "thread/goal/get",
+                { threadId: nativeThreadId },
+                { goal: codexGoal("paused", 10) },
+              ),
+            ],
+          });
+          const requests: Array<string> = [];
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            () => Effect.void,
+            (method) =>
+              Effect.sync(() => {
+                requests.push(method);
+              }),
+            undefined,
+            {
+              fileSystem: {
+                ...fs,
+                makeDirectory:
+                  failure === "reference length" ? () => Effect.void : fs.makeDirectory,
+                writeFileString: () =>
+                  failure === "brief write" ? Effect.fail(writeError) : Effect.void,
+              },
+              serverConfig: {
+                ...serverConfig,
+                stateDir:
+                  failure === "reference length"
+                    ? path.join(serverConfig.stateDir, ...Array<string>(30).fill("a".repeat(128)))
+                    : serverConfig.stateDir,
+              },
+            },
+          );
+          const error = yield* Effect.flip(
+            harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${"a".repeat(4_001)}`)),
+          );
+          assert.instanceOf(error, ProviderAdapter.ProviderAdapterTurnStartError);
+          assert.deepEqual(requests, ["initialize", "thread/start", "thread/goal/get"]);
+          if (failure === "brief write") assert.equal(error.cause, writeError);
+          else assert.propertyVal(error.cause, "_tag", "SchemaError");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect("passes a 4,000-scalar objective unchanged and follows native continuations", () =>
       Effect.gen(function* () {
+        const objective = "a🙂".repeat(2_000);
+        const goal = { ...codexGoal("paused", 0), objective };
         const transcript = makeCodexReplayTranscript({
           scenario: "goal-continuation",
           entries: [
@@ -9312,7 +9507,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               4,
               "thread/goal/set",
               { threadId: nativeThreadId, objective, status: "paused" },
-              { goal: codexGoal("paused", 0) },
+              { goal },
             ),
             ...withReplayRequestId(
               codexReplayPreamble({
@@ -9326,12 +9521,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               6,
               "thread/goal/set",
               { threadId: nativeThreadId, status: "active" },
-              { goal: codexGoal("active", 0) },
+              { goal: { ...goal, status: "active" } },
             ),
             notification("goal active", "thread/goal/updated", {
               threadId: nativeThreadId,
               turnId: "goal-turn-1",
-              goal: codexGoal("active", 0),
+              goal: { ...goal, status: "active" },
             }),
             notification("first turn done", "turn/completed", {
               threadId: nativeThreadId,
@@ -9344,7 +9539,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             notification("goal complete", "thread/goal/updated", {
               threadId: nativeThreadId,
               turnId: "goal-turn-2",
-              goal: codexGoal("complete", 1200),
+              goal: { ...goal, status: "complete", tokensUsed: 1200 },
             }),
             notification("continuation done", "turn/completed", {
               threadId: nativeThreadId,
