@@ -3997,22 +3997,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
    * Unlinks links under `target` without following them and removes the
    * directories that leaves empty. Returns false when anything else remains.
    */
-  const removeLeftoverLinks = (
+  // Recursive filesystem traversal can visit many entries; removeWorktree owns the operation span.
+  const removeLeftoverLinks = Effect.fnUntraced(function* (
     target: string,
-  ): Effect.Effect<boolean, PlatformError.PlatformError | Cause.UnknownError> =>
-    Effect.gen(function* () {
-      if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
-        yield* fileSystem.remove(target);
-        return true;
-      }
-      if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
-      let empty = true;
-      for (const name of yield* fileSystem.readDirectory(target)) {
-        if (!(yield* removeLeftoverLinks(path.join(target, name)))) empty = false;
-      }
-      // Only an empty directory goes, so files written since the listing stay.
-      return empty && (yield* removeEmptyDirectory(target));
-    });
+  ): Effect.fn.Return<boolean, PlatformError.PlatformError | Cause.UnknownError> {
+    if (Option.isSome(yield* fileSystem.readLink(target).pipe(Effect.option))) {
+      yield* fileSystem.remove(target);
+      return true;
+    }
+    if ((yield* fileSystem.stat(target)).type !== "Directory") return false;
+    let empty = true;
+    for (const name of yield* fileSystem.readDirectory(target)) {
+      if (!(yield* removeLeftoverLinks(path.join(target, name)))) empty = false;
+    }
+    // Only an empty directory goes, so files written since the listing stay.
+    return empty && (yield* removeEmptyDirectory(target));
+  });
 
   const removeWorktree: GitVcsDriver.GitVcsDriver["Service"]["removeWorktree"] = Effect.fn(
     "removeWorktree",
