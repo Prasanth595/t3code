@@ -99,6 +99,7 @@ describe("bundled side panels", () => {
         </PanelHostContext>,
       );
     });
+    await expect.poll(() => loaded.previewRenders.length).toBe(1);
     expect(loaded).toMatchObject({
       diff: 0,
       preview: 1,
