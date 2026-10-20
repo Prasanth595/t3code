@@ -211,7 +211,8 @@ describe("server ownership", () => {
       "replace",
       "during acquisition",
       "first acquisition",
-      "stat error",
+      // Root bypasses directory permissions, so chmod cannot force EACCES.
+      ...(process.getuid?.() === 0 ? [] : (["stat error"] as const)),
     ] as const)("monitors ownership after %s", (operation) => {
       const messages: unknown[] = [];
       const warnings: unknown[] = [];
