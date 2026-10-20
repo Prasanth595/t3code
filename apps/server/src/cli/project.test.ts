@@ -154,6 +154,13 @@ it.effect("adds, renames, and removes projects through the V2 project CLI domain
     yield* runCli(["project", "rename", workspaceRoot, "Beta", "--base-dir", baseDir]);
     assert.equal((yield* readProjects(baseDir)).projects[0]?.title, "Beta");
 
+    yield* runCli(["project", "rename", workspaceRoot, "Two\nline\ttitle", "--base-dir", baseDir]);
+    yield* runCli(["project", "list", "--base-dir", baseDir]);
+    assert.equal(
+      (yield* TestConsole.logLines).at(-1),
+      `${added?.id}\tTwo line title\t${workspaceRoot}`,
+    );
+
     yield* runCli(["project", "remove", added?.id ?? "", "--base-dir", baseDir]);
     assert.deepEqual((yield* readProjects(baseDir)).projects, []);
 

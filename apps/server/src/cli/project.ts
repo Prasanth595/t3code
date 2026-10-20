@@ -588,7 +588,12 @@ const projectListCommand = Command.make("list", projectLocationFlags).pipe(
         active.length === 0
           ? "No projects."
           : active
-              .map((project) => `${project.id}\t${project.title}\t${project.workspaceRoot}`)
+              .map((project) =>
+                // Titles and paths may contain tabs or newlines; keep one row of three columns.
+                [project.id, project.title, project.workspaceRoot]
+                  .map((field) => field.replace(/[\t\r\n]/g, " "))
+                  .join("\t"),
+              )
               .join("\n"),
       );
     }),
