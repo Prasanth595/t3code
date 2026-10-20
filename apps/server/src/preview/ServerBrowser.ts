@@ -915,9 +915,16 @@ const make = Effect.gen(function* () {
       void tab.initialNavigation.catch(constVoid);
     } else if (adopted) {
       // Popup navigation can finish during setup, before this tab's listeners exist.
+      // A load after setup settles this wait too, and the `load` listener reports that one.
+      let loadReported = false;
+      page.once("load", () => {
+        loadReported = true;
+      });
       void page
         .waitForLoadState("load")
-        .then(() => reportLoaded(tab))
+        .then(() => {
+          if (!loadReported) return reportLoaded(tab);
+        })
         .catch(constVoid);
     }
     return tab;

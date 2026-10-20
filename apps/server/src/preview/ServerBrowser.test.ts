@@ -1159,6 +1159,40 @@ it.live("an adopted popup that is still loading is not reported as successful ea
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("an adopted popup that loads after setup reports success once", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      const opener = contexts[0]!.page;
+      const popup = makeContext();
+      const url = "https://example.com/popup-loads-later";
+      const loadState = Promise.withResolvers<void>();
+      popup.setPageUrl(url);
+      popup.page.waitForLoadState.mockImplementationOnce(() => loadState.promise);
+
+      opener.emit("popup", popup.page);
+      let opened = yield* PubSub.take(events);
+      while (opened.type !== "opened" || opened.snapshot.tabId === tabId) {
+        opened = yield* PubSub.take(events);
+      }
+      yield* browser.attachViewer(viewerInput(opened.snapshot.tabId, false));
+
+      // Playwright settles the load-state wait and emits `load` for the same load.
+      loadState.resolve();
+      popup.page.emit("load");
+      expect(yield* nextLoaded(events, opened.snapshot.tabId)).toEqual({
+        _tag: "Success",
+        url,
+        title: "test page",
+      });
+      // Each report reads the title first, and a duplicate starts before the first one publishes.
+      expect(popup.page.title).toHaveBeenCalledTimes(1);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {
