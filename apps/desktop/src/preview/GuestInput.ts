@@ -137,6 +137,15 @@ const restoreHostFocusScript = (guestId: number) =>
     if (document.activeElement === current) current.blur();
   })()`;
 
+/**
+ * The app's focus held for a guest's agent mouse input. Overlapping events share
+ * one hold: a later event would only note the guest an earlier one focused.
+ */
+const heldHostFocus = new WeakMap<
+  Electron.WebContents,
+  { inFlight: number; readonly held: Promise<void> }
+>();
+
 /** Runs an agent's mouse input in a guest the app does not have focused, then hands the app its focus back. */
 const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () => Promise<A>) => {
   const host = webContents.hostWebContents;
@@ -147,11 +156,21 @@ const keepingHostFocus = async <A>(webContents: Electron.WebContents, run: () =>
       await host.executeJavaScript(script);
     } catch {}
   };
-  await inHost(holdHostFocusScript(webContents.id));
+  let hold = heldHostFocus.get(webContents);
+  if (!hold) {
+    hold = { inFlight: 0, held: inHost(holdHostFocusScript(webContents.id)) };
+    heldHostFocus.set(webContents, hold);
+  }
+  hold.inFlight += 1;
   try {
+    await hold.held;
     return await run();
   } finally {
-    await inHost(restoreHostFocusScript(webContents.id));
+    hold.inFlight -= 1;
+    if (hold.inFlight === 0) {
+      heldHostFocus.delete(webContents);
+      await inHost(restoreHostFocusScript(webContents.id));
+    }
   }
 };
 
@@ -168,7 +187,10 @@ export const sendPageCommand = async (
     else webContents.reload();
     return {};
   }
-  if (method === "Input.dispatchMouseEvent" && !webContents.focusedFrame) {
+  if (
+    method === "Input.dispatchMouseEvent" &&
+    (!webContents.focusedFrame || heldHostFocus.has(webContents))
+  ) {
     return keepingHostFocus(webContents, () => debuggee.sendCommand(method, params));
   }
   if (!FOCUS_ROUTED_INPUT.has(method) || webContents.focusedFrame) {

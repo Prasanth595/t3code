@@ -161,6 +161,27 @@ describe("preview guest input", () => {
       expect(host.activeElement()).toBe(host.composer);
     });
 
+    it("hands focus back after a click that overlaps the one before it", async () => {
+      const host = makeHost();
+      host.composer.focus();
+      const guest = makeGuest({ focused: false, host });
+      let finishPress = () => {};
+      guest.sendCommand.mockImplementationOnce(async () => {
+        host.webview.focus();
+        await new Promise<void>((resolve) => {
+          finishPress = resolve;
+        });
+        return { result: {} };
+      });
+      const pressing = guest.send("Input.dispatchMouseEvent", press);
+      await vi.waitFor(() => expect(host.activeElement()).toBe(host.webview));
+      // The relay forwards the release without waiting for the press to finish.
+      await guest.send("Input.dispatchMouseEvent", { ...press, type: "mouseReleased" });
+      finishPress();
+      await pressing;
+      expect(host.activeElement()).toBe(host.composer);
+    });
+
     it("does not touch the app's focus while the person has the preview focused", async () => {
       const host = makeHost();
       host.webview.focus();
