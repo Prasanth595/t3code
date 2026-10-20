@@ -1,5 +1,6 @@
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -81,6 +82,7 @@ const REVIEW_DIFF_ARGS = [
 ];
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
+const STATUS_UPSTREAM_FETCH_TIMEOUT = Duration.minutes(5);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_BASE_COOLDOWN = Duration.seconds(30);
 const STATUS_UPSTREAM_REFRESH_FAILURE_MAX_COOLDOWN = Duration.minutes(15);
@@ -171,6 +173,7 @@ interface GitRefsSnapshot {
 interface ExecuteGitOptions {
   stdin?: string | undefined;
   timeoutMs?: number | null | undefined;
+  forceKillAfterMs?: number | undefined;
   allowNonZeroExit?: boolean | undefined;
   fallbackErrorDetail?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
@@ -963,6 +966,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             ChildProcess.make(executable, commandInput.args, {
               cwd: commandInput.cwd,
               env: spawnEnv,
+              forceKillAfter: input.forceKillAfterMs,
             }),
           )
           .pipe(
@@ -1100,6 +1104,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ...(options.env !== undefined ? { env: options.env } : {}),
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.forceKillAfterMs !== undefined
+        ? { forceKillAfterMs: options.forceKillAfterMs }
+        : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
       ...(options.appendTruncationMarker !== undefined
         ? { appendTruncationMarker: options.appendTruncationMarker }
@@ -1269,18 +1276,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       remoteName,
     ];
     const key = `${gitCommonDir}\0${remoteName}`;
+    const failure = statusRemoteRefreshFailures.get(key);
+    if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
     const fiber = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const pending = statusFetches.get(key);
         if (pending) return pending;
-        // Git creates a lock before registering it for signal cleanup. A short poll
-        // deadline or a disconnected client must not terminate the writer in that gap.
+        // Frequent poll deadlines and disconnected clients must not interrupt a
+        // healthy writer. A separate safety limit prevents a hung transport from
+        // occupying its worker slot indefinitely.
         const started = yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
           env: STATUS_UPSTREAM_REFRESH_ENV,
           fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-          timeoutMs: null,
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+          forceKillAfterMs: 1_000,
         }).pipe(
           Effect.asVoid,
+          Effect.tap(() =>
+            Effect.sync(() => {
+              statusRemoteRefreshFailures.delete(key);
+            }),
+          ),
+          Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
+          Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
           statusFetchProcesses.withPermits(1),
           Effect.onExit(() =>
             Effect.sync(() => {
@@ -1496,31 +1514,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const statusRemoteRefreshFailureCounts = new Map<string, number>();
+  const statusRemoteRefreshFailures = new Map<string, { count: number; retryAt: number }>();
   const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
-  const recordStatusRemoteRefreshFailure = (cacheKey: StatusRemoteRefreshCacheKey) => {
-    const key = statusRemoteRefreshFailureKey(cacheKey);
-    const nextCount = (statusRemoteRefreshFailureCounts.get(key) ?? 0) + 1;
-    statusRemoteRefreshFailureCounts.delete(key);
-    statusRemoteRefreshFailureCounts.set(key, nextCount);
-    if (statusRemoteRefreshFailureCounts.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
-      const oldestKey = statusRemoteRefreshFailureCounts.keys().next().value;
+  const recordStatusRemoteRefreshFailure = Effect.fn(
+    "GitVcsDriver.recordStatusRemoteRefreshFailure",
+  )(function* (key: string) {
+    const nextCount = (statusRemoteRefreshFailures.get(key)?.count ?? 0) + 1;
+    const now = yield* Clock.currentTimeMillis;
+    statusRemoteRefreshFailures.delete(key);
+    statusRemoteRefreshFailures.set(key, {
+      count: nextCount,
+      retryAt: now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
+    });
+    if (statusRemoteRefreshFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+      const oldestKey = statusRemoteRefreshFailures.keys().next().value;
       if (oldestKey !== undefined) {
-        statusRemoteRefreshFailureCounts.delete(oldestKey);
+        statusRemoteRefreshFailures.delete(oldestKey);
       }
     }
-  };
-  const clearStatusRemoteRefreshFailures = (cacheKey: StatusRemoteRefreshCacheKey) => {
-    statusRemoteRefreshFailureCounts.delete(statusRemoteRefreshFailureKey(cacheKey));
-  };
+  });
   const refreshStatusRemoteCacheEntry = Effect.fn("refreshStatusRemoteCacheEntry")(function* (
     cacheKey: StatusRemoteRefreshCacheKey,
   ) {
     return yield* fetchRemoteForStatus(cacheKey.gitCommonDir, cacheKey.remoteName).pipe(
-      Effect.tap(() => Effect.sync(() => clearStatusRemoteRefreshFailures(cacheKey))),
-      Effect.tapError(() => Effect.sync(() => recordStatusRemoteRefreshFailure(cacheKey))),
-      Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
       Effect.as(true as const),
     );
   });
@@ -1535,7 +1552,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Exit.isSuccess(exit)
         ? STATUS_UPSTREAM_REFRESH_INTERVAL
         : statusUpstreamRefreshFailureCooldown(
-            statusRemoteRefreshFailureCounts.get(statusRemoteRefreshFailureKey(cacheKey)) ?? 1,
+            statusRemoteRefreshFailures.get(statusRemoteRefreshFailureKey(cacheKey))?.count ?? 1,
           ),
   });
 
@@ -2613,7 +2630,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const pullCurrentBranch: GitVcsDriver.GitVcsDriver["Service"]["pullCurrentBranch"] = Effect.fn(
     "pullCurrentBranch",
   )(function* (cwd) {
-    const details = yield* statusDetails(cwd);
+    const details = yield* readStatusDetailsLocal(cwd);
     const refName = details.branch;
     if (!refName) {
       return yield* new GitCommandError({
@@ -2634,6 +2651,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
         detail: "Current branch has no upstream configured. Push with upstream first.",
       });
+    }
+    const remote = yield* readConfigValue(cwd, `branch.${refName}.remote`);
+    if (remote) {
+      const gitCommonDir = yield* resolveGitCommonDir(cwd);
+      const pending = statusFetches.get(`${gitCommonDir}\0${remote}`);
+      // The status wait can finish while its fetch still owns reference locks.
+      // Let our existing writer finish before starting the pull's fetch.
+      if (pending) yield* Fiber.await(pending);
     }
     const beforeSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.beforeSha",
@@ -2712,7 +2737,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
 
-    const refreshed = yield* statusDetails(cwd);
+    const refreshed = yield* readStatusDetailsLocal(cwd);
     return {
       status: beforeSha.length > 0 && beforeSha === afterSha ? "skipped_up_to_date" : "pulled",
       refName,
