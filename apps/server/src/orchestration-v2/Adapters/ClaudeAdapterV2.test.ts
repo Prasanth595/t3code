@@ -2009,7 +2009,6 @@ describe("ClaudeAdapterV2 attachments", () => {
               attachments: [attachment, document],
             },
           });
-          // The steer waits for the prompt's first model frame.
           yield* Queue.offer(
             frames,
             claudeSdkFrame({
@@ -8830,8 +8829,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             },
           });
           // CLI 2.1.304 still ran a "now" steer ahead of a prompt it had reported
-          // started and echoed on init. Synthetic notices and another prompt's
-          // output aren't this prompt's model output either.
+          // started and echoed on init.
           for (const frame of [
             {
               type: "command_lifecycle",
@@ -8845,7 +8843,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               state: "started",
               uuid: "started",
             },
-            // Once the CLI is known to echo early, untagged output is another turn's.
             ...(initEcho
               ? [
                   {
