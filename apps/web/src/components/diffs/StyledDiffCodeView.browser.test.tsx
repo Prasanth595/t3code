@@ -19,6 +19,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -161,9 +162,11 @@ describe("code-view worker lifecycle", () => {
     testState.heldResponses = [];
     testState.onInitializationHeld = undefined;
   }
+  // Worker startup runs on real time, so only the idle expiry checks use this clock.
+  // Faking startup too would let advancing the idle clock time out a worker startup.
+  const idleClock = () => fakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   async function workerEnvironment() {
     await using stack = new AsyncDisposableStack();
-    stack.use(fakeTimers({ toFake: ["setTimeout", "clearTimeout"] }));
     // Pins the pool at two workers whatever machine runs the suite.
     stack.use(vi.spyOn(navigator, "hardwareConcurrency", "get").mockReturnValue(2));
     const initialize = WorkerPoolManager.prototype.initialize;
@@ -177,16 +180,30 @@ describe("code-view worker lifecycle", () => {
         return pending;
       }),
     );
+    // Runs out the idle timer each view's unmount scheduled, releasing its pool.
     stack.defer(async () => {
       await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
     });
-    return stack.move();
+    const environment = stack.move();
+    return {
+      async render(ui: ReactNode) {
+        const view = environment.use(await render(ui, { router: false }));
+        // Disposed before the view, so its unmount schedules the idle timer on a fake clock
+        // that the run-out above then restores.
+        environment.defer(() => {
+          if (!vi.isFakeTimers()) idleClock();
+        });
+        return view;
+      },
+      [Symbol.asyncDispose]: () => environment.disposeAsync(),
+    };
   }
 
   it("starts on demand, keeps quick reopens warm, and expires the last closed pool", async () => {
     setup();
-    await using _workers = await workerEnvironment();
-    await using view = await render(renderViews(0), { router: false });
+    await using workers = await workerEnvironment();
+    const view = await workers.render(renderViews(0));
     const button = document.querySelector("button")!;
     expect(testState.workers).toHaveLength(0);
     expect(testState.pools.size).toBe(0);
@@ -207,26 +224,29 @@ describe("code-view worker lifecycle", () => {
     expect(pool.getFileResultCache(files[1]!)).toBeDefined();
     await vi.waitFor(() => expect(codeFile("answer.ts")).toContain("answer"));
 
-    await view.rerender(renderViews(1));
-    expect(pool.getStats().totalWorkers).toBe(2);
-    expect(testState.terminations).toBe(0);
-    await view.rerender(renderViews(0));
-    await vi.advanceTimersByTimeAsync(29_999);
-    expect(pool.getStats().totalWorkers).toBe(2);
-    expect(testState.terminations).toBe(0);
+    {
+      using _idleClock = idleClock();
+      await view.rerender(renderViews(1));
+      expect(pool.getStats().totalWorkers).toBe(2);
+      expect(testState.terminations).toBe(0);
+      await view.rerender(renderViews(0));
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(pool.getStats().totalWorkers).toBe(2);
+      expect(testState.terminations).toBe(0);
 
-    await view.rerender(renderViews(1));
-    expect(testState.pools.size).toBe(1);
-    expect(testState.workers).toHaveLength(2);
-    expect(loadingViews()).toBe(0);
-    expect(pool.getFileResultCache(files[1]!)).toBeDefined();
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(pool.getStats().totalWorkers).toBe(2);
+      await view.rerender(renderViews(1));
+      expect(testState.pools.size).toBe(1);
+      expect(testState.workers).toHaveLength(2);
+      expect(loadingViews()).toBe(0);
+      expect(pool.getFileResultCache(files[1]!)).toBeDefined();
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(pool.getStats().totalWorkers).toBe(2);
 
-    await view.rerender(renderViews(0));
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(pool.getStats().totalWorkers).toBe(0);
-    expect(testState.terminations).toBe(2);
+      await view.rerender(renderViews(0));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(pool.getStats().totalWorkers).toBe(0);
+      expect(testState.terminations).toBe(2);
+    }
 
     await view.rerender(renderViews(1));
     const reopenedPool = [...testState.pools.keys()][1]!;
@@ -240,9 +260,9 @@ describe("code-view worker lifecycle", () => {
 
   it("renders through Pierre's main-thread fallback when worker creation fails", async () => {
     setup();
-    await using _workers = await workerEnvironment();
+    await using workers = await workerEnvironment();
     testState.failWorkers = true;
-    await using _view = await render(renderViews(1), { router: false });
+    await workers.render(renderViews(1));
     const pool = [...testState.pools.keys()][0]!;
     await act(async () => {
       await expect(testState.pools.get(pool)).rejects.toMatchObject({ _tag: "DiffWorkerError" });
@@ -259,12 +279,13 @@ describe("code-view worker lifecycle", () => {
 
   it("keeps an initializing pool until its last view closes and ignores late responses", async () => {
     setup();
-    await using _workers = await workerEnvironment();
+    using _idleClock = idleClock();
+    await using workers = await workerEnvironment();
     testState.holdInitialization = true;
     const held = new Promise<void>((resolve) => {
       testState.onInitializationHeld = resolve;
     });
-    await using view = await render(renderViews(2), { router: false });
+    const view = await workers.render(renderViews(2));
     const pool = [...testState.pools.keys()][0]!;
     const pending = testState.pools.get(pool)!;
     await held;

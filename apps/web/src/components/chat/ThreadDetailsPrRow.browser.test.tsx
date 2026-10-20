@@ -10,6 +10,7 @@ import * as Cause from "effect/Cause";
 import { DraftId } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
@@ -24,7 +25,14 @@ const state = vi.hoisted(() => ({
 
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useServerConfigs: (() => new Map()) as never,
+  // Rows render a pull request only with a project, so this does not reach tests that pass none.
+  useServerConfigs: (() =>
+    new Map([
+      [
+        EnvironmentId.make("environment"),
+        { environment: { capabilities: { pullRequests: true } } },
+      ],
+    ])) as never,
 }));
 const queryData = () => ({
   projectId: ProjectId.make("project"),
@@ -56,6 +64,16 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
     select(AsyncResult.success(queryData()))) as never,
   useEnvironmentQueryIsNewer: () => true,
   useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
+  useEnvironmentQuery: (() => ({
+    data: {
+      code: { additions: 1, deletions: 0 },
+      tests: { additions: 0, deletions: 0 },
+      mocks: { additions: 0, deletions: 0 },
+      generated: { additions: 0, deletions: 0 },
+      docs: { additions: 7, deletions: 3 },
+    },
+    isPending: false,
+  })) as never,
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -211,6 +229,27 @@ it("shows the current checkout recovery detail when fixing checks fails and is r
     expect.stringContaining(first.detail),
     second.detail,
   ]);
+});
+
+it("splits the change by file kind in the hover card", async () => {
+  await using screen = await setup();
+  await screen.rerender(
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      reference={{ repository: "owner/repo", number: 1 }}
+      status={null}
+      project={{ id: ProjectId.make("project"), repositoryIdentity: null } as never}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+    />,
+  );
+  await userEvent.hover(screen.getByRole("button", { name: "Open PR" }));
+  await expect
+    .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
+    .toMatch(/Docs\+7-3/);
 });
 
 async function setup() {
