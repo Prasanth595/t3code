@@ -78,8 +78,8 @@ function failureMessage(result: Parameters<typeof squashAtomCommandFailure>[0]):
 }
 
 /**
- * Resolves when the clone finishes. Null means it was cancelled or removed. A
- * failed clone keeps waiting, since its toast offers a retry.
+ * Resolves when the clone finishes, or null once it is removed. A failed or
+ * cancelled clone keeps waiting, since its toast offers a retry.
  */
 function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
   return new Promise<ProjectCloneSnapshot | null>((resolve) => {
@@ -91,12 +91,7 @@ function waitForClone(environmentId: EnvironmentId, projectId: ProjectId) {
       if (settled) return;
       const clone = clones.find((candidate) => candidate.projectId === projectId);
       if (clone) seen = true;
-      const result =
-        clone?.phase === "done"
-          ? clone
-          : clone?.phase === "cancelled" || (!clone && seen)
-            ? null
-            : undefined;
+      const result = clone?.phase === "done" ? clone : !clone && seen ? null : undefined;
       if (result === undefined) return;
       settled = true;
       unsubscribe?.();

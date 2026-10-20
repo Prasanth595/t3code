@@ -111,8 +111,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // The project or every target can vanish while the dialog is open.
-  const unavailable = project === null || target === null;
+  // The project or every target can vanish while the dialog is open. Submitting
+  // before the file list loads would silently skip the default .env copies.
+  const unavailable =
+    project === null ||
+    target === null ||
+    (canListFiles && ignoredFiles.data === null && ignoredFiles.error === null);
   useEffect(() => {
     if (project === null) close();
   }, [project]);
