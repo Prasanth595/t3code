@@ -836,9 +836,17 @@ const decodeUtf8 = (bytes: Uint8Array): string | null => {
   }
 };
 
+/**
+ * Whether `branch` can be a path under `refs/heads/` in the API: no empty or dot segment.
+ * `branchTip` refuses any other name with `GitHubInvalidArgument`; a caller that wants its own
+ * words for the refusal asks this first.
+ */
+export const isBranchPath = (branch: string): boolean =>
+  !branch.split("/").some((part) => part === "" || part === "." || part === "..");
+
 /** A branch name as a path under `refs/heads/` in the API; null for a name that could leave it. */
 const encodeBranch = (branch: string): string | null => {
-  if (branch.split("/").some((part) => part === "" || part === "." || part === "..")) return null;
+  if (!isBranchPath(branch)) return null;
   let out = "";
   for (const byte of new TextEncoder().encode(branch)) {
     const char = String.fromCharCode(byte);

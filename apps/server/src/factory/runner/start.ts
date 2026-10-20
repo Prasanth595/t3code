@@ -52,6 +52,7 @@ import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runI
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
+  isBranchPath,
   isNotFound,
   type BoundGitHub,
   type GitHubError,
@@ -873,13 +874,15 @@ const runBase = (
     if (named === null || named === ctx.project.base) {
       return { ok: true, base: ctx.project.base } as const;
     }
-    // `branchTip` refuses an empty or dot segment, so such a name is refused here too.
-    const segments = named.split("/");
-    if (!isPlainRefName(named) || segments.some((s) => s === "" || s === "." || s === "..")) {
+    if (!isPlainRefName(named) || !isBranchPath(named)) {
       return { ok: false, reason: baseNotABranch(named) } as const;
     }
     const tip = yield* Effect.result(ctx.tracker.branchTip(named));
     if (tip._tag === "Success") return { ok: true, base: named } as const;
+    // A name the tracker refuses is not a branch name either, whatever rule refused it.
+    if (tip.failure._tag === "GitHubInvalidArgument") {
+      return { ok: false, reason: baseNotABranch(named) } as const;
+    }
     if (isNotFound(tip.failure)) return { ok: false, reason: baseNotOnOrigin(named) } as const;
     return yield* tip.failure;
   });

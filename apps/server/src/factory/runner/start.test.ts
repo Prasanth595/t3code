@@ -30,6 +30,7 @@ import {
 } from "../t3/sessions.ts";
 import {
   GitHubFailed,
+  GitHubInvalidArgument,
   type ClaimOutcome,
   type FactoryComment,
   type GitHubError,
@@ -2267,6 +2268,25 @@ describe("start: an issue that names its base", () => {
         assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
         assert.deepStrictEqual(lookups(calls), []);
       }
+    }),
+  );
+
+  it.effect("a base the tracker refuses as a name is not a branch name, not an error", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({
+        issues: [withBody("## Base\nfeature/odd\n")],
+        branchTip: new GitHubInvalidArgument({ argument: "feature/odd", expected: "a branch" }),
+      });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      const reason = "base branch feature/odd is not a branch name";
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+      assert.deepStrictEqual(calls.slice(3), [
+        "branchTip feature/odd",
+        ...stuckCalls(reason, null),
+      ]);
+      assert.deepStrictEqual(t3.launchRequests, []);
     }),
   );
 
