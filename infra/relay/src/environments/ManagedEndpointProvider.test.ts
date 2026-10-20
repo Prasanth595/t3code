@@ -6,6 +6,7 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -751,6 +752,127 @@ describe("ManagedEndpointProvider", () => {
         "recordDns",
         "markReady",
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("recovers a ready tunnel for the same origin with only reads", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const dnsCalls: DnsCall[] = [];
+    const allocationCalls: AllocationCall[] = [];
+    const layer = layerProvider(
+      makePersistentTunnelClient(tunnelCalls),
+      makeDnsClient(dnsCalls),
+      makeAllocations(allocationCalls),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const request = {
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+      } as const;
+      const provisioned = yield* provider.provision(request);
+      tunnelCalls.length = 0;
+      dnsCalls.length = 0;
+      allocationCalls.length = 0;
+
+      const recovered = yield* provider.provision({ ...request, reuseReadyTunnel: true });
+
+      expect(recovered).toEqual(provisioned);
+      expect(tunnelCalls.map((call) => call.operation)).toEqual(["get", "getToken"]);
+      expect(dnsCalls).toEqual([]);
+      expect(allocationCalls.map((call) => call.operation)).toEqual(["reserve"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("fully provisions a recovery when the ready tunnel cannot be reused", () => {
+    const tunnelCalls: TunnelCall[] = [];
+    const tunnelClient = makePersistentTunnelClient(tunnelCalls);
+    const layer = layerProvider(tunnelClient);
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const request = {
+        userId: "user_ABC",
+        environmentId: "env_ABC",
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        reuseReadyTunnel: true,
+      } as const;
+      yield* provider.provision(request);
+
+      tunnelCalls.length = 0;
+      yield* provider.provision({
+        ...request,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3774 },
+      });
+      expect(tunnelCalls.map((call) => call.operation)).toEqual([
+        "list",
+        "putConfiguration",
+        "getToken",
+      ]);
+
+      yield* tunnelClient.delete("tunnel-id");
+      tunnelCalls.length = 0;
+      yield* provider.provision({
+        ...request,
+        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3774 },
+      });
+      expect(tunnelCalls.map((call) => call.operation)).toEqual([
+        "get",
+        "list",
+        "create",
+        "putConfiguration",
+        "getToken",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("stops calling Cloudflare until a rate limit has passed", () => {
+    let listCalls = 0;
+    const tunnelClient = {
+      list: () =>
+        Effect.suspend(() => {
+          listCalls += 1;
+          return Effect.fail({ _tag: "TooManyRequests", message: "Rate limited" });
+        }),
+    } as unknown as Cloudflare.Tunnel.ReadWriteTunnelClient;
+    const layer = ManagedEndpointProvider.layerCloudflareBindings(
+      tunnelClient,
+      {} as Cloudflare.DNS.ReadWriteDnsClient,
+      {} as Alchemy.BaseRuntimeContext,
+    ).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(RelayConfiguration.layer(config)),
+      Layer.provide(
+        Layer.succeed(ManagedEndpointAllocations.ManagedEndpointAllocations, makeAllocations()),
+      ),
+      Layer.provide(Layer.succeed(ManagedTunnelLimits.ManagedTunnelLimits, makeTunnelLimits())),
+    );
+
+    return Effect.gen(function* () {
+      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+      const provision = provider
+        .provision({
+          userId: "user_ABC",
+          environmentId: "env_ABC",
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        })
+        .pipe(Effect.flip);
+
+      const rateLimited = yield* provision;
+      const paused = yield* provision;
+      expect(listCalls).toBe(1);
+      expect(ManagedEndpointProvider.isCloudflareRateLimited(rateLimited)).toBe(true);
+      expect(paused).toMatchObject({
+        _tag: "ManagedEndpointProvisioningFailed",
+        stage: "ensure-tunnel",
+        cause: { cause: { _tag: "CloudflareApiPaused" } },
+      });
+
+      yield* TestClock.adjust("30 seconds");
+      yield* provision;
+      expect(listCalls).toBe(2);
     }).pipe(Effect.provide(layer));
   });
 
