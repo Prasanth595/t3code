@@ -20,6 +20,8 @@ import {
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
+  webhookDraftErrors,
+  webhookDeliveryLabel,
   taskToDraft,
 } from "./scheduledTasksSettings.logic";
 
@@ -360,4 +362,53 @@ it("rejects dedupe templates without a request placeholder", () => {
   const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
   expect(scheduleFromDraft({ ...draft, replayKey: "literal" })).toBeNull();
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
+});
+
+describe("webhook delivery labels and validation messages", () => {
+  it("preserves Ran for legacy and dispatched deliveries and distinguishes pending windows", () => {
+    expect(webhookDeliveryLabel({ outcome: "accepted" })).toBe("Ran");
+    expect(webhookDeliveryLabel({ outcome: "accepted", pendingWindow: false })).toBe("Ran");
+    expect(webhookDeliveryLabel({ outcome: "accepted", pendingWindow: true })).toBe(
+      "Opened window",
+    );
+  });
+
+  it("keeps the existing age-limit title and body", () => {
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
+    expect(
+      webhookDraftErrors({ ...draft, maxDeliveryAgeMinutes: "0", replayKey: "literal" }),
+    ).toEqual([
+      {
+        title: "Invalid age limit",
+        description: "Enter whole minutes from 1 to 1440, or leave it blank.",
+      },
+    ]);
+  });
+
+  it.each([
+    [{ replayKey: "literal" }, "Replay key must contain a valid request placeholder."],
+    [{ coalesceKey: "{{body.bad" }, "Coalesce key must contain a valid request placeholder."],
+    [{ coalesceWindowSeconds: "9" }, "Coalesce window must be whole seconds from 10 to 3600."],
+  ])("names only the invalid webhook field for %o", (invalid, description) => {
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
+    expect(webhookDraftErrors({ ...draft, ...invalid })).toEqual([
+      { title: "Invalid webhook settings", description },
+    ]);
+  });
+
+  it("reports separate short errors when several dedupe fields fail", () => {
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "webhook", signature: null } });
+    expect(
+      webhookDraftErrors({
+        ...draft,
+        replayKey: "bad",
+        coalesceKey: "bad",
+        coalesceWindowSeconds: "0",
+      }).map((error) => error.description),
+    ).toEqual([
+      "Replay key must contain a valid request placeholder.",
+      "Coalesce key must contain a valid request placeholder.",
+      "Coalesce window must be whole seconds from 10 to 3600.",
+    ]);
+  });
 });

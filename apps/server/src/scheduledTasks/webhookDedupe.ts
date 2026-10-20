@@ -50,6 +50,7 @@ export const acceptWebhookDedupe = Effect.fn("ScheduledTaskService.acceptWebhook
   reserve: Effect.Effect<void, "first_rejected" | "rejected">,
   reserveCoalescedLog: Effect.Effect<boolean>,
   checkCapacity: Effect.Effect<void, "queue_full" | ScheduledTaskError>,
+  replaceDeliveryRequest: (ownerId: string) => Effect.Effect<void, ScheduledTaskError>,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const dedupe = task.schedule.type === "webhook" ? task.schedule.dedupe : undefined;
@@ -79,6 +80,7 @@ export const acceptWebhookDedupe = Effect.fn("ScheduledTaskService.acceptWebhook
   if (pending.length > 0) {
     yield* sql`UPDATE scheduled_task_webhook_pending SET request_json = ${requestJson},
       delivery_ids_json = json_insert(delivery_ids_json, '$[#]', ${deliveryId}) WHERE delivery_id = ${pending[0]!.delivery_id}`;
+    yield* replaceDeliveryRequest(pending[0]!.delivery_id);
     return logCoalesced ? ("coalesced" as const) : ("coalesced_unlogged" as const);
   }
   // Expired windows are immutable, even if the scheduler has not dispatched them yet.

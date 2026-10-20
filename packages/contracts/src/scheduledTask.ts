@@ -289,6 +289,7 @@ export const ScheduledTaskWebhookDeliverySummary = Schema.Struct({
   bodyBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   outcome: Schema.Union([ScheduledTaskWebhookDeliveryOutcome, Schema.String]),
   signatureVerified: Schema.Boolean,
+  pendingWindow: Schema.optional(Schema.Boolean),
   missingFields: Schema.Array(Schema.String),
   error: Schema.NullOr(Schema.String),
 });

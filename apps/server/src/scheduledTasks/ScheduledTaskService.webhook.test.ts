@@ -1228,6 +1228,24 @@ it.effect.each([1, 3])(
             );
             if (value < count) yield* TestClock.adjust("2 seconds");
           }
+          const owner = (yield* service.listWebhookDeliveries({
+            id: task.id,
+            acceptAnyOutcome: true,
+          })).deliveries.find((delivery) => delivery.outcome === "accepted")!;
+          assert.isTrue(owner.pendingWindow);
+          const beforeDispatch = (yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: owner.id,
+            acceptAnyOutcome: true,
+          })).delivery;
+          assert.isTrue(beforeDispatch.pendingWindow);
+          assert.equal(beforeDispatch.body, JSON.stringify({ key: "B", value: count }));
+          assert.equal(beforeDispatch.headers.version, String(count));
+          assert.equal(beforeDispatch.query, `version=${count}`);
+          assert.equal(
+            beforeDispatch.bodyBytes,
+            new TextEncoder().encode(beforeDispatch.body).byteLength,
+          );
           assert.equal(yield* Queue.size(launches), 0);
           yield* workers.get("webhook-coalescing")!;
           assert.equal(yield* Queue.size(launches), 0);
@@ -1244,6 +1262,14 @@ it.effect.each([1, 3])(
             id: task.id,
             acceptAnyOutcome: true,
           })).deliveries.map((d) => d.outcome);
+          const afterDispatch = (yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: owner.id,
+            acceptAnyOutcome: true,
+          })).delivery;
+          assert.isFalse(afterDispatch.pendingWindow);
+          assert.equal(afterDispatch.body, beforeDispatch.body);
+          assert.include(afterDispatch.renderedPrompt!, `>${count}<`);
           assert.equal(outcomes.filter((o) => o === "accepted").length, 1);
           assert.equal(outcomes.filter((o) => o === "coalesced").length, count - 1);
         }),
@@ -2426,3 +2452,54 @@ it.effect("a full run budget still accepts replay hits and the latest open-windo
     { workers },
   );
 });
+
+it.effect("dispatches an overdue window exactly once after its deadline passed while stopped", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const task = yield* withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          const { task } = yield* service.upsert(
+            yield* webhookTaskInput({
+              schedule: {
+                type: "webhook",
+                dedupe: { coalesceKey: "{{body}}", coalesceWindowSeconds: 10 },
+              },
+            }),
+          );
+          yield* service.triggerWebhook(requestFor(task));
+          assert.equal(yield* Queue.size(launches), 0);
+          return task;
+        }),
+      { sql, workers: new Map() },
+    );
+    // The first service scope is closed before the deadline advances.
+    yield* TestClock.adjust("30 seconds");
+    const restartedWorkers = new Map<string, Effect.Effect<void>>();
+    yield* withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          yield* drainPendingDispatch(restartedWorkers);
+          yield* Queue.take(launches);
+          for (let i = 0; i < 3; i++) yield* restartedWorkers.get("webhook-coalescing")!;
+          assert.equal(yield* Queue.size(launches), 0);
+          assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
+          assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
+        }),
+      { sql, workers: restartedWorkers },
+    );
+    const secondRestartWorkers = new Map<string, Effect.Effect<void>>();
+    yield* withService(
+      ({ service, launches }) =>
+        Effect.gen(function* () {
+          yield* secondRestartWorkers.get("webhook-coalescing")!;
+          assert.equal(yield* Queue.size(launches), 0);
+          assert.equal(
+            (yield* service.list()).tasks.find((entry) => entry.id === task.id)!.runCount,
+            1,
+          );
+        }),
+      { sql, workers: secondRestartWorkers },
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

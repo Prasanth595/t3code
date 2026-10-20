@@ -1,6 +1,7 @@
 import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
+  MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -89,23 +90,61 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signaturePrefix: "sha256=",
 } as const;
 
+export function webhookDraftErrors(draft: DraftState) {
+  if (draft.scheduleMode !== "webhook") return [];
+  if (parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes) === undefined)
+    return [
+      {
+        title: "Invalid age limit",
+        description: `Enter whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}, or leave it blank.`,
+      },
+    ];
+  const errors: Array<{ title: string; description: string }> = [];
+  for (const [label, value] of [
+    ["Replay key", draft.replayKey],
+    ["Coalesce key", draft.coalesceKey],
+  ] as const) {
+    if (value.trim() && !isWebhookDedupeTemplate(value.trim()))
+      errors.push({
+        title: "Invalid webhook settings",
+        description: `${label} must contain a valid request placeholder.`,
+      });
+  }
+  const window = draft.coalesceWindowSeconds.trim();
+  if (window && (!Number.isInteger(Number(window)) || Number(window) < 10 || Number(window) > 3600))
+    errors.push({
+      title: "Invalid webhook settings",
+      description: "Coalesce window must be whole seconds from 10 to 3600.",
+    });
+  return errors;
+}
+
+export function webhookDeliveryLabel(delivery: {
+  readonly outcome: string;
+  readonly pendingWindow?: boolean | undefined;
+}) {
+  if (delivery.outcome === "accepted") return delivery.pendingWindow ? "Opened window" : "Ran";
+  const labels: Record<string, string> = {
+    dispatch_failed: "Run failed",
+    duplicate: "Duplicate",
+    coalesced: "Coalesced",
+    rejected_signature: "Bad signature",
+    disabled: "Task paused",
+    rate_limited: "Rate limited",
+    expired: "Too old",
+  };
+  return labels[delivery.outcome] ?? delivery.outcome;
+}
+
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (draft.scheduleMode === "webhook") {
+    if (webhookDraftErrors(draft).length > 0) return null;
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
-    if (maxDeliveryAgeMinutes === undefined) return null;
     const replayKey = draft.replayKey.trim();
     const coalesceKey = draft.coalesceKey.trim();
-    if ([replayKey, coalesceKey].some((key) => key && !isWebhookDedupeTemplate(key))) return null;
-    const coalesceWindowSeconds = draft.coalesceWindowSeconds?.trim()
+    const coalesceWindowSeconds = draft.coalesceWindowSeconds.trim()
       ? Number(draft.coalesceWindowSeconds)
       : undefined;
-    if (
-      coalesceWindowSeconds !== undefined &&
-      (!Number.isInteger(coalesceWindowSeconds) ||
-        coalesceWindowSeconds < 10 ||
-        coalesceWindowSeconds > 3600)
-    )
-      return null;
     const secret = draft.signatureSecret.trim();
     return {
       type: "webhook",

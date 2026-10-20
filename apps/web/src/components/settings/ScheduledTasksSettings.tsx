@@ -72,6 +72,8 @@ import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
+  webhookDraftErrors,
+  webhookDeliveryLabel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
   scheduledTaskDefaultModel,
@@ -226,17 +228,6 @@ export function ScheduledRelativeLabel(props: { value: string | null }) {
   const nowMinute = useNowMinute();
   return relativeLabel(props.value, Date.parse(`${nowMinute}:00.000Z`));
 }
-
-const DELIVERY_OUTCOME_LABELS: Record<string, string> = {
-  accepted: "Accepted",
-  dispatch_failed: "Run failed",
-  duplicate: "Duplicate",
-  coalesced: "Coalesced",
-  rejected_signature: "Bad signature",
-  disabled: "Task paused",
-  rate_limited: "Rate limited",
-  expired: "Too old",
-};
 
 function deliveryOutcomeVariant(outcome: string) {
   if (outcome === "accepted") return "success";
@@ -748,8 +739,12 @@ function WebhookDeliveriesDialog({
           ) : selected ? (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2 text-sm">
-                <Badge variant={deliveryOutcomeVariant(selected.outcome)}>
-                  {DELIVERY_OUTCOME_LABELS[selected.outcome] ?? selected.outcome}
+                <Badge
+                  variant={deliveryOutcomeVariant(
+                    selected.pendingWindow ? "coalesced" : selected.outcome,
+                  )}
+                >
+                  {webhookDeliveryLabel(selected)}
                 </Badge>
                 <span>
                   {selected.method} · <ScheduledRelativeLabel value={selected.receivedAt} />
@@ -794,8 +789,12 @@ function WebhookDeliveriesDialog({
                     className="flex w-full flex-wrap items-center gap-2 py-2 text-left text-sm hover:bg-accent/40"
                     onClick={() => setSelectedId(delivery.id)}
                   >
-                    <Badge variant={deliveryOutcomeVariant(delivery.outcome)}>
-                      {DELIVERY_OUTCOME_LABELS[delivery.outcome] ?? delivery.outcome}
+                    <Badge
+                      variant={deliveryOutcomeVariant(
+                        delivery.pendingWindow ? "coalesced" : delivery.outcome,
+                      )}
+                    >
+                      {webhookDeliveryLabel(delivery)}
                     </Badge>
                     <span>{delivery.method}</span>
                     <span className="text-muted-foreground">
@@ -1073,10 +1072,7 @@ function ScheduledTaskEditorForm({
     }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
-      reportFailure(
-        "Invalid webhook settings",
-        `Age must be whole minutes from 1 to ${MAX_WEBHOOK_DELIVERY_AGE_MINUTES}; coalesce window must be whole seconds from 10 to 3600. Leave either blank for its default. Each dedupe key must contain a valid request placeholder.`,
-      );
+      for (const error of webhookDraftErrors(draft)) reportFailure(error.title, error.description);
       return;
     }
     if (

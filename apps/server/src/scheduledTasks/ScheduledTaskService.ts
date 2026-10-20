@@ -211,6 +211,7 @@ interface WebhookDeliveryRow {
   readonly signature_verified: number;
   readonly missing_fields_json: string;
   readonly rendered_prompt: string | null;
+  readonly pending_window: number;
   readonly error: string | null;
 }
 
@@ -1307,6 +1308,7 @@ export const layer = Layer.effect(
       bodyBytes: row.body_bytes,
       outcome: row.outcome as ScheduledTaskWebhookDeliveryOutcome,
       signatureVerified: row.signature_verified === 1,
+      pendingWindow: row.outcome === "accepted" && row.pending_window === 1,
       missingFields: Option.getOrElse(decodeMissingFieldsJson(row.missing_fields_json), () => []),
       error: row.error,
     });
@@ -1315,8 +1317,9 @@ export const layer = Layer.effect(
       input,
     ) =>
       sql<WebhookDeliveryRow>`
-        SELECT * FROM scheduled_task_webhook_deliveries
-        WHERE task_id = ${input.id}
+        SELECT d.*, EXISTS (SELECT 1 FROM scheduled_task_webhook_pending p
+          WHERE p.delivery_id = d.delivery_id AND p.state IN ('pending', 'dispatching')) AS pending_window
+        FROM scheduled_task_webhook_deliveries d WHERE task_id = ${input.id}
         ORDER BY received_at DESC, rowid DESC
       `.pipe(
         Effect.map((rows) => ({
@@ -1335,8 +1338,9 @@ export const layer = Layer.effect(
       "ScheduledTaskService.getWebhookDelivery",
     )(function* (input) {
       const rows = yield* sql<WebhookDeliveryRow>`
-          SELECT * FROM scheduled_task_webhook_deliveries
-          WHERE task_id = ${input.id} AND delivery_id = ${input.deliveryId}
+          SELECT d.*, EXISTS (SELECT 1 FROM scheduled_task_webhook_pending p
+            WHERE p.delivery_id = d.delivery_id AND p.state IN ('pending', 'dispatching')) AS pending_window
+          FROM scheduled_task_webhook_deliveries d WHERE task_id = ${input.id} AND delivery_id = ${input.deliveryId}
         `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not load webhook delivery.", { taskId: input.id, cause }),
@@ -1361,6 +1365,24 @@ export const layer = Layer.effect(
       };
     });
 
+    const deliveryRequestBody = (request: WebhookTriggerRequest) => {
+      const truncated = request.body.byteLength > WEBHOOK_DELIVERY_LOG_BODY_LIMIT;
+      return {
+        truncated,
+        body: truncated
+          ? new TextDecoder().decode(request.body.subarray(0, WEBHOOK_DELIVERY_LOG_BODY_LIMIT))
+          : request.bodyText,
+      };
+    };
+    const replaceDeliveryRequest = (deliveryId: string, request: WebhookTriggerRequest) => {
+      const logged = deliveryRequestBody(request);
+      return sql`UPDATE scheduled_task_webhook_deliveries SET
+        method = ${request.method}, query = ${redactQuery(request.query)},
+        headers_json = ${encodeHeadersJson(redactHeaders(request.headers))}, body = ${logged.body},
+        body_bytes = ${request.body.byteLength}, body_truncated = ${logged.truncated ? 1 : 0}
+        WHERE delivery_id = ${deliveryId}`.pipe(Effect.asVoid, Effect.mapError(dedupeError));
+    };
+
     const recordDelivery = (input: {
       readonly id: string;
       readonly taskId: ScheduledTaskId;
@@ -1372,10 +1394,7 @@ export const layer = Layer.effect(
       readonly renderedPrompt: string | null;
       readonly error?: string;
     }) => {
-      const truncated = input.request.body.byteLength > WEBHOOK_DELIVERY_LOG_BODY_LIMIT;
-      const loggedBody = truncated
-        ? new TextDecoder().decode(input.request.body.subarray(0, WEBHOOK_DELIVERY_LOG_BODY_LIMIT))
-        : input.request.bodyText;
+      const { truncated, body: loggedBody } = deliveryRequestBody(input.request);
       return sql
         .withTransaction(
           Effect.gen(function* () {
@@ -1840,6 +1859,7 @@ export const layer = Layer.effect(
                       reserve,
                       takeDedupeLogSlot(task.id, DateTime.toEpochMillis(now)),
                       checkCapacity,
+                      (ownerId) => replaceDeliveryRequest(ownerId, request),
                     ).pipe(Effect.provideService(SqlClient.SqlClient, sql));
                     if (
                       outcome === "pending" ||
