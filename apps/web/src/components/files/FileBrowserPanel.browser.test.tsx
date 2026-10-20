@@ -62,6 +62,7 @@ describe("Files panel", () => {
     selectedPath: null,
     selectedPathRevealId: 0,
     onOpenFile: vi.fn(),
+    addToChat: () => "inserted" as const,
     workspaceMutationId: null,
   };
 
