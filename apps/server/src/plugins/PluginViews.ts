@@ -140,10 +140,28 @@ export const make = Effect.fn("PluginViews.make")(function* () {
       path.isAbsolute(inside)
     )
       return yield* fail("resolves outside the plugin directory.");
-    const info = yield* fs.stat(real).pipe(Effect.mapError(() => fail("is not readable.")));
-    if (info.type !== "File") return yield* fail("is not a file.");
-    if (Number(info.size) > maxBytes) return yield* fail(`is larger than ${maxBytes} bytes.`);
-    const bytes = yield* fs.readFile(real).pipe(Effect.mapError(() => fail("is not readable.")));
+    const bytes = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const file = yield* fs.open(real);
+        const info = yield* file.stat;
+        if (info.type !== "File") return yield* fail("is not a file.");
+        if (Number(info.size) > maxBytes) return yield* fail(`is larger than ${maxBytes} bytes.`);
+        // The file can grow after stat; never allocate or read more than the limit plus
+        // the one byte that proves it is too large. Handle short reads until EOF.
+        const buffer = new Uint8Array(maxBytes + 1);
+        let length = 0;
+        while (length < buffer.length) {
+          const read = yield* file.read(buffer.subarray(length));
+          if (read === 0) break;
+          length += read;
+        }
+        return buffer.subarray(0, length);
+      }),
+    ).pipe(
+      Effect.mapError((error) =>
+        error._tag === "PluginViewError" ? error : fail("is not readable."),
+      ),
+    );
     if (bytes.length > maxBytes) return yield* fail(`is larger than ${maxBytes} bytes.`);
     const text = yield* Effect.try({
       try: () => utf8.decode(bytes),
