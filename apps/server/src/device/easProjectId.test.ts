@@ -361,6 +361,14 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config spreads the config but replaces a quoted extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, "extra": {} });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when a config spreads the config but replaces eas",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({

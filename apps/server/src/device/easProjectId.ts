@@ -78,7 +78,7 @@ const REPLACES_HOLDER = /\.\s*(?:extra|eas)\s*=(?!=)|\brequire\s*\(|\bimport\s*\
 // An `extra:` or `eas:` entry in a config that takes its id from app.json:
 // unless its value is an object that starts by spreading `config`'s own,
 // it replaces app.json's (`extra: {}` drops the id).
-const EXTRA_OR_EAS = /\b(?:extra|eas)\s*:\s*/g;
+const EXTRA_OR_EAS = /(?:\b(?:extra|eas)|["'`](?:extra|eas)["'`])\s*:\s*/g;
 const keepsStaticExtra = (source: string): boolean => {
   for (const entry of source.matchAll(EXTRA_OR_EAS)) {
     let at = entry.index + entry[0].length;
