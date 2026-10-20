@@ -190,16 +190,15 @@ describe("DesktopClerk", () => {
     return Effect.gen(function* () {
       yield* Effect.scoped(Layer.build(layerDesktopClerk(true, events)));
 
-      assert.deepEqual(createClerkBridgeMock.mock.calls, [
-        [
-          {
-            storage: storageAdapter,
-            manageSingleInstanceLock: false,
-            passkeys: true,
-            renderer: { scheme: "t3code-dev", host: "app" },
-          },
-        ],
+      assert.deepEqual(storageMock.mock.calls, [
+        [{ path: NodePath.join("/tmp/t3-state", "clerk") }],
       ]);
+      const bridgeOptions = createClerkBridgeMock.mock.calls[0]?.[0];
+      assert.notStrictEqual(bridgeOptions?.storage, storageAdapter);
+      assert.equal(bridgeOptions?.manageSingleInstanceLock, false);
+      assert.equal(bridgeOptions?.passkeys, true);
+      assert.deepEqual(bridgeOptions?.renderer, { scheme: "t3code-dev", host: "app" });
+      assert.equal(createClerkBridgeMock.mock.calls.length, 1);
       assert.equal(cleanup.mock.calls.length, 1);
       assert.deepEqual(events, [
         "setPath:userData:/tmp/app-data/t3code-dev",
