@@ -401,6 +401,7 @@ describe("shouldPreserveAssistantLineBreaks", () => {
         "★ Insight ─────────────────\\nFirst observation\\nSecond observation\\n─────────────────",
       ),
     ).toBe(true);
+    expect(shouldPreserveAssistantLineBreaks("Before.\n★ Insight \nline one\nline two")).toBe(true);
     expect(shouldPreserveAssistantLineBreaks("A normal\\nmarkdown paragraph")).toBe(false);
   });
 });

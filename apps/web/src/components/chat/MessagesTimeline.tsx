@@ -2,6 +2,7 @@ import { useRenderedAppearance } from "../../hooks/useTheme";
 import type { Root, RootContent } from "mdast";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { splitAssistantInsights } from "@t3tools/client-runtime/assistant-insights";
 import { MarkdownFindContext, findRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
@@ -2689,7 +2690,15 @@ function AssistantMessageBody({
         </aside>
       );
     }
-    return <ChatMarkdown key={key} text={segment.text} isStreaming={isStreaming} {...markdown} />;
+    return (
+      <ChatMarkdown
+        key={key}
+        text={segment.text}
+        lineBreaks={shouldPreserveAssistantLineBreaks(text)}
+        isStreaming={isStreaming}
+        {...markdown}
+      />
+    );
   });
 }
 

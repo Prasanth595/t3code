@@ -6,6 +6,9 @@ const INSIGHT_START = /^([ \t]*)(`?)★ Insight[ \t]+─{3,}\2[ \t]*$/u;
 const INSIGHT_END = /^([ \t]*)(`?)─{3,}\2[ \t]*$/u;
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})(.*)$/u;
 const FENCE_CLOSE = /^ {0,3}(`+|~+)[ \t]*$/u;
+const REFERENCE_DEFINITION =
+  /^ {0,3}\[[^[\]\n]+\]:[ \t]*(?:<[^<>\n]+>|\S+)(?:[ \t]+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?[ \t]*$/u;
+const INDENTED_CODE = /^(?: {4,}|\t)[ \t]*\S/u;
 
 function fenceMarker(line: string): string | undefined {
   const open = FENCE_OPEN.exec(line);
@@ -41,10 +44,16 @@ export function splitAssistantInsights(text: string): readonly AssistantTextSegm
   const lines = text.split(/\r\n|\r|\n/u);
   const parts: AssistantTextSegment[] = [];
   const markdown: string[] = [];
+  const definitions: string[] = [];
   let fence: string | undefined;
   let insightIndent: string | undefined;
   const insightBody: string[] = [];
   let found = false;
+  let paragraph = false;
+
+  const rememberDefinition = (line: string) => {
+    if (REFERENCE_DEFINITION.test(line) && !definitions.includes(line)) definitions.push(line);
+  };
 
   const take = (bucket: string[], line: string) => {
     if (fence !== undefined) {
@@ -61,15 +70,26 @@ export function splitAssistantInsights(text: string): readonly AssistantTextSegm
 
   for (const line of lines) {
     if (insightIndent === undefined) {
-      if (take(markdown, line)) continue;
+      if (take(markdown, line)) {
+        paragraph = false;
+        continue;
+      }
+      if (/^[ \t]*$/u.test(line) || (!paragraph && INDENTED_CODE.test(line))) {
+        paragraph = false;
+        markdown.push(line);
+        continue;
+      }
+      paragraph = true;
       const start = INSIGHT_START.exec(line);
       if (start) {
         pushMarkdown(parts, markdown);
         insightIndent = start[1] ?? "";
         insightBody.length = 0;
         found = true;
+        paragraph = false;
         continue;
       }
+      rememberDefinition(line);
       markdown.push(line);
       continue;
     }
@@ -81,13 +101,25 @@ export function splitAssistantInsights(text: string): readonly AssistantTextSegm
       parts.push(insight(insightBody));
       insightIndent = undefined;
       insightBody.length = 0;
+      paragraph = false;
       continue;
     }
+    rememberDefinition(content);
     insightBody.push(content);
   }
 
   if (!found) return [{ kind: "markdown", text }];
   if (insightIndent !== undefined) parts.push(insight(insightBody));
   else pushMarkdown(parts, markdown);
-  return parts;
+  if (definitions.length === 0 || parts.length < 2) return parts;
+  const block = `${definitions.join("\n")}\n\n`;
+  return parts.map((part) =>
+    part.kind === "insight"
+      ? part.body.length === 0
+        ? part
+        : { ...part, body: block + part.body }
+      : part.text.length === 0
+        ? part
+        : { kind: "markdown", text: block + part.text },
+  );
 }

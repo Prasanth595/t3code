@@ -74,6 +74,41 @@ describe("splitAssistantInsights", () => {
     ]);
   });
 
+  it("leaves an indented code-block insight literal", () => {
+    for (const indent of ["    ", "\t"]) {
+      const sample = [`${indent}★ Insight ${rule}`, `${indent}literal`, `${indent}${rule}`].join(
+        "\n",
+      );
+      expect(splitAssistantInsights(`${sample}\n\n${fenced("Real.")}`)).toEqual([
+        { kind: "markdown", text: sample },
+        { kind: "insight", title: "Insight", body: "Real." },
+      ]);
+    }
+  });
+
+  it("copies link reference definitions onto every split segment", () => {
+    const definition = "[src]: https://example.com";
+    const text = ["[Open][src]", "", fenced("Also [Open][src]."), "", definition].join("\n");
+    expect(splitAssistantInsights(text)).toEqual([
+      { kind: "markdown", text: `${definition}\n\n[Open][src]` },
+      { kind: "insight", title: "Insight", body: `${definition}\n\nAlso [Open][src].` },
+      { kind: "markdown", text: `${definition}\n\n${definition}` },
+    ]);
+    const fencedDefinition = [
+      "[Open][src]",
+      "",
+      fenced("Body."),
+      "",
+      "```",
+      definition,
+      "```",
+    ].join("\n");
+    expect(splitAssistantInsights(fencedDefinition)[0]).toEqual({
+      kind: "markdown",
+      text: "[Open][src]",
+    });
+  });
+
   it.each(["\r\n", "\r"])("treats %j line endings like newlines", (lineEnding) => {
     const lines = ["★ Insight " + rule, "First.", rule, "After."];
     expect(splitAssistantInsights(lines.join(lineEnding))).toEqual(
