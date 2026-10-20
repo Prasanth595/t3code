@@ -1,5 +1,5 @@
 import type { ContributionStatusTone, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { memo, useMemo } from "react";
+import { memo } from "react";
 
 import { useThreadContributionStatus } from "../../state/contributionStatus";
 import { Badge } from "../ui/badge";
@@ -100,7 +100,7 @@ export const ThreadContributionStatus = memo(function ThreadContributionStatus(p
   threadId: ThreadId;
 }) {
   const entries = useThreadContributionStatus(props.environmentId, props.threadId);
-  const chips = useMemo(() => contributionStatusChips(entries), [entries]);
+  const chips = contributionStatusChips(entries);
   if (chips.length === 0) return null;
   return <ContributionStatusChips chips={chips} />;
 });

@@ -924,44 +924,50 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
       const child = yield* ensureChild(entry);
       const timeout = Duration.fromInputUnsafe(invokeOptions?.timeout ?? callTimeout);
 
-      const call = yield* Effect.sync(() => {
-        if (entry.removed || child.stopping) return new PluginStoppedError({ pluginId });
-        if (Deferred.isDoneUnsafe(child.exited))
-          return new PluginUnavailableError({ pluginId, reason: "its process just stopped." });
-        // A cancelled call holds its slot until the plugin answers it or exits.
-        if (child.pending.size + child.settling.size >= options.maxConcurrentCalls)
-          return new PluginBusyError({ pluginId, limit: options.maxConcurrentCalls });
-        const requestId = ++child.nextRequestId;
-        const deferred = Deferred.makeUnsafe<Schema.Json, PluginInvokeError>();
-        child.pending.set(requestId, { handler, deferred });
-        const unsent = write(child, { _tag: "Invoke", requestId, handler, input });
-        if (unsent) child.pending.delete(requestId);
-        if (unsent?._tag === "tooLarge")
-          return new PluginPayloadTooLargeError({
-            pluginId,
-            bytes: unsent.bytes,
-            limit: maxMessageBytes,
+      return yield* Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
+          const call = yield* Effect.sync(() => {
+            if (entry.removed || child.stopping) return new PluginStoppedError({ pluginId });
+            if (Deferred.isDoneUnsafe(child.exited))
+              return new PluginUnavailableError({ pluginId, reason: "its process just stopped." });
+            // A cancelled call holds its slot until the plugin answers it or exits.
+            if (child.pending.size + child.settling.size >= options.maxConcurrentCalls)
+              return new PluginBusyError({ pluginId, limit: options.maxConcurrentCalls });
+            const requestId = ++child.nextRequestId;
+            const deferred = Deferred.makeUnsafe<Schema.Json, PluginInvokeError>();
+            child.pending.set(requestId, { handler, deferred });
+            const unsent = write(child, { _tag: "Invoke", requestId, handler, input });
+            if (unsent) child.pending.delete(requestId);
+            if (unsent?._tag === "tooLarge")
+              return new PluginPayloadTooLargeError({
+                pluginId,
+                bytes: unsent.bytes,
+                limit: maxMessageBytes,
+              });
+            if (unsent)
+              return new PluginCallFailedError({
+                pluginId,
+                handler,
+                reason: "the input is not JSON.",
+              });
+            return { requestId, deferred };
           });
-        if (unsent)
-          return new PluginCallFailedError({ pluginId, handler, reason: "the input is not JSON." });
-        return { requestId, deferred };
-      });
-      if (!("requestId" in call)) return yield* call;
+          if (!("requestId" in call)) return yield* call;
 
-      const outcome: Option.Option<CallOutcome> = yield* Deferred.await(call.deferred).pipe(
-        Effect.exit,
-        Effect.timeoutOption(timeout),
-        Effect.onInterrupt(() => cancel(entry, child, call.requestId, handler)),
+          const outcome: Option.Option<CallOutcome> = yield* restore(
+            Deferred.await(call.deferred).pipe(Effect.exit, Effect.timeoutOption(timeout)),
+          ).pipe(Effect.onInterrupt(() => cancel(entry, child, call.requestId, handler)));
+          if (Option.isNone(outcome)) {
+            yield* cancel(entry, child, call.requestId, handler);
+            return yield* new PluginTimeoutError({
+              pluginId,
+              handler,
+              timeoutMs: Duration.toMillis(timeout),
+            });
+          }
+          return yield* outcome.value;
+        }),
       );
-      if (Option.isNone(outcome)) {
-        yield* cancel(entry, child, call.requestId, handler);
-        return yield* new PluginTimeoutError({
-          pluginId,
-          handler,
-          timeoutMs: Duration.toMillis(timeout),
-        });
-      }
-      return yield* outcome.value;
     },
   );
 
@@ -985,33 +991,37 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
   });
 
   const disable = Effect.fn("PluginSupervisor.disable")(function* (pluginId: PluginId) {
-    const entry = entries.get(pluginId);
-    const previous = stops.get(pluginId);
-    if (!entry) {
-      // A retry after an interrupted disable waits for the same stop.
-      if (previous) yield* Deferred.await(previous);
-      return;
-    }
-    entries.delete(pluginId);
-    entry.removed = true;
-    if (entry.child) revokeChild(entry, entry.child);
-    // The stop belongs to the supervisor: interrupting this caller only stops the wait.
-    // It also covers an earlier generation still stopping, so done means every process exited.
-    const stopped = Deferred.makeUnsafe<void>();
-    stops.set(pluginId, stopped);
-    yield* Effect.all([stopEntry(entry), previous ? Deferred.await(previous) : Effect.void], {
-      concurrency: "unbounded",
-      discard: true,
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (stops.get(pluginId) === stopped) stops.delete(pluginId);
-          Deferred.doneUnsafe(stopped, Exit.void);
-        }),
-      ),
-      Effect.forkIn(fibers, { startImmediately: true, uninterruptible: true }),
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const entry = entries.get(pluginId);
+        const previous = stops.get(pluginId);
+        if (!entry) {
+          // A retry after an interrupted disable waits for the same stop.
+          if (previous) yield* restore(Deferred.await(previous));
+          return;
+        }
+        entries.delete(pluginId);
+        entry.removed = true;
+        if (entry.child) revokeChild(entry, entry.child);
+        // The stop belongs to the supervisor: interrupting this caller only stops the wait.
+        // It also covers an earlier generation still stopping, so done means every process exited.
+        const stopped = Deferred.makeUnsafe<void>();
+        stops.set(pluginId, stopped);
+        yield* Effect.all([stopEntry(entry), previous ? Deferred.await(previous) : Effect.void], {
+          concurrency: "unbounded",
+          discard: true,
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (stops.get(pluginId) === stopped) stops.delete(pluginId);
+              Deferred.doneUnsafe(stopped, Exit.void);
+            }),
+          ),
+          Effect.forkIn(fibers, { startImmediately: true, uninterruptible: true }),
+        );
+        yield* restore(Deferred.await(stopped));
+      }),
     );
-    yield* Deferred.await(stopped);
   });
 
   // Closing `fibers` waits for every stop in progress; anything left is killed.

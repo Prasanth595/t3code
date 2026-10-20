@@ -42,7 +42,7 @@ export const pluginActionsStream = Stream.unwrap(
                 session.initialConfig.pipe(
                   Effect.map((config) =>
                     supportsPluginActions(config.environment.capabilities)
-                      ? subscribe(WS_METHODS.pluginActionsSubscribe, {})
+                      ? subscribe(WS_METHODS.pluginActionsSubscribe, {}, { session })
                       : Stream.succeed(NO_ACTIONS),
                   ),
                   Effect.orElseSucceed(() => Stream.empty),

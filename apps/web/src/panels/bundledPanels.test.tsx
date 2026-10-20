@@ -205,13 +205,18 @@ export function typeFixtures(
       <RegisteredSidePanel id="preview" shortcutsEnabled />
       {/* @ts-expect-error The host owns the composer draft target. */}
       <RegisteredSidePanel id="pull-request" {...pullRequest} composerDraftTarget={threadRef} />
-      <RegisteredSidePanel id="files" {...filesProps} />
+      <RegisteredSidePanel openInShortcutEnabled id="files" {...filesProps} />
       {/* @ts-expect-error Files props on Preview. */}
       <RegisteredSidePanel id="preview" cwd="/repo" />
       {/* @ts-expect-error Files needs its surface inputs. */}
-      <RegisteredSidePanel id="files" cwd="/repo" />
-      {/* @ts-expect-error The host owns the composer draft target. */}
-      <RegisteredSidePanel id="files" {...filesProps} composerDraftTarget={threadRef} />
+      <RegisteredSidePanel openInShortcutEnabled id="files" cwd="/repo" />
+      <RegisteredSidePanel
+        openInShortcutEnabled
+        id="files"
+        {...filesProps}
+        // @ts-expect-error The host owns the draft.
+        composerDraftTarget={threadRef}
+      />
       {/* @ts-expect-error Preview props on Diff. */}
       <RegisteredSidePanel id="diff" tabId="tab-1" />
       {/* @ts-expect-error Device props on Preview. */}

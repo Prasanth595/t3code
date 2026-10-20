@@ -379,23 +379,25 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
       worker.cursor = cursor;
       yield* publish({ _tag: "Started", installationId, generation, cursor });
       /** Stops at the cursor until `resume`, a re-enable, or a restart. */
-      const quarantine = (attempts: number, reason: string) =>
-        Effect.gen(function* () {
-          yield* setState(installationId, worker, {
-            _tag: "quarantined",
-            failures: attempts,
-            reason,
-          });
-          yield* publish({
-            _tag: "Quarantined",
-            installationId,
-            generation,
-            cursor,
-            failures: attempts,
-            reason,
-          });
-          return yield* Effect.never;
+      const quarantine = Effect.fn("PluginEventFeed.quarantine")(function* (
+        attempts: number,
+        reason: string,
+      ) {
+        yield* setState(installationId, worker, {
+          _tag: "quarantined",
+          failures: attempts,
+          reason,
         });
+        yield* publish({
+          _tag: "Quarantined",
+          installationId,
+          generation,
+          cursor,
+          failures: attempts,
+          reason,
+        });
+        return yield* Effect.never;
+      });
       while (true) {
         const head = yield* eventSink.latestSequence();
         if (cursor >= head) {
@@ -545,8 +547,6 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
     yield* delivery.report(installationId, worker.generation, undefined);
   });
 
-  let known: ReadonlySet<PluginInstallationId> | undefined;
-
   const reconcile = (installations: ReadonlyArray<PluginInstallation>) =>
     lock.withPermit(
       Effect.gen(function* () {
@@ -563,7 +563,10 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
         }
         // Removed installations forget their cursor; a later add is a new installation.
         const present = new Set(installations.map((installation) => installation.installationId));
-        for (const installationId of known ?? []) {
+        const cursors = yield* sql<{ readonly installation_id: PluginInstallationId }>`
+          SELECT installation_id FROM plugin_event_cursors
+        `;
+        for (const { installation_id: installationId } of cursors) {
           if (present.has(installationId)) continue;
           yield* sql`DELETE FROM plugin_event_cursors WHERE installation_id = ${installationId}`.pipe(
             Effect.andThen(publish({ _tag: "Forgotten", installationId })),
@@ -575,7 +578,6 @@ export const make = Effect.fn("PluginEventFeed.make")(function* (
             ),
           );
         }
-        known = present;
       }),
     );
 
