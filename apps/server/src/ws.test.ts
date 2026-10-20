@@ -1,3 +1,4 @@
+import * as PluginNotifications from "./plugins/PluginNotifications.ts";
 import * as PluginNpm from "./plugins/PluginNpm.ts";
 import * as PluginViews from "./plugins/PluginViews.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -452,6 +453,7 @@ it.live.each(["thread", "shell"] as const)(
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(PluginNotifications.PluginNotifications)({}),
   Layer.mock(PluginNpm.PluginNpm)({}),
   Layer.mock(PluginViews.PluginViews)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
