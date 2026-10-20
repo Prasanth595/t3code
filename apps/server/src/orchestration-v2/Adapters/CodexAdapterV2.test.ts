@@ -7114,6 +7114,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       expectedClass: "usage_limit",
     },
     {
+      name: "rounded-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "late-rounded-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
+      name: "ambiguous-late-reset",
+      code: "usageLimitExceeded",
+      notification: false,
+      expectedClass: "usage_limit",
+    },
+    {
       name: "late-reset",
       code: "usageLimitExceeded",
       notification: false,
@@ -7162,7 +7180,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             params: {
               rateLimits: {
                 limitId: "codex",
-                primary: { usedPercent: 100, resetsAt: 2000100000, windowDurationMins: 300 },
+                primary: {
+                  usedPercent: scenario.name.includes("rounded") ? 99 : 100,
+                  resetsAt: 2000100000,
+                  windowDurationMins: 300,
+                },
               },
             },
           },
@@ -7171,8 +7193,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario: `codex-limit-${scenario.name}`,
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
-            ...(scenario.name === "known-reset" || scenario.name === "deferred-reset"
+            ...(scenario.name === "known-reset" ||
+            scenario.name === "deferred-reset" ||
+            scenario.name === "rounded-reset"
               ? [snapshot]
+              : []),
+            // Both windows read 99%, so the stop cannot tell which one ran out.
+            ...(scenario.name === "ambiguous-late-reset"
+              ? [
+                  {
+                    ...snapshot,
+                    frame: {
+                      method: "account/rateLimits/updated",
+                      params: {
+                        rateLimits: {
+                          limitId: "codex",
+                          primary: {
+                            usedPercent: 99,
+                            resetsAt: 2000100000,
+                            windowDurationMins: 300,
+                          },
+                          secondary: {
+                            usedPercent: 99,
+                            resetsAt: 2000200000,
+                            windowDurationMins: 10080,
+                          },
+                        },
+                      },
+                    },
+                  },
+                ]
               : []),
             ...(scenario.name === "deferred-reset"
               ? [
@@ -7253,7 +7303,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
               },
             },
-            ...(scenario.name === "late-reset" ? [snapshot] : []),
+            ...(scenario.name === "late-reset" ||
+            scenario.name === "late-rounded-reset" ||
+            scenario.name === "ambiguous-late-reset"
+              ? [snapshot]
+              : []),
             ...(scenario.name === "deferred-reset"
               ? [
                   {
@@ -7313,11 +7367,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (terminal?.status !== "failed") return;
         assert.equal(terminal.failure.class, scenario.expectedClass);
         assert.equal(terminal.threadDisposition, "reusable");
-        if (scenario.name === "known-reset" || scenario.name === "deferred-reset")
+        if (
+          scenario.name === "known-reset" ||
+          scenario.name === "deferred-reset" ||
+          scenario.name === "rounded-reset"
+        )
           assert.equal(terminal.failure.resetAt, resetAt);
         if (scenario.name === "matching-details")
           assert.equal(terminal.failure.message, "Detailed provider allowance explanation.");
-        if (scenario.name === "late-reset") {
+        if (scenario.name === "ambiguous-late-reset") assert.isNull(terminal.failure.resetAt);
+        if (
+          scenario.name === "late-reset" ||
+          scenario.name === "late-rounded-reset" ||
+          scenario.name === "ambiguous-late-reset"
+        ) {
           yield* Deferred.await(resetReceipt);
           const item = harness.events.find(
             (event) =>
