@@ -62,6 +62,7 @@ interface HarnessOptions {
   readonly projects?: (
     real: ProjectService.ProjectService["Service"],
   ) => ProjectService.ProjectService["Service"];
+  readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
 }
 
 const layer = (baseDir: string, options?: HarnessOptions) =>
@@ -80,7 +81,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(layerGitWorkflow(options?.vcsProcess)),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest(options?.settings)),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -379,6 +380,7 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         );
         assert.include(readme, "# Pinball Stats");
         assert.include(readme, `src="assets/icon.svg"`);
+        assert.include(readme, "Created in [T3 Code](https://t3.codes).");
         const icon = yield* fileSystem.readFileString(
           path.join(first.workspaceRoot, "assets", "icon.svg"),
         );
@@ -394,6 +396,36 @@ it.effect("starts a named project as a committed repository, and suffixes a take
         assert.equal(yield* gitOutput(first.workspaceRoot, ["status", "--porcelain"]), "");
       }),
     ),
+  ),
+);
+
+it.effect("leaves the T3 Code credit out of the README when the setting is off", () =>
+  withScratch(
+    () =>
+      withGitEnv(
+        TEST_IDENTITY,
+        Effect.gen(function* () {
+          const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+
+          const result = yield* folders.createNamedProject({ name: "Pinball Stats" });
+
+          const readme = yield* fileSystem.readFileString(
+            path.join(result.workspaceRoot, "README.md"),
+          );
+          assert.equal(
+            readme,
+            [
+              `<img src="assets/icon.svg" width="64" height="64" alt="">`,
+              "",
+              "# Pinball Stats",
+              "",
+            ].join("\n"),
+          );
+        }),
+      ),
+    { settings: { newProjectReadmeCredit: false } },
   ),
 );
 

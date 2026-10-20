@@ -643,6 +643,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? ["Add project base directory"]
       : []),
+    ...(settings.newProjectReadmeCredit !== DEFAULT_UNIFIED_SETTINGS.newProjectReadmeCredit
+      ? ["Credit T3 Code in new project READMEs"]
+      : []),
     ...(settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin
       ? ["Unpin confirmation"]
       : []),
@@ -758,6 +761,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      newProjectReadmeCredit: DEFAULT_UNIFIED_SETTINGS.newProjectReadmeCredit,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
@@ -3051,6 +3055,34 @@ export function GeneralSettingsPanel() {
               placeholder={mixedAddProjectBaseDirectory ? "Mixed" : "~/"}
               spellCheck={false}
               aria-label="Add project base directory"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["newProjectReadmeCredit"]}
+          {...searchableSetting("new-project-readme-credit")}
+          description='Adds a "Created in T3 Code" line to the README of projects you start from a name. Existing projects are not changed.'
+          resetAction={
+            settings.newProjectReadmeCredit !== DEFAULT_UNIFIED_SETTINGS.newProjectReadmeCredit ? (
+              <SettingResetButton
+                label="credit T3 Code in new project READMEs"
+                onClick={() =>
+                  updateSettings({
+                    newProjectReadmeCredit: DEFAULT_UNIFIED_SETTINGS.newProjectReadmeCredit,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["newProjectReadmeCredit"]}
+              checked={settings.newProjectReadmeCredit}
+              onCheckedChange={(checked) =>
+                updateSettings({ newProjectReadmeCredit: Boolean(checked) })
+              }
+              aria-label="Credit T3 Code in new project READMEs"
             />
           }
         />

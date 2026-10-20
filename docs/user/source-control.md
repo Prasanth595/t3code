@@ -128,7 +128,8 @@ an icon, and a first commit, then opens a new thread in it. Until the project ha
 threads work in its folder, even when your default is a new worktree. The folder is named after the project,
 like `pinball-stats` for "Pinball Stats". Turn on **Create private repository on GitHub** to also
 publish it. If Git has no name or email on that machine, the project is created without the
-first commit.
+first commit. The README credits T3 Code; turn off **Credit T3 Code in new project READMEs** in
+**Settings → General** to leave that line out.
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the

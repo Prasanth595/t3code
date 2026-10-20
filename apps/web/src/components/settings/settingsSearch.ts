@@ -493,6 +493,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["base directory folder browser path home"],
   },
   {
+    id: "new-project-readme-credit",
+    title: "Credit T3 Code in new project READMEs",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["readme attribution credit t3.codes created in new project"],
+  },
+  {
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
