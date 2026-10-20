@@ -2556,10 +2556,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         [];
       const continuationReceipts =
         yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
-      const runtimeRequestReceipts =
-        yield* Queue.unbounded<
-          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
-        >();
       const terminalReceipts =
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }>
@@ -2690,9 +2686,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         Stream.runForEach((event) =>
           Effect.gen(function* () {
             events.push(event);
-            if (event.type === "runtime_request.updated") {
-              yield* Queue.offer(runtimeRequestReceipts, event);
-            }
             if (event.type === "subagent.updated") {
               yield* Queue.offer(subagentReceipts, event);
             }
