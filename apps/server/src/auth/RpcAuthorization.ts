@@ -3,13 +3,9 @@ import {
   type DeviceListInput,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
-  AssetCreateUrlInput,
   AuthAccessReadScope,
-  ServerSettingsPatch,
-  ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
-  ProjectMutation,
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
@@ -31,11 +27,13 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import * as Layer from "effect/Layer";
+import type * as Rpc from "effect/rpc/Rpc";
 import type * as RpcGroup from "effect/rpc/RpcGroup";
 
-type WsRpcMethod = RpcGroup.Rpcs<typeof WsRpcGroup>["_tag"];
+type WsRpc = RpcGroup.Rpcs<typeof WsRpcGroup>;
+type WsRpcMethod = WsRpc["_tag"];
+type WsRpcPayload<Tag extends WsRpcMethod> = Rpc.Payload<Rpc.ExtractTag<WsRpc, Tag>>;
 
 export const RPC_REQUIRED_SCOPES = {
   ...CLIENT_GUARDED_RPC_SCOPES,
@@ -224,13 +222,9 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
     ...authScopeRequiredResponse(requiredScope),
   });
 
-const SettingsUpdate = Schema.Struct({
-  patch: ServerSettingsPatch,
-  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
-});
-
-const requiredScopesForSettingsUpdate = (payload: unknown) => {
-  const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
+const requiredScopesForSettingsUpdate = (
+  input: WsRpcPayload<typeof WS_METHODS.serverUpdateSettings>,
+) => {
   const scopes = requiredScopesForServerSettingsPatch(input.patch);
   if (input.providerInstanceMutation === undefined) return scopes;
   // An atomic provider mutation carries an empty patch unless it also changes settings.
@@ -239,8 +233,11 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
     : [...new Set([...scopes, AuthProvidersManageScope])];
 };
 
-const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
-
+/**
+ * The RPC server decodes `payload` before middleware runs, so it is already the
+ * schema's Type side. Decoding it again fails on transformed fields, such as
+ * Duration intervals in a settings patch.
+ */
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
@@ -249,7 +246,7 @@ const requiredScopesForRpcCall = (
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }
   if (method === WS_METHODS.assetsCreateUrl) {
-    const { resource } = Schema.decodeUnknownSync(AssetCreateUrlInput)(payload);
+    const { resource } = payload as WsRpcPayload<typeof WS_METHODS.assetsCreateUrl>;
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
@@ -258,9 +255,15 @@ const requiredScopesForRpcCall = (
         : AuthOrchestrationReadScope,
     ];
   }
-  if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.serverUpdateSettings) {
+    return requiredScopesForSettingsUpdate(
+      payload as WsRpcPayload<typeof WS_METHODS.serverUpdateSettings>,
+    );
+  }
   if (method === WS_METHODS.projectsMutate) {
-    return requiredScopesForProjectMutation(decodeProjectMutation(payload));
+    return requiredScopesForProjectMutation(
+      payload as WsRpcPayload<typeof WS_METHODS.projectsMutate>,
+    );
   }
   const guarded = clientRpcRequiredScopes(method, payload);
   if (guarded.length > 0) return guarded;
@@ -276,14 +279,17 @@ export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
 ) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
-    const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
-    const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
-  });
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) =>
+    // A synchronous scope-calculation throw would fail every pending request on the connection.
+    Effect.suspend(() => {
+      const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
+      const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
+      if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
+      return onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    }),
+  );
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */
 export const requiredScopeForDeviceList = (input: DeviceListInput): AuthEnvironmentScope =>
