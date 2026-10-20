@@ -26,10 +26,6 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
       Layer.mergeAll(
         FileSystem.layerNoop({}),
         Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
-        ),
-        Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make(() => Effect.die("unexpected HTTP request")),
         ),
@@ -82,6 +78,12 @@ function layerPool(labelRef: Ref.Ref<string>): Layer.Layer<DesktopBackendPool.De
           runMainContentsCommand: () => Effect.die("unexpected main contents command"),
           syncAppearance: Effect.void,
         } satisfies DesktopWindow.DesktopWindow["Service"]),
+      ),
+    ),
+    Layer.provideMerge(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.die("unexpected child process spawn")),
       ),
     ),
   );

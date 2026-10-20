@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
@@ -18,6 +19,7 @@ import * as DesktopWindow from "../window/DesktopWindow.ts";
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
   quit: Effect.Effect<void> = Effect.void,
+  overrides: Partial<ElectronApp.ElectronApp["Service"]> = {},
 ) {
   const registerListener = (eventName: string, listener: (...args: readonly unknown[]) => void) =>
     Effect.acquireRelease(
@@ -52,6 +54,7 @@ function layerElectronApp(
     onBeforeQuitForUpdate: (listener) => registerListener("before-quit-for-update", listener),
     on: (eventName, listener) =>
       registerListener(eventName, listener as unknown as (...args: readonly unknown[]) => void),
+    ...overrides,
   } satisfies ElectronApp.ElectronApp["Service"]);
 }
 
@@ -103,6 +106,63 @@ function layerDesktopWindow(
 }
 
 describe("DesktopLifecycle", () => {
+  it.effect("exits after completed shutdown when scheduling relaunch fails", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<void>();
+      const events: string[] = [];
+      const logger = Logger.make(({ logLevel }) => {
+        if (logLevel === "Error") events.push("log-error");
+      });
+      let options: Electron.RelaunchOptions | undefined;
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          layerElectronApp(new Map(), Effect.void, {
+            relaunch: (value) =>
+              Effect.sync(() => {
+                options = value;
+                events.push("relaunch");
+              }).pipe(Effect.andThen(Effect.die("spawn failed"))),
+            exit: (code) =>
+              Effect.sync(() => {
+                assert.equal(code, 0);
+                events.push("exit");
+              }).pipe(Effect.andThen(Deferred.succeed(exited, undefined)), Effect.asVoid),
+          }),
+        ),
+        Layer.provideMerge(
+          layerDesktopWindow({
+            flushMainWindowBounds: Effect.sync(() => {
+              events.push("flush");
+            }),
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            isDevelopment: false,
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(layerElectronTheme),
+      );
+      yield* Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        const shutdown = yield* DesktopShutdown.DesktopShutdown;
+        yield* lifecycle.relaunch("serverExposureMode=network-accessible");
+        yield* shutdown.awaitRequest;
+        assert.deepEqual(events, ["flush"]);
+        yield* shutdown.markComplete;
+        yield* Deferred.await(exited);
+        assert.deepEqual(options, {
+          args: process.argv.slice(1),
+        });
+        assert.deepEqual(events, ["flush", "relaunch", "log-error", "exit"]);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(layer, Logger.layer([logger], { mergeWithExisting: false }))),
+      );
+    }),
+  );
+
   it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
     "lets the updater's quit event proceed on %s",
     (platform) => {

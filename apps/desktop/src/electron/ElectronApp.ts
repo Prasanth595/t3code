@@ -1,8 +1,11 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as Electron from "electron";
 
@@ -98,8 +101,7 @@ const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = ElectronApp.of({
+const electronApp = ElectronApp.of({
   metadata: Effect.gen(function* () {
     const appVersion = yield* Effect.try({
       try: () => Electron.app.getVersion(),
@@ -210,4 +212,73 @@ export const make = ElectronApp.of({
   on: addScopedAppListener,
 });
 
-export const layer = Layer.succeed(ElectronApp, make);
+// Validate descriptor names before eval so closing arbitrary FDs needs no Bash 4.1 syntax.
+const appImageRelaunchScript = `
+for fd in /proc/self/fd/*; do
+  fd=\${fd##*/}
+  case "$fd" in
+    ''|*[!0-9]*) continue ;;
+  esac
+  if [ "$fd" -gt 2 ]; then
+    eval "exec $fd>&-"
+  fi
+done
+while read -r _; do :; done
+set +p
+exec "$@" </dev/null
+`;
+
+/** @public Service construction is part of the canonical Effect module API. */
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcess.Platform;
+  const env = yield* HostProcess.Environment;
+  const appImagePath = env.APPIMAGE;
+  const executablePath = yield* HostProcess.ExecutablePath;
+  if (
+    platform !== "linux" ||
+    !appImagePath?.trim() ||
+    !env.APPDIR ||
+    !executablePath.startsWith(`${env.APPDIR}/`) ||
+    !Electron.app.isPackaged
+  ) {
+    return electronApp;
+  }
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  return ElectronApp.of({
+    ...electronApp,
+    // Native relaunch sets no_new_privs, which can prevent fusermount from mounting
+    // the replacement. Release inherited AppImage/Chromium FDs before waiting for EOF.
+    relaunch: Effect.fn("desktop.electron.relaunchAppImage")(
+      function* (options: Electron.RelaunchOptions) {
+        const handle = yield* spawner.spawn(
+          ChildProcess.make(
+            "bash",
+            [
+              // Ignore startup files in the waiter; +p before exec keeps this mode helper-local.
+              "-p",
+              "-c",
+              appImageRelaunchScript,
+              "t3code-appimage-relaunch",
+              options.execPath ?? appImagePath,
+              ...(options.args ?? process.argv.slice(1)),
+            ],
+            {
+              detached: true,
+              stdin: "pipe",
+              stdout: "ignore",
+              stderr: "ignore",
+              env,
+            },
+          ),
+        );
+        // Unref also prevents scope cleanup from killing the waiter; stdin stays open until exit.
+        yield* Effect.asVoid(handle.unref);
+      },
+      Effect.scoped,
+      Effect.orDie,
+    ),
+  });
+});
+
+export const layer = Layer.effect(ElectronApp, make);
