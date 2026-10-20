@@ -302,13 +302,17 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
   });
 
   it("projects AskUserQuestion input with question text as the answer key", () => {
+    const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
     assert.deepEqual(
       ClaudeAdapterV2.claudeUserInputQuestions({
         questions: [
           {
             header: "Approach",
             question: "Which approach?",
-            options: [{ label: "Simple", description: "Use fewer moving parts" }],
+            options: [
+              { label: "Simple", description: "Use fewer moving parts", preview },
+              { label: "Safe", description: "Keep the current setup" },
+            ],
             multiSelect: true,
           },
         ],
@@ -318,7 +322,10 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           id: "Which approach?",
           header: "Approach",
           question: "Which approach?",
-          options: [{ label: "Simple", description: "Use fewer moving parts" }],
+          options: [
+            { label: "Simple", description: "Use fewer moving parts", preview },
+            { label: "Safe", description: "Keep the current setup" },
+          ],
           multiSelect: true,
         },
       ],
@@ -469,6 +476,30 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       allowDangerouslySkipPermissions: true,
       installPermissionCallback: false,
     });
+  });
+
+  it("keeps approval checks when Full access must fall back to an allowed Claude mode", () => {
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: "/workspace",
+      approvalPolicy: "never",
+    });
+
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy, {
+        bypassDisabled: true,
+        autoDisabled: false,
+      }),
+      { permissionMode: "auto", installPermissionCallback: true },
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy, {
+        bypassDisabled: true,
+        autoDisabled: true,
+      }),
+      { permissionMode: "default", installPermissionCallback: true },
+    );
   });
 
   it("maps Auto runtime mode to Claude's AI-reviewed permission mode", () => {

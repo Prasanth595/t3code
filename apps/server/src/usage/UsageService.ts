@@ -866,12 +866,12 @@ export const make = Effect.gen(function* () {
       sources.push({
         fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
         status:
-          malformedRecords > 0
-            ? status === undefined || status === "ok"
-              ? "partial"
-              : status
-            : files === null && scannedFiles === 0
-              ? "missing"
+          files === null && scannedFiles === 0
+            ? "missing"
+            : malformedRecords > 0
+              ? status === undefined || status === "ok"
+                ? "partial"
+                : status
               : (status ?? "ok"),
         scannedFiles,
         skippedFiles,
