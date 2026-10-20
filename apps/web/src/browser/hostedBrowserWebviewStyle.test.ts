@@ -82,6 +82,26 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
     });
   });
 
+  it("keeps a server-driven tab composited before its first remote viewer connects", () => {
+    const style = resolveHostedBrowserWebviewWrapperStyle({
+      active: false,
+      renderingActive: false,
+      serverDriven: true,
+      rect: null,
+      hiddenSize: { width: 1280, height: 800 },
+    });
+
+    expect(style).toEqual({
+      left: 0,
+      top: 0,
+      width: 1280,
+      height: 800,
+      zIndex: -1,
+      pointerEvents: "none",
+      visibility: "visible",
+    });
+  });
+
   it("keeps an inactive webview paintable without marking it as rendering-active", () => {
     const style = resolveHostedBrowserWebviewWrapperStyle({
       active: false,

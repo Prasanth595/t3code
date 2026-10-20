@@ -211,7 +211,7 @@ describe("HostedBrowserWebview viewport layout", () => {
   const owner = Symbol("panel");
   const panel = { x: 0, y: 0, width: 2000, height: 1600 };
 
-  async function renderViewport(viewport: PreviewViewportSetting) {
+  async function renderViewport(viewport: PreviewViewportSetting, serverDriven = false) {
     mocks.getClientSettings.mockResolvedValue({
       ...DEFAULT_CLIENT_SETTINGS,
       browserDefaultZoomFactor: 1.5,
@@ -232,6 +232,7 @@ describe("HostedBrowserWebview viewport layout", () => {
           pictureInPicture={false}
           profileId={undefined}
           zoomFactor={1.5}
+          serverDriven={serverDriven}
         />,
       );
     });
@@ -239,6 +240,20 @@ describe("HostedBrowserWebview viewport layout", () => {
     expect(guest).not.toBeNull();
     return guest!;
   }
+
+  it("keeps an unattended server guest inside the compositor without a local panel", async () => {
+    const guest = await renderViewport(FILL_PREVIEW_VIEWPORT, true);
+    const wrapper = container.querySelector<HTMLElement>("[data-preview-viewport]")!;
+    const style = getComputedStyle(wrapper);
+
+    expect(useBrowserSurfaceStore.getState().activityByTabId[runtimeTabId]).toBeUndefined();
+    expect(wrapper.getBoundingClientRect()).toMatchObject({ x: 0, y: 0 });
+    expect(style.visibility).toBe("visible");
+    expect(style.pointerEvents).toBe("none");
+    expect(style.zIndex).toBe("-1");
+    expect(guest.getBoundingClientRect().width).toBeGreaterThan(0);
+    expect(guest.getBoundingClientRect().height).toBeGreaterThan(0);
+  });
 
   it("keeps fixed viewports sized in guest pixels across host zoom and fitted surfaces", async () => {
     let windowZoom = 1.25;
