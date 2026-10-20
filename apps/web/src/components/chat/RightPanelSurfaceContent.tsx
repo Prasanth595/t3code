@@ -138,6 +138,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <RegisteredSidePanel
           id="files"
+          openInShortcutEnabled={visible && props.activeSurfaceId === surface.id}
           key={`${props.environmentId}:${
             attachment ? `attachment:${attachment.id}` : files.workspaceRoot
           }`}
