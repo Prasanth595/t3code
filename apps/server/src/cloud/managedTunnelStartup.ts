@@ -43,6 +43,9 @@ const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 // Every host retries against the same relay, so while it is failing the
 // retries themselves are load. Backing off to minutes, and never sooner than
 // the relay's Retry-After, lets it recover instead of absorbing the storm.
+// Not HttpClient.retryTransient: it resends the identical request, and these
+// carry proofs that expire after 60 s or single-use link challenges, so each
+// retry has to re-run the whole operation.
 const RELAY_RETRY_MAX_DELAY = Duration.minutes(5);
 
 export const relayRetrySchedule = Schedule.exponential("1 second").pipe(
