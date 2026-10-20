@@ -438,6 +438,30 @@ function cloudflareRateLimitPauseMillis(cause: unknown): number {
   return Duration.toMillis(Duration.min(pause, CLOUDFLARE_MAX_RATE_LIMIT_PAUSE));
 }
 
+/**
+ * How long a caller should wait before retrying, when `cause` is a Cloudflare
+ * rate limit or a call refused during the pause that follows one.
+ */
+export function cloudflareRetryAfterMillis(cause: unknown): number | undefined {
+  for (let current = cause, depth = 0; depth < 8; depth++) {
+    if (typeof current !== "object" || current === null) return undefined;
+    if ("_tag" in current && current._tag === "CloudflareApiPaused") {
+      const retryAfterMillis: unknown = Reflect.get(current, "retryAfterMillis");
+      return typeof retryAfterMillis === "number" ? retryAfterMillis : undefined;
+    }
+    if (
+      ("_tag" in current &&
+        (current._tag === "TooManyRequests" || current._tag === "CloudflareRateLimited")) ||
+      ("status" in current && current.status === 429)
+    ) {
+      return cloudflareRateLimitPauseMillis(current);
+    }
+    if (!("cause" in current)) return undefined;
+    current = current.cause;
+  }
+  return undefined;
+}
+
 // The SDK's default policy sleeps through Retry-After inside the request, which
 // held every caller until its timeout and kept the account over its limit.
 // Rate limits surface at once instead; other transient failures still retry.
