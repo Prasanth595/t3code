@@ -42,22 +42,21 @@ export const makeStaleWhileRevalidate = <A>(discover: Effect.Effect<A>, ttl: Dur
     const scope = yield* Effect.scope;
     const state = yield* Ref.make<Entry<A>>({ _tag: "Empty" });
 
-    const settle = (exit: Exit.Exit<A>) =>
-      Effect.gen(function* () {
-        const now = yield* Clock.monotonicTimeNanos;
-        yield* Ref.update(state, (entry): Entry<A> =>
-          Exit.isSuccess(exit)
-            ? {
-                _tag: "Ready",
-                value: exit.value,
-                expiresAtNanos: now + ttlNanos,
-                refreshing: false,
-              }
-            : entry._tag === "Ready"
-              ? { ...entry, refreshing: false }
-              : { _tag: "Empty" },
-        );
-      });
+    const settle = Effect.fn("StaleWhileRevalidate.settle")(function* (exit: Exit.Exit<A>) {
+      const now = yield* Clock.monotonicTimeNanos;
+      yield* Ref.update(state, (entry): Entry<A> =>
+        Exit.isSuccess(exit)
+          ? {
+              _tag: "Ready",
+              value: exit.value,
+              expiresAtNanos: now + ttlNanos,
+              refreshing: false,
+            }
+          : entry._tag === "Ready"
+            ? { ...entry, refreshing: false }
+            : { _tag: "Empty" },
+      );
+    });
     const fork = (scan: Effect.Effect<unknown>) =>
       scan.pipe(Effect.ignoreCause({ log: true }), Effect.interruptible, Effect.forkIn(scope));
     const firstScan = (scan: Deferred.Deferred<A>) =>
