@@ -579,6 +579,8 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const toTsvCell = (value: string) => value.replace(/[\t\r\n]/g, " ");
+
 const projectListCommand = Command.make("list", projectLocationFlags).pipe(
   Command.withDescription("List projects."),
   Command.withHandler((flags) =>
@@ -589,10 +591,7 @@ const projectListCommand = Command.make("list", projectLocationFlags).pipe(
           ? "No projects."
           : active
               .map((project) =>
-                // Titles and paths may contain tabs or newlines; keep one row of three columns.
-                [project.id, project.title, project.workspaceRoot]
-                  .map((field) => field.replace(/[\t\r\n]/g, " "))
-                  .join("\t"),
+                [project.id, project.title, project.workspaceRoot].map(toTsvCell).join("\t"),
               )
               .join("\n"),
       );
