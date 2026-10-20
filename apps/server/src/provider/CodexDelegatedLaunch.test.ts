@@ -115,3 +115,27 @@ it.effect(
       );
     }),
 );
+
+it.effect(
+  "retains verified exhausted capacity without inventing usage and rejects it at dispatch",
+  () =>
+    Effect.gen(function* () {
+      for (const options of [{ used: 100 }, { used: 12, ordinaryUsageAllowed: false }]) {
+        const probe = runtime(options);
+        const capacity = yield* readCodexLaunchCapacity(probe.client, {});
+        assert.equal(capacity.email, "direct@example.com");
+        assert.equal(capacity.usageLimits.credentialFingerprint, "opaque-backend-account");
+        assert.equal(capacity.usageLimits.windows[0]?.usedPercent, options.used);
+        assert.equal(capacity.usageLimits.ordinaryUsageAllowed, options.ordinaryUsageAllowed);
+        const dispatch = runtime(options);
+        const error = yield* verifyCodexLaunchBinding(
+          dispatch.client,
+          {},
+          domains,
+          "native-thread",
+        ).pipe(Effect.flip);
+        assert.equal(error.code, "usage_limit");
+        assert.isFalse(dispatch.calls.includes("thread/read"));
+      }
+    }),
+);

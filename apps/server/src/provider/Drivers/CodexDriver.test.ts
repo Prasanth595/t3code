@@ -101,7 +101,7 @@ const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unkno
 
 it.layer(layerTest)("CodexDriver", (it) => {
   it.effect(
-    "admits a direct account through the production driver's fresh runtime controls and denies an unbound pool",
+    "preserves exhausted direct-account identity across models, allows independent capacity and denies pools",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -112,6 +112,10 @@ it.layer(layerTest)("CodexDriver", (it) => {
         );
         let provider = "openai";
         let starts = 0;
+        let usage = 1;
+        let ordinaryUsageAllowed = true;
+        let accountId = "backend-account";
+        let email = "direct@example.com";
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
             const output = yield* Queue.unbounded<Uint8Array>();
@@ -146,7 +150,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
                           ? {
                               account: {
                                 type: "chatgpt",
-                                email: "direct@example.com",
+                                email,
                                 planType: "pro",
                               },
                               requiresOpenaiAuth: true,
@@ -155,11 +159,11 @@ it.layer(layerTest)("CodexDriver", (it) => {
                             ? { config: { model_provider: provider }, origins: {}, layers: null }
                             : method === "account/rateLimits/read"
                               ? {
-                                  accountId: "backend-account",
-                                  ordinaryUsageAllowed: true,
+                                  accountId,
+                                  ordinaryUsageAllowed,
                                   rateLimits: {
                                     primary: {
-                                      usedPercent: 1,
+                                      usedPercent: usage,
                                       windowDurationMins: 300,
                                       resetsAt: null,
                                     },
@@ -202,7 +206,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
               ...CodexDriver.defaultConfig(),
               binaryPath: process.execPath,
               homePath,
-              customModels: [{ slug: "gpt-6.1-sol" }],
+              customModels: [{ slug: "gpt-6.1-sol" }, { slug: "gpt-6-astra" }],
             },
           });
           const candidate = { instanceId, model: "gpt-6.1-sol" };
@@ -218,6 +222,45 @@ it.layer(layerTest)("CodexDriver", (it) => {
           expect(decision.status).toBe("ready");
           if (decision.status === "ready")
             expect(decision.domains).toContain("codex:credential:backend-account");
+          for (const exhaustedUsage of [100, 12]) {
+            usage = exhaustedUsage;
+            ordinaryUsageAllowed = false;
+            const observedModels: string[] = [];
+            const denied = yield* selectLaunchCandidate({
+              candidates: [candidate, { instanceId, model: "gpt-6-astra" }],
+              probe: (target) =>
+                Effect.gen(function* () {
+                  observedModels.push(target.model);
+                  const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+                  const observed = yield* instance.probeDelegatedLaunch!(target.model);
+                  usage = 1;
+                  ordinaryUsageAllowed = true;
+                  return observed ? { provider: observed, probeStartedAt } : undefined;
+                }),
+            });
+            expect(denied.status).toBe("waiting");
+            expect(observedModels).toEqual(["gpt-6.1-sol", "gpt-6-astra"]);
+          }
+          usage = 12;
+          ordinaryUsageAllowed = false;
+          const fallback = yield* selectLaunchCandidate({
+            candidates: [candidate, { instanceId, model: "gpt-6-astra" }],
+            probe: (target) =>
+              Effect.gen(function* () {
+                const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+                const observed = yield* instance.probeDelegatedLaunch!(target.model);
+                usage = 1;
+                ordinaryUsageAllowed = true;
+                accountId = "independent-account";
+                email = "independent@example.com";
+                return observed ? { provider: observed, probeStartedAt } : undefined;
+              }),
+          });
+          expect(fallback.status).toBe("ready");
+          if (fallback.status === "ready") {
+            expect(fallback.selection.model).toBe("gpt-6-astra");
+            expect(fallback.domains).toContain("codex:credential:independent-account");
+          }
           provider = "external-pool";
           expect(yield* instance.probeDelegatedLaunch!(candidate.model)).toBeUndefined();
         }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));

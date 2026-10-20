@@ -2023,6 +2023,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     capacity?: {
       readonly accountId: string;
       readonly used: number;
+      readonly ordinaryUsageAllowed?: boolean;
       readonly threadProvider: string;
     },
   ) =>
@@ -2068,6 +2069,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                                 : method === "account/rateLimits/read"
                                   ? {
                                       accountId: capacity.accountId,
+                                      ordinaryUsageAllowed: capacity.ordinaryUsageAllowed,
                                       rateLimits: {
                                         primary: { usedPercent: capacity.used },
                                         secondary: { usedPercent: 2 },
@@ -2172,6 +2174,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     { accountId: "backend-account", used: 1, threadProvider: "openai", starts: true },
     { accountId: "changed-account", used: 1, threadProvider: "openai", starts: false },
     { accountId: "backend-account", used: 100, threadProvider: "openai", starts: false },
+    {
+      accountId: "backend-account",
+      used: 12,
+      ordinaryUsageAllowed: false,
+      threadProvider: "openai",
+      starts: false,
+    },
     { accountId: "backend-account", used: 1, threadProvider: "pool", starts: false },
   ])("checks delegated binding on the actual Codex start path: %j", (capacity) =>
     Effect.gen(function* () {

@@ -52,14 +52,13 @@ export const readCodexLaunchCapacity = Effect.fn("readCodexLaunchCapacity")(func
       checkedAt: DateTime.formatIso(yield* DateTime.now),
     }),
     credentialFingerprint: limits.accountId,
+    ...(limits.ordinaryUsageAllowed !== undefined
+      ? { ordinaryUsageAllowed: limits.ordinaryUsageAllowed }
+      : {}),
   };
-  if (
-    limits.ordinaryUsageAllowed === false ||
-    usageLimits.windows.some((w) => w.usedPercent >= 100)
-  )
-    return yield* new CodexLaunchCapacityError({ code: "usage_limit" });
   if (!["primary", "secondary"].every((id) => usageLimits.windows.some((w) => w.id === id)))
     return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
+  // Exhaustion is verified evidence; admission needs its identity to block aliases.
   return { email: account.email.trim().toLowerCase(), usageLimits };
 });
 
@@ -70,6 +69,11 @@ export const verifyCodexLaunchBinding = Effect.fn("verifyCodexLaunchBinding")(fu
   nativeThreadId: string,
 ) {
   const capacity = yield* readCodexLaunchCapacity(client, environment);
+  if (
+    capacity.usageLimits.ordinaryUsageAllowed === false ||
+    capacity.usageLimits.windows.some((w) => w.usedPercent >= 100)
+  )
+    return yield* new CodexLaunchCapacityError({ code: "usage_limit" });
   const { thread } = yield* client.request("thread/read", {
     threadId: nativeThreadId,
     includeTurns: false,

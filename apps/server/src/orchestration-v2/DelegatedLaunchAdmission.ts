@@ -159,7 +159,9 @@ export function assessCapacity(
     )
   )
     return "unverified";
-  return relevant.some((w) => w.usedPercent >= 100) ? "exhausted" : "healthy";
+  return limits.ordinaryUsageAllowed === false || relevant.some((w) => w.usedPercent >= 100)
+    ? "exhausted"
+    : "healthy";
 }
 
 export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectCandidate")(
@@ -258,13 +260,15 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
         );
         // A model-specific window does not exhaust the account's other models.
         // Unknown evidence never establishes an exhausted quota domain.
-        const shared = exhaustedWindows.some((window) =>
-          provider.driver === "claudeAgent"
-            ? !/^seven_day_(opus|sonnet|haiku)/.test(window.id)
-            : provider.driver === "cursor"
-              ? window.id === "totalPercentUsed"
-              : true,
-        );
+        const shared =
+          provider.usageLimits!.ordinaryUsageAllowed === false ||
+          exhaustedWindows.some((window) =>
+            provider.driver === "claudeAgent"
+              ? !/^seven_day_(opus|sonnet|haiku)/.test(window.id)
+              : provider.driver === "cursor"
+                ? window.id === "totalPercentUsed"
+                : true,
+          );
         const domains = shared
           ? identities
           : scopedWindowIds.flatMap((id) =>

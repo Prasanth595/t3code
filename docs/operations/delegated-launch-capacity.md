@@ -47,7 +47,9 @@ local credentials cannot establish the runtime's account.
 
 Direct Codex admission requires runtime `config/read`, ChatGPT `account/read`,
 and backend-bound `account/rateLimits/read` evidence. The backend account ID
-travels as an opaque quota identity. Before generation the dispatch app-server
+travels as an opaque quota identity. Verified exhaustion, including an explicit
+ordinary-usage denial below 100% on the usage bars, blocks that account across
+model aliases without changing the reported percentages. Before generation the dispatch app-server
 rechecks that identity, fresh usage and the native thread's provider. Custom
 providers, overrides of the built-in OpenAI provider, external API endpoints,
 missing backend account IDs and changed accounts remain unverified. A caller's
