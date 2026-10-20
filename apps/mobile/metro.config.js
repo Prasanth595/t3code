@@ -27,7 +27,7 @@ config.resolver = {
       : config.resolver?.blockList
         ? [config.resolver.blockList]
         : []),
-    new RegExp(`${escapedWorkspaceRoot}[/\\\\]\\.t3[/\\\\].*`),
+    /[/\\]\.t3(?:[/\\]|$)/,
   ],
   extraNodeModules: {
     ...config.resolver?.extraNodeModules,
