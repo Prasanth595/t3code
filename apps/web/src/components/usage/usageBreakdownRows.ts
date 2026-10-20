@@ -42,6 +42,7 @@ interface RowBase {
 
 export interface ItemRow extends RowBase {
   readonly kind: "item";
+  readonly topLevel: boolean;
   readonly dimension: BreakdownDimension;
   readonly key: string;
   readonly totals: UsageTotals;
@@ -267,6 +268,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
     const familyCount = isThread ? (scopeThreads?.families.get(entry.key)?.descendants ?? 0) : 0;
     rows.push({
       kind: "item",
+      topLevel,
       path,
       depth,
       dimension: dim,
@@ -412,9 +414,12 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
 
   const top = ranked(dimension, facts, dimension === "project" ? input.favorites : undefined);
   // Coloured rows and favourites stay on top; the grey tail folds into Other.
-  const isGrey = (key: string) => input.seriesOf(key) === OTHER_SERIES && !input.favorites.has(key);
+  const isGrey = (key: string) => input.seriesOf(key) === OTHER_SERIES;
   const grey = search === "" ? top.filter((entry) => isGrey(entry.key)) : [];
-  const listed = grey.length > 1 ? top.filter((entry) => !isGrey(entry.key)) : top;
+  const listed =
+    grey.length > 1
+      ? top.filter((entry) => !isGrey(entry.key) || input.favorites.has(entry.key))
+      : top;
   const overall = dimension === "thread" ? "this project" : "the total";
   const topAll = showAll.has("\u0000top") || search !== "";
   const topShown = topAll ? listed : listed.slice(0, ROW_CAP);
@@ -459,9 +464,11 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
       hidden: grey.every((entry) => input.hidden.has(entry.key)),
     });
     if (otherOpen) {
+      // Favorites already have their own row; their usage still belongs to the chart band.
+      const children = grey.filter((entry) => !input.favorites.has(entry.key));
       const listPath = `${OTHER_PATH}\u0000list`;
       const otherAll = showAll.has(listPath);
-      const otherShown = otherAll ? grey : grey.slice(0, ROW_CAP);
+      const otherShown = otherAll ? children : children.slice(0, ROW_CAP);
       for (const entry of otherShown) {
         pushItem(
           dimension,
@@ -475,17 +482,17 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
           true,
         );
       }
-      if (otherShown.length < grey.length) {
+      if (otherShown.length < children.length) {
         rows.push({
           kind: "more",
           path: `${OTHER_PATH}\u0000more`,
           depth: 1,
           target: listPath,
-          hiddenCount: grey.length - otherShown.length,
-          noun: input.nounOf(dimension, grey.length - otherShown.length),
-          hiddenShare: restShare(grey, otherShown.length, whole, metric),
+          hiddenCount: children.length - otherShown.length,
+          noun: input.nounOf(dimension, children.length - otherShown.length),
+          hiddenShare: restShare(children, otherShown.length, whole, metric),
         });
-      } else if (otherAll && grey.length > ROW_CAP) {
+      } else if (otherAll && children.length > ROW_CAP) {
         rows.push({ kind: "fewer", path: `${OTHER_PATH}\u0000fewer`, depth: 1, target: listPath });
       }
     }

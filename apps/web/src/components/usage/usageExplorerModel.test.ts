@@ -284,6 +284,45 @@ describe("buildBreakdownRows", () => {
     );
   });
 
+  it("keeps favorite tail usage in the Other band and its hide controls without duplicate rows", () => {
+    const totals = foldFacts(data.facts, (fact) => fact.project);
+    const rows = buildBreakdownRows(
+      input({
+        seriesOf: () => OTHER_SERIES,
+        favorites: new Set(["env-a\u001fapp"]),
+        open: new Set(["\u0000other"]),
+        hidden: new Set(totals.keys()),
+      }),
+    );
+    const other = rows.find((row) => row.kind === "other");
+    expect(other?.kind === "other" && other.members).toEqual(
+      expect.arrayContaining([...totals.keys()]),
+    );
+    expect(other?.kind === "other" && other.members).toHaveLength(totals.size);
+    expect(other?.kind === "other" && other.totals.costUsd).toBe(
+      [...totals.values()].reduce((sum, value) => sum + value.costUsd, 0),
+    );
+    expect(other?.kind === "other" && other.hidden).toBe(true);
+    expect(rows.filter((row) => row.kind === "item" && row.key === "env-a\u001fapp")).toHaveLength(
+      1,
+    );
+    expect(new Set(rows.map((row) => row.path)).size).toBe(rows.length);
+  });
+
+  it("keeps previous totals on indented Other members for top-level comparisons", () => {
+    const previous = foldFacts(data.facts, (fact) => fact.project);
+    const rows = buildBreakdownRows(
+      input({ seriesOf: () => OTHER_SERIES, open: new Set(["\u0000other"]), previous }),
+    );
+    const items = rows.filter((row) => row.kind === "item");
+    expect(items.length).toBeGreaterThan(1);
+    for (const row of items) {
+      expect(row.depth).toBe(1);
+      expect(row.topLevel).toBe(true);
+      expect(row.previous).toEqual(previous.get(row.key));
+    }
+  });
+
   it("pages a long Other group", () => {
     const many = buildExplorerData([
       source({

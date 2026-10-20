@@ -45,6 +45,25 @@ const source = (overrides: Partial<UsageSessionSource>): UsageSessionSource => (
 });
 
 describe("UsageThreadIndex", () => {
+  it.each(["pi", "cursor", "antigravity"] as const)(
+    "attributes %s sessions by folder without a native driver binding",
+    (provider) => {
+      const index = new UsageThreadIndex(attribution);
+      const group = index.groupFor(
+        source({
+          provider,
+          sessionId: "native-session",
+          cwd: "/work/app/docs/subdir",
+          instanceId: "account",
+        }),
+      );
+      const { threads, projects } = index.finish();
+      expect(group.instanceId).toBe("account");
+      expect(threads[group.thread!]).toMatchObject({ projectId: nested, located: true });
+      expect(projects.map((project) => project.projectId)).toContain(nested);
+    },
+  );
+
   it("nests a delegated child thread under the thread that started it", () => {
     const index = new UsageThreadIndex(attribution);
     const child = index.groupFor(

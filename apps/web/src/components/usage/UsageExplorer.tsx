@@ -1408,7 +1408,7 @@ function ThreadFilters({
       ? "All providers"
       : accounts.filter((account) => selected.has(account)).length === 1
         ? accountName(accounts.find((account) => selected.has(account))!)
-        : `${accounts.filter((account) => selected.has(account)).length} providers`;
+        : `${accounts.filter((account) => selected.has(account)).length} accounts`;
   return (
     <>
       <Menu>
@@ -1783,7 +1783,7 @@ function BreakdownTable({
                     share={row.share}
                     shareOf={row.shareOf}
                     metric={metric}
-                    hasPrevious={hasPrevious && row.depth === 0}
+                    hasPrevious={hasPrevious && row.topLevel}
                     previous={row.previous}
                   />
                 </tr>

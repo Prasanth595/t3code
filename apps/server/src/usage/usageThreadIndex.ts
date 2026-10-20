@@ -145,16 +145,19 @@ export class UsageThreadIndex {
 
   #resolve(source: UsageSessionSource): UsageBucketGroup {
     const driver = DRIVER_BY_PROVIDER[source.provider];
-    if (driver === undefined) {
+    if (driver === undefined && source.cwd === null) {
       return source.instanceId === null ? {} : { instanceId: source.instanceId };
     }
     if (source.agentId !== null) {
-      const child = this.#nativeRef(
-        this.#attribution.nativeSubagents,
-        driver,
-        source.agentId,
-        source.instanceId,
-      );
+      const child =
+        driver === undefined
+          ? undefined
+          : this.#nativeRef(
+              this.#attribution.nativeSubagents,
+              driver,
+              source.agentId,
+              source.instanceId,
+            );
       const parent = this.#resolve({ ...source, agentId: null, label: null });
       if (child !== undefined) {
         const thread = this.#t3Thread(child.threadId);
@@ -172,12 +175,15 @@ export class UsageThreadIndex {
       });
       return withInstance({ thread: index }, parent.instanceId ?? null);
     }
-    const native = this.#nativeRef(
-      this.#attribution.nativeThreads,
-      driver,
-      source.sessionId,
-      source.instanceId,
-    );
+    const native =
+      driver === undefined
+        ? undefined
+        : this.#nativeRef(
+            this.#attribution.nativeThreads,
+            driver,
+            source.sessionId,
+            source.instanceId,
+          );
     if (native !== undefined) {
       const thread = this.#t3Thread(native.threadId);
       if (thread !== null) return withInstance(thread, native.instanceId ?? source.instanceId);
