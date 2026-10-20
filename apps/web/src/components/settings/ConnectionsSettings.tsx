@@ -1814,11 +1814,11 @@ function ConfiguredCloudLinkRow({ canManageRelay }: { readonly canManageRelay: b
   const isBusy = isUpdating || isUpdatingPreference;
   const refreshLinkState = useEffectEvent(primaryCloudLinkState.refresh);
   // The server rechecks reachability when the tunnel's 30 s readiness poll changes.
+  // Poll while mounted, so a failed read does not stop later ones.
   useEffect(() => {
-    if (!managedTunnelActive) return;
     const interval = window.setInterval(() => refreshLinkState(), 30_000);
     return () => window.clearInterval(interval);
-  }, [managedTunnelActive]);
+  }, []);
   const reachability = managedTunnelActive ? primaryCloudLinkState.data?.reachability : undefined;
   const reachabilityStatus =
     reachability?.status === "reachable" ? (
