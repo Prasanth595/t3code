@@ -343,3 +343,22 @@ describe("resolveMarkdownFileLinkTarget", () => {
     );
   });
 });
+
+describe("inlineCodeFilePathCandidate with a position suffix", () => {
+  it.each([
+    ["I/W217:220", null],
+    ["A/B12:40", null],
+    ["Sheet/XFD1:2", null],
+    ["./I/W217:220", "./I/W217:220"],
+    ["bin/run:12", "bin/run:12"],
+    ["scripts/deploy:40", "scripts/deploy:40"],
+    ["docker/Dockerfile:8", "docker/Dockerfile:8"],
+    ["src/app.ts:10", "src/app.ts:10"],
+    ["src/app.ts:10:4", "src/app.ts:10:4"],
+  ])(
+    "only treats extensionless %s as a file when it is not a spreadsheet cell",
+    (source, candidate) => {
+      expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
+    },
+  );
+});

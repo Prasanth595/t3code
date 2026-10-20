@@ -27,6 +27,7 @@ const PATH_SEPARATOR_PATTERN = /[\\/]/;
 
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
+const SPREADSHEET_CELL_PATTERN = /^[A-Za-z]{1,3}\d+$/;
 const NUMERIC_DOTTED_PATTERN = /^\d+(?:\.\d+)+$/;
 
 const POSIX_FILE_ROOT_PREFIXES = [
@@ -184,7 +185,14 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .split(/[\\/]/)
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
-    if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
+    // A position vouches for an extensionless file (`bin/run:12`), but not for
+    // spreadsheet cell shorthand (`I/W217:220`).
+    if (
+      !FILE_EXTENSION_PATTERN.test(basename) &&
+      (!hasPosition || SPREADSHEET_CELL_PATTERN.test(basename))
+    ) {
+      return null;
+    }
   }
   return candidate;
 }
