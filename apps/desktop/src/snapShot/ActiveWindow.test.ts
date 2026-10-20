@@ -172,6 +172,21 @@ it.each([
   assert.deepEqual(window?.bounds, bounds);
 });
 
+it("keeps an untitled content window ahead of a much taller background window", async () => {
+  const bounds = { x: 0, y: 0, width: 800, height: 900 };
+  stubMacLookup(
+    macLookup([
+      { id: 1, title: "", bounds },
+      { id: 2, title: "Background document", bounds: { x: 0, y: 0, width: 800, height: 4_000 } },
+    ]),
+  );
+
+  const window = await activeWindow("darwin");
+
+  assert.strictEqual(window?.id, 1);
+  assert.deepEqual(window?.bounds, bounds);
+});
+
 it("resolves undefined when macOS has no frontmost window", async () => {
   stubMacLookup("\n");
 
