@@ -1,11 +1,12 @@
 import { Schema } from "effect";
 
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, ProjectId, RunId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import {
   OrchestrationV2ThreadLaunchInput,
   OrchestrationV2ThreadLaunchResult,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2Run,
 } from "./orchestrationV2.ts";
 import { ServerProvider } from "./server.ts";
 
@@ -34,7 +35,24 @@ export const PeerEnvironmentHost = Schema.Struct({
 });
 export type PeerEnvironmentHost = typeof PeerEnvironmentHost.Type;
 
+export const PeerEnvironmentThreadWaitInput = Schema.Struct({
+  projectId: ProjectId,
+  threadId: ThreadId,
+  runId: Schema.optional(RunId),
+  timeoutMs: Schema.Finite,
+});
+export const PeerEnvironmentThreadWaitResult = Schema.Struct({
+  threadId: ThreadId,
+  run: Schema.NullOr(OrchestrationV2Run),
+  timedOut: Schema.Boolean,
+});
+
 export const PeerEnvironmentOperation = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("thread_wait"),
+    environmentId: EnvironmentId,
+    input: PeerEnvironmentThreadWaitInput,
+  }),
   Schema.Struct({ operation: Schema.Literal("list") }),
   Schema.Struct({ operation: Schema.Literal("catalog"), environmentId: EnvironmentId }),
   Schema.Struct({
@@ -51,6 +69,10 @@ export const PeerEnvironmentOperation = Schema.Union([
 export type PeerEnvironmentOperation = typeof PeerEnvironmentOperation.Type;
 
 export const PeerEnvironmentResult = Schema.Union([
+  Schema.Struct({
+    operation: Schema.Literal("thread_wait"),
+    result: PeerEnvironmentThreadWaitResult,
+  }),
   Schema.Struct({
     operation: Schema.Literal("list"),
     environments: Schema.Array(PeerEnvironmentSummary),

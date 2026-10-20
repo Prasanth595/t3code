@@ -193,6 +193,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.previewClearProfile]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportProfiles]: AuthPreviewOperateScope,
   [WS_METHODS.previewReportStatus]: AuthPreviewOperateScope,
+  [WS_METHODS.peerEnvironmentsWaitForThread]: AuthOrchestrationReadScope,
   [WS_METHODS.peerEnvironmentsConnect]: AuthOrchestrationOperateScope,
   [WS_METHODS.peerEnvironmentsRespond]: AuthOrchestrationOperateScope,
   [WS_METHODS.subscribePreviewEvents]: AuthOrchestrationReadScope,

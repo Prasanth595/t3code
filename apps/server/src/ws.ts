@@ -2967,7 +2967,26 @@ export const layerWsRpc = (
         [WS_METHODS.deviceConfigure]: (input) => deviceService.configure(input),
         [WS_METHODS.deviceTestHost]: (input) => deviceService.testHost(input),
         [WS_METHODS.deviceEasAccount]: (input) => deviceService.easAccount(input),
-        [WS_METHODS.peerEnvironmentsConnect]: (input) => Stream.unwrap(peerEnvironmentBroker.connect(input)),
+        [WS_METHODS.peerEnvironmentsWaitForThread]: (input) =>
+          threadManagement
+            .waitForThread({
+              projectId: input.projectId,
+              threadId: input.threadId,
+              ...(input.runId === undefined ? {} : { runId: input.runId }),
+              timeoutMs: Math.min(300_000, Math.max(1, input.timeoutMs)),
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: "Could not wait for thread",
+                    cause,
+                  }),
+              ),
+            ),
+        [WS_METHODS.peerEnvironmentsConnect]: (input) =>
+          Stream.unwrap(peerEnvironmentBroker.connect(input)),
         [WS_METHODS.peerEnvironmentsRespond]: (input) => peerEnvironmentBroker.respond(input),
         [WS_METHODS.deviceList]: (input) =>
           input.inspectOnly && !input.updateTool

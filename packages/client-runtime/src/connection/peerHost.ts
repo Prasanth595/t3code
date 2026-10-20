@@ -148,6 +148,14 @@ export const executePeerEnvironmentOperation = Effect.fn(
             operation.input,
           ),
         };
+      case "thread_wait":
+        return {
+          operation: "thread_wait" as const,
+          result: yield* EnvironmentRpc.request(
+            WS_METHODS.peerEnvironmentsWaitForThread,
+            operation.input,
+          ),
+        };
       case "thread_projection":
         return {
           operation: "thread_projection" as const,
@@ -240,6 +248,7 @@ const servePeerRequests = (hostEnvironmentId: EnvironmentId, clientId: string) =
                   Effect.map((config) =>
                     config.environment.capabilities.peerEnvironments === true
                       ? session.client[WS_METHODS.peerEnvironmentsConnect]({ clientId }).pipe(
+                          Stream.catchCause(() => Stream.empty),
                           // The server completes the stream to evict a silent
                           // client; a live one registers again.
                           Stream.repeat(Schedule.spaced("1 second")),

@@ -19,6 +19,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -344,6 +345,11 @@ const make = Effect.gen(function* () {
       return yield* refreshCatalog(environmentId);
     }),
     launchThread: Effect.fn("PeerEnvironmentService.launchThread")(function* (scope, input) {
+      if (input.workspaceStrategy?.type === "existing_worktree")
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "existing_worktree is not supported when launching on another environment.",
+        });
       const { limits } = yield* withCaller(scope, readCaller().pipe(Effect.tap(assertLiveCaller)));
       yield* assertLaunchCaller(limits);
       if (input.projectId === undefined || input.modelSelection === undefined) {
@@ -398,7 +404,11 @@ const make = Effect.gen(function* () {
     }),
     readThread: Effect.fn("PeerEnvironmentService.readThread")(function* (scope, input) {
       yield* withCaller(scope, readCaller());
-      return readProjection(yield* loadProjection(input.environmentId, input.threadId), input, yield* Clock.currentTimeMillis);
+      return readProjection(
+        yield* loadProjection(input.environmentId, input.threadId),
+        input,
+        yield* Clock.currentTimeMillis,
+      );
     }),
     waitForThread: Effect.fn("PeerEnvironmentService.waitForThread")(function* (scope, input) {
       yield* withCaller(scope, readCaller());
@@ -407,46 +417,26 @@ const make = Effect.gen(function* () {
         Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
       );
       const first = yield* loadProjection(input.environmentId, input.threadId);
-      const runId = input.runId ?? ThreadManagementService.latestRun(first)?.id;
-      if (runId === undefined) {
-        return { threadId: input.threadId, runId: null, status: "idle" as const, timedOut: false };
-      }
-      const findRun = (
-        projection: OrchestrationV2ThreadProjection,
-      ): Effect.Effect<OrchestrationV2ThreadProjection["runs"][number], OrchestratorMcpFailure> => {
-        const run = projection.runs.find((candidate) => candidate.id === runId);
-        return run === undefined
-          ? Effect.fail(
-              new OrchestratorMcpFailure({
-                code: "run_not_found",
-                message: `Run ${runId} was not found in thread ${input.threadId}.`,
-              }),
-            )
-          : Effect.succeed(run);
-      };
-      // The other environment cannot push to this server, so its state is
-      // re-read through the carrying client until the run settles.
-      let latest = yield* findRun(first);
-      const settled = (
-        projection: OrchestrationV2ThreadProjection,
-      ): Effect.Effect<void, OrchestratorMcpFailure> =>
-        findRun(projection).pipe(
-          Effect.flatMap((run) => {
-            latest = run;
-            return ThreadManagementService.isTerminalRunStatus(run.status)
-              ? Effect.void
-              : Effect.sleep(WAIT_POLL_INTERVAL_MS).pipe(
-                  Effect.andThen(loadProjection(input.environmentId, input.threadId)),
-                  Effect.flatMap(settled),
-                );
-          }),
-        );
-      const finished = yield* settled(first).pipe(Effect.timeoutOption(timeoutMs));
+      const { result } = yield* broker
+        .invoke(
+          {
+            operation: "thread_wait",
+            environmentId: input.environmentId,
+            input: {
+              projectId: first.thread.projectId,
+              threadId: input.threadId,
+              ...(input.runId === undefined ? {} : { runId: input.runId }),
+              timeoutMs,
+            },
+          },
+          timeoutMs + 5_000,
+        )
+        .pipe(Effect.mapError(brokerFailure));
       return {
         threadId: input.threadId,
-        runId,
-        status: latest.status,
-        timedOut: finished._tag === "None",
+        runId: result.run?.id ?? null,
+        status: result.run === null ? ("idle" as const) : runOutcome(result.run),
+        timedOut: result.timedOut,
       };
     }),
   });

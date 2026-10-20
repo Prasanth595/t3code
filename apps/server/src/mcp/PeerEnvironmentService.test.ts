@@ -7,15 +7,14 @@ import {
   type PeerEnvironmentOperation,
   type PeerEnvironmentResult,
   ProjectId,
+  RunId,
   ProviderInstanceId,
   type ServerProvider,
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -285,37 +284,112 @@ it.effect("lists only this environment, with the reason, when no app can carry r
   ),
 );
 
-it.effect("waits on a remote run until it settles", () => {
-  let reads = 0;
-  return withService(
+it.effect(
+  "returns the destination's restart continuation rather than the interrupted source run",
+  () =>
+    withService(
+      {
+        answer: (operation) =>
+          operation.operation === "thread_projection"
+            ? { operation: "thread_projection", projection: projection("interrupted") }
+            : {
+                operation: "thread_wait",
+                result: {
+                  threadId: remoteThread,
+                  run: {
+                    ...projection("completed").runs[0]!,
+                    id: RunId.make("continued"),
+                    restartContinuationOfRunId: RunId.make("run-1"),
+                  },
+                  timedOut: false,
+                },
+              },
+      },
+      (service) =>
+        Effect.gen(function* () {
+          const result = yield* service.waitForThread(scope, {
+            environmentId: r2d2,
+            threadId: remoteThread,
+          });
+          assert.deepInclude(result, {
+            runId: RunId.make("continued"),
+            status: "completed",
+            timedOut: false,
+          });
+        }),
+    ),
+);
+
+it.effect("reports an unfinished destination wait as timed out", () =>
+  withService(
     {
-      answer: () => ({
-        operation: "thread_projection",
-        projection: projection(++reads < 3 ? "running" : "completed"),
-      }),
+      answer: (operation) =>
+        operation.operation === "thread_projection"
+          ? { operation: "thread_projection", projection: projection("running") }
+          : {
+              operation: "thread_wait",
+              result: {
+                threadId: remoteThread,
+                run: projection("running").runs[0]!,
+                timedOut: true,
+              },
+            },
     },
     (service) =>
       Effect.gen(function* () {
-        const fiber = yield* service
-          .waitForThread(scope, { environmentId: r2d2, threadId: remoteThread })
-          .pipe(Effect.forkChild);
-        yield* TestClock.adjust(10_000);
-        assert.deepInclude(yield* Fiber.join(fiber), { status: "completed", timedOut: false });
+        assert.deepInclude(
+          yield* service.waitForThread(scope, {
+            environmentId: r2d2,
+            threadId: remoteThread,
+            timeoutMs: 5000,
+          }),
+          { status: "running", timedOut: true },
+        );
       }),
-  );
-});
+  ),
+);
 
-it.effect("reports the latest status when a remote wait times out", () =>
+it.effect("reports non-shell work lost during restart as interrupted", () =>
   withService(
-    { answer: () => ({ operation: "thread_projection", projection: projection("running") }) },
+    {
+      answer: (operation) =>
+        operation.operation === "thread_projection"
+          ? { operation: "thread_projection", projection: projection("completed") }
+          : {
+              operation: "thread_wait",
+              result: {
+                threadId: remoteThread,
+                run: {
+                  ...projection("completed").runs[0]!,
+                  restartCancelledBackgroundWork: [{ kind: "task", label: "lost work" }],
+                },
+                timedOut: false,
+              },
+            },
+    },
     (service) =>
       Effect.gen(function* () {
-        const fiber = yield* service
-          .waitForThread(scope, { environmentId: r2d2, threadId: remoteThread, timeoutMs: 5_000 })
-          .pipe(Effect.forkChild);
-        yield* TestClock.adjust(6_000);
-        assert.deepInclude(yield* Fiber.join(fiber), { status: "running", timedOut: true });
+        assert.deepInclude(
+          yield* service.waitForThread(scope, { environmentId: r2d2, threadId: remoteThread }),
+          { status: "interrupted", timedOut: false },
+        );
       }),
+  ),
+);
+
+it.effect("rejects arbitrary existing-worktree paths on remote launches", () =>
+  withService({}, (service) =>
+    Effect.gen(function* () {
+      const error = yield* service
+        .launchThread(scope, {
+          environmentId: r2d2,
+          projectId: remoteProject,
+          title: "escape",
+          workspaceStrategy: { type: "existing_worktree", worktreePath: "/outside-project" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(error.code, "invalid_request");
+    }),
   ),
 );
 
