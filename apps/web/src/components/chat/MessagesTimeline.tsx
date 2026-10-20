@@ -437,6 +437,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 } as const satisfies MaintainScrollAtEndOptions;
 
 export interface MessagesTimelineHistoryControls {
+  readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
   readonly error: string | null;
@@ -2814,7 +2815,11 @@ function AssistantMessageMeta({
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
       {!message.streaming && (
-        <MessageTimestamp messageId={message.id} time={message.updatedAt} linkable />
+        <MessageTimestamp
+          messageId={message.id}
+          time={message.updatedAt}
+          linkable={projectedItem !== undefined}
+        />
       )}
     </div>
   );

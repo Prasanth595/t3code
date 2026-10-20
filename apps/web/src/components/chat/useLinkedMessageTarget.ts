@@ -91,7 +91,7 @@ export function useLinkedMessageTarget({
     }
     if (historyControls.loading) return;
     // Each page lands before the next request, so a cursor already asked for is still loading.
-    const cursor = entries[0]?.id ?? "first";
+    const cursor = historyControls.historyCursor ?? "first";
     if (progress.requestedPages.has(cursor)) return;
     progress.requestedPages.add(cursor);
     historyControls.onLoadEarlier(request.messageId);
@@ -123,6 +123,11 @@ export function useLinkedMessageTarget({
         });
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("input, textarea, [contenteditable=true]")
+      )
+        return;
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))
         cancel();
     };

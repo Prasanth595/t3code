@@ -855,6 +855,7 @@ describe("MessagesTimeline history and thread links", () => {
     const onLoadEarlier = vi.fn();
     await renderTimeline([message("Recent activity")], {
       historyControls: {
+        historyCursor: "older",
         hasMoreHistory: true,
         loading: false,
         error: "Earlier activity could not be loaded.",
@@ -870,6 +871,7 @@ describe("MessagesTimeline history and thread links", () => {
   it("keeps an empty bounded timeline busy while earlier history loads", async () => {
     await renderTimeline([], {
       historyControls: {
+        historyCursor: "older",
         hasMoreHistory: true,
         loading: true,
         error: null,
