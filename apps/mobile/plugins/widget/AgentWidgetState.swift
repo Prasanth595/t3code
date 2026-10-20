@@ -15,7 +15,10 @@ enum AgentWidgetState {
     base["expiresAt"] = freshnessDeadline.timeIntervalSince1970 * 1000
     let covered = Set(environmentIds)
     let relayRows = base["activities"] as? [[String: Any]] ?? []
-    let localRows = (localObservation?["activities"] as? [[String: Any]] ?? []).filter {
+    let allLocalRows = localObservation?["activities"] as? [[String: Any]] ?? []
+    let localCount = localObservation?["activeCount"] as? Int
+    let countUnavailable = localObservation != nil && (localCount == nil || localCount! < 0 || localCount! > allLocalRows.filter { isUnfinished($0) }.count)
+    let localRows = allLocalRows.filter {
       guard let environmentId = $0["environmentId"] as? String else { return false }
       return !covered.contains(environmentId)
     }
@@ -30,7 +33,7 @@ enum AgentWidgetState {
       props["activities"] = relayRows + directRows
       let unavailable = directRows.contains { $0["phase"] as? String == "stale" }
       let directCount = directRows.filter { isUnfinished($0) }.count
-      props["activeCount"] = unavailable ? -1 : (base["activeCount"] as? Int ?? 0) + directCount
+      props["activeCount"] = unavailable || countUnavailable ? -1 : (base["activeCount"] as? Int ?? 0) + directCount
       return props
     }
     var entries = [entry(at: now, props: merged(at: now))]

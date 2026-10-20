@@ -6,7 +6,7 @@ func row(_ environmentId: String, _ phase: String) -> [String: Any] {
 }
 func props(_ entry: [String: Any]) -> [String: Any] { entry["props"] as! [String: Any] }
 let running: [String: Any] = ["activeCount": 1, "updatedAt": "old unchanged observation", "activities": [row("relay", "running")]]
-let local: [String: Any] = ["expiresAt": now.addingTimeInterval(600).timeIntervalSince1970 * 1000,
+let local: [String: Any] = ["activeCount": 2, "expiresAt": now.addingTimeInterval(600).timeIntervalSince1970 * 1000,
   "activities": [row("relay", "running"), row("direct", "waiting_for_input"), row("direct", "failed")]]
 let entries = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: local, now: now)
 assert(entries.count == 3)
@@ -56,3 +56,12 @@ for key in ["t3_agent_widget_identity", "t3_agent_widget_token", "t3_agent_widge
 assert(defaults.string(forKey: "t3_agent_widget_push_token") == "install-push-token")
 assert(T3AgentWidgetConfiguration.clearStoredState(in: defaults) == nil)
 print("Agent widget sign-out: cached rows removed and previous capability revocation prepared")
+
+// Truncated local rows cannot establish the total outside relay coverage.
+var truncated = local
+truncated["activeCount"] = 20
+let truncatedEntries = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: truncated, now: now)
+assert(props(truncatedEntries[0])["activeCount"] as? Int == -1)
+var unknown = local
+unknown.removeValue(forKey: "activeCount")
+assert(props(AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: unknown, now: now)[0])["activeCount"] as? Int == -1)

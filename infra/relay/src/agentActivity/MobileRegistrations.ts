@@ -95,7 +95,10 @@ const make = Effect.gen(function* () {
     ),
     getAgentActivitySnapshot: Effect.fn("relay.mobile_registrations.get_agent_activity_snapshot")(
       function* (input) {
-        const activeStates = yield* rows.listForUser({ userId: input.userId });
+        const activeStates = yield* rows.listForUser({
+          userId: input.userId,
+          includeLiveActivitiesDisabled: true,
+        });
         const now = yield* DateTime.now;
         const excludedEnvironmentIds = [...new Set(input.excludedEnvironmentIds ?? [])];
         const excluded = new Set(excludedEnvironmentIds);

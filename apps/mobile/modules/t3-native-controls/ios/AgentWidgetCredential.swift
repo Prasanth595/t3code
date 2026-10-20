@@ -28,7 +28,14 @@ enum AgentWidgetCredential {
     guard var query else { return false }
     query[kSecValueData as String] = Data(token.utf8)
     query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+    var status = SecItemAdd(query as CFDictionary, nil)
+    if status == errSecDuplicateItem, let base = self.query {
+      status = SecItemUpdate(base as CFDictionary, [
+        kSecValueData as String: Data(token.utf8),
+        kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+      ] as CFDictionary)
+    }
+    return status == errSecSuccess
   }
 
   static func remove() {

@@ -2,7 +2,7 @@
   "version": "8",
   "dialect": "postgres",
   "id": "56288d1c-be3d-4d40-879f-e616798a79ea",
-  "prevIds": ["13972659-45db-4ce9-9818-523b450bceca"],
+  "prevIds": ["7b10c420-1566-4dfc-8e9c-c73efa561d3b"],
   "ddl": [
     {
       "isRlsEnabled": false,
@@ -1643,6 +1643,19 @@
       "schema": "public",
       "table": "relay_managed_tunnel_limits",
       "entityType": "pks"
+    },
+    {
+      "type": "varchar(64)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tunnel_released_at",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "relay_managed_endpoint_allocations"
     }
   ],
   "renames": []

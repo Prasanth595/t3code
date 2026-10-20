@@ -452,7 +452,11 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockReset();
-    widgetMocks.start.mockReturnValue({ getId: () => "activity-1", getPushToken: () => Promise.resolve(null), addPushTokenListener: vi.fn() });
+    widgetMocks.start.mockReturnValue({
+      getId: () => "activity-1",
+      getPushToken: () => Promise.resolve(null),
+      addPushTokenListener: vi.fn(),
+    });
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
     vi.mocked(publishAgentActivityWidget).mockReset().mockReturnValue(true);
@@ -2417,6 +2421,35 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     );
     expect(publishAgentActivityWidget).toHaveBeenCalledTimes(publications + 1);
   });
+
+  it("keeps the full freshness interval for a shell observed late in a minute", () => {
+    const now = Date.parse("2026-10-02T12:00:59.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    addLiveEnvironment();
+    setLiveShell("running");
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+    expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
+      now + AGENT_ACTIVITY_FRESHNESS_MS,
+    );
+  });
+
+  it.effect("does not expire a fresh direct observation because an empty relay read is old", () =>
+    Effect.gen(function* () {
+      const now = Date.parse("2026-10-02T12:00:00.000Z");
+      const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+      addLiveEnvironment();
+      setLiveShell("running");
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-a"), "user-a");
+      yield* refreshActiveLiveActivityRemoteRegistration().pipe(
+        Effect.provide(snapshotRelayLayer(() => Effect.succeed({ aggregate: null }))),
+      );
+      clock.mockReturnValue(now + AGENT_ACTIVITY_FRESHNESS_MS + 59_000);
+      setLiveShell("running");
+      expect(vi.mocked(publishAgentActivityWidget).mock.lastCall![0].expiresAt).toBe(
+        now + AGENT_ACTIVITY_FRESHNESS_MS * 2 + 59_000,
+      );
+    }),
+  );
 
   it.effect("renews unchanged confirmed relay content, but not a failed read", () =>
     Effect.gen(function* () {

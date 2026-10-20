@@ -128,7 +128,10 @@ const make = Effect.gen(function* () {
           ),
         )
         .pipe(persistenceError("list-environments"));
-      const activeStates = yield* rows.listForUser({ userId: device.userId });
+      const activeStates = yield* rows.listForUser({
+        userId: device.userId,
+        includeLiveActivitiesDisabled: true,
+      });
       const now = yield* DateTime.now;
       return {
         environmentIds: coveredEnvironments.map((row) => EnvironmentId.make(row.environmentId)),
@@ -207,7 +210,8 @@ const make = Effect.gen(function* () {
       if (
         result.status === 410 ||
         result.reason === "BadDeviceToken" ||
-        result.reason === "Unregistered"
+        result.reason === "Unregistered" ||
+        result.reason === "DeviceTokenNotForTopic"
       ) {
         yield* db
           .update(relayMobileDevices)

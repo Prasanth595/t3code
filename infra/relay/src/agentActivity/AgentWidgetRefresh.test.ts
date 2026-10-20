@@ -49,7 +49,9 @@ const state: RelayAgentActivityState = {
   deepLink: "/threads/env-a/thread-a",
 };
 
-function fixture() {
+function fixture(
+  response = { ok: true, status: 200, apnsId: "apns-id", reason: undefined as string | undefined },
+) {
   let present = true;
   let activity = state;
   const queries: Array<ReadonlyArray<unknown>> = [];
@@ -137,7 +139,7 @@ function fixture() {
           sendPushNotificationRequest: (input) =>
             Effect.sync(() => {
               pushes.push(input);
-              return { ok: true, status: 200, apnsId: "apns-id" };
+              return response;
             }),
         }),
         Layer.succeed(RelayConfiguration.RelayConfiguration, {
@@ -276,4 +278,17 @@ describe("AgentWidgetRefresh", () => {
       }).pipe(Effect.provide(test.layer));
     },
   );
+  it.effect("invalidates a widget token permanently rejected for its topic", () => {
+    const test = fixture({
+      ok: false,
+      status: 400,
+      apnsId: "apns-id",
+      reason: "DeviceTokenNotForTopic",
+    });
+    return Effect.gen(function* () {
+      const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+      yield* widgets.process(job);
+      expect(test.updates).toContainEqual({ widgetPushToken: null });
+    }).pipe(Effect.provide(test.layer));
+  });
 });
