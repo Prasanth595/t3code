@@ -2,7 +2,7 @@ import { useRenderedAppearance } from "../../hooks/useTheme";
 import type { Root, RootContent } from "mdast";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { splitAssistantInsights } from "@t3tools/client-runtime/assistant-insights";
 import { MarkdownFindContext, findRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
@@ -81,6 +81,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent,
   type MouseEvent,
   type ReactNode,
@@ -2661,6 +2662,37 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
   );
 }
 
+function AssistantMessageBody({
+  text,
+  streaming,
+  ...markdown
+}: {
+  text: string;
+  streaming: boolean;
+} & Omit<ComponentProps<typeof ChatMarkdown>, "text" | "lineBreaks" | "isStreaming">) {
+  const segments = splitAssistantInsights(text);
+  let cursor = 0;
+  return segments.map((segment, index) => {
+    const key = cursor;
+    cursor += (segment.kind === "insight" ? segment.body.length : segment.text.length) + 1;
+    const isStreaming = streaming && index === segments.length - 1;
+    if (segment.kind === "insight") {
+      return (
+        <aside key={key} role="note" className="my-2 border-l-2 border-info pl-3">
+          <p className="mb-1 flex items-center gap-1.5 font-medium text-info">
+            <span aria-hidden="true">★</span>
+            {segment.title}
+          </p>
+          {segment.body.length > 0 ? (
+            <ChatMarkdown text={segment.body} lineBreaks isStreaming={isStreaming} {...markdown} />
+          ) : null}
+        </aside>
+      );
+    }
+    return <ChatMarkdown key={key} text={segment.text} isStreaming={isStreaming} {...markdown} />;
+  });
+}
+
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
@@ -2677,12 +2709,11 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             request={ctx.citationRequest}
             listRef={ctx.listRef}
           >
-            <ChatMarkdown
+            <AssistantMessageBody
               text={messageText}
+              streaming={Boolean(row.message.streaming)}
               cwd={ctx.markdownCwd}
               threadRef={ctx.threadRef ?? undefined}
-              isStreaming={Boolean(row.message.streaming)}
-              lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
               onUseArtifactTemplate={ctx.onUseArtifactTemplate}
