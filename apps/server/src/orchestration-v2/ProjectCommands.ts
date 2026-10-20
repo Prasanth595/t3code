@@ -200,7 +200,7 @@ export function planProjectCommand(input: {
         type: "project.meta-updated",
         payload: {
           projectId: command.projectId,
-          ...(command.title === undefined ? {} : { title: command.title }),
+          ...(command.title === undefined ? {} : { title: command.title, titleIsExplicit: true }),
           ...(command.workspaceRoot === undefined ? {} : { workspaceRoot: command.workspaceRoot }),
           ...(command.defaultModelSelection === undefined
             ? {}

@@ -7,6 +7,7 @@ import {
   buildProjectGroups,
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
+  projectGroupTitleNeedsUpdate,
   resolveScratchProjectScopeKey,
   sortProjectsByGroupOrder,
   type ProjectGroupingSettings,
@@ -118,6 +119,71 @@ function settings(
     sidebarProjectGroupingOverrides: overrides,
   };
 }
+
+describe("projectGroupTitleNeedsUpdate", () => {
+  it("updates divergent explicit titles even when the requested title is the displayed label", () => {
+    const projects = [
+      makeProject("first", "/local/t3code", { titleIsExplicit: true }),
+      makeProject("second", "/remote/t3code", { titleIsExplicit: true }),
+    ];
+    const group = buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+    expect(projectGroupTitleNeedsUpdate(projects, group.label, true)).toBe(true);
+  });
+
+  it("does not turn an untouched automatic label into an explicit rename on blur", () => {
+    const projects = [
+      makeProject("first", "/local/t3code", { title: "t3code" }),
+      makeProject("second", "/remote/t3code", { title: "t3code" }),
+    ];
+    const group = buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+    expect(group.label).not.toBe(projects[0]!.title);
+    expect(projectGroupTitleNeedsUpdate(projects, group.label, false)).toBe(false);
+  });
+
+  it("saves an edited same-name title on a single automatic checkout before it is grouped", () => {
+    const projects = [makeProject("first", "/local/t3code", { title: "t3code" })];
+    const group = buildProjectGroups({ projects, settings: settings("repository") })[0]!;
+
+    expect(group.label).toBe("t3code");
+    expect(projectGroupTitleNeedsUpdate(projects, group.label, true)).toBe(true);
+  });
+
+  it("keeps a partial grouped rename retryable until every member has the explicit title", () => {
+    const identity = { ...repositoryIdentity, displayName: "t3tools/t3code" };
+    const local = makeProject("first", "/local/t3code", {
+      title: "t3code",
+      titleIsExplicit: false,
+      repositoryIdentity: identity,
+    });
+    const remote = makeProject("second", "/remote/t3code", {
+      title: "t3code",
+      titleIsExplicit: false,
+      repositoryIdentity: identity,
+      environmentId: EnvironmentId.make("remote"),
+    });
+
+    expect(projectGroupTitleNeedsUpdate([local, remote], "t3code", true)).toBe(true);
+
+    const savedLocal = { ...local, titleIsExplicit: true };
+    const afterRemoteFailure = [savedLocal, remote];
+    const group = buildProjectGroups({
+      projects: afterRemoteFailure,
+      settings: settings("repository"),
+    })[0]!;
+
+    expect(group.label).toBe("t3code");
+    expect(projectGroupTitleNeedsUpdate(afterRemoteFailure, "t3code", true)).toBe(true);
+    expect(
+      projectGroupTitleNeedsUpdate(
+        [savedLocal, { ...remote, titleIsExplicit: true }],
+        "t3code",
+        true,
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("buildProjectGroups", () => {
   it.each(["repository", "repository_path", "separate"] as const)(
@@ -275,14 +341,47 @@ describe("buildProjectGroups", () => {
     );
   });
 
-  it("keeps the repository label when shared titles match its repository name", () => {
+  it("preserves an explicit repository-name rename across grouped environments", () => {
     const projects = [
-      makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", { title: "t3code" }),
+      makeProject("first", "/local/t3code"),
+      makeProject("second", "/remote/t3code", {
+        environmentId: EnvironmentId.make("remote"),
+      }),
+    ].map((project) => ({
+      ...project,
+      title: "t3code",
+      titleIsExplicit: true,
+      repositoryIdentity: {
+        ...repositoryIdentity,
+        displayName: "t3tools/t3code",
+        rootPath: project.workspaceRoot,
+      },
+    }));
+
+    for (const mode of ["repository", "repository_path"] as const) {
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe("t3code");
+      expect(groups[0]?.memberProjectRefs).toHaveLength(2);
+    }
+  });
+
+  it("keeps the owner-qualified automatic label when stored titles match the repository name", () => {
+    const identity = { ...repositoryIdentity, displayName: "t3tools/t3code" };
+    const projects = [
+      makeProject("first", "/local/t3code", {
+        title: "t3code",
+        repositoryIdentity: identity,
+      }),
+      makeProject("second", "/remote/t3code", {
+        title: "t3code",
+        repositoryIdentity: identity,
+        environmentId: EnvironmentId.make("remote"),
+      }),
     ];
 
     expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3 Code",
+      "t3tools/t3code",
     );
   });
 

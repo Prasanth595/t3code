@@ -198,9 +198,22 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+export function projectGroupTitleNeedsUpdate(
+  members: ReadonlyArray<Pick<EnvironmentProject, "title" | "titleIsExplicit">>,
+  nextTitle: string,
+  wasEdited: boolean,
+): boolean {
+  return (
+    wasEdited &&
+    members.some((member) => member.title !== nextTitle || member.titleIsExplicit !== true)
+  );
+}
+
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "titleIsExplicit" | "repositoryIdentity">
+  >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
@@ -215,8 +228,8 @@ export function deriveProjectGroupLabel(input: {
   if (
     sharedTitles.length === 1 &&
     sharedTitle !== undefined &&
-    !sharedDisplayNames.includes(sharedTitle) &&
-    !sharedRepositoryNames.includes(sharedTitle)
+    (input.members.some((member) => member.titleIsExplicit === true) ||
+      (!sharedDisplayNames.includes(sharedTitle) && !sharedRepositoryNames.includes(sharedTitle)))
   ) {
     return sharedTitle;
   }

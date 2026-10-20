@@ -31,6 +31,7 @@ export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>
 export const ProjectRow = Schema.Struct({
   projectId: ProjectId,
   title: Schema.String,
+  titleIsExplicit: Schema.Boolean,
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   defaultThreadEnvMode: Schema.NullOr(ThreadEnvMode),
@@ -46,6 +47,7 @@ export type ProjectRow = typeof ProjectRow.Type;
 
 const ProjectDbRow = Schema.Struct({
   ...ProjectRow.fields,
+  titleIsExplicit: Schema.BooleanFromBit,
   defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
   autoPull: Schema.BooleanFromBit,
   projectIcon: Schema.NullOr(Schema.fromJsonString(StoredProjectIcon)),
@@ -56,6 +58,7 @@ function toShell(row: ProjectRow): OrchestrationProjectShell {
   return {
     id: row.projectId,
     title: row.title,
+    titleIsExplicit: row.titleIsExplicit,
     workspaceRoot: row.workspaceRoot,
     repositoryIdentity: null,
     defaultModelSelection: row.defaultModelSelection,
@@ -112,6 +115,7 @@ export const make = Effect.gen(function* () {
       SELECT
         project_id AS "projectId",
         title,
+        title_is_explicit AS "titleIsExplicit",
         workspace_root AS "workspaceRoot",
         default_model_selection_json AS "defaultModelSelection",
         default_thread_env_mode AS "defaultThreadEnvMode",
@@ -142,6 +146,7 @@ export const make = Effect.gen(function* () {
           INSERT INTO projection_projects (
             project_id,
             title,
+            title_is_explicit,
             workspace_root,
             default_model_selection_json,
             default_thread_env_mode,
@@ -156,6 +161,7 @@ export const make = Effect.gen(function* () {
           VALUES (
             ${encoded.projectId},
             ${encoded.title},
+            ${encoded.titleIsExplicit},
             ${encoded.workspaceRoot},
             ${encoded.defaultModelSelection},
             ${encoded.defaultThreadEnvMode},
@@ -170,6 +176,7 @@ export const make = Effect.gen(function* () {
           ON CONFLICT (project_id)
           DO UPDATE SET
             title = excluded.title,
+            title_is_explicit = excluded.title_is_explicit,
             workspace_root = excluded.workspace_root,
             default_model_selection_json = excluded.default_model_selection_json,
             default_thread_env_mode = excluded.default_thread_env_mode,
@@ -216,6 +223,7 @@ export const make = Effect.gen(function* () {
         return yield* upsertRow({
           projectId: payload.projectId,
           title: payload.title,
+          titleIsExplicit: false,
           workspaceRoot: payload.workspaceRoot,
           defaultModelSelection: payload.defaultModelSelection,
           defaultThreadEnvMode: payload.defaultThreadEnvMode ?? null,
@@ -242,6 +250,9 @@ export const make = Effect.gen(function* () {
       yield* upsertRow({
         ...row,
         ...(payload.title === undefined ? {} : { title: payload.title }),
+        ...(payload.titleIsExplicit === undefined
+          ? {}
+          : { titleIsExplicit: payload.titleIsExplicit }),
         ...(payload.workspaceRoot === undefined ? {} : { workspaceRoot: payload.workspaceRoot }),
         ...(payload.defaultModelSelection === undefined
           ? {}

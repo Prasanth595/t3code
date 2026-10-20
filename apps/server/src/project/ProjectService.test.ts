@@ -1,12 +1,19 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { CommandId, type Project, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  CommandId,
+  OrchestrationProjectShell,
+  type Project,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -25,6 +32,10 @@ import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
+
+const ProjectShellJson = Schema.fromJsonString(OrchestrationProjectShell);
+const encodeProjectShell = Schema.encodeEffect(ProjectShellJson);
+const decodeProjectShell = Schema.decodeEffect(ProjectShellJson);
 
 const layerWorkspacePaths = Layer.succeed(WorkspacePaths.WorkspacePaths, {
   normalizeWorkspaceRoot: (workspaceRoot) => Effect.succeed(workspaceRoot.replace(/\/$/, "")),
@@ -198,6 +209,42 @@ it.layer(layerTest)("ProjectService", (it) => {
       assert.deepEqual(
         changes.map((change) => change.event_type),
         ["project.created", "project.meta-updated", "project.meta-updated", "project.deleted"],
+      );
+    }),
+  );
+
+  it.effect("persists an explicit rename even when the stored title is unchanged", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const projectId = ProjectId.make("project:explicit-title");
+      const created = yield* service.create({
+        commandId: CommandId.make("command:explicit-title:create"),
+        projectId,
+        title: "t3code",
+        workspaceRoot: "/work/explicit-title",
+      });
+      assert.isFalse(created.titleIsExplicit);
+
+      const renamed = yield* service.update({
+        commandId: CommandId.make("command:explicit-title:rename"),
+        projectId,
+        title: created.title,
+      });
+      assert.equal(renamed.title, created.title);
+      assert.isTrue(renamed.titleIsExplicit);
+
+      yield* service.update({
+        commandId: CommandId.make("command:explicit-title:settings"),
+        projectId,
+        autoPull: true,
+      });
+      const shell = Option.getOrThrow(yield* service.getShell(projectId));
+      const decoded = yield* decodeProjectShell(yield* encodeProjectShell(shell));
+      assert.isTrue(decoded.titleIsExplicit);
+      assert.isTrue((yield* service.listShells({ projectIds: [projectId] }))[0]?.titleIsExplicit);
+      assert.isTrue(
+        (yield* service.snapshot).projects.find((project) => project.id === projectId)
+          ?.titleIsExplicit,
       );
     }),
   );
