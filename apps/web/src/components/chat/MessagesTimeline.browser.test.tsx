@@ -1463,6 +1463,40 @@ describe("MessagesTimeline scroll position", () => {
     return props.listRef.current!.getScrollableNode()!;
   }
 
+  it("keeps following after a non-user scroll reports an end gap before new rows", async () => {
+    const onIsAtEndChange = vi.fn();
+    const props = { ...baseProps(), onIsAtEndChange };
+    const timeline = (entries: Entry[]) => (
+      <MessagesTimeline {...props} timelineEntries={entries} />
+    );
+    await renderElement(timeline(tallEntries));
+    const viewport = await waitForList(props);
+    await vi.waitFor(() => expect(onIsAtEndChange).toHaveBeenLastCalledWith(true));
+    // Let restoration finish before the completed reply adds more than a viewport.
+    await act(async () => {
+      for (let frame = 0; frame < 8; frame += 1) await new Promise(requestAnimationFrame);
+    });
+    // Deliver a non-user scroll callback with a gap larger than the follow threshold,
+    // without a wheel, touch or other user-navigation event disabling follow.
+    await act(async () => {
+      await props.listRef.current!.scrollToOffset({
+        offset: viewport.scrollTop - 2 * viewport.clientHeight,
+        animated: false,
+      });
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(onIsAtEndChange).toHaveBeenLastCalledWith(false);
+    expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+      viewport.clientHeight,
+    );
+    await act(async () => roots.at(-1)!.render(timeline([...tallEntries, tall(12)])));
+    await vi.waitFor(() =>
+      expect(
+        viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop,
+      ).toBeLessThanOrEqual(2),
+    );
+  });
+
   it.each(["together", "anchor-first", "rows-first"] as const)(
     "preserves an anchored reading position when anchor clearing and changed rows arrive %s",
     async (order) => {

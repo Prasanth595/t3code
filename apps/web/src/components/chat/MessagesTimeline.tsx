@@ -1209,7 +1209,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
-    if (isAtEnd !== undefined) endPinWasAtEndRef.current = isAtEnd;
+    if (isAtEnd !== undefined && (isAtEnd || !followsEndRef.current)) {
+      endPinWasAtEndRef.current = isAtEnd;
+    }
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && state && isAtEnd !== undefined && !paintOnly) {
       const index = state.indexByKey(position.rowId);
