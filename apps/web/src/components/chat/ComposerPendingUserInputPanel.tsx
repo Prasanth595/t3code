@@ -12,17 +12,13 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
 
-function pendingQuestionTextIsSelected(): boolean {
-  return (window.getSelection()?.toString().length ?? 0) > 0;
-}
-
-// A drag that ends on the header clicks the row, the shared ancestor, so the
-// target is not inside the question. The selection still is.
-function collapsedQuestionSelectionIntersects(row: Element): boolean {
+// A drag can release on the row while the highlight sits in the expanded body.
+// Ignore that click only when the selection meets this card, not the document.
+function pendingQuestionSelectionIntersects(node: Element): boolean {
+  const card = node.closest("[data-slot=collapsible]");
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false;
-  const question = row.querySelector("[data-pending-user-input-selectable]");
-  return question !== null && selection.getRangeAt(0).intersectsNode(question);
+  if (!card || !selection || selection.isCollapsed || selection.rangeCount === 0) return false;
+  return selection.getRangeAt(0).intersectsNode(card);
 }
 
 interface PendingUserInputPanelProps {
@@ -203,7 +199,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           const target = event.target;
           if (!(target instanceof Element)) return;
           if (target.closest("[data-pending-user-input-toggle]")) return;
-          if (collapsedQuestionSelectionIntersects(event.currentTarget)) return;
+          if (pendingQuestionSelectionIntersects(event.currentTarget)) return;
           setCollapsedQuestionId(isCollapsed ? null : activeQuestion.id);
         }}
       >
@@ -345,7 +341,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     onClick={(event) => {
                       // A pointer drag that highlighted text is a copy, not a choice.
                       // Keyboard and assistive clicks (detail 0) still choose the option.
-                      if (event.detail !== 0 && pendingQuestionTextIsSelected()) return;
+                      if (
+                        event.detail !== 0 &&
+                        pendingQuestionSelectionIntersects(event.currentTarget)
+                      )
+                        return;
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
                     className={className}
