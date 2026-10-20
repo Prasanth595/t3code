@@ -24,7 +24,7 @@ const readable =
   "A lighthouse guides ships safely through the darkness.\nComment: what are you talking about";
 
 it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
-  "068_ProjectionMessageSearchText",
+  "071_ProjectionMessageSearchText",
   (it) => {
     it.effect("backfills readable text only for messages whose citations read differently", () =>
       Effect.gen(function* () {
@@ -48,8 +48,8 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
           { discard: true },
         );
 
-        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 68 }), [
-          [68, "ProjectionMessageSearchText"],
+        assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 71 }), [
+          [71, "ProjectionMessageSearchText"],
         ]);
         const rows = yield* sql<{
           readonly message_id: string;
