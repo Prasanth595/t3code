@@ -8,6 +8,7 @@ import {
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
 } from "./gitLabMergeRequestJson.ts";
@@ -619,5 +620,46 @@ describe("decodeRepositoryBlobsJson", () => {
         ),
       ),
     ).toEqual(new Map());
+  });
+});
+
+describe("decodeMergeRequestStatsJson", () => {
+  it("keys the counts by merge request number", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(
+        JSON.stringify({
+          data: {
+            project: {
+              mergeRequests: {
+                nodes: [
+                  { iid: "7", diffStatsSummary: { additions: 12, deletions: 3 } },
+                  { iid: "8", diffStatsSummary: null },
+                  { iid: null, diffStatsSummary: { additions: 1, deletions: 1 } },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    // A merge request without a summary is left out rather than shown as zero lines changed.
+    expect([...stats]).toEqual([[7, { additions: 12, deletions: 3 }]]);
+  });
+
+  it("answers nothing for a project the token cannot see", () => {
+    const stats = expectSuccess(
+      decodeMergeRequestStatsJson(JSON.stringify({ data: { project: null } })),
+    );
+
+    expect(stats.size).toBe(0);
+  });
+
+  it("fails on a GitLab that rejects the query", () => {
+    const result = decodeMergeRequestStatsJson(
+      JSON.stringify({ errors: [{ message: "Field 'diffStatsSummary' doesn't exist" }] }),
+    );
+
+    expect(Result.isSuccess(result)).toBe(false);
   });
 });

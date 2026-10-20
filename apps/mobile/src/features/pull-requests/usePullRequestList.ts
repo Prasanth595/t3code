@@ -201,12 +201,17 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     visible.key === scopeKey && visible.rows.length ? visible.rows : data.entries.slice(0, 8);
   const statsKey = JSON.stringify(
     targets.flatMap(({ environmentId }) => {
+      const answered = sources.find(
+        (source) => source.target.environmentId === environmentId,
+      )?.stats;
+      // Zero totals mean "not counted yet" only until the host answers, so a row whose real
+      // counts are zero is not asked for again each time the visible rows change.
       const refs = visibleRows
         .filter(
           (row) =>
             row.environmentId === environmentId &&
-            row.provider === "github" &&
-            row.additions + row.deletions === 0,
+            row.additions + row.deletions === 0 &&
+            !answered?.has(statKey(row)),
         )
         .map(({ projectId, host, repository, number }) => ({
           projectId,

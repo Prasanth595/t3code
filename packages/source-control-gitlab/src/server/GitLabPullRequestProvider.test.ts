@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -65,7 +65,11 @@ describe("getChangeRequest base freshness", () => {
     reviewerIds: [],
   };
 
-  const readWith = (divergence: { readonly divergedCommits?: number }) =>
+  const readWith = (
+    divergence: { readonly divergedCommits?: number },
+    stats: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestStats"] = () =>
+      Effect.succeed([]),
+  ) =>
     Effect.gen(function* () {
       const provider = yield* make;
       return yield* provider.getChangeRequest({
@@ -80,6 +84,7 @@ describe("getChangeRequest base freshness", () => {
           getMergeRequestDetail: () => Effect.succeed({ ...detail, ...divergence }),
           getProjectMergeCapabilities: () =>
             Effect.succeed({ merge: true, squash: true, rebase: true }),
+          listMergeRequestStats: stats,
         }),
       ),
     );
@@ -99,6 +104,84 @@ describe("getChangeRequest base freshness", () => {
 
       expect(changeRequest.baseComparison).toBe("unknown");
       expect(changeRequest.behindBy).toBeUndefined();
+    }),
+  );
+
+  it.effect("fills in the line counts the REST detail leaves out", () =>
+    Effect.gen(function* () {
+      const changeRequest = yield* readWith({}, () =>
+        Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
+      );
+
+      expect(changeRequest.additions).toBe(40);
+      expect(changeRequest.deletions).toBe(2);
+    }),
+  );
+
+  it.effect("keeps the detail when the line counts cannot be read", () =>
+    Effect.gen(function* () {
+      const changeRequest = yield* readWith({}, () =>
+        Effect.fail(
+          new GitLabPullRequestCli.GitLabMergeRequestReadError({
+            command: "glab",
+            cwd: "/w",
+            operation: "listMergeRequestStats",
+            cause: new Error("unknown field"),
+          }),
+        ),
+      );
+
+      expect(changeRequest.number).toBe(7);
+      expect(changeRequest.additions).toBe(0);
+    }),
+  );
+
+  it.effect("reports an unauthenticated line count read instead of a detail without counts", () =>
+    Effect.gen(function* () {
+      const result = yield* Effect.result(
+        readWith({}, () =>
+          Effect.fail(
+            new GitLabCli.GitLabCliAuthenticationError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: null,
+            }),
+          ),
+        ),
+      );
+
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "PullRequestProviderError", reason: "unauthenticated" },
+      });
+    }),
+  );
+
+  it.effect("gives linked threads line counts without reading the merge settings", () =>
+    Effect.gen(function* () {
+      const getProjectMergeCapabilities = vi.fn(() =>
+        Effect.succeed({ merge: true, squash: true, rebase: true }),
+      );
+      const summary = yield* Effect.gen(function* () {
+        const provider = yield* make;
+        const read = provider.getChangeRequestSummary;
+        if (read === undefined) return yield* Effect.die("summary read missing");
+        return yield* read({ cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 });
+      }).pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            getMergeRequestDetail: () => Effect.succeed(detail),
+            getProjectMergeCapabilities,
+            listMergeRequestStats: () =>
+              Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
+          }),
+        ),
+      );
+
+      expect(summary.additions).toBe(40);
+      expect(summary.deletions).toBe(2);
+      expect(getProjectMergeCapabilities).not.toHaveBeenCalled();
     }),
   );
 });

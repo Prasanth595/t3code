@@ -33,6 +33,7 @@ import {
   decodeMergeRequestDiffsJson,
   decodeMergeRequestChangesJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
@@ -40,6 +41,7 @@ import {
   decodeRepositoryBlobsJson,
   decodeViewerJson,
   gitLabAwardName,
+  MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   type GitLabDiffRefs,
   type GitLabMergeRequestDetail,
@@ -230,6 +232,23 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly number: number;
     }) => Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError>;
+
+    /** Line counts for the given merge requests; one with no answer is left out. */
+    readonly listMergeRequestStats: (input: {
+      readonly cwd: string;
+      readonly changeRequests: ReadonlyArray<{
+        readonly repository: string;
+        readonly number: number;
+      }>;
+    }) => Effect.Effect<
+      ReadonlyArray<{
+        readonly repository: string;
+        readonly number: number;
+        readonly additions: number;
+        readonly deletions: number;
+      }>,
+      GitLabPullRequestCliError
+    >;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -972,6 +991,85 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** The stats connection hands back one page, so a repository's rows are asked for 100 at a time. */
+  const STAT_IIDS_PER_REQUEST = 100;
+
+  const mergeRequestStats = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly numbers: ReadonlyArray<number>;
+  }) =>
+    api({
+      cwd: input.cwd,
+      path: "graphql",
+      method: "POST",
+      stdin: JSON.stringify({
+        query: MERGE_REQUEST_STATS_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iids: input.numbers.map(String) },
+      }),
+    }).pipe(
+      Effect.flatMap((result) => {
+        const decoded = decodeMergeRequestStatsJson(result.stdout.trim());
+        return Result.isSuccess(decoded)
+          ? Effect.succeed(decoded.success)
+          : Effect.fail(
+              new GitLabMergeRequestReadError({
+                command: "glab",
+                cwd: input.cwd,
+                operation: "listMergeRequestStats",
+                cause: decoded.failure,
+              }),
+            );
+      }),
+    );
+
+  const STAT_REQUEST_CONCURRENCY = 4;
+
+  const listMergeRequestStats: GitLabPullRequestCli["Service"]["listMergeRequestStats"] = (
+    input,
+  ) => {
+    const byRepository = new Map<string, Set<number>>();
+    for (const { repository, number } of input.changeRequests) {
+      const numbers = byRepository.get(repository) ?? new Set<number>();
+      numbers.add(number);
+      byRepository.set(repository, numbers);
+    }
+    const reads: Array<{ readonly repository: string; readonly numbers: ReadonlyArray<number> }> =
+      [];
+    for (const [repository, numberSet] of byRepository) {
+      const numbers = [...numberSet];
+      for (let start = 0; start < numbers.length; start += STAT_IIDS_PER_REQUEST) {
+        reads.push({ repository, numbers: numbers.slice(start, start + STAT_IIDS_PER_REQUEST) });
+      }
+    }
+    return Effect.forEach(
+      reads,
+      (read) =>
+        mergeRequestStats({ cwd: input.cwd, ...read }).pipe(
+          Effect.map((stats) =>
+            read.numbers.flatMap((number) => {
+              const stat = stats.get(number);
+              return stat === undefined ? [] : [{ repository: read.repository, number, ...stat }];
+            }),
+          ),
+          // One read GitLab could not answer costs its own rows their counts, not every other
+          // read's on the same page. An unusable CLI or account still reaches the caller.
+          Effect.catchIf(
+            (cause) =>
+              cause._tag !== "GitLabCliUnavailableError" &&
+              cause._tag !== "GitLabCliAuthenticationError" &&
+              cause._tag !== "GitLabCliRateLimitError",
+            (cause) =>
+              Effect.logWarning("GitLab merge request line count read failed", {
+                repository: read.repository,
+                reason: cause._tag,
+              }).pipe(Effect.as([])),
+          ),
+        ),
+      { concurrency: STAT_REQUEST_CONCURRENCY },
+    ).pipe(Effect.map((results) => results.flat()));
+  };
+
   /**
    * GitLab charges the blobs query by how many paths it is handed, and its connection hands back
    * one page. A hundred at a time keeps each request inside both.
@@ -1081,6 +1179,8 @@ export const make = Effect.gen(function* () {
     },
 
     getMergeRequestDetail: mergeRequestDetail,
+
+    listMergeRequestStats,
 
     listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
 

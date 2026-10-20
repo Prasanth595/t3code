@@ -1162,4 +1162,119 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
   );
+
+  it.effect("reads line counts per repository, a hundred merge requests at a time", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((request) => {
+        const body = JSON.parse(request.stdin ?? "{}") as {
+          readonly variables: { readonly fullPath: string; readonly iids: ReadonlyArray<string> };
+        };
+        return Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                project: {
+                  mergeRequests: {
+                    // GitLab answers only what it has: iid 3 is left out on purpose.
+                    nodes: body.variables.iids
+                      .filter((iid) => iid !== "3")
+                      .map((iid) => ({
+                        iid,
+                        diffStatsSummary: { additions: Number(iid), deletions: 1 },
+                      })),
+                  },
+                },
+              },
+            }),
+          ),
+        );
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const stats = yield* cli.listMergeRequestStats({
+        cwd: "/w",
+        changeRequests: [
+          ...Array.from({ length: 150 }, (_, index) => ({
+            repository: "acme/web",
+            number: index + 1,
+          })),
+          { repository: "acme/api", number: 9 },
+        ],
+      });
+
+      expect(stats).toHaveLength(150);
+      expect(stats).toContainEqual({
+        repository: "acme/web",
+        number: 150,
+        additions: 150,
+        deletions: 1,
+      });
+      expect(stats).toContainEqual({
+        repository: "acme/api",
+        number: 9,
+        additions: 9,
+        deletions: 1,
+      });
+      expect(stats.some((stat) => stat.number === 3)).toBe(false);
+      // Two reads for the hundred and fifty in one project, one for the other project.
+      const reads = mockedExecute.mock.calls.map(([request]) => {
+        const body = JSON.parse(request.stdin ?? "{}") as {
+          readonly variables: { readonly fullPath: string; readonly iids: ReadonlyArray<string> };
+        };
+        return [body.variables.fullPath, body.variables.iids.length];
+      });
+      expect(reads).toEqual([
+        ["acme/web", 100],
+        ["acme/web", 50],
+        ["acme/api", 1],
+      ]);
+    }),
+  );
+
+  it.effect("keeps the counts of reads that answered when another read fails", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((request) => {
+        const body = JSON.parse(request.stdin ?? "{}") as {
+          readonly variables: { readonly fullPath: string };
+        };
+        return Effect.succeed(
+          output(
+            body.variables.fullPath === "acme/api"
+              ? JSON.stringify({ errors: [{ message: "Query timed out" }] })
+              : JSON.stringify({
+                  data: {
+                    project: {
+                      mergeRequests: {
+                        nodes: [{ iid: "7", diffStatsSummary: { additions: 5, deletions: 2 } }],
+                      },
+                    },
+                  },
+                }),
+          ),
+        );
+      });
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const stats = yield* cli.listMergeRequestStats({
+        cwd: "/w",
+        changeRequests: [
+          { repository: "acme/web", number: 7 },
+          { repository: "acme/api", number: 9 },
+        ],
+      });
+
+      expect(stats).toEqual([{ repository: "acme/web", number: 7, additions: 5, deletions: 2 }]);
+    }),
+  );
+
+  it.effect("asks GitLab nothing for no merge requests", () =>
+    Effect.gen(function* () {
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const stats = yield* cli.listMergeRequestStats({ cwd: "/w", changeRequests: [] });
+
+      expect(stats).toEqual([]);
+      expect(mockedExecute).not.toHaveBeenCalled();
+    }),
+  );
 });

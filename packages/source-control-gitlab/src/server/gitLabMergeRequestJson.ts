@@ -940,3 +940,79 @@ export function decodeRepositoryBlobsJson(
   }
   return Result.succeed(blobs);
 }
+
+/**
+ * Line counts for merge requests of one project. The REST listing carries no line counts, and
+ * reading each diff to count them would cost a request per row, so GraphQL's per-merge-request
+ * summary is asked for in one read instead.
+ */
+export const MERGE_REQUEST_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
+  project(fullPath: $fullPath) {
+    mergeRequests(iids: $iids, first: 100) {
+      nodes { iid diffStatsSummary { additions deletions } }
+    }
+  }
+}`;
+
+const RawMergeRequestStatsSchema = Schema.Struct({
+  data: Schema.Struct({
+    project: Schema.NullOr(
+      Schema.Struct({
+        mergeRequests: Schema.optional(
+          Schema.NullOr(
+            Schema.Struct({
+              nodes: Schema.optional(
+                Schema.NullOr(
+                  Schema.Array(
+                    Schema.NullOr(
+                      Schema.Struct({
+                        iid: Schema.optional(Schema.NullOr(Schema.String)),
+                        diffStatsSummary: Schema.optional(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              additions: Schema.optional(Schema.NullOr(Schema.Int)),
+                              deletions: Schema.optional(Schema.NullOr(Schema.Int)),
+                            }),
+                          ),
+                        ),
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            }),
+          ),
+        ),
+      }),
+    ),
+  }),
+});
+
+const decodeMergeRequestStats = decodeJsonResult(RawMergeRequestStatsSchema);
+
+/**
+ * The counts by merge request number. A merge request GitLab returned no summary for is left
+ * out rather than counted as zero, so its row keeps whatever it already showed.
+ */
+export function decodeMergeRequestStatsJson(
+  raw: string,
+): Result.Result<
+  ReadonlyMap<number, { readonly additions: number; readonly deletions: number }>,
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
+  for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
+    const iid = Number(trimmed(node?.iid));
+    const summary = node?.diffStatsSummary;
+    if (!Number.isSafeInteger(iid) || iid <= 0 || summary == null) continue;
+    stats.set(iid, {
+      additions: Math.max(0, summary.additions ?? 0),
+      deletions: Math.max(0, summary.deletions ?? 0),
+    });
+  }
+  return Result.succeed(stats);
+}
