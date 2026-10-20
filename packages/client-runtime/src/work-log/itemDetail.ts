@@ -97,8 +97,10 @@ export function toolCallLines(input: {
   const args = input.args;
   const html =
     isHtmlRenderTool(input.toolName) &&
-    // Bounded inputs can omit the source; reject a blank source only when it is available.
-    (isRecord(args) && typeof args.html === "string" ? args.html.trim() !== "" : true) &&
+    // Summary payloads still resolve the full source through the asset route.
+    (isRecord(args)
+      ? isSummarizedValue(args) || (typeof args.html === "string" && args.html.trim() !== "")
+      : typeof args === "string" && args.trim() !== "") &&
     input.status !== "failed" &&
     compactDynamicToolOutput(input.output)?.isError !== true;
   if (isRecord(args) && !isSummarizedValue(args)) {

@@ -26,6 +26,13 @@ const htmlTool = {
 };
 
 describe("HTML tool inputs", () => {
+  it.each([{}, null, undefined, "", { html: null }])(
+    "does not offer an HTML preview when source is missing: %j",
+    (args) => {
+      expect(toolCallLines({ toolName: "mcp__t3-code__html_preview", args }).html).toBe(false);
+    },
+  );
+
   it("keeps blank HTML visible without requesting a preview", () => {
     const html = " \n\t ";
     const lines = toolCallLines({ toolName: "mcp__t3-code__html_preview", args: { html } });
