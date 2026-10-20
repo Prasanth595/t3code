@@ -423,6 +423,51 @@ it.effect.each([
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)("%s: a subagent thread becomes a candidate once its parent is done", ([, testLayer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const parent = yield* createThread("subagent-parent");
+    const child = yield* createThread("subagent-child", {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+    });
+    const ids = () =>
+      store.getSettlementCandidates().pipe(Effect.map((rows) => rows.map((row) => row.id)));
+    assert.deepEqual(yield* ids(), [parent]);
+
+    const parentThread = yield* store.getThread(parent);
+    for (const [type, overrides] of [
+      ["thread.settled", { settledOverride: "settled", settledAt: now }],
+      ["thread.archived", { archivedAt: now }],
+      ["thread.deleted", { deletedAt: now }],
+    ] satisfies ReadonlyArray<
+      readonly [
+        "thread.settled" | "thread.archived" | "thread.deleted",
+        Partial<OrchestrationV2AppThread>,
+      ]
+    >) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:subagent-parent:${type}`),
+        type,
+        threadId: parent,
+        occurredAt: now,
+        payload: { ...parentThread, ...overrides, updatedAt: now },
+      });
+      assert.deepEqual(yield* ids(), [child]);
+    }
+    const orphan = yield* createThread("orphan", {
+      lineage: {
+        parentThreadId: ThreadId.make("missing-parent"),
+        relationshipToParent: "subagent",
+        rootThreadId: parent,
+      },
+    });
+    assert.deepEqual(new Set(yield* ids()), new Set([child, orphan]));
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect(
   "reads settlement candidates and thread metadata without loading historical or archived payloads",
   () =>

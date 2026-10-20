@@ -308,9 +308,7 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) {
     const settings = yield* settingsService.getSettings;
-    if (!autoSettlementConfigured(settings)) {
-      return;
-    }
+    const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
@@ -320,10 +318,26 @@ export const make = Effect.gen(function* () {
     // the merged pull request: most threads carry no link and settle from
     // their branch lookup, which would otherwise wait for the next minute's
     // sweep on a possibly stale cached answer.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates = threads.filter(
+      (thread) =>
+        (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
+        isAutoSettlementCandidate(thread, nowMs),
+    );
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
+        if (thread.lineage.relationshipToParent === "subagent") {
+          // The store returns a subagent only once its parent is done, so it
+          // settles with the parent and never runs its own lookup.
+          const uuid = yield* crypto.randomUUIDv4();
+          yield* orchestrator.dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            snapshotAt: thread.updatedAt,
+          });
+          return null;
+        }
         const currentSettings = resolveProjectSettings(
           yield* settingsService.getSettings,
           thread.projectId,
@@ -539,9 +553,18 @@ export const make = Effect.gen(function* () {
             }),
       ),
     );
-  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) =>
-    runSweep(null, threadId),
-  );
+  let fullSweepPending = false;
+  const worker = yield* makeDrainableWorker((threadId: ThreadId | undefined) => {
+    // Clear at the start so events during this sweep can request one follow-up.
+    if (threadId === undefined) fullSweepPending = false;
+    return runSweep(null, threadId);
+  });
+  const enqueueFullSweep = () =>
+    Effect.suspend(() => {
+      if (fullSweepPending) return Effect.void;
+      fullSweepPending = true;
+      return worker.enqueue(undefined);
+    });
 
   // Then the project's settle script runs in the thread's own worktree; a
   // thread in the shared checkout skips it, because other threads may still be
@@ -559,6 +582,19 @@ export const make = Effect.gen(function* () {
       if (thread.settledOverride !== "settled") return;
       const settledAtMs = toMillis(thread.settledAt);
       if (settledAtMs === null || settleActionRunAt.get(threadId) === settledAtMs) return;
+      // The parent's worktree belongs to the parent; shared-worktree children
+      // skip duplicate cleanup there.
+      if (
+        thread.lineage.relationshipToParent === "subagent" &&
+        thread.lineage.parentThreadId !== null
+      ) {
+        const parent = yield* projections.getThread(thread.lineage.parentThreadId).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+          }),
+        );
+        if (parent?.worktreePath === worktreePath) return;
+      }
       const run = yield* projectScripts.runForThread({
         threadId,
         projectId: thread.projectId,
@@ -587,7 +623,10 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return cleanUpSettledThread(event.threadId);
+        return cleanUpSettledThread(event.threadId).pipe(Effect.andThen(enqueueFullSweep()));
+      case "thread.archived":
+      case "thread.deleted":
+        return enqueueFullSweep();
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":
@@ -617,7 +656,7 @@ export const make = Effect.gen(function* () {
     let lastSettlementSettings = autoSettlementSettingsKey(initialSettings);
     yield* forkParked(
       Effect.gen(function* () {
-        yield* worker.enqueue(undefined);
+        yield* enqueueFullSweep();
         yield* worker.drain;
       }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
     );
@@ -628,7 +667,7 @@ export const make = Effect.gen(function* () {
           return Effect.void;
         }
         lastSettlementSettings = key;
-        return worker.enqueue(undefined);
+        return enqueueFullSweep();
       }),
     );
     yield* forkParked(Stream.runForEach(mergedPullRequests, (event) => runSweep(event)));
