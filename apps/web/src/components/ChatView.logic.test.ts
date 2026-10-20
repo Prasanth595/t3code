@@ -11,6 +11,7 @@ import {
   releaseDraftSendStateIfIdle,
   rememberCheckoutIsRepo,
   retainDraftSendState,
+  routeSendInFlight,
   threadShellHasStarted,
 } from "./ChatView.logic";
 import {
@@ -2069,6 +2070,21 @@ describe("route send state", () => {
     const remount = retainDraftSendState("route-strict", state);
     expect(draftSendState("route-strict")).toBe(state);
     remount();
+  });
+
+  it("reports a newer send after the earlier state was released", () => {
+    const first = mountRoute("route-restore");
+    first.state.sendInFlight.current = true;
+    first.unmount();
+    first.state.sendInFlight.current = false;
+
+    const second = mountRoute("route-restore");
+    second.state.sendInFlight.current = true;
+    expect(second.state).not.toBe(first.state);
+    expect(routeSendInFlight("route-restore")).toBe(true);
+    second.state.sendInFlight.current = false;
+    expect(routeSendInFlight("route-restore")).toBe(false);
+    second.unmount();
   });
 });
 

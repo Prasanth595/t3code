@@ -25,6 +25,7 @@ import {
   releaseDraftSendStateIfIdle,
   rememberCheckoutIsRepo,
   retainDraftSendState,
+  routeSendInFlight,
 } from "./ChatView.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
@@ -7000,7 +7001,7 @@ export default function ChatView(props: ChatViewProps) {
                   if (
                     !draftId ||
                     !useComposerDraftStore.getState().getDraftSession(draftId) ||
-                    sendInFlightRef.current ||
+                    routeSendInFlight(routeThreadKey) ||
                     composerDraftHasUserContent(
                       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
                     )

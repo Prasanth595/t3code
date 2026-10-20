@@ -1013,6 +1013,11 @@ export function releaseDraftSendStateIfIdle(routeKey: string, state: DraftSendSt
   }
 }
 
+/** Whether the route's current send state has a send in flight. Never creates an entry. */
+export function routeSendInFlight(routeKey: string): boolean {
+  return draftSendStateByRouteKey.get(routeKey)?.sendInFlight.current === true;
+}
+
 export function countDraftSendStatesForTests(): number {
   return draftSendStateByRouteKey.size;
 }
