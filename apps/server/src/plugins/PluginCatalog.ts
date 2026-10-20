@@ -279,17 +279,16 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   });
 
   /**
-   * Saves `record` (normally with `enabled: false`), revokes the registration,
-   * and waits for the process to exit. The row is written first and
-   * everything but the wait finishes even if the caller goes away, so a
-   * disable that was cut short never comes back enabled at the next start. A
-   * failed save changes nothing.
+   * Revokes the registration, saves `record` (normally with `enabled: false`),
+   * and waits for the process to exit. Everything but the wait finishes even
+   * if the caller goes away, so a disable that was cut short never comes
+   * back enabled at the next start. A failed save leaves the registration revoked, so changed bytes cannot run.
    */
   const revoke = (installation: Installation, record: PluginInstallationRecord) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        if (record !== installation.record) yield* commit(installation, record);
         const stopping = yield* unregister(installation);
+        if (record !== installation.record) yield* commit(installation, record);
         if (stopping) yield* restore(Fiber.join(stopping));
       }),
     );
