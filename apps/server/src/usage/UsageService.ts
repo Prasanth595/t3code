@@ -488,9 +488,7 @@ export const make = Effect.gen(function* () {
         ? cached.position
         : undefined;
 
-    const parsed = yield* Effect.promise(() =>
-      readTranscriptRecords(filePath, format, resumeFrom),
-    );
+    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
     // A read failure is not an empty transcript: caching it under this
     // (size, mtime) would silently drop the file's usage until it changes.
     if (parsed === null)
