@@ -186,27 +186,29 @@ function WebhookFiltersField({
         </Button>
       </div>
       {filters.map((filter, index) => (
-        // Below md the row stacks: path and remove on one line, test and value on the next.
+        // Always stacked: the dialog stays narrow on wide windows, so a single line
+        // would cut off typical paths and values.
         // Rows have no identity of their own; removing one re-renders the rest in order.
         // oxlint-disable-next-line react/no-array-index-key
-        <div key={index} className="flex flex-wrap items-center gap-2 md:flex-nowrap">
-          <Input
-            aria-label={`Filter ${index + 1} path`}
-            className="min-w-0 flex-1 md:flex-4"
-            placeholder="body.action"
-            value={filter.path}
-            onChange={(event) => update(index, { path: event.target.value })}
-          />
-          <Button
-            className="md:order-last"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Remove filter ${index + 1}`}
-            onClick={() => onChange(filters.filter((_, at) => at !== index))}
-          >
-            <Trash2Icon />
-          </Button>
-          <div className="flex w-full min-w-0 items-center gap-2 md:contents">
+        <div key={index} className="space-y-2 pt-1">
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label={`Filter ${index + 1} path`}
+              className="min-w-0 flex-1"
+              placeholder="body.action"
+              value={filter.path}
+              onChange={(event) => update(index, { path: event.target.value })}
+            />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Remove filter ${index + 1}`}
+              onClick={() => onChange(filters.filter((_, at) => at !== index))}
+            >
+              <Trash2Icon />
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
             <Select
               value={filter.op}
               onValueChange={(op) => {
@@ -216,7 +218,7 @@ function WebhookFiltersField({
             >
               <SelectTrigger
                 size="sm"
-                className="w-40 shrink-0"
+                className="w-44 shrink-0"
                 aria-label={`Filter ${index + 1} test`}
               >
                 <SelectValue>
@@ -231,12 +233,10 @@ function WebhookFiltersField({
                 ))}
               </SelectPopup>
             </Select>
-            {filter.op === "exists" ? (
-              <div className="min-w-0 flex-1 md:flex-3" />
-            ) : (
+            {filter.op === "exists" ? null : (
               <Input
                 aria-label={`Filter ${index + 1} value`}
-                className="min-w-0 flex-1 md:flex-3"
+                className="min-w-0 flex-1"
                 placeholder={filter.op === "in" ? "opened, reopened" : "opened"}
                 value={filter.value}
                 onChange={(event) => update(index, { value: event.target.value })}
@@ -1286,7 +1286,8 @@ function ScheduledTaskEditorForm({
       </DialogHeader>
 
       <DialogPanel>
-        <fieldset disabled={saving} className="space-y-5">
+        {/* Fieldsets default to min-width: min-content, which lets one wide control widen the form past the dialog. */}
+        <fieldset disabled={saving} className="min-w-0 space-y-5">
           {!connected ? (
             <p className="text-sm text-destructive">Reconnect this environment before saving.</p>
           ) : null}
