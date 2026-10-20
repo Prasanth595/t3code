@@ -76,8 +76,17 @@ function heldCorrection(): number {
   return -Number(match[1]);
 }
 
-function touch(type: "touchstart" | "touchend") {
-  scroller().dispatchEvent(Object.assign(new Event(type), { touches: [] }));
+// Dispatches a touch event on the scroller: `changed` are the fingers this event
+// is about, `down` every finger on the screen afterwards (TouchEvent.touches).
+function touch(
+  type: "touchstart" | "touchend",
+  changed: ReadonlyArray<number>,
+  down: ReadonlyArray<number>,
+) {
+  const touches = (ids: ReadonlyArray<number>) => ids.map((identifier) => ({ identifier }));
+  scroller().dispatchEvent(
+    Object.assign(new Event(type), { changedTouches: touches(changed), touches: touches(down) }),
+  );
 }
 
 async function mountScrolledToRow(index: number) {
@@ -120,7 +129,7 @@ describe("LegendList scroll corrections during a touch scroll", () => {
     const scrollTop = scroller().scrollTop;
     const anchorTop = rowTop("row-31");
 
-    touch("touchstart");
+    touch("touchstart", [1], [1]);
     scroller().dispatchEvent(new Event("scroll"));
     await act(async () => growRow(28, ROW_HEIGHT + 300));
     await settleFrames();
@@ -131,7 +140,7 @@ describe("LegendList scroll corrections during a touch scroll", () => {
     expect(rowTop("row-31")).toBe(anchorTop);
 
     // Momentum keeps scrolling after the finger lifts; scrollend marks its end.
-    touch("touchend");
+    touch("touchend", [1], []);
     await settleFrames();
     expect(scroller().scrollTop).toBe(scrollTop);
 
@@ -148,13 +157,52 @@ describe("LegendList scroll corrections during a touch scroll", () => {
     await mountScrolledToRow(30);
     const scrollTop = scroller().scrollTop;
 
-    touch("touchstart");
+    touch("touchstart", [1], [1]);
     await act(async () => growRow(28, ROW_HEIGHT + 120));
     await settleFrames();
     const held = heldCorrection();
     expect(held).toBeGreaterThanOrEqual(120);
 
-    touch("touchend");
+    touch("touchend", [1], []);
+    await settleFrames();
+
+    expect(scroller().scrollTop).toBeCloseTo(scrollTop + held, 0);
+    expect(contentNode().style.transform).toBe("");
+  });
+
+  it("ends the hold when the scroller's finger lifts while a finger elsewhere stays down", async () => {
+    await mountScrolledToRow(30);
+    const scrollTop = scroller().scrollTop;
+
+    // Finger 2 rests outside the scroller, so its events never reach it.
+    touch("touchstart", [1], [1, 2]);
+    await act(async () => growRow(28, ROW_HEIGHT + 120));
+    await settleFrames();
+    const held = heldCorrection();
+
+    touch("touchend", [1], [2]);
+    await settleFrames();
+
+    expect(scroller().scrollTop).toBeCloseTo(scrollTop + held, 0);
+    expect(contentNode().style.transform).toBe("");
+  });
+
+  it("holds corrections until every finger that started on the scroller lifts", async () => {
+    await mountScrolledToRow(30);
+    const scrollTop = scroller().scrollTop;
+
+    touch("touchstart", [1], [1]);
+    touch("touchstart", [2], [1, 2]);
+    await act(async () => growRow(28, ROW_HEIGHT + 120));
+    await settleFrames();
+    const held = heldCorrection();
+
+    touch("touchend", [1], [2]);
+    await settleFrames();
+    expect(scroller().scrollTop).toBe(scrollTop);
+    expect(heldCorrection()).toBe(held);
+
+    touch("touchend", [2], []);
     await settleFrames();
 
     expect(scroller().scrollTop).toBeCloseTo(scrollTop + held, 0);

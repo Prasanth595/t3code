@@ -1447,7 +1447,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
      }
    }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2ace70387 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..9649b22ba5ab9f4fd7c4011ffddd54fabef7ed07 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1545,7 +1545,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
          const target = getScrollTarget();
          if (!target || typeof target.scrollBy !== "function") {
            return;
-@@ -6237,6 +6259,74 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
+@@ -6237,6 +6259,94 @@ var ListComponentScrollView = React3.forwardRef(function ListComponentScrollView
        scrollEventCoalescer.cancel();
      };
    }, [emitScrollEnd, getScrollTarget, handleScroll, scrollEventCoalescer]);
@@ -1574,14 +1574,33 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
 +      clearSettle();
 +      deferral.settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
 +    };
-+    const onTouchStart = () => {
++    // Fingers that started on this scroller, by touch identifier. A finger
++    // elsewhere on the screen does not hold a touch scroll here, and its
++    // touchend never reaches this element. A finger whose touchend was lost
++    // drops out at the next touchstart, which lists every finger still down.
++    const touchIds = /* @__PURE__ */ new Set();
++    const onTouchStart = (event) => {
 +      clearSettle();
++      const down = new Set(Array.from(event.touches, (touch) => touch.identifier));
++      for (const id of touchIds) {
++        if (!down.has(id)) {
++          touchIds.delete(id);
++        }
++      }
++      if (touchIds.size === 0) {
++        scrolledDuringTouch = false;
++      }
++      for (const touch of Array.from(event.changedTouches)) {
++        touchIds.add(touch.identifier);
++      }
 +      deferral.touching = true;
 +      deferral.active = true;
-+      scrolledDuringTouch = false;
 +    };
 +    const onTouchEnd = (event) => {
-+      if (event.touches.length > 0) {
++      for (const touch of Array.from(event.changedTouches)) {
++        touchIds.delete(touch.identifier);
++      }
++      if (touchIds.size > 0) {
 +        return;
 +      }
 +      deferral.touching = false;
@@ -1612,6 +1631,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
 +      element.removeEventListener("scroll", onScroll);
 +      element.removeEventListener("scrollend", settle);
 +      clearSettle();
++      touchIds.clear();
 +      deferral.touching = false;
 +      deferral.active = false;
 +      flushTouchScrollDeferral(ctx.state);
@@ -1620,7 +1640,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
    React3.useEffect(() => {
      const doScroll = () => {
        if (contentOffset) {
-@@ -6404,6 +6494,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
+@@ -6404,6 +6514,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
    }
    return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
  }
@@ -1674,7 +1694,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
  function scrollAdjustBy(el, left, top) {
    el.scrollBy({ behavior: "auto", left, top });
  }
-@@ -6414,6 +6551,48 @@ function ScrollAdjust() {
+@@ -6414,6 +6571,48 @@ function ScrollAdjust() {
    const resetPaddingRafRef = React3__namespace.useRef(void 0);
    const temporaryPaddingRef = React3__namespace.useRef(void 0);
    const contentNodeRef = React3__namespace.useRef(null);
@@ -1723,7 +1743,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
    const callback = React3__namespace.useCallback(() => {
      const scrollAdjust = peek$(ctx, "scrollAdjust");
      const scrollAdjustUserOffset = peek$(ctx, "scrollAdjustUserOffset");
-@@ -6423,55 +6602,53 @@ function ScrollAdjust() {
+@@ -6423,55 +6622,53 @@ function ScrollAdjust() {
        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
        if (target) {
          const horizontal = !!ctx.state.props.horizontal;
@@ -1815,7 +1835,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..44580c0daf9c9ab7ea3fdfb7b5f6d9f2
    useValueListener$("scrollAdjustUserOffset", callback);
    return null;
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63310f1e4d 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..94f4709eb4f8020ba6ebebfbade689a348dd3611 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1913,7 +1933,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63
          const target = getScrollTarget();
          if (!target || typeof target.scrollBy !== "function") {
            return;
-@@ -6216,6 +6238,74 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
+@@ -6216,6 +6238,94 @@ var ListComponentScrollView = forwardRef(function ListComponentScrollView2({
        scrollEventCoalescer.cancel();
      };
    }, [emitScrollEnd, getScrollTarget, handleScroll, scrollEventCoalescer]);
@@ -1942,14 +1962,33 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63
 +      clearSettle();
 +      deferral.settleTimer = setTimeout(settle, TOUCH_SCROLL_SETTLE_FALLBACK_MS);
 +    };
-+    const onTouchStart = () => {
++    // Fingers that started on this scroller, by touch identifier. A finger
++    // elsewhere on the screen does not hold a touch scroll here, and its
++    // touchend never reaches this element. A finger whose touchend was lost
++    // drops out at the next touchstart, which lists every finger still down.
++    const touchIds = /* @__PURE__ */ new Set();
++    const onTouchStart = (event) => {
 +      clearSettle();
++      const down = new Set(Array.from(event.touches, (touch) => touch.identifier));
++      for (const id of touchIds) {
++        if (!down.has(id)) {
++          touchIds.delete(id);
++        }
++      }
++      if (touchIds.size === 0) {
++        scrolledDuringTouch = false;
++      }
++      for (const touch of Array.from(event.changedTouches)) {
++        touchIds.add(touch.identifier);
++      }
 +      deferral.touching = true;
 +      deferral.active = true;
-+      scrolledDuringTouch = false;
 +    };
 +    const onTouchEnd = (event) => {
-+      if (event.touches.length > 0) {
++      for (const touch of Array.from(event.changedTouches)) {
++        touchIds.delete(touch.identifier);
++      }
++      if (touchIds.size > 0) {
 +        return;
 +      }
 +      deferral.touching = false;
@@ -1980,6 +2019,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63
 +      element.removeEventListener("scroll", onScroll);
 +      element.removeEventListener("scrollend", settle);
 +      clearSettle();
++      touchIds.clear();
 +      deferral.touching = false;
 +      deferral.active = false;
 +      flushTouchScrollDeferral(ctx.state);
@@ -1988,7 +2028,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63
    useEffect(() => {
      const doScroll = () => {
        if (contentOffset) {
-@@ -6383,6 +6473,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
+@@ -6383,6 +6493,53 @@ function getScrollAdjustTarget(ctx, contentNode) {
    }
    return scrollElement ? { contentNode: resolvedContentNode, scrollElement } : null;
  }
@@ -2042,7 +2082,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63
  function scrollAdjustBy(el, left, top) {
    el.scrollBy({ behavior: "auto", left, top });
  }
-@@ -6393,6 +6530,48 @@ function ScrollAdjust() {
+@@ -6393,6 +6550,48 @@ function ScrollAdjust() {
    const resetPaddingRafRef = React3.useRef(void 0);
    const temporaryPaddingRef = React3.useRef(void 0);
    const contentNodeRef = React3.useRef(null);
@@ -2091,7 +2131,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..cae24cc3013fa44c8b8db58e13cccf63
    const callback = React3.useCallback(() => {
      const scrollAdjust = peek$(ctx, "scrollAdjust");
      const scrollAdjustUserOffset = peek$(ctx, "scrollAdjustUserOffset");
-@@ -6402,55 +6581,53 @@ function ScrollAdjust() {
+@@ -6402,55 +6601,53 @@ function ScrollAdjust() {
        const target = getScrollAdjustTarget(ctx, contentNodeRef.current);
        if (target) {
          const horizontal = !!ctx.state.props.horizontal;
