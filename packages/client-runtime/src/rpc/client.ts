@@ -32,6 +32,7 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
 
 export interface EnvironmentRpcRequestObservation {
   readonly environmentId: string;
+  readonly environmentLabel: string;
   readonly method: string;
 }
 
@@ -201,6 +202,7 @@ const requestOnSession = Effect.fn("EnvironmentRpc.requestOnSession")(function* 
   ) => Effect.Effect<EnvironmentRpcSuccess<TTag>, EnvironmentRpcFailure<TTag>>;
   const completeObservation = yield* observer.observe({
     environmentId: supervisor.target.environmentId,
+    environmentLabel: supervisor.target.label,
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
@@ -278,6 +280,8 @@ export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
 }
 
 interface SubscriptionOptions<TTag extends EnvironmentSubscriptionRpcTag> {
+  /** Pins a subscription to a session already checked by its caller. */
+  readonly session?: RpcSession;
   readonly onDefect?: (
     cause: Cause.Cause<EnvironmentRpcStreamFailure<TTag>>,
   ) => Effect.Effect<void, never, never>;
@@ -305,14 +309,21 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
     Effect.gen(function* () {
       const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
       const observer = yield* EnvironmentRpcSubscriptionObserver;
-      const sessionChanges = SubscriptionRef.changes(supervisor.session);
+      const sessionChanges =
+        options?.session === undefined
+          ? SubscriptionRef.changes(supervisor.session)
+          : Stream.succeed(Option.some(options.session));
       const sessions =
         options?.resubscribe === undefined
           ? sessionChanges
           : Stream.merge(
               sessionChanges,
               options.resubscribe.pipe(
-                Stream.mapEffect(() => SubscriptionRef.get(supervisor.session)),
+                Stream.mapEffect(() =>
+                  options.session === undefined
+                    ? SubscriptionRef.get(supervisor.session)
+                    : Effect.succeed(Option.some(options.session)),
+                ),
               ),
             );
       return sessions.pipe(
