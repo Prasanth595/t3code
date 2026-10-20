@@ -271,7 +271,7 @@ describe("ChangedFilesTree", () => {
         data={["files", "after"]}
         keyExtractor={(item) => item}
         estimatedItemSize={100}
-        style={{ height: 600 }}
+        className="h-[600px]"
         renderItem={({ item }) =>
           item === "files" ? (
             <ChangedFilesTree
