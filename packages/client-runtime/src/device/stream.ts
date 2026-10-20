@@ -134,6 +134,11 @@ const WEBRTC_STALL_CHECK_MS = 5_000;
 const TRANSPORT_PROBE_TIMEOUT_MS = 5_000;
 // Offers carry every candidate: serve-sim does not accept trickled ICE.
 const ICE_GATHERING_TIMEOUT_MS = 2_000;
+// A gathering cut short without a reflexive or relay candidate is retried
+// with twice the deadline, up to this; then the offer goes as gathered. The
+// whole sequence stays inside the first-frame deadline, which retries do
+// not extend.
+const ICE_GATHERING_MAX_TIMEOUT_MS = 4_000;
 const MJPEG_FRAME_CHECK_MS = 250;
 const FRAME_DURATION_US = 16_667;
 const SEMU_MAGIC = 0x53454d55;
@@ -416,6 +421,7 @@ export function createDeviceStreamClient(
   let panelSinks: DuoPanelSinks | null = null;
   let rotationCursor: DeviceScreenSize["orientation"] | null = null;
   let pendingOrientation: { requestId: number } | null = null;
+  let iceGatheringDeadlineMs = ICE_GATHERING_TIMEOUT_MS;
   let peer: { connection: RTCPeerConnection; sessionId: string; video: HTMLVideoElement } | null =
     null;
   const duoControl = createDuoControl({
@@ -934,6 +940,7 @@ export function createDeviceStreamClient(
     }
     connection.ontrack = (event) => {
       if (!isCurrent()) return;
+      iceGatheringDeadlineMs = ICE_GATHERING_TIMEOUT_MS;
       video.srcObject = event.streams[0] ?? new MediaStream([event.track]);
       void video.play().catch(() => {});
       video.requestVideoFrameCallback(presentFrame);
@@ -946,7 +953,7 @@ export function createDeviceStreamClient(
       await connection.setLocalDescription(await connection.createOffer());
       const gathered = await new Promise<boolean>((resolve) => {
         if (connection.iceGatheringState === "complete") return resolve(true);
-        const timer = setTimeout(() => done(false), ICE_GATHERING_TIMEOUT_MS);
+        const timer = setTimeout(() => done(false), iceGatheringDeadlineMs);
         function done(complete: boolean) {
           clearTimeout(timer);
           connection.removeEventListener("icegatheringstatechange", changed);
@@ -959,10 +966,17 @@ export function createDeviceStreamClient(
       });
       if (!isCurrent()) return;
       // serve-sim takes the offer's candidates as the whole set; none trickle
-      // later. Host candidates gather at once and reach a simulator on this
-      // network, so an offer cut short with some is still sent; one with none
-      // could never connect, so it is retried instead.
-      if (!gathered && !/^a=candidate:/m.test(connection.localDescription?.sdp ?? "")) {
+      // later. A simulator in the cloud needs a reflexive or relay candidate,
+      // which STUN and TURN can take longer than the deadline to produce: an
+      // offer cut short without one is retried with a longer deadline, up to
+      // a bound, after which it goes as gathered rather than never.
+      const sdp = connection.localDescription?.sdp ?? "";
+      if (
+        !gathered &&
+        !/^a=candidate:.* typ (?:srflx|relay)\b/m.test(sdp) &&
+        iceGatheringDeadlineMs < ICE_GATHERING_MAX_TIMEOUT_MS
+      ) {
+        iceGatheringDeadlineMs = Math.min(iceGatheringDeadlineMs * 2, ICE_GATHERING_MAX_TIMEOUT_MS);
         return retry("Device stream found no network candidates yet. Retrying…");
       }
       const response = await fetch(httpUrl(`/helper/${device}/webrtc/offer`), {

@@ -1140,8 +1140,8 @@ describe("WebRTC-only iOS devices", () => {
     await fixture.settle();
     expect(fixture.peers).toHaveLength(1);
     expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(0);
-    // The gathering deadline passes with no candidate in the offer: no offer is
-    // sent, the attempt is retried.
+    // The gathering deadline passes with no reflexive or relay candidate: no
+    // offer is sent, the attempt is retried with twice the deadline.
     await vi.advanceTimersByTimeAsync(2_000);
     expect(fixture.peers[0]!.closed).toBe(true);
     expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(0);
@@ -1152,6 +1152,14 @@ describe("WebRTC-only iOS devices", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await fixture.settle();
     expect(fixture.peers).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fixture.peers[1]!.closed).toBe(false);
+    // The second deadline, 4 s, is the bound: the offer goes as gathered.
+    await vi.advanceTimersByTimeAsync(3_000);
+    await fixture.settle();
+    expect(fixture.peers).toHaveLength(2);
+    expect(fixture.peers[1]!.closed).toBe(false);
+    expect(fixture.requests("/helper/udid-1/webrtc/offer")).toHaveLength(1);
     fixture.client.stop();
   });
 
