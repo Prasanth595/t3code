@@ -16,6 +16,8 @@ const fixture = vi.hoisted(() => ({
   remoteConfigured: true,
   revision: 1,
   targets: new Set<string>(),
+  invalidateWait: undefined as Promise<void> | undefined,
+  continuationFails: false,
 }));
 
 vi.mock(import("@tanstack/react-router"), async (original) => ({
@@ -78,9 +80,9 @@ vi.mock(import("../../state/pullRequests"), async (original) => {
       const values: Array<readonly [EnvironmentId, PullRequestListResult]> = [];
       const observations: Array<readonly [EnvironmentId, PullRequestListResult, number]> = [];
       let error: string | null = null;
-      for (const { environmentId } of targets) {
+      for (const { environmentId, input } of targets) {
         fixture.targets.add(environmentId);
-        const value = answer(environmentId);
+        const value = answer(environmentId, input.cursors !== undefined);
         if (value.providers[0]!.configured) {
           values.push([environmentId, value]);
           observations.push([environmentId, value, Date.now()]);
@@ -113,6 +115,7 @@ vi.mock(import("../../state/use-atom-command"), async () => {
   const { AsyncResult } = await import("effect/reactivity");
   return {
     useAtomCommand: (() => async () => {
+      await fixture.invalidateWait;
       fixture.revision++;
       return AsyncResult.success(undefined);
     }) as never,
@@ -130,9 +133,11 @@ vi.mock(import("../ui/sidebar"), async (original) => ({
 
 import { Route } from "../../routes/_chat.pull-requests";
 
-function answer(environmentId: EnvironmentId): PullRequestListResult {
+function answer(environmentId: EnvironmentId, continuation = false): PullRequestListResult {
   const configured =
-    environmentId === "env-1" ? fixture.primaryConfigured : fixture.remoteConfigured;
+    environmentId === "env-1"
+      ? fixture.primaryConfigured && !(continuation && fixture.continuationFails)
+      : fixture.remoteConfigured;
   const projectId = `project-${environmentId}` as ProjectId;
   return {
     viewers: configured ? { "bitbucket.org": "reviewer" } : {},
@@ -175,8 +180,11 @@ function answer(environmentId: EnvironmentId): PullRequestListResult {
     errors: configured
       ? []
       : [{ projectId, projectTitle: "Widget", message: "Credentials rejected" }],
-    truncated: false,
-    nextCursors: {},
+    truncated: configured && fixture.continuationFails && !continuation,
+    nextCursors:
+      configured && fixture.continuationFails && !continuation
+        ? { "bitbucket.org acme/widget": "next-page" }
+        : {},
   };
 }
 
@@ -193,6 +201,8 @@ beforeEach(() => {
   fixture.remoteConfigured = true;
   fixture.revision++;
   fixture.targets.clear();
+  fixture.invalidateWait = undefined;
+  fixture.continuationFails = false;
   window.localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
@@ -240,4 +250,42 @@ it("keeps the setup error visible when a failing server is explicitly selected",
   expect(container.textContent).toContain("Bitbucket rejected");
   expect(container.textContent).not.toContain("No pull requests");
   expect([...fixture.targets]).toEqual(["env-1"]);
+});
+
+it("falls back when a continuation fails after a successful baseline", async () => {
+  fixture.primaryConfigured = true;
+  fixture.continuationFails = true;
+  await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Local server");
+  const loadMore = [...container.querySelectorAll("button")].find((button) =>
+    button.textContent?.includes("Load more pull requests"),
+  );
+  expect(loadMore).toBeDefined();
+  vi.mocked(Date.now).mockImplementation(() => (fixture.revision + 1) * 1000);
+  await act(async () => loadMore!.click());
+  expect(container.textContent).toContain("Remote server");
+  expect(container.textContent).toContain("Handle reconnects without dropping pending work");
+  expect([...fixture.targets]).toEqual(["env-1", "env-2"]);
+});
+
+it("discards a stale baseline failure that arrives while host invalidation is pending", async () => {
+  fixture.primaryConfigured = true;
+  await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Local server");
+  let completeInvalidation!: () => void;
+  fixture.invalidateWait = new Promise<void>((resolve) => {
+    completeInvalidation = resolve;
+  });
+  const refresh = container.querySelector<HTMLButtonElement>(
+    '[aria-label="Refresh pull requests"]',
+  );
+  await act(async () => refresh!.click());
+  fixture.primaryConfigured = false;
+  fixture.revision++;
+  await act(async () => root.render(<View />));
+  expect(container.textContent).toContain("Remote server");
+  fixture.primaryConfigured = true;
+  await act(async () => completeInvalidation());
+  expect(container.textContent).toContain("Local server");
+  expect(container.textContent).not.toContain("Remote server");
 });

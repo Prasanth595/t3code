@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   assignProjectsToEnvironments,
   rememberPullRequestHosts,
+  resetPullRequestHosts,
   pullRequestProjectQueries,
   resolvePickableEnvironments,
   type AssignableProject,
@@ -147,9 +148,106 @@ describe("host read results", () => {
     ]);
     expect(next.get(environmentId)!.projectHosts.get(projectId)?.host).toBe("forge.example:3000");
   });
+
+  it.each([false, true])(
+    "treats a host as readable when any active batch succeeds (reversed: %s)",
+    (reverse) => {
+      const observations = [
+        [environmentId, { providers: [provider("gitlab.example", true)] }, 100],
+        [environmentId, { providers: [provider("gitlab.example", false)] }, 200],
+      ] as const;
+      const next = rememberPullRequestHosts(
+        new Map(),
+        reverse ? observations.toReversed() : observations,
+      );
+      expect(next.get(environmentId)!.hosts.get("gitlab.example")).toEqual({
+        configured: true,
+        observedAt: 200,
+      });
+      expect(next.get(environmentId)!.observedAt).toBe(200);
+      const cleared = resetPullRequestHosts(next);
+      expect(rememberPullRequestHosts(cleared, observations)).toBe(cleared);
+      const failed = rememberPullRequestHosts(next, [
+        [environmentId, { providers: [provider("gitlab.example", false)] }, 300],
+      ]);
+      expect(failed.get(environmentId)!.hosts.get("gitlab.example")?.configured).toBe(false);
+    },
+  );
+
+  it("forgets a refined host on refresh when the server returns to the stored identity", () => {
+    const projects = [
+      project("ssh", "env-1", "forge.example/acme/app"),
+      project("copy", "env-2", "forge.example/acme/app"),
+    ];
+    const oldRead = [
+      environmentId,
+      { providers: [{ ...provider("forge.example:3000", true), projectIds: [projects[0]!.id] }] },
+      100,
+    ] as const;
+    const previous = rememberPullRequestHosts(new Map(), [oldRead]);
+    const cleared = resetPullRequestHosts(previous);
+    expect(rememberPullRequestHosts(cleared, [oldRead])).toBe(cleared);
+    const refreshed = rememberPullRequestHosts(cleared, [
+      [environmentId, { providers: [provider("forge.example", false)] }, 200],
+    ]);
+    expect(
+      plain(
+        assignProjectsToEnvironments(projects, envs("env-1", "env-2"), environmentId, refreshed),
+      ),
+    ).toEqual({ "env-2": ["copy"] });
+  });
+
+  it("accepts a readable batch that arrives after a newer failed batch", () => {
+    const failedRead = [
+      environmentId,
+      { providers: [provider("gitlab.example", false)] },
+      200,
+    ] as const;
+    const failed = rememberPullRequestHosts(new Map(), [failedRead]);
+    const reads = [
+      failedRead,
+      [environmentId, { providers: [provider("gitlab.example", true)] }, 100] as const,
+    ];
+    const readable = rememberPullRequestHosts(failed, reads);
+    expect(readable.get(environmentId)!.hosts.get("gitlab.example")?.configured).toBe(true);
+    expect(rememberPullRequestHosts(readable, reads)).toBe(readable);
+  });
 });
 
 describe("assignment query limits", () => {
+  it("deduplicates worktrees before splitting a partial assignment", () => {
+    const healthy = Array.from({ length: 101 }, (_, index) =>
+      project(`healthy-${index}`, "env-1", `github.com/acme/repo-${index}`),
+    );
+    const worktrees = Array.from({ length: 101 }, (_, index) =>
+      project(`worktree-${index}`, "env-1", "GITHUB.COM/ACME/REPO-0"),
+    );
+    const projects = [
+      project("shared", "env-1", "bitbucket.org/acme/app"),
+      ...healthy,
+      ...worktrees,
+      project("unknown", "env-1"),
+      project("other-unknown", "env-1"),
+      project("copy", "env-2", "bitbucket.org/acme/app"),
+    ];
+    const queries = pullRequestProjectQueries(
+      projects,
+      envs("env-1", "env-2"),
+      new Map([["env-1" as EnvironmentId, hostAvailability(new Map([["bitbucket.org", false]]))]]),
+    );
+    const own = queries.filter(({ environmentId }) => environmentId === "env-1");
+    expect(own.map(({ projectIds }) => projectIds?.length)).toEqual([100, 3]);
+    expect(own.flatMap(({ projectIds }) => projectIds ?? [])).toEqual([
+      ...healthy.map(({ id }) => id),
+      "unknown",
+      "other-unknown",
+    ]);
+    for (const { projectIds } of queries)
+      expect(() =>
+        decodeListInput({ state: "open", ...(projectIds === undefined ? {} : { projectIds }) }),
+      ).not.toThrow();
+  });
+
   it("splits the healthy remainder after fallback into valid project filters", () => {
     const healthy = Array.from({ length: 101 }, (_, index) =>
       project(`healthy-${index}`, "env-1", `github.com/acme/repo-${index}`),

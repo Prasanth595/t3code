@@ -1216,6 +1216,31 @@ describe("merging the environments' own listings", () => {
     );
   });
 
+  it.each([false, true])(
+    "merges worktree batches without duplicate rows (reversed: %s)",
+    (reverse) => {
+      const older = entry({
+        projectId: "worktree-1" as ProjectId,
+        number: 4,
+        updatedAt: "2026-07-01T00:00:00Z",
+      });
+      const newer = entry({
+        projectId: "worktree-101" as ProjectId,
+        number: 4,
+        updatedAt: "2026-07-02T00:00:00Z",
+      });
+      const rows = reverse ? [newer, older] : [older, newer];
+      const merged = mergePullRequestLists([
+        ...rows.map((row) => [ENV_1, answer({ entries: [row] })] as const),
+        [ENV_2, answer({ entries: [older] })],
+      ]);
+      expect(merged?.entries).toEqual([
+        { ...newer, environmentId: ENV_1 },
+        { ...older, environmentId: ENV_2 },
+      ]);
+    },
+  );
+
   it("keeps project errors scoped to the environment that reported them", () => {
     const error = {
       projectId: "project-1" as ProjectId,

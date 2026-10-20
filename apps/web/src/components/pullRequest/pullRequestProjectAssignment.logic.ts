@@ -36,6 +36,17 @@ export type PullRequestHostRead = {
   >;
 };
 
+export function resetPullRequestHosts(
+  previous: ReadonlyMap<EnvironmentId, PullRequestHostRead>,
+): ReadonlyMap<EnvironmentId, PullRequestHostRead> {
+  return new Map(
+    [...previous].map(([id, read]) => [
+      id,
+      { ...read, resetAt: read.observedAt, hosts: new Map(), projectHosts: new Map() },
+    ]),
+  );
+}
+
 export function rememberPullRequestHosts(
   previous: ReadonlyMap<EnvironmentId, PullRequestHostRead>,
   observations: ReadonlyArray<
@@ -46,6 +57,26 @@ export function rememberPullRequestHosts(
     ]
   >,
 ): ReadonlyMap<EnvironmentId, PullRequestHostRead> {
+  const activeHosts = new Map<
+    EnvironmentId,
+    Map<string, { configured: boolean; observedAt: number }>
+  >();
+  for (const [environmentId, { providers }, observedAt] of observations) {
+    if (observedAt <= (previous.get(environmentId)?.resetAt ?? -Infinity)) continue;
+    let hosts = activeHosts.get(environmentId);
+    if (hosts === undefined) {
+      hosts = new Map();
+      activeHosts.set(environmentId, hosts);
+    }
+    for (const provider of providers) {
+      const host = provider.host.toLowerCase();
+      const held = hosts.get(host);
+      hosts.set(host, {
+        configured: provider.configured || held?.configured === true,
+        observedAt: Math.max(observedAt, held?.observedAt ?? -Infinity),
+      });
+    }
+  }
   let next = previous;
   for (const [environmentId, { providers }, observedAt] of observations) {
     const before = next.get(environmentId);
@@ -53,10 +84,17 @@ export function rememberPullRequestHosts(
     const hosts = new Map(before?.hosts);
     const projectHosts = new Map(before?.projectHosts);
     let changed = false;
+    let latestObservedAt = observedAt;
     for (const provider of providers) {
       const host = provider.host.toLowerCase();
-      if (observedAt > (hosts.get(host)?.observedAt ?? -Infinity)) {
-        hosts.set(host, { configured: provider.configured, observedAt });
+      const active = activeHosts.get(environmentId)!.get(host)!;
+      const held = hosts.get(host);
+      if (
+        active.observedAt > (held?.observedAt ?? -Infinity) ||
+        (active.observedAt === held?.observedAt && active.configured && !held.configured)
+      ) {
+        hosts.set(host, active);
+        latestObservedAt = Math.max(latestObservedAt, active.observedAt);
         changed = true;
       }
       for (const projectId of provider.projectIds ?? []) {
@@ -69,7 +107,7 @@ export function rememberPullRequestHosts(
     if (!changed) continue;
     next = new Map(next).set(environmentId, {
       ...before,
-      observedAt: Math.max(before?.observedAt ?? -Infinity, observedAt),
+      observedAt: Math.max(before?.observedAt ?? -Infinity, latestObservedAt),
       hosts,
       projectHosts,
     });
@@ -156,12 +194,30 @@ export function pullRequestProjectQueries(
     const projectIds = assignment.get(environmentId);
     if (projectIds === undefined) return [];
     if (projectIds.length === totals.get(environmentId)) return [{ environmentId }];
+    const byId = new Map(
+      projects
+        .filter((project) => project.environmentId === environmentId)
+        .map((project) => [project.id, project] as const),
+    );
+    const seen = new Set<string>();
+    const uniqueProjectIds = projectIds.filter((id) => {
+      const project = byId.get(id);
+      const key = project === undefined ? undefined : repositoryKey(project);
+      if (!key) return true;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     const queries: Array<{ environmentId: EnvironmentId; projectIds: ReadonlyArray<ProjectId> }> =
       [];
-    for (let offset = 0; offset < projectIds.length; offset += PULL_REQUEST_LIST_PROJECT_LIMIT) {
+    for (
+      let offset = 0;
+      offset < uniqueProjectIds.length;
+      offset += PULL_REQUEST_LIST_PROJECT_LIMIT
+    ) {
       queries.push({
         environmentId,
-        projectIds: projectIds.slice(offset, offset + PULL_REQUEST_LIST_PROJECT_LIMIT),
+        projectIds: uniqueProjectIds.slice(offset, offset + PULL_REQUEST_LIST_PROJECT_LIMIT),
       });
     }
     return queries;

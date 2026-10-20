@@ -465,7 +465,7 @@ export function mergePullRequestLists(
   const viewers: Record<string, string> = {};
   const truncatedEnvironments = new Set<string>();
   const providers = new Map<string, PullRequestListResult["providers"][number]>();
-  const entries: EnvironmentPullRequestEntry[] = [];
+  const entries = new Map<string, EnvironmentPullRequestEntry>();
   const errors: EnvironmentPullRequestError[] = [];
   const nextCursors: Record<string, PullRequestListCursors> = {};
   let truncated = false;
@@ -487,7 +487,19 @@ export function mergePullRequestLists(
             },
       );
     }
-    entries.push(...answer.entries.map((entry) => ({ ...entry, environmentId })));
+    for (const entry of answer.entries) {
+      const key = JSON.stringify([
+        environmentId,
+        entry.provider,
+        entry.host.toLowerCase(),
+        entry.repository.toLowerCase(),
+        entry.number,
+      ]);
+      const held = entries.get(key);
+      if (held === undefined || entry.updatedAt > held.updatedAt) {
+        entries.set(key, { ...entry, environmentId });
+      }
+    }
     errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));
     truncated ||= answer.truncated;
     if (answer.truncated) truncatedEnvironments.add(environmentId);
@@ -498,7 +510,9 @@ export function mergePullRequestLists(
   return {
     viewers,
     providers: [...providers.values()],
-    entries: entries.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    entries: [...entries.values()].toSorted((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt),
+    ),
     errors,
     truncated,
     nextCursors,

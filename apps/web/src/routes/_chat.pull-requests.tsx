@@ -105,6 +105,7 @@ import {
 import {
   pullRequestProjectQueries,
   rememberPullRequestHosts,
+  resetPullRequestHosts,
   type PullRequestHostAvailability,
   type PullRequestHostRead,
 } from "../components/pullRequest/pullRequestProjectAssignment.logic";
@@ -536,7 +537,10 @@ function PullRequestsRouteView() {
     } satisfies PullRequestListInput,
   }));
   const baselineQuery = usePullRequestList(baselineTargets);
-  const observedHosts = rememberPullRequestHosts(hostReads, baselineQuery.observations);
+  const observedHosts = rememberPullRequestHosts(
+    rememberPullRequestHosts(hostReads, baselineQuery.observations),
+    listQuery.observations,
+  );
   if (observedHosts !== hostReads) setHostReads(observedHosts);
   const baselineEmpty =
     baselineQuery.data?.entries.length === 0 &&
@@ -1070,21 +1074,14 @@ function PullRequestsRouteView() {
   );
   const refreshFromHost = async () => {
     const requestedStatsScope = statsScope;
-    // Retry preferred servers after credentials change, without replaying cached failures.
-    setHostReads(
-      (previous) =>
-        new Map(
-          [...previous].map(([id, read]) => [
-            id,
-            { ...read, resetAt: read.observedAt, hosts: new Map() },
-          ]),
-        ),
-    );
     setInvalidating(true);
     // Atom commands settle into results rather than throwing.
     await Promise.all(
       queryEnvironmentIds.map((environmentId) => invalidate({ environmentId, input: {} })),
     );
+    // Cancel the original reads before forgetting failures, including targets reassigned while waiting.
+    listQuery.refresh([...listTargets, ...baselineTargets]);
+    setHostReads(resetPullRequestHosts);
     setInvalidating(false);
     refreshListAndStats(requestedStatsScope);
     setDetailRefreshToken((token) => token + 1);
