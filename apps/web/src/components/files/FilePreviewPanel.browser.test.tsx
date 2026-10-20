@@ -44,7 +44,7 @@ vi.mock(import("~/hooks/useTheme"), async (original) => ({
 vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
 }));
-vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => null }));
+vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   useProjectFileQuery: () => ({
