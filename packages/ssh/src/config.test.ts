@@ -19,6 +19,48 @@ function makeTempHomeDir() {
 }
 
 describe("ssh config", () => {
+  it.effect("deduplicates hosts through quoted and escaped Include paths like OpenSSH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* makeTempHomeDir();
+      const sshDir = path.join(homeDir, ".ssh");
+      const quotedDir = path.join(homeDir, "quoted dir");
+      yield* fs.makeDirectory(sshDir);
+      yield* fs.makeDirectory(quotedDir);
+      yield* fs.writeFileString(
+        path.join(quotedDir, "team#1=a.conf"),
+        'Host quoted\n  HostName quoted".example.com"\nHost *\n',
+      );
+      yield* fs.writeFileString(
+        path.join(homeDir, "escaped space.conf"),
+        "Host escaped\n  HostName escaped.example.com\nHost *\n",
+      );
+      yield* fs.writeFileString(
+        path.join(sshDir, "config"),
+        [
+          `Include "${path.join(quotedDir, "team#1=a.conf")}" # comment`,
+          `Include ${path.join(homeDir, "escaped space.conf").replaceAll(" ", "\\ ")}`,
+          "",
+        ].join("\n"),
+      );
+
+      yield* fs.writeFileString(
+        path.join(sshDir, "known_hosts"),
+        "escaped.example.com ssh-ed25519 AAAA\nquoted.example.com ssh-ed25519 AAAA\n",
+      );
+
+      const hosts = yield* discoverSshHosts({ homeDir });
+      assert.deepEqual(
+        hosts.map((host) => [host.alias, host.hostname, host.source]),
+        [
+          ["escaped", "escaped.example.com", "ssh-config"],
+          ["quoted", "quoted.example.com", "ssh-config"],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("discovers ssh config hosts across included files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -11,19 +11,55 @@ import { SshHostDiscoveryError } from "./errors.ts";
 
 const NO_HOSTS: ReadonlyArray<string> = [] as const;
 
+// Mirrors OpenSSH readconf: the keyword may be followed by one optional "=",
+// then the arguments are split like misc.c argv_split() with quotes, the
+// escapes \\ \" \' and unquoted "\ ", and "#" starting a comment only at
+// the start of a token. Invalid quoting leaves hostname resolution uncertain.
 function parseSshConfigLine(line: string) {
-  const match = /^\s*([a-z]+)(?:\s*=\s*|\s+|$)(.*)$/iu.exec(line);
-  if (!match) return null;
+  const match = /^\s*([^\s=]+)\s*=?\s*(.*)$/u.exec(line);
+  if (!match) {
+    return null;
+  }
 
   const directive = match[1]!.toLowerCase();
   const args: Array<string> = [];
-  let rest = match[2]!.trim();
-  while (rest.length > 0 && !rest.startsWith("#")) {
-    const token = /^(?:"([^"\\]*)"|'([^'\\]*)'|([^\s"'\\]+))(?=\s|$)/u.exec(rest);
-    // Unsupported escaping or partial quoting must not produce a guessed hostname.
-    if (!token) return { directive, args: null };
-    args.push(token[1] ?? token[2] ?? token[3]!);
-    rest = rest.slice(token[0].length).trimStart();
+  const rest = match[2]!;
+  let token: string | null = null;
+  let quote: string | null = null;
+  for (let index = 0; index < rest.length; index += 1) {
+    const char = rest[index]!;
+    const next = rest[index + 1];
+    if (
+      char === "\\" &&
+      (next === '"' || next === "'" || next === "\\" || (quote === null && next === " "))
+    ) {
+      token = (token ?? "") + next;
+      index += 1;
+    } else if (quote !== null) {
+      if (char === quote) {
+        quote = null;
+      } else {
+        token = (token ?? "") + char;
+      }
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      token ??= "";
+    } else if (/\s/u.test(char)) {
+      if (token !== null) {
+        args.push(token);
+        token = null;
+      }
+    } else if (char === "#" && token === null) {
+      break;
+    } else {
+      token = (token ?? "") + char;
+    }
+  }
+  if (quote !== null) {
+    return { directive, args: null };
+  }
+  if (token !== null) {
+    args.push(token);
   }
   return { directive, args };
 }
