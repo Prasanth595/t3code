@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
+export const EditorLaunchStyle = Schema.Literals([
+  "direct-path",
+  "goto",
+  "line-column",
+  "plus-line",
+]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
 
 type EditorDefinition = {
@@ -12,6 +17,11 @@ type EditorDefinition = {
   readonly launchStyle: EditorLaunchStyle;
   readonly remoteScheme?: string;
   readonly jetbrainsProductCode?: string;
+  /**
+   * Runs `$VISUAL` or `$EDITOR` inside a terminal emulator; `commands` is the
+   * fallback when neither is set.
+   */
+  readonly terminal?: true;
 };
 
 export const EDITORS = [
@@ -53,6 +63,13 @@ export const EDITORS = [
     commands: ["zed", "zeditor"],
     launchStyle: "direct-path",
     remoteScheme: "zed",
+  },
+  {
+    id: "terminal-editor",
+    label: "Terminal Editor",
+    commands: ["nvim"],
+    launchStyle: "plus-line",
+    terminal: true,
   },
   {
     id: "antigravity",

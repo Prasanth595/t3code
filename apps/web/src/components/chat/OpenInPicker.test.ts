@@ -1,5 +1,5 @@
 import { FolderClosedIcon } from "lucide-react";
-import { FileExplorerIcon, FinderIcon } from "../Icons";
+import { FileExplorerIcon, FinderIcon, TerminalEditorIcon } from "../Icons";
 import { resolveOpenInOptions } from "./OpenInPicker";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -83,5 +83,16 @@ describe("resolveOpenInOptions", () => {
       expect.objectContaining({ value: "vscode" }),
     ]);
     expect(resolveOpenInOptions("MacIntel", [])).toEqual([]);
+  });
+
+  it("includes the terminal editor after Zed when the server reports it available", () => {
+    expect(resolveOpenInOptions("Linux x86_64", ["zed", "terminal-editor"])).toEqual([
+      expect.objectContaining({ value: "zed", label: "Zed" }),
+      expect.objectContaining({
+        value: "terminal-editor",
+        label: "Terminal Editor",
+        Icon: TerminalEditorIcon,
+      }),
+    ]);
   });
 });

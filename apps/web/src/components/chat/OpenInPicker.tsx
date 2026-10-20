@@ -38,6 +38,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  TerminalEditorIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -117,6 +118,11 @@ export const resolveOpenInOptions = (
       Icon: Zed,
       value: "zed",
       kind: "brand",
+    },
+    {
+      Icon: TerminalEditorIcon,
+      value: "terminal-editor",
+      kind: "generic",
     },
     {
       Icon: AntigravityIcon,
