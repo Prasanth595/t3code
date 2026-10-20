@@ -134,7 +134,7 @@ it.effect(
           domains,
           "native-thread",
         ).pipe(Effect.flip);
-        assert.equal(error.code, "usage_limit");
+        assert.equal("code" in error ? error.code : undefined, "usage_limit");
         assert.isFalse(dispatch.calls.includes("thread/read"));
       }
     }),

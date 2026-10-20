@@ -4871,7 +4871,8 @@ function runBackgroundItemScenario(
   key: string,
   makeEvents: (ids: BackgroundScenarioIds) => ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
   options?: {
-    readonly onLaunchQuotaFailure?: () => Effect.Effect<boolean>;
+    readonly onLaunchQuotaFailure?: (failure: unknown) => Effect.Effect<boolean>;
+    readonly isLaunchFailureCandidate?: (failure: unknown) => boolean;
     readonly keepEventStreamOpen?: boolean;
     readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
       ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>
@@ -4986,6 +4987,9 @@ function runBackgroundItemScenario(
             }),
         ...(options?.onLaunchQuotaFailure
           ? { onLaunchQuotaFailure: options.onLaunchQuotaFailure }
+          : {}),
+        ...(options?.isLaunchFailureCandidate
+          ? { isLaunchFailureCandidate: options.isLaunchFailureCandidate }
           : {}),
         providerTurnOrdinal: 1,
         message: {
@@ -5140,5 +5144,53 @@ it.effect("preserves non-quota failures and refuses quota replay after tool exec
       options,
     );
     assert.equal(recovered, 0);
+  }),
+);
+
+it.effect(
+  "hands any pre-work failure of a bound launch to trusted pool state, never after work",
+  () =>
+    Effect.gen(function* () {
+      const handed: Array<unknown> = [];
+      // A bound launch asks the proxy what happened; the native class may say
+      // only "provider error" for a dispatch-time refusal.
+      const options = {
+        isLaunchFailureCandidate: () => true,
+        onLaunchQuotaFailure: (failure: unknown) =>
+          Effect.sync(() => {
+            handed.push(failure);
+            return true;
+          }),
+      };
+      const observed = yield* runBackgroundItemScenario(
+        "bound-launch-refusal",
+        (ids) => [rootTerminalEvent(ids, "failed")],
+        options,
+      );
+      assert.lengthOf(handed, 1);
+      assert.notInclude(observed, "root-finalized");
+      yield* runBackgroundItemScenario(
+        "bound-launch-after-work",
+        (ids) => [
+          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          rootTerminalEvent(ids, "failed"),
+        ],
+        options,
+      );
+      assert.lengthOf(handed, 1);
+    }),
+);
+
+it.effect("finalizes the run when pool state proves an ordinary failure", () =>
+  Effect.gen(function* () {
+    const observed = yield* runBackgroundItemScenario(
+      "bound-launch-ordinary",
+      (ids) => [rootTerminalEvent(ids, "failed")],
+      {
+        isLaunchFailureCandidate: () => true,
+        onLaunchQuotaFailure: () => Effect.succeed(false),
+      },
+    );
+    assert.include(observed, "root-finalized");
   }),
 );

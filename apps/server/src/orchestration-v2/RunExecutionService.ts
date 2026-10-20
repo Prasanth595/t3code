@@ -1,4 +1,4 @@
-import { isLaunchQuotaFailure, launchQuotaScope } from "./DelegatedLaunchAdmission.ts";
+import { isLaunchQuotaFailure } from "./DelegatedLaunchAdmission.ts";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -575,8 +575,13 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly onLaunchWorkStarted?: () => Effect.Effect<void, RunExecutionStartError>;
   readonly onLaunchQuotaFailure?: (
-    scope: import("@t3tools/contracts").DelegatedQuotaScope,
+    failure: unknown,
   ) => Effect.Effect<boolean, RunExecutionStartError>;
+  /**
+   * Which pre-work failures may be launch refusals. Defaults to the quota class;
+   * a bound launch widens it because only its binding state can tell.
+   */
+  readonly isLaunchFailureCandidate?: (failure: unknown) => boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -1327,18 +1332,20 @@ export const layer: Layer.Layer<
           Stream.tap(({ event, accepted }) =>
             Effect.gen(function* () {
               if (!accepted) return;
+              const launchFailure = (failure: { readonly class: string } | undefined) =>
+                input.isLaunchFailureCandidate?.(failure) ?? failure?.class === "usage_limit";
               const quotaErrorItem =
                 event.type === "turn_item.updated" &&
                 event.turnItem.type === "error" &&
-                event.turnItem.failure.class === "usage_limit";
+                launchFailure(event.turnItem.failure);
               if (!launchDidWork && input.onLaunchQuotaFailure && quotaErrorItem) return;
               if (
                 event.type === "turn.terminal" &&
                 event.status === "failed" &&
-                event.failure?.class === "usage_limit" &&
+                launchFailure(event.failure) &&
                 !launchDidWork &&
                 input.onLaunchQuotaFailure &&
-                (yield* input.onLaunchQuotaFailure(launchQuotaScope(event.failure)))
+                (yield* input.onLaunchQuotaFailure(event.failure))
               ) {
                 yield* Ref.set(terminalEvent, event);
                 yield* Ref.set(rootTerminalSeen, true);
@@ -1580,7 +1587,12 @@ export const layer: Layer.Layer<
           message: input.message,
           modelSelection: input.modelSelection,
           ...(input.run.delegatedLaunch && !input.run.delegatedLaunch.complete
-            ? { delegatedLaunchDomains: input.run.delegatedLaunch.admittedDomains }
+            ? {
+                delegatedLaunchDomains: input.run.delegatedLaunch.admittedDomains,
+                ...(input.run.delegatedLaunch.binding
+                  ? { delegatedLaunchBinding: input.run.delegatedLaunch.binding }
+                  : {}),
+              }
             : {}),
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
@@ -1625,8 +1637,8 @@ export const layer: Layer.Layer<
               if (
                 !launchDidWork &&
                 input.onLaunchQuotaFailure &&
-                isLaunchQuotaFailure(Cause.squash(cause)) &&
-                (yield* input.onLaunchQuotaFailure(launchQuotaScope(Cause.squash(cause))))
+                (input.isLaunchFailureCandidate ?? isLaunchQuotaFailure)(Cause.squash(cause)) &&
+                (yield* input.onLaunchQuotaFailure(Cause.squash(cause)))
               ) {
                 yield* Ref.set(rootRunFinalized, true);
                 yield* Fiber.interrupt(providerEventFiber);

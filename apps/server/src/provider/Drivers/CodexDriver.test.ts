@@ -268,6 +268,52 @@ it.layer(layerTest)("CodexDriver", (it) => {
       }),
   );
 
+  it.effect("exposes pool control only for the named launcher protocol", () =>
+    Effect.gen(function* () {
+      const spawned: Array<{
+        command: string;
+        args: ReadonlyArray<string>;
+        account: string | undefined;
+      }> = [];
+      const recording = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command))
+          spawned.push({
+            command: command.command,
+            args: command.args,
+            account: command.options.env?.CODEX_T3_ACCOUNT,
+          });
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+        );
+      });
+      const create = (config: Partial<ReturnType<typeof CodexDriver.defaultConfig>>) =>
+        CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex_pool"),
+          displayName: "Pool",
+          enabled: true,
+          environment: [{ name: "CODEX_T3_ACCOUNT", value: "pool", sensitive: false }],
+          config: { ...CodexDriver.defaultConfig(), binaryPath: "/opt/fake/codex-t3", ...config },
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recording));
+
+      expect((yield* create({})).delegatedLaunchPool).toBeUndefined();
+      const pooled = yield* create({ delegatedLaunchControl: "codex-t3-pool-v1" });
+      expect(pooled.delegatedLaunchPool).toBeDefined();
+      spawned.length = 0;
+      // An unreachable launcher is unverified, never an exemption.
+      expect(
+        yield* pooled.delegatedLaunchPool!.prepare({
+          runId: "run-driver",
+          generation: 0,
+          model: "gpt-6.1-sol",
+          blockedQuotaDomains: [],
+        }),
+      ).toEqual({ status: "unverified" });
+      expect(spawned).toEqual([
+        { command: "/opt/fake/codex-t3", args: ["pool-control"], account: "pool" },
+      ]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("reports a disabled managed account as disabled", () =>
     Effect.gen(function* () {
       const instance = yield* CodexDriver.create({

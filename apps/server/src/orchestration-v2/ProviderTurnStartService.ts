@@ -536,6 +536,24 @@ export const layer: Layer.Layer<
         inheritedBackgroundTurnItems,
       });
       const { isCurrentAttemptInStatus } = runControls;
+      const launchGeneration = run.delegatedLaunch?.generation ?? 0;
+      const boundLaunch =
+        run.delegatedLaunch && !run.delegatedLaunch.complete
+          ? run.delegatedLaunch.binding
+          : undefined;
+      // A launch refusal before useful work returns to admission instead of
+      // failing the delegated task.
+      const recoverLaunch = (failure: unknown) =>
+        boundLaunch
+          ? launchAdmission.recoverBoundLaunch(input.threadId, run.id, launchGeneration, failure)
+          : DelegatedLaunchAdmission.isLaunchQuotaFailure(failure)
+            ? launchAdmission.recover(
+                input.threadId,
+                run.id,
+                launchGeneration,
+                DelegatedLaunchAdmission.launchQuotaScope(failure),
+              )
+            : Effect.succeed(false);
 
       const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
@@ -547,6 +565,7 @@ export const layer: Layer.Layer<
       );
       const sessionResult = yield* Effect.result(
         providerSessions.open({
+          ...(boundLaunch ? { delegatedLaunchBinding: boundLaunch } : {}),
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
@@ -597,16 +616,7 @@ export const layer: Layer.Layer<
         },
       );
       if (sessionResult._tag === "Failure") {
-        if (
-          DelegatedLaunchAdmission.isLaunchQuotaFailure(sessionResult.failure) &&
-          (yield* launchAdmission.recover(
-            input.threadId,
-            run.id,
-            run.delegatedLaunch?.generation ?? 0,
-            DelegatedLaunchAdmission.launchQuotaScope(sessionResult.failure),
-          ))
-        )
-          return;
+        if (yield* recoverLaunch(sessionResult.failure)) return;
         if (input.willRetry === true) return yield* sessionResult.failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
@@ -622,16 +632,7 @@ export const layer: Layer.Layer<
       ) {
         const loaded = yield* Effect.result(load);
         if (loaded._tag === "Success") return loaded.success;
-        if (
-          DelegatedLaunchAdmission.isLaunchQuotaFailure(loaded.failure) &&
-          (yield* launchAdmission.recover(
-            input.threadId,
-            run.id,
-            run.delegatedLaunch?.generation ?? 0,
-            DelegatedLaunchAdmission.launchQuotaScope(loaded.failure),
-          ))
-        )
-          return undefined;
+        if (yield* recoverLaunch(loaded.failure)) return undefined;
         if (input.willRetry === true) return yield* loaded.failure;
         yield* settleStartFailure({
           signal: "provider-thread-load-failure",
@@ -1260,19 +1261,18 @@ export const layer: Layer.Layer<
                       }),
                   ),
                 ),
-              onLaunchQuotaFailure: (scope) =>
-                launchAdmission
-                  .recover(input.threadId, run.id, run.delegatedLaunch?.generation ?? 0, scope)
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new RunExecutionService.RunExecutionStartError({
-                          commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
-                          runId: run.id,
-                          cause,
-                        }),
-                    ),
+              onLaunchQuotaFailure: (failure: unknown) =>
+                recoverLaunch(failure).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new RunExecutionService.RunExecutionStartError({
+                        commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+                        runId: run.id,
+                        cause,
+                      }),
                   ),
+                ),
+              ...(boundLaunch ? { isLaunchFailureCandidate: () => true } : {}),
             }
           : {}),
         appThread: projection.thread,

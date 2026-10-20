@@ -44,6 +44,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { DelegatedLaunchBinding } from "./delegatedLaunchBinding.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -561,11 +562,12 @@ export const OrchestrationV2Run = Schema.Struct({
       admittedDomains: Schema.Array(Schema.String),
       generation: NonNegativeInt,
       blockedUntil: IsoDateTime,
+      binding: Schema.optional(DelegatedLaunchBinding),
     }),
   ),
   capacityWait: Schema.optional(
     Schema.Struct({
-      reason: Schema.Literals(["exhausted", "unverified"]),
+      reason: Schema.Literals(["exhausted", "throttled", "unverified"]),
       checkedAt: IsoDateTime,
       retryAt: IsoDateTime,
     }),

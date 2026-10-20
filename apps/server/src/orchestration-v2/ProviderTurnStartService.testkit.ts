@@ -11,6 +11,7 @@ export const layer = Layer.mergeAll(
     check: (selection) => Effect.succeed({ status: "ready", selection, domains: [] }),
     markStarted: () => Effect.void,
     recover: () => Effect.succeed(false),
+    recoverBoundLaunch: () => Effect.succeed(false),
     prepare: () => Effect.succeed(true),
   }),
   Layer.mock(GitWorkflow.GitWorkflowService)({

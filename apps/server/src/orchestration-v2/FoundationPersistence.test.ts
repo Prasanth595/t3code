@@ -1,12 +1,14 @@
 import * as DelegatedLaunchAdmission from "./DelegatedLaunchAdmission.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
-import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import type { DelegatedLaunchPool, ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointId,
+  type CodexPoolBindingState,
+  type DelegatedLaunchBinding,
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
@@ -3934,6 +3936,351 @@ it.effect(
         });
         assert.isFalse(yield* admission.prepare(threadId, runId, 0));
         assert.equal(probes, 4);
+      }).pipe(Effect.provide(admissionLayer));
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+);
+
+it.effect(
+  "admits pool launches by binding, separates throttle from exhaustion, and never recovers after work",
+  () =>
+    Effect.gen(function* () {
+      const sink = yield* EventSink.EventSinkV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:pool-admission");
+      const runId = RunId.make("run:pool-admission");
+      const attemptId = RunAttemptId.make("attempt:pool-admission");
+      const providerThreadId = ProviderThreadId.make("provider-thread:pool-admission");
+      const thread = makeThread(threadId, now);
+      const run: OrchestrationV2Run = {
+        id: runId,
+        threadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId,
+        userMessageId: MessageId.make("message:pool-admission"),
+        rootNodeId: null,
+        activeAttemptId: attemptId,
+        status: "starting",
+        requestedAt: now,
+        startedAt: null,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+        delegatedTaskId: NodeId.make("task:pool-admission"),
+      };
+      assert.isTrue(
+        (yield* sink.commitCommand({
+          commandId: CommandId.make("client-request:pool-admission"),
+          commandType: "delegated_task.request",
+          acceptedAt: now,
+          threadId,
+          events: [
+            threadCreatedEvent({ id: "event:pool:thread", thread, now }),
+            {
+              id: EventId.make("event:pool:run"),
+              type: "run.created" as const,
+              threadId,
+              occurredAt: now,
+              payload: run,
+            },
+            {
+              id: EventId.make("event:pool:attempt"),
+              type: "run-attempt.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: attemptId,
+                runId,
+                attemptOrdinal: 1,
+                rootNodeId: NodeId.make("node:pool"),
+                providerInstanceId,
+                providerThreadId,
+                providerTurnId: null,
+                reason: "initial" as const,
+                status: "pending" as const,
+                startedAt: null,
+                completedAt: null,
+              },
+            },
+            {
+              id: EventId.make("event:pool:provider-thread"),
+              type: "provider-thread.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: providerThreadId,
+                driver: providerDriver,
+                providerInstanceId,
+                providerSessionId: ProviderSessionId.make("session:pool"),
+                appThreadId: threadId,
+                ownerNodeId: null,
+                nativeThreadRef: null,
+                nativeConversationHeadRef: null,
+                status: "not_loaded" as const,
+                firstRunOrdinal: 1,
+                lastRunOrdinal: 1,
+                handoffIds: [],
+                forkedFrom: null,
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+          effects: [],
+        })).committed,
+      );
+
+      const sol = "gpt-6.1-sol";
+      const exhausted = "codex:credential:acct-exhausted";
+      const spare = "codex:credential:acct-spare";
+      const prepares: Array<{ model: string; blocked: ReadonlyArray<string>; generation: number }> =
+        [];
+      const lifecycle: Array<string> = [];
+      const bindingIds = new Map<string, string>();
+      // Per model: what the proxy answers for a fresh prepare.
+      let answers: Record<string, "waiting" | "ready" | "unverified"> = {
+        [modelSelection.model]: "waiting",
+        [sol]: "ready",
+      };
+      let state: CodexPoolBindingState | undefined;
+      let stateReads = 0;
+      const bindingFor = (
+        model: string,
+        generation: number,
+        blocked: ReadonlyArray<string>,
+        at: number,
+      ): DelegatedLaunchBinding => {
+        const clientRequestId = `t3.req-${generation}-${model}-${blocked.length}`;
+        const bindingId =
+          bindingIds.get(clientRequestId) ?? String(bindingIds.size + 1).padStart(48, "0");
+        bindingIds.set(clientRequestId, bindingId);
+        const sessionId = `t3.session-${generation}-${model}`;
+        return {
+          protocol: "codex-t3-pool-v1",
+          instanceId: providerInstanceId,
+          prepareRequest: {
+            clientRequestId,
+            sessionId,
+            provider: "codex",
+            model,
+            blockedQuotaDomains: blocked,
+          },
+          result: {
+            protocolVersion: 1,
+            status: "ready",
+            checkedAt: DateTime.formatIso(DateTime.makeUnsafe(at)),
+            expiresAt: DateTime.formatIso(DateTime.makeUnsafe(at + 30_000)),
+            ordinaryUsageAllowed: true,
+            quotaDomains: [spare],
+            bindingId,
+            basePath: `/v1/delegated-launch/bindings/${bindingId}/sessions/${sessionId}`,
+            provider: "codex",
+            model,
+            sessionId,
+            windows: [
+              {
+                id: "primary",
+                usedPercent: 10,
+                resetsAt: DateTime.formatIso(DateTime.makeUnsafe(at + 3_600_000)),
+              },
+            ],
+          },
+        };
+      };
+      const pool: DelegatedLaunchPool = {
+        prepare: (input) =>
+          Effect.gen(function* () {
+            const blocked = input.blockedQuotaDomains.filter((d) =>
+              d.startsWith("codex:credential:"),
+            );
+            prepares.push({ model: input.model, blocked, generation: input.generation });
+            const answer = answers[input.model] ?? "unverified";
+            if (answer === "waiting") return { status: "waiting", quotaDomains: [exhausted] };
+            if (answer === "unverified" || blocked.includes(spare)) return { status: "unverified" };
+            const at = DateTime.toEpochMillis(yield* DateTime.now);
+            return {
+              status: "ready",
+              binding: bindingFor(input.model, input.generation, blocked, at),
+            };
+          }),
+        state: () =>
+          Effect.sync(() => {
+            stateReads++;
+            return state;
+          }),
+        touch: () => Effect.succeed(true),
+        release: (b) =>
+          Effect.sync(() => lifecycle.push(`release:${b.result.bindingId}`)).pipe(Effect.as(true)),
+        resume: () => Effect.succeed(true),
+        cancel: (id) => Effect.sync(() => lifecycle.push(`cancel:${id}`)).pipe(Effect.as(true)),
+      };
+      const instance = {
+        instanceId: providerInstanceId,
+        driverKind: providerDriver,
+        enabled: true,
+        delegatedLaunchPool: pool,
+        snapshot: {
+          getSnapshot: Effect.succeed({
+            instanceId: providerInstanceId,
+            driver: providerDriver,
+            enabled: true,
+            installed: true,
+            version: null,
+            status: "ready" as const,
+            auth: { status: "unknown" as const },
+            checkedAt: DateTime.formatIso(now),
+            models: [modelSelection.model, sol].map((slug) => ({
+              slug,
+              name: slug,
+              isCustom: false,
+              capabilities: null,
+            })),
+            slashCommands: [],
+            skills: [],
+          }),
+          refresh: Effect.die("pool admission never spends a local usage snapshot"),
+        },
+      } as unknown as ProviderInstance;
+      const admissionLayer = DelegatedLaunchAdmission.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            ServerSettings.layerTest({
+              delegatedLaunchRoutes: [
+                {
+                  from: modelSelection,
+                  fallback: [{ instanceId: providerInstanceId, model: sol }],
+                },
+              ],
+            }),
+            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+              getInstance: () => Effect.succeed(instance),
+            }),
+          ),
+        ),
+      );
+      const current = () =>
+        store.getTurnStartContext(threadId, runId).pipe(Effect.map((c) => c.runs[0]!));
+      const providerThread = () =>
+        store
+          .getTurnStartContext(threadId, runId)
+          .pipe(Effect.map((c) => c.providerThreads.find((p) => p.id === providerThreadId)!));
+      const setStatus = (id: string, status: "running" | "starting") =>
+        Effect.gen(function* () {
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(id),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...(yield* current()), status },
+              },
+            ],
+          });
+        });
+
+      yield* Effect.gen(function* () {
+        const admission = yield* DelegatedLaunchAdmission.DelegatedLaunchAdmission;
+        // The requested model's account is exhausted: the fallback prepare
+        // carries that account as blocked, so the proxy cannot pin it again.
+        assert.isTrue(yield* admission.prepare(threadId, runId, 0));
+        assert.deepEqual(prepares, [
+          { model: modelSelection.model, blocked: [], generation: 0 },
+          { model: sol, blocked: [exhausted], generation: 0 },
+        ]);
+        const admitted = yield* current();
+        assert.equal(admitted.modelSelection.model, sol);
+        assert.isUndefined(admitted.capacityWait);
+        assert.deepEqual(admitted.delegatedLaunch?.admittedDomains, [spare]);
+        const binding = admitted.delegatedLaunch!.binding!;
+        assert.equal(binding.prepareRequest.model, sol);
+        // A lease always gets a fresh native process.
+        assert.notEqual((yield* providerThread()).providerSessionId, "session:pool");
+
+        // Duplicate delivery at the same generation reuses the same logical prepare.
+        assert.isTrue(yield* admission.prepare(threadId, runId, 0));
+        assert.deepEqual((yield* current()).delegatedLaunch?.binding, binding);
+        assert.deepEqual(lifecycle, []);
+
+        // Dispatch-time throttle before useful work: skip this candidate only.
+        state = {
+          protocolVersion: 1,
+          state: "established",
+          active: false,
+          executorAttempts: 1,
+          refusalVersion: 1,
+          refusal: { code: "throttled", quotaScope: "transient", quotaDomains: [] },
+        };
+        yield* setStatus("event:pool:running-1", "running");
+        assert.isTrue(yield* admission.recoverBoundLaunch(threadId, runId, 0, new Error("429")));
+        const throttled = yield* current();
+        assert.equal(throttled.delegatedLaunch?.generation, 1);
+        assert.include(
+          throttled.delegatedLaunch?.blockedDomains ?? [],
+          `launch:candidate:codex:${sol}`,
+        );
+        assert.notInclude(throttled.delegatedLaunch?.blockedDomains ?? [], spare);
+        assert.isFalse(yield* admission.recoverBoundLaunch(threadId, runId, 0, new Error("dup")));
+
+        answers = { [modelSelection.model]: "unverified", [sol]: "ready" };
+        const waiting = yield* admission.prepare(threadId, runId, 1).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(waiting));
+        assert.equal((yield* current()).capacityWait?.reason, "throttled");
+        assert.isFalse(prepares.some((p) => p.generation === 1 && p.model === sol));
+        // The superseded lease is cancelled and released, never launched.
+        assert.deepEqual(lifecycle, [
+          `cancel:${binding.prepareRequest.clientRequestId}`,
+          `release:${binding.result.bindingId}`,
+        ]);
+
+        // After the throttle window the same model is eligible again.
+        yield* TestClock.adjust("61 seconds");
+        assert.isTrue(yield* admission.prepare(threadId, runId, 1));
+        const second = (yield* current()).delegatedLaunch!.binding!;
+        assert.notEqual(
+          second.prepareRequest.clientRequestId,
+          binding.prepareRequest.clientRequestId,
+        );
+
+        // Verified account exhaustion blocks that account for every model.
+        state = {
+          protocolVersion: 1,
+          state: "established",
+          active: false,
+          executorAttempts: 1,
+          refusalVersion: 2,
+          refusal: { code: "usage_limit", quotaScope: "account", quotaDomains: [spare] },
+        };
+        yield* setStatus("event:pool:running-2", "running");
+        assert.isTrue(yield* admission.recoverBoundLaunch(threadId, runId, 1, new Error("429")));
+        assert.include((yield* current()).delegatedLaunch?.blockedDomains ?? [], spare);
+        answers = { [modelSelection.model]: "ready", [sol]: "ready" };
+        const exhaustedWait = yield* admission.prepare(threadId, runId, 2).pipe(Effect.flip);
+        assert.isTrue(isWaitingForCapacity(exhaustedWait));
+        assert.isTrue(
+          prepares.filter((p) => p.generation === 2).every((p) => p.blocked.includes(spare)),
+        );
+
+        // Once useful work starts, no refusal may relaunch the run.
+        yield* TestClock.adjust("61 seconds");
+        state = undefined;
+        assert.isTrue(yield* admission.prepare(threadId, runId, 2));
+        yield* setStatus("event:pool:running-3", "running");
+        yield* admission.markStarted(threadId, runId);
+        const reads = stateReads;
+        state = {
+          protocolVersion: 1,
+          state: "established",
+          active: false,
+          executorAttempts: 1,
+          refusalVersion: 3,
+          refusal: { code: "usage_limit", quotaScope: "account", quotaDomains: [spare] },
+        };
+        assert.isFalse(yield* admission.recoverBoundLaunch(threadId, runId, 2, new Error("429")));
+        assert.equal(stateReads, reads);
+        assert.equal((yield* current()).delegatedLaunch?.generation, 2);
       }).pipe(Effect.provide(admissionLayer));
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
 );

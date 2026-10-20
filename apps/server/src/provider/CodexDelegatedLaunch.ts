@@ -1,4 +1,5 @@
-import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import type { DelegatedLaunchBinding, ServerProviderUsageLimits } from "@t3tools/contracts";
+import type { DelegatedLaunchPool } from "@t3tools/provider-core/server/driver";
 import type * as CodexClient from "effect-codex-app-server/client";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -52,7 +53,8 @@ export const readCodexLaunchCapacity = Effect.fn("readCodexLaunchCapacity")(func
       checkedAt: DateTime.formatIso(yield* DateTime.now),
     }),
     credentialFingerprint: limits.accountId,
-    ...(limits.ordinaryUsageAllowed !== undefined
+    // The app-server may send null for "not reported"; only a boolean is evidence.
+    ...(typeof limits.ordinaryUsageAllowed === "boolean"
       ? { ordinaryUsageAllowed: limits.ordinaryUsageAllowed }
       : {}),
   };
@@ -83,5 +85,47 @@ export const verifyCodexLaunchBinding = Effect.fn("verifyCodexLaunchBinding")(fu
     !domains.includes(`codex:account:${capacity.email}`) ||
     !domains.includes(`codex:credential:${capacity.usageLimits.credentialFingerprint}`)
   )
+    return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
+});
+
+// The wrapper names its bound provider table; anything else is an unbound process.
+const CODEX_POOL_NATIVE_PROVIDER = "cliproxy_bound";
+
+/**
+ * Before the first turn of a pool-bound launch: this process must have been
+ * spawned for exactly this lease, and the lease must still be unused. The
+ * proxy re-probes quota and pins the account at dispatch; this check only
+ * prevents generation on a stale, reused or already refused lease.
+ */
+export const verifyCodexPoolLaunch = Effect.fn("verifyCodexPoolLaunch")(function* (input: {
+  readonly client: CodexClient.CodexAppServerClient["Service"];
+  readonly pool?: DelegatedLaunchPool;
+  readonly sessionBinding?: DelegatedLaunchBinding;
+  readonly binding: DelegatedLaunchBinding;
+  readonly nativeThreadId: string;
+}) {
+  if (
+    !input.pool ||
+    input.sessionBinding?.result.bindingId !== input.binding.result.bindingId ||
+    input.sessionBinding.prepareRequest.clientRequestId !==
+      input.binding.prepareRequest.clientRequestId
+  )
+    return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
+  const state = yield* input.pool.state(input.binding);
+  if (state?.refusal?.code === "usage_limit")
+    return yield* new CodexLaunchCapacityError({ code: "usage_limit" });
+  if (
+    !state ||
+    state.refusal ||
+    state.state !== "pending" ||
+    state.active ||
+    state.executorAttempts !== 0
+  )
+    return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
+  const { thread } = yield* input.client.request("thread/read", {
+    threadId: input.nativeThreadId,
+    includeTurns: false,
+  });
+  if (thread.modelProvider !== CODEX_POOL_NATIVE_PROVIDER)
     return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
 });

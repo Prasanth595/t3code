@@ -67,10 +67,62 @@ race guarantee is claimed from the unit tests.
 Unknown/account-wide first-request refusals block the account across aliases;
 only a typed model window observed at admission permits a narrower block.
 
-The configured `codex-t3` pool and the `opencode-t3` launcher that loads a Kimi
-secret only inside the child process still need wrapper/pool integration.
-They use healthy fallbacks or wait; this fragment alone cannot admit those
-routes. No wrapper, credentials or live settings are changed by this feature.
+## Bound `codex-t3` pool launches
+
+A Codex instance whose launcher speaks the `codex-t3` pool protocol can opt in
+with `"delegatedLaunchControl": "codex-t3-pool-v1"` in its provider instance
+config. The field names a protocol, not a health claim. Without it, a custom
+provider stays unverified. With it, T3 still asks the configured `binaryPath`
+for `pool-control` capabilities on every prepare. These must be exactly
+version 1: all seven control operations, `app-server-stdio`, an `https` origin,
+no WebSocket transport and zero native retries. The instance's `launchArgs`
+must also be empty. Anything else is unverified.
+
+Admission calls `prepare` with the accounts already proven exhausted for this
+launch. A ready result is used only if it is at most 30 seconds old, matches
+the request's model and session, names no blocked account and has every
+window below 100%. The run persists the exact nonsecret request and result as
+`delegatedLaunch.binding`. Request and session IDs are hashes of the run,
+launch generation, instance and model. A duplicate delivery or a restart at
+the same generation therefore repeats the same logical prepare, and the
+proxy answers it idempotently. A new generation or blocked set is a new
+request. A bound launch always gets a new provider session. It spawns
+`<binaryPath> pool-launch '<json>'`, and the wrapper replays the prepare
+under its own credential before it execs `app-server`. No key or helper output
+reaches T3's argv, events or state.
+
+Before the first turn, T3 checks four things: the session's lease must be the
+run's, the proxy `state` must be pending, inactive, with zero attempts and no
+refusal, and the native thread's provider must be `cliproxy_bound`. Any
+failure before useful work reads the authenticated `state`:
+
+| `state`                            | Effect                                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------------- |
+| `usage_limit` with account domains | Blocks those accounts for every model                                        |
+| `throttled` / `model_capacity`     | Skips this instance+model for one minute (`capacityWait.reason` `throttled`) |
+| Unknown refusal scope              | Blocks the account; it is never treated as independent                       |
+| Lease `released` / `invalid`       | Skips the candidate                                                          |
+| No refusal                         | Ordinary failure, unless the native class was `usage_limit`                  |
+
+After any content, tool call, plan or input request, no refusal relaunches the
+run. A superseded lease is cancelled and released. A session releases its
+lease when it closes, and touches it every 10 minutes while it lives so the
+proxy's 30-minute idle eviction does not drop a pin during long local tool
+work. A later explicit turn on an inactive established pin acknowledges a
+latched refusal with `resume(expectedRefusalVersion)`, using the version it
+just read.
+
+Limits: the proxy and wrapper slices must be reviewed and deployed before any
+instance opts in. Until then the route example keeps its approved order, and a
+`codex_pool` entry would only be skipped as unverified. T3 tests use a fake
+launcher; an opt-in test (`CODEX_T3_CONTRACT_DIR`) validates T3's requests and
+the `pool-launch` payload against the wrapper's own contract module. No live
+proxy, credential or quota race is exercised.
+
+The `opencode-t3` launcher that loads a Kimi secret only inside the child
+process still needs wrapper integration. It uses healthy fallbacks or waits;
+this fragment alone cannot admit it. No wrapper, credentials or live settings
+are changed by this feature.
 
 ACP does not expose quota or pin a pooled account. Copilot's ACP integration
 therefore reports unsupported; neither a GitHub login nor another account's

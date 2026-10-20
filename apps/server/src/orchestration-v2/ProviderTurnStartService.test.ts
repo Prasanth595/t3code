@@ -7,6 +7,7 @@ import {
   CheckpointScopeId,
   ContextTransferId,
   MessageId,
+  type DelegatedLaunchBinding,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -293,6 +294,8 @@ function makeLocalCommandHarness(input: {
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
   readonly admissionPrepare?: DelegatedLaunchAdmission.DelegatedLaunchAdmission["Service"]["prepare"];
+  readonly recoverBoundLaunch?: DelegatedLaunchAdmission.DelegatedLaunchAdmission["Service"]["recoverBoundLaunch"];
+  readonly delegatedLaunchBinding?: DelegatedLaunchBinding;
 }) {
   const now = DateTime.makeUnsafe("2026-09-04T12:00:00Z");
   const threadId = ThreadId.make("thread-native-account-command");
@@ -322,6 +325,19 @@ function makeLocalCommandHarness(input: {
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(input.delegatedLaunchBinding
+      ? {
+          delegatedTaskId: NodeId.make("task-native-account-command"),
+          delegatedLaunch: {
+            requested: { instanceId: newInstanceId, model: "gpt-5.4" },
+            blockedDomains: [],
+            admittedDomains: input.delegatedLaunchBinding.result.quotaDomains,
+            generation: 0,
+            blockedUntil: DateTime.formatIso(now),
+            binding: input.delegatedLaunchBinding,
+          },
+        }
+      : {}),
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
@@ -633,9 +649,12 @@ function makeLocalCommandHarness(input: {
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
-        input.admissionPrepare
+        input.admissionPrepare || input.recoverBoundLaunch
           ? Layer.mock(DelegatedLaunchAdmission.DelegatedLaunchAdmission)({
-              prepare: input.admissionPrepare,
+              prepare: input.admissionPrepare ?? (() => Effect.succeed(true)),
+              recover: () => Effect.succeed(false),
+              recoverBoundLaunch: input.recoverBoundLaunch ?? (() => Effect.succeed(false)),
+              markStarted: () => Effect.void,
             })
           : Layer.empty,
         input.fileSystem === undefined
@@ -1330,3 +1349,71 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+const boundLaunchBinding: DelegatedLaunchBinding = {
+  protocol: "codex-t3-pool-v1",
+  instanceId: ProviderInstanceId.make("codex-personal"),
+  prepareRequest: {
+    clientRequestId: "t3.request-turn-start",
+    sessionId: "t3.session-turn-start",
+    provider: "codex",
+    model: "gpt-5.4",
+    blockedQuotaDomains: [],
+  },
+  result: {
+    protocolVersion: 1,
+    status: "ready",
+    checkedAt: "2026-09-04T12:00:00Z",
+    expiresAt: "2026-09-04T12:00:30Z",
+    ordinaryUsageAllowed: true,
+    quotaDomains: ["codex:credential:acct-turn-start"],
+    bindingId: "e".repeat(48),
+    basePath: `/v1/delegated-launch/bindings/${"e".repeat(48)}/sessions/t3.session-turn-start`,
+    provider: "codex",
+    model: "gpt-5.4",
+    sessionId: "t3.session-turn-start",
+    windows: [{ id: "primary", usedPercent: 1, resetsAt: "2026-09-04T17:00:00Z" }],
+  },
+};
+
+effectIt.effect("routes a bound session-open refusal to pool recovery without a failed run", () =>
+  Effect.gen(function* () {
+    const recovered: Array<unknown> = [];
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new Error("pool-launch refused"),
+      delegatedLaunchBinding: boundLaunchBinding,
+      recoverBoundLaunch: (_threadId, _runId, generation, failure) =>
+        Effect.sync(() => {
+          recovered.push({ generation, failure });
+          return true;
+        }),
+    });
+
+    yield* harness.start;
+
+    expect(recovered).toHaveLength(1);
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ delegatedLaunchBinding: boundLaunchBinding }),
+    );
+    expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.events).toEqual([]);
+  }),
+);
+
+effectIt.effect("settles a bound session-open failure when pool state proves it ordinary", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new Error("provider session rejected"),
+      delegatedLaunchBinding: boundLaunchBinding,
+      recoverBoundLaunch: () => Effect.succeed(false),
+    });
+
+    yield* harness.start.pipe(Effect.exit);
+
+    expect(harness.writeIfRunCurrent).toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+  }),
+);

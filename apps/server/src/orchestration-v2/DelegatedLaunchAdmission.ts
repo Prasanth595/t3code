@@ -6,6 +6,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import type {
+  DelegatedLaunchBinding,
   ModelSelection,
   ServerProvider,
   ServerProviderUsageLimits,
@@ -15,13 +16,16 @@ import type {
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import type { DelegatedLaunchPoolPrepareOutcome } from "@t3tools/provider-core/server/driver";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { classifyPoolRefusal, type LaunchRefusalScope } from "../provider/CodexPoolControl.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
@@ -29,6 +33,7 @@ export class DelegatedLaunchAdmissionError extends Schema.TaggedError<DelegatedL
   "DelegatedLaunchAdmissionError",
   { cause: Schema.Defect() },
 ) {}
+const isDelegatedLaunchAdmissionError = Schema.is(DelegatedLaunchAdmissionError);
 
 export class WaitingForDelegatedCapacity extends Schema.TaggedError<WaitingForDelegatedCapacity>()(
   "WaitingForDelegatedCapacity",
@@ -81,6 +86,11 @@ export function launchQuotaScope(error: unknown, depth = 0): DelegatedQuotaScope
   return { type: "account" };
 }
 
+// Throttling or model capacity says nothing about the account's quota: skip only
+// this candidate until the race block expires.
+export const launchCandidateKey = (selection: Pick<ModelSelection, "instanceId" | "model">) =>
+  `launch:candidate:${selection.instanceId}:${selection.model}`;
+
 export function refusedQuotaDomains(
   domains: ReadonlyArray<string>,
   scope: DelegatedQuotaScope,
@@ -97,10 +107,11 @@ export type AdmissionDecision =
       readonly status: "ready";
       readonly selection: ModelSelection;
       readonly domains: ReadonlyArray<string>;
+      readonly binding?: DelegatedLaunchBinding;
     }
   | {
       readonly status: "waiting";
-      readonly reason: "exhausted" | "unverified";
+      readonly reason: "exhausted" | "throttled" | "unverified";
       readonly retryAt: string;
     };
 
@@ -164,27 +175,73 @@ export function assessCapacity(
     : "healthy";
 }
 
+function supportedOptions(provider: ServerProvider, candidate: ModelSelection) {
+  const model = provider.models.find((m) => m.slug === candidate.model);
+  return candidate.options?.filter((option) =>
+    model?.capabilities?.optionDescriptors?.some(
+      (d) =>
+        d.id === option.id &&
+        (d.type === "boolean"
+          ? typeof option.value === "boolean"
+          : d.options.some((choice) => choice.id === option.value)),
+    ),
+  );
+}
+
 export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectCandidate")(
   function* (input: {
     readonly candidates: ReadonlyArray<ModelSelection>;
     readonly blockedDomains?: ReadonlyArray<string>;
-    readonly probe: (selection: ModelSelection) => Effect.Effect<
+    /** Pool control may wait on the launcher's credential helper (two 40 s calls). */
+    readonly probeTimeout?: Duration.Input;
+    readonly probe: (
+      selection: ModelSelection,
+      blocked: ReadonlySet<string>,
+    ) => Effect.Effect<
       | {
           readonly provider: ServerProvider;
           readonly binding?: string;
           readonly probeStartedAt: number;
+          /** A launcher-owned binding replaces local usage evidence entirely. */
+          readonly pool?: DelegatedLaunchPoolPrepareOutcome;
         }
       | undefined
     >;
   }) {
     const blocked = new Set<string>(input.blockedDomains);
     let exhausted = false;
+    let throttled = false;
     for (const candidate of input.candidates) {
-      const observed = yield* input.probe(candidate).pipe(
-        Effect.timeout("8 seconds"),
+      if (blocked.has(launchCandidateKey(candidate))) {
+        throttled = true;
+        continue;
+      }
+      const observed = yield* input.probe(candidate, blocked).pipe(
+        Effect.timeout(input.probeTimeout ?? "8 seconds"),
         Effect.orElseSucceed(() => undefined),
       );
       if (!observed) continue;
+      if (observed.pool) {
+        const outcome = observed.pool;
+        if (outcome.status === "waiting") {
+          for (const key of outcome.quotaDomains) blocked.add(key);
+          exhausted = true;
+          continue;
+        }
+        if (outcome.status === "unverified") continue;
+        const domains = outcome.binding.result.quotaDomains;
+        if (domains.some((key) => blocked.has(key))) {
+          exhausted = true;
+          continue;
+        }
+        const options = supportedOptions(observed.provider, candidate);
+        return {
+          status: "ready",
+          selection: { ...candidate, ...(options ? { options } : {}) },
+          domains,
+          binding: outcome.binding,
+        } as const;
+      }
       const { binding, probeStartedAt } = observed;
       const provider = observed.provider.usageLimitsByModel?.[candidate.model]
         ? {
@@ -238,16 +295,7 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
         now,
       );
       if (assessment === "healthy" && provider.models.some((m) => m.slug === candidate.model)) {
-        const model = provider.models.find((m) => m.slug === candidate.model);
-        const options = candidate.options?.filter((option) =>
-          model?.capabilities?.optionDescriptors?.some(
-            (d) =>
-              d.id === option.id &&
-              (d.type === "boolean"
-                ? typeof option.value === "boolean"
-                : d.options.some((choice) => choice.id === option.value)),
-          ),
-        );
+        const options = supportedOptions(provider, candidate);
         return {
           status: "ready",
           selection: { ...candidate, ...(options ? { options } : {}) },
@@ -280,7 +328,7 @@ export const selectLaunchCandidate = Effect.fn("DelegatedLaunchAdmission.selectC
     }
     return {
       status: "waiting",
-      reason: exhausted ? "exhausted" : "unverified",
+      reason: exhausted ? "exhausted" : throttled ? "throttled" : "unverified",
       retryAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { minutes: 1 })),
     } as const;
   },
@@ -293,6 +341,7 @@ export class DelegatedLaunchAdmission extends Context.Service<
       selection: ModelSelection,
       blockedDomains?: ReadonlyArray<string>,
       context?: { readonly projectId: ProjectId; readonly runtimeMode: RuntimeMode },
+      launch?: { readonly runId: RunId; readonly generation: number },
     ) => Effect.Effect<AdmissionDecision, ServerSettingsError>;
     readonly markStarted: (
       threadId: ThreadId,
@@ -302,7 +351,18 @@ export class DelegatedLaunchAdmission extends Context.Service<
       threadId: ThreadId,
       runId: RunId,
       launchGeneration: number,
-      scope?: DelegatedQuotaScope,
+      scope?: LaunchRefusalScope,
+      refusedDomains?: ReadonlyArray<string>,
+    ) => Effect.Effect<boolean, DelegatedLaunchAdmissionError>;
+    /**
+     * For a pool-bound launch that failed before useful work, the launcher's
+     * authenticated binding state decides the refusal; native error text never does.
+     */
+    readonly recoverBoundLaunch: (
+      threadId: ThreadId,
+      runId: RunId,
+      launchGeneration: number,
+      failure: unknown,
     ) => Effect.Effect<boolean, DelegatedLaunchAdmissionError>;
     readonly prepare: (
       threadId: ThreadId,
@@ -321,6 +381,7 @@ export const layer = Layer.effect(
       selection: ModelSelection,
       blockedDomains?: ReadonlyArray<string>,
       context?: { readonly projectId: ProjectId; readonly runtimeMode: RuntimeMode },
+      launch?: { readonly runId: RunId; readonly generation: number },
     ) {
       const preferences = yield* settings.getSettings;
       const route = preferences.delegatedLaunchRoutes.find(
@@ -337,7 +398,9 @@ export const layer = Layer.effect(
           })),
         ],
         ...(blockedDomains ? { blockedDomains } : {}),
-        probe: Effect.fn("DelegatedLaunchAdmission.probe")(function* (candidate) {
+        // Local runtime probes keep their own 8 second bound below.
+        probeTimeout: "90 seconds",
+        probe: Effect.fn("DelegatedLaunchAdmission.probe")(function* (candidate, blocked) {
           const instance = yield* instances.getInstance(candidate.instanceId);
           if (
             !instance?.enabled ||
@@ -350,11 +413,43 @@ export const layer = Layer.effect(
           )
             return undefined;
           const probeStartedAt = DateTime.toEpochMillis(yield* DateTime.now);
+          const pool = instance.delegatedLaunchPool;
+          if (pool) {
+            // The launcher owns authentication and account selection; the
+            // catalog only says whether this instance can run the model.
+            const catalog = yield* instance.snapshot.getSnapshot;
+            if (
+              !launch ||
+              catalog.instanceId !== candidate.instanceId ||
+              !catalog.enabled ||
+              !catalog.installed ||
+              !catalog.models.some((m) => m.slug === candidate.model) ||
+              (context &&
+                catalog.supportedRuntimeModes &&
+                !catalog.supportedRuntimeModes.includes(context.runtimeMode))
+            )
+              return undefined;
+            return {
+              provider: catalog,
+              probeStartedAt,
+              pool: yield* pool.prepare({
+                runId: launch.runId,
+                generation: launch.generation,
+                model: candidate.model,
+                blockedQuotaDomains: [...blocked],
+              }),
+            };
+          }
           // Codex requires runtime evidence, never a configuration assertion.
           if (instance.driverKind === "codex" && !instance.probeDelegatedLaunch) return undefined;
-          const provider = instance.probeDelegatedLaunch
-            ? yield* instance.probeDelegatedLaunch(candidate.model)
-            : yield* instance.snapshot.refresh;
+          const provider = yield* (
+            instance.probeDelegatedLaunch
+              ? instance.probeDelegatedLaunch(candidate.model)
+              : instance.snapshot.refresh
+          ).pipe(
+            Effect.timeout("8 seconds"),
+            Effect.orElseSucceed(() => undefined),
+          );
           if (!provider) return undefined;
           if (
             context &&
@@ -383,6 +478,151 @@ export const layer = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
+    const recover = Effect.fn("DelegatedLaunchAdmission.recover")(
+      function* (
+        threadId: ThreadId,
+        runId: RunId,
+        launchGeneration: number,
+        scope: LaunchRefusalScope = { type: "account" },
+        refusedDomains: ReadonlyArray<string> = [],
+      ) {
+        const projection = yield* projections.getTurnStartContext(threadId, runId);
+        const run = projection.runs.find((r) => r.id === runId);
+        if (
+          !run?.delegatedTaskId ||
+          !run.delegatedLaunch ||
+          run.delegatedLaunch.generation !== launchGeneration ||
+          run.delegatedLaunch.admittedDomains.length === 0 ||
+          run.delegatedLaunch.complete ||
+          (run.status !== "running" && run.status !== "starting")
+        )
+          return false;
+        const attempt = projection.attempts.find((a) => a.id === run.activeAttemptId);
+        const providerThread = projection.providerThreads.find(
+          (p) => p.id === run.providerThreadId,
+        );
+        if (!attempt || !providerThread) return false;
+        const now = yield* DateTime.now;
+        const generation = run.delegatedLaunch.generation + 1;
+        const commandId = CommandId.make(`capacity-race:${run.id}:${generation}`);
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: run.providerInstanceId,
+          threadId,
+        });
+        const base = {
+          threadId,
+          occurredAt: now,
+          driver: providerThread.driver,
+          providerInstanceId: run.providerInstanceId,
+        };
+        const events: Array<OrchestrationV2DomainEvent> = [
+          {
+            ...base,
+            id: yield* ids.allocate.event({ threadId }),
+            type: "run.updated",
+            payload: {
+              ...run,
+              status: "starting",
+              startedAt: null,
+              delegatedLaunch: {
+                ...run.delegatedLaunch,
+                generation,
+                blockedDomains: [
+                  ...new Set([
+                    ...run.delegatedLaunch.blockedDomains,
+                    ...(scope.type === "candidate"
+                      ? [launchCandidateKey(run.modelSelection)]
+                      : [
+                          ...refusedQuotaDomains(run.delegatedLaunch.admittedDomains, scope),
+                          ...refusedDomains,
+                        ]),
+                  ]),
+                ],
+                admittedDomains: [],
+                blockedUntil: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
+              },
+            },
+          },
+          {
+            ...base,
+            id: yield* ids.allocate.event({ threadId }),
+            type: "run-attempt.updated",
+            payload: {
+              ...attempt,
+              status: "pending",
+              startedAt: null,
+              providerTurnId: null,
+            },
+          },
+          {
+            ...base,
+            id: yield* ids.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            payload: {
+              ...providerThread,
+              providerSessionId,
+              nativeThreadRef: null,
+              status: "not_loaded",
+              updatedAt: now,
+            },
+          },
+        ];
+        const written = yield* sink.writeIfRunCurrent({
+          threadId,
+          runId,
+          activeAttemptId: attempt.id,
+          expectedStatus: run.status,
+          events,
+          commandId,
+          effects: [
+            ...(providerThread.providerSessionId
+              ? [
+                  {
+                    id: `effect:${commandId}:detach`,
+                    commandId,
+                    threadId,
+                    request: {
+                      type: "provider-session.detach" as const,
+                      providerSessionId: providerThread.providerSessionId,
+                    },
+                  },
+                ]
+              : []),
+            {
+              id: `effect:${commandId}:start`,
+              commandId,
+              threadId,
+              request: { type: "provider-turn.start", runId, launchGeneration: generation },
+            },
+          ],
+        });
+        return written.committed;
+      },
+      Effect.mapError((cause) => new DelegatedLaunchAdmissionError({ cause })),
+    );
+    const recoverBoundLaunch = Effect.fn("DelegatedLaunchAdmission.recoverBoundLaunch")(
+      function* (threadId: ThreadId, runId: RunId, launchGeneration: number, failure: unknown) {
+        const projection = yield* projections.getTurnStartContext(threadId, runId);
+        const launch = projection.runs.find((r) => r.id === runId)?.delegatedLaunch;
+        if (!launch?.binding || launch.complete || launch.generation !== launchGeneration)
+          return false;
+        const pool = (yield* instances.getInstance(launch.binding.instanceId))?.delegatedLaunchPool;
+        const state = pool
+          ? yield* pool.state(launch.binding).pipe(
+              Effect.timeout("45 seconds"),
+              Effect.orElseSucceed(() => undefined),
+            )
+          : undefined;
+        const refusal = classifyPoolRefusal(state, isLaunchQuotaFailure(failure));
+        if (!refusal) return false;
+        return yield* recover(threadId, runId, launchGeneration, refusal.scope, refusal.domains);
+      },
+      Effect.mapError((cause) =>
+        isDelegatedLaunchAdmissionError(cause)
+          ? cause
+          : new DelegatedLaunchAdmissionError({ cause }),
+      ),
+    );
     return DelegatedLaunchAdmission.of({
       check,
       markStarted: Effect.fn("DelegatedLaunchAdmission.markStarted")(
@@ -409,117 +649,8 @@ export const layer = Layer.effect(
         },
         Effect.mapError((cause) => new DelegatedLaunchAdmissionError({ cause })),
       ),
-      recover: Effect.fn("DelegatedLaunchAdmission.recover")(
-        function* (threadId, runId, launchGeneration, scope = { type: "account" }) {
-          const projection = yield* projections.getTurnStartContext(threadId, runId);
-          const run = projection.runs.find((r) => r.id === runId);
-          if (
-            !run?.delegatedTaskId ||
-            !run.delegatedLaunch ||
-            run.delegatedLaunch.generation !== launchGeneration ||
-            run.delegatedLaunch.admittedDomains.length === 0 ||
-            run.delegatedLaunch.complete ||
-            (run.status !== "running" && run.status !== "starting")
-          )
-            return false;
-          const attempt = projection.attempts.find((a) => a.id === run.activeAttemptId);
-          const providerThread = projection.providerThreads.find(
-            (p) => p.id === run.providerThreadId,
-          );
-          if (!attempt || !providerThread) return false;
-          const now = yield* DateTime.now;
-          const generation = run.delegatedLaunch.generation + 1;
-          const commandId = CommandId.make(`capacity-race:${run.id}:${generation}`);
-          const providerSessionId = yield* ids.allocate.providerSession({
-            providerInstanceId: run.providerInstanceId,
-            threadId,
-          });
-          const base = {
-            threadId,
-            occurredAt: now,
-            driver: providerThread.driver,
-            providerInstanceId: run.providerInstanceId,
-          };
-          const events: Array<OrchestrationV2DomainEvent> = [
-            {
-              ...base,
-              id: yield* ids.allocate.event({ threadId }),
-              type: "run.updated",
-              payload: {
-                ...run,
-                status: "starting",
-                startedAt: null,
-                delegatedLaunch: {
-                  ...run.delegatedLaunch,
-                  generation,
-                  blockedDomains: [
-                    ...new Set([
-                      ...run.delegatedLaunch.blockedDomains,
-                      ...refusedQuotaDomains(run.delegatedLaunch.admittedDomains, scope),
-                    ]),
-                  ],
-                  admittedDomains: [],
-                  blockedUntil: DateTime.formatIso(DateTime.add(now, { minutes: 1 })),
-                },
-              },
-            },
-            {
-              ...base,
-              id: yield* ids.allocate.event({ threadId }),
-              type: "run-attempt.updated",
-              payload: {
-                ...attempt,
-                status: "pending",
-                startedAt: null,
-                providerTurnId: null,
-              },
-            },
-            {
-              ...base,
-              id: yield* ids.allocate.event({ threadId }),
-              type: "provider-thread.updated",
-              payload: {
-                ...providerThread,
-                providerSessionId,
-                nativeThreadRef: null,
-                status: "not_loaded",
-                updatedAt: now,
-              },
-            },
-          ];
-          const written = yield* sink.writeIfRunCurrent({
-            threadId,
-            runId,
-            activeAttemptId: attempt.id,
-            expectedStatus: run.status,
-            events,
-            commandId,
-            effects: [
-              ...(providerThread.providerSessionId
-                ? [
-                    {
-                      id: `effect:${commandId}:detach`,
-                      commandId,
-                      threadId,
-                      request: {
-                        type: "provider-session.detach" as const,
-                        providerSessionId: providerThread.providerSessionId,
-                      },
-                    },
-                  ]
-                : []),
-              {
-                id: `effect:${commandId}:start`,
-                commandId,
-                threadId,
-                request: { type: "provider-turn.start", runId, launchGeneration: generation },
-              },
-            ],
-          });
-          return written.committed;
-        },
-        Effect.mapError((cause) => new DelegatedLaunchAdmissionError({ cause })),
-      ),
+      recover,
+      recoverBoundLaunch,
       prepare: Effect.fn("DelegatedLaunchAdmission.prepare")(
         function* (threadId, runId, generation) {
           const projection = yield* projections.getTurnStartContext(threadId, runId);
@@ -542,7 +673,24 @@ export const layer = Layer.effect(
               ? run.delegatedLaunch.blockedDomains
               : [],
             { projectId: projection.thread.projectId, runtimeMode: projection.thread.runtimeMode },
+            { runId: run.id, generation },
           );
+          // A superseded lease is never launched: earlier generations failed
+          // before useful work, and a changed blocked set is a new request.
+          const previous = run.delegatedLaunch?.binding;
+          if (
+            previous &&
+            (decision.status !== "ready" ||
+              decision.binding?.prepareRequest.clientRequestId !==
+                previous.prepareRequest.clientRequestId)
+          ) {
+            const pool = (yield* instances.getInstance(previous.instanceId))?.delegatedLaunchPool;
+            if (pool)
+              yield* Effect.all(
+                [pool.cancel(previous.prepareRequest.clientRequestId), pool.release(previous)],
+                { concurrency: "unbounded", discard: true },
+              ).pipe(Effect.timeout("45 seconds"), Effect.ignore);
+          }
           const now = yield* DateTime.now;
           const wait =
             decision.status === "waiting"
@@ -578,11 +726,16 @@ export const layer = Layer.effect(
                 admittedDomains: decision.status === "ready" ? decision.domains : [],
                 generation: run.delegatedLaunch?.generation ?? 0,
                 blockedUntil: run.delegatedLaunch?.blockedUntil ?? DateTime.formatIso(now),
+                ...(decision.status === "ready" && decision.binding
+                  ? { binding: decision.binding }
+                  : {}),
               },
             },
           });
           if (decision.status === "ready") {
-            const switched = selection.instanceId !== run.providerInstanceId;
+            // A lease belongs to exactly one bound native process, never a reused one.
+            const switched =
+              selection.instanceId !== run.providerInstanceId || decision.binding !== undefined;
             const providerSessionId = switched
               ? yield* ids.allocate.providerSession({
                   providerInstanceId: selection.instanceId,

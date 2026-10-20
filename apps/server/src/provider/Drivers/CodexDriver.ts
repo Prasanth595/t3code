@@ -22,11 +22,13 @@ import { ProviderDriverError } from "../Errors.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkCodexProviderStatus,
+  codexAppServerEnvironment,
   makePendingCodexProvider,
   probeCodexSkillsForCwd,
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { readCodexLaunchCapacity } from "../CodexDelegatedLaunch.ts";
+import { makeCodexPoolControl } from "../CodexPoolControl.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
@@ -178,6 +180,17 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
+    // Only an explicitly named launcher protocol is consulted; the launcher must
+    // still prove it per call. Other custom providers stay unverified.
+    const delegatedLaunchPool =
+      effectiveConfig.delegatedLaunchControl === "codex-t3-pool-v1"
+        ? yield* makeCodexPoolControl({
+            instanceId,
+            binaryPath: effectiveConfig.binaryPath,
+            environment: codexAppServerEnvironment(processEnv),
+            launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+          }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner))
+        : undefined;
     const orchestrationAdapter = yield* createCodexAdapterV2(
       {
         instanceId,
@@ -187,7 +200,10 @@ export const CodexDriver: ProviderDriver<
         enabled,
         config,
       },
-      { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+      {
+        onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+        ...(delegatedLaunchPool ? { delegatedLaunchPool } : {}),
+      },
     ).pipe(
       Effect.mapError(
         (cause) =>
@@ -354,6 +370,7 @@ export const CodexDriver: ProviderDriver<
       enabled,
       snapshot,
       snapshotForCwd,
+      ...(delegatedLaunchPool ? { delegatedLaunchPool } : {}),
       probeDelegatedLaunch: Effect.fn("CodexDriver.probeDelegatedLaunch")(
         function* () {
           const provider = yield* snapshot.refresh;

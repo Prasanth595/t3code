@@ -630,6 +630,11 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
+    // Names the launcher's control protocol only. The launcher must still
+    // answer that protocol's capabilities before any launch is admitted.
+    delegatedLaunchControl: Schema.optionalKey(Schema.Literal("codex-t3-pool-v1")).pipe(
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
