@@ -65,6 +65,10 @@ it.effect("includes the scheduler zone in empty lists and subscription updates",
       NodeCrypto.layer,
       Scheduler.layer,
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
     );
