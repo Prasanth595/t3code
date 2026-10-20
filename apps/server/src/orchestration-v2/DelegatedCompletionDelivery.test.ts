@@ -674,6 +674,88 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
     }),
   );
 
+  it.effect.each([
+    {
+      name: "oversized UTF-8 result",
+      first: "界".repeat(6_000),
+      second: "small result",
+      inlineFirst: false,
+      inlineSecond: true,
+    },
+    {
+      name: "combined results",
+      first: "a".repeat(10_000),
+      second: "b".repeat(10_000),
+      inlineFirst: true,
+      inlineSecond: false,
+    },
+  ])("uses task_status for $name beyond the inline budget", (testCase) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread:inline-budget:${testCase.name}`);
+      const runId = RunId.make(`run:inline-budget:${testCase.name}`);
+      const firstTaskId = NodeId.make(`node:inline-first:${testCase.name}`);
+      const secondTaskId = NodeId.make(`node:inline-second:${testCase.name}`);
+      const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make(`project:inline-budget:${testCase.name}`),
+        runId,
+        rootNodeId: NodeId.make(`node:inline-budget:${testCase.name}`),
+        taskId: firstTaskId,
+        deliveryState: "claimed",
+        completionWake: "always",
+        deliveryTaskIds: [firstTaskId, secondTaskId],
+        now,
+      });
+      const parent = yield* orchestrator.getThreadProjection(threadId);
+      const task = parent.subagents[0]!;
+      yield* sink.write({
+        events: [
+          { id: firstTaskId, result: testCase.first },
+          { id: secondTaskId, result: testCase.second },
+        ].map(({ id, result }) => ({
+          id: EventId.make(`event:inline-budget:${id}`),
+          type: "subagent.updated" as const,
+          threadId,
+          runId,
+          nodeId: id,
+          occurredAt: now,
+          payload: { ...task, id, result },
+        })),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:inline-budget:${testCase.name}`),
+        threadId,
+        messageId,
+        text: "Delegated tasks completed.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: {
+          parentRunId: runId,
+          generation: 1,
+          taskIds: [firstTaskId, secondTaskId],
+        },
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      const message = projection.messages.find((candidate) => candidate.id === messageId)!;
+      assert.equal(message.text.includes(testCase.first), testCase.inlineFirst);
+      assert.equal(message.text.includes(testCase.second), testCase.inlineSecond);
+      const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
+      assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
+      assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
+      assert.equal(
+        projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
+        testCase.inlineFirst ? testCase.second : testCase.first,
+      );
+    }),
+  );
+
   it.effect("does not re-offer when wake-policy upgrades after delivered ownership settled", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

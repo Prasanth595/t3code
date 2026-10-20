@@ -590,16 +590,25 @@ function legacyPullRequestLink(
   );
 }
 
+const DELEGATED_RESULT_INLINE_BYTES = 16_000;
+
 function delegatedCompletionWakeDetail(
   taskIds: ReadonlyArray<string>,
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
 ): string {
+  let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
   return taskIds
     .map((taskId) => {
       const task = tasks.find((candidate) => candidate.id === taskId);
-      return task?.result == null
-        ? `Delegated task ${taskId} reached a terminal state. Use task_status with taskId ${taskId} to read the result.`
-        : `Delegated task ${taskId}${task.title === null ? "" : ` (${task.title})`} [${task.status}]:\n${task.result}`;
+      if (task?.result != null) {
+        const detail = `Delegated task ${taskId}${task.title === null ? "" : ` (${task.title})`} [${task.status}]:\n${task.result}`;
+        const bytes = Buffer.byteLength(detail);
+        if (bytes <= remainingBytes) {
+          remainingBytes -= bytes;
+          return detail;
+        }
+      }
+      return `Delegated task ${taskId} reached a terminal state. Use task_status with taskId ${taskId} to read the result.`;
     })
     .join("\n\n");
 }
