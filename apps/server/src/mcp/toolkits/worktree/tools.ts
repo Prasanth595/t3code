@@ -43,8 +43,7 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
 
 const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
-    "Report this thread's worktree: attached or not, path, branch, project root, and the `startFromOrigin` default. Check before `t3_worktree_handoff`.",
-  // No `parameters`: Tool.make defaults to Tool.EmptyParams, which serializes
+    "Report this thread's worktree: attached or not, path, branch, project root, the `startFromOrigin` default, and reserved script preview ports and URLs. Ports are available before running a script. Check before `t3_worktree_handoff`.",  // No `parameters`: Tool.make defaults to Tool.EmptyParams, which serializes
   // to a top-level `type: "object"` JSON Schema. An explicit empty
   // Schema.Struct({}) serializes to `anyOf: [object, array]`, which is not a
   // valid MCP tool input schema and makes clients reject the whole server.

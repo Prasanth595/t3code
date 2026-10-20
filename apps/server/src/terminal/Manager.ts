@@ -203,7 +203,9 @@ export class TerminalManager extends Context.Service<
       registerCleanup?: (stop: () => void) => void,
     ) => Effect.Effect<() => void, TerminalError>;
 
-    readonly write: (input: TerminalWriteInput) => Effect.Effect<void, TerminalError>;
+    readonly write: (
+      input: TerminalWriteInput & { readonly expectedPid?: number },
+    ) => Effect.Effect<void, TerminalError>;
 
     readonly resize: (
       input: TerminalResizeInput,
@@ -3334,8 +3336,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     const terminalId = input.terminalId;
     const session = yield* requireSession(input.threadId, terminalId);
     const process = session.process;
-    if (!process || session.status !== "running") {
-      if (session.status === "exited") return;
+    if (
+      !process ||
+      session.status !== "running" ||
+      (input.expectedPid !== undefined && process.pid !== input.expectedPid)
+    ) {
+      if (session.status === "exited" && input.expectedPid === undefined) return;
       return yield* new TerminalNotRunningError({
         threadId: input.threadId,
         terminalId,
