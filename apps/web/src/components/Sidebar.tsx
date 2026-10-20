@@ -4245,6 +4245,7 @@ export default function Sidebar() {
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
+              canFind: false,
               branch: thread.branch ?? null,
               projectFilter: threadProjectGroup
                 ? {
