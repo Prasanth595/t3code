@@ -46,6 +46,7 @@ function PopoverPopup({
   anchor,
   touchBackdrop = false,
   animationDurationMs,
+  style,
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
@@ -112,8 +113,12 @@ function PopoverPopup({
           // inline on mount, and removing that shorthand also clears the longhand.
           style={
             animationDurationMs === undefined
-              ? undefined
-              : ({ "--popover-animation-duration": `${animationDurationMs}ms` } as CSSProperties)
+              ? style
+              : (state) =>
+                  ({
+                    ...(typeof style === "function" ? style(state) : style),
+                    "--popover-animation-duration": `${animationDurationMs}ms`,
+                  }) as CSSProperties
           }
           {...props}
         >
