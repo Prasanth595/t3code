@@ -4,7 +4,12 @@ import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
-import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentation";
+import { enrichedContextLinkCustomization } from "../../native/useEnrichedLinkVariants";
+import {
+  enrichedSkillDisplayName,
+  enrichedSkillInstructionsPath,
+  enrichedSkillReference,
+} from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
 import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -165,7 +170,6 @@ import {
   resolveNativeMarkdownTypography,
 } from "../../lib/appearancePreferences";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { markdownFileIconSource } from "../../lib/markdownFileIcons";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { markdownLinkIconSource } from "../../lib/markdownLinkIcons";
 import {
@@ -231,7 +235,7 @@ import {
 } from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
+import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
   MarkdownImageAvailableWidthContext,
@@ -305,6 +309,7 @@ export interface ThreadFeedProps {
   readonly anchorMessageId: MessageId | null;
   readonly submittedMessageId: MessageId | null;
   readonly contentInsetEndAdjustment: SharedValue<number>;
+  readonly keyboardOffset: number;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
@@ -861,8 +866,6 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownUserCodeText = theme["--color-md-user-code-text"];
   const markdownUserInlineCodeText = theme["--color-user-bubble-foreground-muted"];
   const markdownUserFenceBg = theme["--color-md-user-fence-bg"];
-  const inlineSkillForeground = theme["--color-inline-skill-foreground"];
-  const userBubbleSkillForeground = theme["--color-user-bubble-skill-foreground"];
   const regularFontFamily = FONT_FAMILIES.regular;
   const boldFontFamily = FONT_FAMILIES.bold;
 
@@ -879,7 +882,6 @@ function useMarkdownStyles(): MarkdownStyleSets {
           codeBackgroundColor: markdownUserCodeBg,
           codeBlockBackgroundColor: markdownUserFenceBg,
           fileTextColor: markdownUserBodyColor,
-          skillTextColor: userBubbleSkillForeground,
           quoteMarkerColor: markdownUserBodyColor,
           dividerColor: markdownUserBodyColor,
           contextChipBorderColor,
@@ -902,7 +904,6 @@ function useMarkdownStyles(): MarkdownStyleSets {
           codeBackgroundColor: markdownCodeBg,
           codeBlockBackgroundColor: markdownCodeBg,
           fileTextColor: markdownCodeText,
-          skillTextColor: inlineSkillForeground,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
           contextChipBorderColor,
@@ -918,7 +919,6 @@ function useMarkdownStyles(): MarkdownStyleSets {
   }, [
     boldFontFamily,
     contextChipBorderColor,
-    inlineSkillForeground,
     markdownBlockquoteBorder,
     markdownBodyColor,
     markdownCodeBg,
@@ -934,7 +934,6 @@ function useMarkdownStyles(): MarkdownStyleSets {
     markdownUserInlineCodeText,
     nativeMarkdownTypography,
     regularFontFamily,
-    userBubbleSkillForeground,
   ]);
 }
 
@@ -1561,12 +1560,9 @@ function UserMessageContent(props: UserMessageContentProps) {
                 });
             }
           },
-          linkCustomization: (href) => {
-            const presentation = enrichedContextLinkPresentation(href, props.context?.records);
-            return presentation
-              ? { color: presentation.color, icon: markdownFileIconSource(presentation.icon) }
-              : props.linkHandlers.linkCustomization?.(href);
-          },
+          linkCustomization: (href) =>
+            enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
+            props.linkHandlers.linkCustomization?.(href),
         }}
       />
       {selected ? (
@@ -1791,13 +1787,32 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
-  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+  const openSkillInstructions = (path: string) => {
+    void Haptics.selectionAsync();
+    navigation.navigate("ThreadFile", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.threadId),
+      path: fileRoutePathSegments(path),
+    });
+  };
+  const resolveLinkedThread = (href: string) => {
     const linkedThreadId = parseThreadLinkHref(href);
-    if (linkedThreadId) {
-      const source = scopeThreadRef(props.environmentId, linkedThreadId);
-      const target =
-        resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
-        source;
+    if (!linkedThreadId) return null;
+    const source = scopeThreadRef(props.environmentId, linkedThreadId);
+    return (
+      resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
+      source
+    );
+  };
+  const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
+    const skill = enrichedSkillReference(href, props.skills);
+    if (skill) {
+      const instructionsPath = enrichedSkillInstructionsPath(skill);
+      if (instructionsPath) openSkillInstructions(instructionsPath);
+      return;
+    }
+    const target = resolveLinkedThread(href);
+    if (target) {
       navigation.navigate("Thread", {
         environmentId: String(target.environmentId),
         threadId: String(target.threadId),
@@ -1866,19 +1881,56 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
     fileContextMenu: (href) => {
+      const skill = enrichedSkillReference(href, props.skills);
+      if (skill) {
+        return {
+          title: enrichedSkillDisplayName(skill),
+          actions: [
+            {
+              id: "open-skill",
+              title: "View instructions",
+              disabled: !enrichedSkillInstructionsPath(skill),
+            },
+            { id: "copy-skill", title: "Copy skill" },
+          ],
+        };
+      }
+      const thread = resolveLinkedThread(href);
+      if (thread) {
+        return {
+          title:
+            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
+          actions: [
+            { id: "open-thread", title: "Open thread" },
+            { id: "copy-thread-link", title: "Copy link" },
+          ],
+        };
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
     onFileContextMenuAction: (href, actionId) => {
+      const skill = enrichedSkillReference(href, props.skills);
+      if (skill) {
+        const instructionsPath = enrichedSkillInstructionsPath(skill);
+        if (actionId === "open-skill" && instructionsPath) openSkillInstructions(instructionsPath);
+        else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
+        return;
+      }
+      if (resolveLinkedThread(href)) {
+        if (actionId === "open-thread") onMarkdownLinkPress(href);
+        else if (actionId === "copy-thread-link") copyTextWithHaptic(href);
+        return;
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       if (!target) return;
-      switch (actionId as FileChipAction) {
+      switch (actionId) {
         case "copy-full-path":
-          if (target.fullPath) copyTextWithHaptic(target.fullPath);
+        case "copy-relative-path": {
+          const clipboardPath = fileChipClipboardPath(target, actionId);
+          if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
           return;
-        case "copy-relative-path":
-          if (target.relativePath) copyTextWithHaptic(target.relativePath);
-          return;
+        }
         case "open-file":
           onMarkdownLinkPress(href);
           return;
@@ -2000,6 +2052,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     themeAppearance,
     userBubbleColor,
     viewportWidth,
+    contentWidth,
+    skills: props.skills,
     workflowOpening,
   };
   const reportHeaderMaterialVisibility = (visible: boolean) => {
@@ -2480,6 +2534,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             // content rest below the transparent header rather than at frame top.
             contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
             contentInsetEndAdjustment={props.contentInsetEndAdjustment}
+            keyboardOffset={props.keyboardOffset}
             // UIKit's automatic behavior adds the safe-area bottom on top of the
             // raw contentInset the keyboard integration writes. The detail screen
             // under-reports the composer inset by this amount (see
