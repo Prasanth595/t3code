@@ -28,7 +28,7 @@ import {
   KeyboardStickyView,
   useKeyboardState,
 } from "react-native-keyboard-controller";
-import Animated, { useSharedValue } from "react-native-reanimated";
+import Animated, { FadeInDown, ReduceMotion, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
@@ -76,6 +76,7 @@ import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
+
 import {
   ComposerDictationCancelAction,
   ComposerDictationPrimaryAction,
@@ -142,6 +143,8 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { serverEnvironment } from "../../state/server";
 import { fileRoutePathSegments } from "../files/filePath";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+
+const COMPOSER_POPOVER_ENTERING = FadeInDown.duration(180).reduceMotion(ReduceMotion.System);
 
 function NewTaskWorkspaceIcon(props: {
   readonly workspaceMode: "local" | "worktree";
@@ -1572,6 +1575,21 @@ export function NewTaskDraftScreen(props: {
       }
       style={{ paddingBottom: controlsBottomPadding }}
     >
+      {!voiceInput.isBusy &&
+      composerMenu.trigger &&
+      (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
+        <ComposerPopoverAnchor>
+          <Animated.View entering={COMPOSER_POPOVER_ENTERING}>
+            <ComposerCommandPopover
+              items={composerMenu.items}
+              triggerKind={composerMenu.trigger.kind}
+              isLoading={composerMenu.isLoading}
+              error={composerMenu.error}
+              onSelect={composerMenu.onSelect}
+            />
+          </Animated.View>
+        </ComposerPopoverAnchor>
+      ) : null}
       {projectClone && projectClone.phase !== "done" && selectedProject ? (
         <View className="px-1 pb-2">
           <ProjectCloneBanner
@@ -1611,175 +1629,160 @@ export function NewTaskDraftScreen(props: {
         />
       ) : null}
 
-      <View>
-        {!voiceInput.isBusy &&
-        composerMenu.trigger &&
-        (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
-          <ComposerPopoverAnchor>
-            <ComposerCommandPopover
-              items={composerMenu.items}
-              triggerKind={composerMenu.trigger.kind}
-              isLoading={composerMenu.isLoading}
-              error={composerMenu.error}
-              onSelect={composerMenu.onSelect}
+      <ComposerSurface
+        style={{
+          borderRadius: 26,
+          minHeight: 140,
+          overflow: "hidden",
+          paddingBottom: 6,
+          paddingTop: 14,
+        }}
+      >
+        {stripAttachments.length > 0 ? (
+          <View className="px-[14px] pb-2.5">
+            <ComposerAttachmentStrip
+              environmentId={selectedProject.environmentId}
+              attachments={stripAttachments}
+              imageBorderRadius={16}
+              imageSize={72}
+              onRemove={
+                isComposerInteractionLocked || voiceInput.isBusy
+                  ? () => undefined
+                  : flow.removeAttachment
+              }
+              onPressPreview={
+                isComposerInteractionLocked || voiceInput.isBusy ? undefined : openFilePreview
+              }
+              onPressVideo={
+                isComposerInteractionLocked || voiceInput.isBusy ? undefined : openVideoPreview
+              }
+              onPressDocument={
+                isComposerInteractionLocked || voiceInput.isBusy
+                  ? undefined
+                  : (attachment) =>
+                      openDraftDocument({
+                        attachmentId: attachment.id,
+                        name: attachment.name,
+                        mimeType: attachment.mimeType,
+                        sizeBytes: attachment.sizeBytes,
+                      })
+              }
             />
-          </ComposerPopoverAnchor>
+          </View>
         ) : null}
-        <ComposerSurface
-          style={{
-            borderRadius: 26,
-            minHeight: 140,
-            overflow: "hidden",
-            paddingBottom: 6,
-            paddingTop: 14,
-          }}
-        >
-          {stripAttachments.length > 0 ? (
-            <View className="px-[14px] pb-2.5">
-              <ComposerAttachmentStrip
-                environmentId={selectedProject.environmentId}
-                attachments={stripAttachments}
-                imageBorderRadius={16}
-                imageSize={72}
-                onRemove={
-                  isComposerInteractionLocked || voiceInput.isBusy
-                    ? () => undefined
-                    : flow.removeAttachment
-                }
-                onPressPreview={
-                  isComposerInteractionLocked || voiceInput.isBusy ? undefined : openFilePreview
-                }
-                onPressVideo={
-                  isComposerInteractionLocked || voiceInput.isBusy ? undefined : openVideoPreview
-                }
-                onPressDocument={
-                  isComposerInteractionLocked || voiceInput.isBusy
-                    ? undefined
-                    : (attachment) =>
-                        openDraftDocument({
-                          attachmentId: attachment.id,
-                          name: attachment.name,
-                          mimeType: attachment.mimeType,
-                          sizeBytes: attachment.sizeBytes,
-                        })
-                }
+
+        <View className="px-[14px]">{promptEditor}</View>
+        <View className="h-1" />
+
+        <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} collapsable={false}>
+          <ComposerDictationToolbar showsDictation={isVoiceInputPresented}>
+            <ComposerToolbarRow
+              paddingBottom={0}
+              paddingHorizontal={0}
+              paddingTop={0}
+              style={{ gap: 0 }}
+            >
+              <ComposerDictationCancelAction
+                presentation={voicePresentation}
+                onCancel={voiceInput.cancel}
               />
-            </View>
-          ) : null}
-
-          <View className="px-[14px]">{promptEditor}</View>
-          <View className="h-1" />
-
-          <Animated.View layout={COMPOSER_LAYOUT_TRANSITION} collapsable={false}>
-            <ComposerDictationToolbar showsDictation={isVoiceInputPresented}>
-              <ComposerToolbarRow
-                paddingBottom={0}
-                paddingHorizontal={0}
-                paddingTop={0}
-                style={{ gap: 0 }}
-              >
-                <ComposerDictationCancelAction
+              {isVoiceInputPresented ? (
+                <ComposerDictationStatus
+                  audioLevels={voiceInput.audioLevels}
+                  elapsedSeconds={voiceInput.elapsedSeconds}
+                  phase={voiceInput.state.phase}
                   presentation={voicePresentation}
-                  onCancel={voiceInput.cancel}
+                  onDismissError={voiceInput.cancel}
                 />
-                {isVoiceInputPresented ? (
-                  <ComposerDictationStatus
-                    audioLevels={voiceInput.audioLevels}
-                    elapsedSeconds={voiceInput.elapsedSeconds}
-                    phase={voiceInput.state.phase}
-                    presentation={voicePresentation}
-                    onDismissError={voiceInput.cancel}
+              ) : (
+                <>
+                  <ComposerAttachmentButton
+                    disabled={isComposerInteractionLocked}
+                    supportsFiles={Boolean(
+                      selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments,
+                    )}
+                    onPickMedia={handlePickMedia}
+                    onPickFiles={handlePickFiles}
                   />
-                ) : (
-                  <>
-                    <ComposerAttachmentButton
-                      disabled={isComposerInteractionLocked}
-                      supportsFiles={Boolean(
-                        selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments,
-                      )}
-                      onPickMedia={handlePickMedia}
-                      onPickFiles={handlePickFiles}
-                    />
-                    <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
-                      <View className="min-w-0 shrink">
-                        <ComposerInlineControl
-                          accessibilityLabel="Model and reasoning settings"
-                          disabled={isComposerInteractionLocked}
-                          emphasized
-                          renderIcon={(size) => (
-                            <ProviderIcon
-                              iconUrl={flow.selectedModelOption?.providerIconUrl}
-                              provider={flow.selectedModelOption?.providerDriver}
-                              size={size}
-                            />
-                          )}
-                          label={flow.selectedModelOption?.label ?? "Choose model"}
-                          maxWidth="100%"
-                          onPress={settingsSheetPresentation.open}
-                        />
-                      </View>
-                      {flow.planModeEnabled ? (
-                        <ComposerInlineControl
-                          accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
-                          accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
-                          disabled={isComposerInteractionLocked}
-                          emphasized
-                          icon={
-                            flow.interactionMode === "plan"
-                              ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
-                              : { ios: "hammer", android: "construction" }
-                          }
-                          label={flow.interactionMode === "plan" ? "Plan" : "Build"}
-                          onPress={() =>
-                            flow.setInteractionMode(
-                              flow.interactionMode === "plan" ? "default" : "plan",
-                            )
-                          }
-                          showChevron={false}
-                        />
-                      ) : null}
+                  <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">
+                    <View className="min-w-0 shrink">
+                      <ComposerInlineControl
+                        accessibilityLabel="Model and reasoning settings"
+                        disabled={isComposerInteractionLocked}
+                        emphasized
+                        renderIcon={(size) => (
+                          <ProviderIcon
+                            iconUrl={flow.selectedModelOption?.providerIconUrl}
+                            provider={flow.selectedModelOption?.providerDriver}
+                            size={size}
+                          />
+                        )}
+                        label={flow.selectedModelOption?.label ?? "Choose model"}
+                        maxWidth="100%"
+                        onPress={settingsSheetPresentation.open}
+                      />
                     </View>
-                  </>
-                )}
-                <ComposerDictationPrimaryAction
-                  state={voiceInput.state}
-                  presentation={voicePresentation}
-                  isAvailable={voiceInput.isAvailable}
-                  disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
-                  onStart={voiceInput.start}
-                  onConfirm={voiceInput.stop}
-                  onCancel={voiceInput.cancel}
+                    {flow.planModeEnabled ? (
+                      <ComposerInlineControl
+                        accessibilityHint={`Switches to ${flow.interactionMode === "plan" ? "Build" : "Plan"} mode`}
+                        accessibilityLabel={`Interaction mode: ${flow.interactionMode === "plan" ? "Plan" : "Build"}`}
+                        disabled={isComposerInteractionLocked}
+                        emphasized
+                        icon={
+                          flow.interactionMode === "plan"
+                            ? { ios: "list.bullet.clipboard", android: "auto_awesome" }
+                            : { ios: "hammer", android: "construction" }
+                        }
+                        label={flow.interactionMode === "plan" ? "Plan" : "Build"}
+                        onPress={() =>
+                          flow.setInteractionMode(
+                            flow.interactionMode === "plan" ? "default" : "plan",
+                          )
+                        }
+                        showChevron={false}
+                      />
+                    ) : null}
+                  </View>
+                </>
+              )}
+              <ComposerDictationPrimaryAction
+                state={voiceInput.state}
+                presentation={voicePresentation}
+                isAvailable={voiceInput.isAvailable}
+                disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+                onStart={voiceInput.start}
+                onConfirm={voiceInput.stop}
+                onCancel={voiceInput.cancel}
+              />
+              {voicePresentation.showsSend ? (
+                <ComposerActionButton
+                  accessibilityLabel={
+                    taskPermissionReason ??
+                    attachmentBlockReason ??
+                    (cloneBlocksStart
+                      ? projectClone === null || projectClone.phase === "running"
+                        ? "Cloning repository"
+                        : "Repository not cloned"
+                      : pendingPastedTextAttachmentCount > 0
+                        ? "Attaching pasted text"
+                        : flow.submitting
+                          ? "Starting task"
+                          : attachmentsUploading
+                            ? "Queue task, sends when uploads finish"
+                            : environmentConnected
+                              ? "Start task"
+                              : "Queue task")
+                  }
+                  disabled={!canStart}
+                  icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
+                  onPress={() => void handleStart()}
+                  variant="primary"
                 />
-                {voicePresentation.showsSend ? (
-                  <ComposerActionButton
-                    accessibilityLabel={
-                      taskPermissionReason ??
-                      attachmentBlockReason ??
-                      (cloneBlocksStart
-                        ? projectClone === null || projectClone.phase === "running"
-                          ? "Cloning repository"
-                          : "Repository not cloned"
-                        : pendingPastedTextAttachmentCount > 0
-                          ? "Attaching pasted text"
-                          : flow.submitting
-                            ? "Starting task"
-                            : attachmentsUploading
-                              ? "Queue task, sends when uploads finish"
-                              : environmentConnected
-                                ? "Start task"
-                                : "Queue task")
-                    }
-                    disabled={!canStart}
-                    icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
-                    onPress={() => void handleStart()}
-                    variant="primary"
-                  />
-                ) : null}
-              </ComposerToolbarRow>
-            </ComposerDictationToolbar>
-          </Animated.View>
-        </ComposerSurface>
-      </View>
+              ) : null}
+            </ComposerToolbarRow>
+          </ComposerDictationToolbar>
+        </Animated.View>
+      </ComposerSurface>
       <VideoPreviewModal source={previewVideo} onRequestClose={closeMediaPreview} />
       <FilePreviewModal source={previewFile} onRequestClose={closeMediaPreview} />
     </View>
