@@ -1463,6 +1463,51 @@ describe("MessagesTimeline scroll position", () => {
     return props.listRef.current!.getScrollableNode()!;
   }
 
+  it.each(["together", "anchor-first", "rows-first"] as const)(
+    "preserves an anchored reading position when anchor clearing and changed rows arrive %s",
+    async (order) => {
+      const onIsAtEndChange = vi.fn();
+      const onAnchorReady = vi.fn();
+      const props = { ...baseProps(), onIsAtEndChange, onAnchorReady };
+      const sent = message("Newest prompt.", {}, "anchored-prompt");
+      const reply = tall(12);
+      const entries = [...tallEntries, sent, reply];
+      const timeline = (anchorCleared: boolean, rowsChanged = anchorCleared) => (
+        <MessagesTimeline
+          {...props}
+          timelineEntries={rowsChanged ? [...entries, tall(13)] : entries}
+          anchorMessageId={anchorCleared ? null : MessageId.make("anchored-prompt")}
+          isWorking={!anchorCleared}
+        />
+      );
+      await renderElement(timeline(false));
+      const viewport = await waitForList(props);
+      await vi.waitFor(() => expect(onAnchorReady).toHaveBeenCalled());
+      await act(async () => {
+        await props.listRef.current!.scrollToOffset({ offset: 600, animated: false });
+        viewport.dispatchEvent(new Event("scroll"));
+      });
+      await vi.waitFor(() => expect(onIsAtEndChange).toHaveBeenLastCalledWith(false));
+      const offset = viewport.scrollTop;
+
+      if (order !== "together") {
+        await act(async () =>
+          roots.at(-1)!.render(timeline(order === "anchor-first", order === "rows-first")),
+        );
+      }
+      await act(async () => roots.at(-1)!.render(timeline(true)));
+      await act(async () => {
+        // Drain the two-frame growth check and its first end correction.
+        for (let frame = 0; frame < 4; frame += 1) await new Promise(requestAnimationFrame);
+      });
+
+      expect(viewport.scrollTop).toBeCloseTo(offset, 0);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
+        600,
+      );
+    },
+  );
+
   it("does not interrupt a smooth jump when following is re-enabled without new rows", async () => {
     const props = baseProps();
     const timeline = (following: boolean) => (

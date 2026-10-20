@@ -898,6 +898,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
   const followsEndRef = useRef(false);
+  const endPinWasAtEndRef = useRef(true);
   const endPinCancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const cancelEndPin = () => {
@@ -1208,6 +1209,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
+    if (isAtEnd !== undefined) endPinWasAtEndRef.current = isAtEnd;
     const position = state?.data?.length ? resolveWorkGroupScrollAnchor(state) : undefined;
     if (position && state && isAtEnd !== undefined && !paintOnly) {
       const index = state.indexByKey(position.rowId);
@@ -1481,7 +1483,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const rowsChanged = endPinRowsRef.current !== rows;
     endPinRowsRef.current = rows;
     const list = listRef.current;
-    if (!rowsChanged || !list || !followsEnd || followsEndSmoothly || restoringThreadPosition)
+    if (
+      !rowsChanged ||
+      !list ||
+      !followsEnd ||
+      followsEndSmoothly ||
+      restoringThreadPosition ||
+      !endPinWasAtEndRef.current
+    )
       return;
     let second: number | null = null;
     const first = requestAnimationFrame(() => {
