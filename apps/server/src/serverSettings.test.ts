@@ -24,6 +24,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -98,6 +99,211 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect.each(["target-failure", "target-end", "root-end", "attachment-repoint"] as const)(
+    "recovers a disconnected settings watcher and retries missed reads: %s",
+    (ending) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "settings-watch-recovery-" });
+        const first = path.join(sandbox, "first", "settings.json");
+        const second = path.join(sandbox, "second", "settings.json");
+        yield* fs.makeDirectory(path.dirname(first), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(second), { recursive: true });
+        yield* fs.writeFileString(first, '{"responseStreamingMode":"turn"}');
+        yield* fs.writeFileString(second, '{"responseStreamingMode":"turn"}');
+        const attached = yield* Deferred.make<void>();
+        const disconnect = yield* Deferred.make<void>();
+        const disconnected = yield* Deferred.make<void>();
+        const repointComplete = yield* Deferred.make<void>();
+        const staleTargetReleased = yield* Deferred.make<void>();
+        const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+        const failedRecoveryRead = yield* Deferred.make<void>();
+        const recovered = yield* Deferred.make<void>();
+        const subsequent = yield* Deferred.make<void>();
+        const eventObserved = yield* Deferred.make<void>();
+        const changes: Array<ServerSettings> = [];
+        let settingsPath = "";
+        let failRead = false;
+        let failedReads = 0;
+        let recoveryAttachments = 0;
+        let rootDisconnected = false;
+        let recovering = false;
+        let repointed = false;
+        const activeTargets = new Set<string>();
+        const unavailable = PlatformError.systemError({
+          _tag: "Unknown",
+          module: "FileSystem",
+          method: "watch",
+          description: "test target watcher disconnected",
+        });
+        const controlled = FileSystem.FileSystem.of({
+          ...fs,
+          watch: (directory, options) => {
+            if (directory === path.dirname(first)) {
+              return Stream.unwrap(
+                Effect.acquireRelease(
+                  Effect.gen(function* () {
+                    if (ending === "attachment-repoint" && recovering)
+                      yield* Deferred.await(repointComplete);
+                    activeTargets.add(first);
+                    options?.onReady?.();
+                    return ending === "attachment-repoint" && recovering;
+                  }),
+                  (staleReplacement) =>
+                    Effect.sync(() => {
+                      activeTargets.delete(first);
+                      if (staleReplacement) Deferred.doneUnsafe(staleTargetReleased, Effect.void);
+                    }),
+                ).pipe(
+                  Effect.andThen(Deferred.succeed(attached, undefined)),
+                  Effect.as(
+                    ending === "root-end" || (ending === "attachment-repoint" && recovering)
+                      ? Stream.never
+                      : Stream.fromEffect(
+                          Deferred.await(disconnect).pipe(
+                            Effect.andThen(Deferred.succeed(disconnected, undefined)),
+                            Effect.andThen(
+                              ending === "target-failure" || ending === "attachment-repoint"
+                                ? Effect.fail(unavailable)
+                                : Effect.void,
+                            ),
+                          ),
+                        ).pipe(Stream.drain),
+                  ),
+                ),
+              );
+            }
+            if (directory === path.dirname(second)) {
+              return Stream.unwrap(
+                Effect.gen(function* () {
+                  recoveryAttachments += 1;
+                  yield* Effect.acquireRelease(
+                    Effect.sync(() => activeTargets.add(second)),
+                    () => Effect.sync(() => activeTargets.delete(second)),
+                  );
+                  yield* fs.writeFileString(second, '{"responseStreamingMode":"paragraph"}');
+                  options?.onReady?.();
+                  return Stream.fromQueue(events).pipe(
+                    Stream.tap(() => Deferred.succeed(eventObserved, undefined)),
+                  );
+                }),
+              );
+            }
+            return Stream.unwrap(
+              Effect.gen(function* () {
+                if (ending === "attachment-repoint" && recovering && !repointed) {
+                  // The old target has been resolved, but neither replacement link watch is attached.
+                  repointed = true;
+                  yield* fs.remove(settingsPath);
+                  yield* fs.symlink(second, settingsPath);
+                  yield* fs.writeFileString(second, '{"responseStreamingMode":"paragraph"}');
+                  yield* Deferred.succeed(repointComplete, undefined);
+                }
+                if (ending === "attachment-repoint" && recovering)
+                  yield* Deferred.await(repointComplete);
+                options?.onReady?.();
+                return ending === "root-end" && !rootDisconnected
+                  ? Stream.fromEffect(
+                      Deferred.await(disconnect).pipe(
+                        Effect.tap(() =>
+                          Effect.sync(() => {
+                            rootDisconnected = true;
+                          }),
+                        ),
+                        Effect.andThen(Deferred.succeed(disconnected, undefined)),
+                      ),
+                    ).pipe(Stream.drain)
+                  : Stream.never;
+              }),
+            );
+          },
+          readFileString: (file, encoding) =>
+            Effect.suspend(() => {
+              if ((file === settingsPath || file === second) && failRead) {
+                failRead = false;
+                failedReads += 1;
+                Deferred.doneUnsafe(failedRecoveryRead, Effect.void);
+                return Effect.fail(unavailable);
+              }
+              return fs.readFileString(file, encoding);
+            }),
+        });
+        yield* Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          settingsPath = config.settingsPath;
+          yield* fs.remove(settingsPath, { force: true });
+          yield* fs.symlink(first, settingsPath);
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const subscription = yield* service.subscribeChanges;
+          yield* subscription.pipe(
+            Stream.runForEach((change) =>
+              Effect.sync(() => {
+                changes.push(change);
+                if (
+                  change.responseStreamingMode === "turn" &&
+                  changes.some((item) => item.responseStreamingMode === "paragraph")
+                )
+                  Deferred.doneUnsafe(subsequent, Effect.void);
+                if (change.responseStreamingMode === "paragraph")
+                  Deferred.doneUnsafe(recovered, Effect.void);
+              }),
+            ),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* service.start;
+          yield* Deferred.await(attached);
+          yield* Deferred.succeed(disconnect, undefined);
+          yield* Deferred.await(disconnected);
+          recovering = true;
+          if (ending !== "attachment-repoint") {
+            yield* fs.remove(settingsPath);
+            yield* fs.symlink(second, settingsPath);
+          }
+          failRead = true;
+          yield* TestClock.adjust("1 second");
+          if (ending === "attachment-repoint") {
+            yield* Deferred.await(staleTargetReleased);
+            yield* TestClock.adjust("1 second");
+          }
+          yield* Deferred.await(failedRecoveryRead);
+          yield* TestClock.adjust("1 minute");
+          yield* Deferred.await(recovered);
+          assert.equal((yield* service.getSettings).responseStreamingMode, "paragraph");
+          assert.isTrue(
+            activeTargets.has(second),
+            "recovery must watch the new target, not just reconcile its contents once",
+          );
+          assert.isAtLeast(
+            recoveryAttachments,
+            1,
+            "the failed inner watcher must re-resolve the link",
+          );
+          assert.equal(failedReads, 1);
+          assert.equal(
+            changes.at(-1)?.responseStreamingMode,
+            "paragraph",
+            "recovery must observe the edit made during lazy watch attachment",
+          );
+
+          yield* fs.writeFileString(second, '{"responseStreamingMode":"turn"}');
+          yield* Queue.offer(events, { _tag: "Update", path: second });
+          yield* Deferred.await(eventObserved);
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+          yield* Deferred.await(subsequent);
+          assert.equal(changes.at(-1)?.responseStreamingMode, "turn");
+          assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
+        }).pipe(
+          Effect.provide(
+            layerServerSettings().pipe(
+              Layer.provide(Layer.succeed(FileSystem.FileSystem, controlled)),
+            ),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
