@@ -2555,6 +2555,12 @@ export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJs
 
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("thread.stop"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
     type: Schema.Literal("thread.create"),
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
@@ -2691,6 +2697,7 @@ export const OrchestrationV2Command = Schema.Union([
     ...ThreadPullRequestKey.fields,
     url: TrimmedNonEmptyString,
     source: ThreadPullRequestLinkSource,
+    repositoryWebUrl: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pull-request.unlink"),
@@ -2713,7 +2720,11 @@ export const OrchestrationV2Command = Schema.Union([
     ...ThreadPullRequestKey.fields,
     watching: Schema.Boolean,
     link: Schema.optional(
-      Schema.Struct({ url: TrimmedNonEmptyString, source: ThreadPullRequestLinkSource }),
+      Schema.Struct({
+        url: TrimmedNonEmptyString,
+        source: ThreadPullRequestLinkSource,
+        repositoryWebUrl: Schema.optional(TrimmedNonEmptyString),
+      }),
     ),
   }),
   Schema.Struct({
@@ -3031,12 +3042,6 @@ const OrchestrationV2InternalCommand = Schema.Union([
         }),
       }),
     ),
-  }),
-  Schema.Struct({
-    type: Schema.Literal("thread.stop"),
-    commandId: CommandId,
-    threadId: ThreadId,
-    reason: Schema.optional(Schema.String),
   }),
   /**
    * Internal so no client can mark a request saved without the value being
