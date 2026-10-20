@@ -95,6 +95,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
     case "run.created":
@@ -103,7 +104,7 @@ export function shouldPublishAgentAwarenessEvent(
     case "subagent.updated":
     case "provider-thread.updated":
       return true;
-    case "thread.settled":
+    // Unsettling must not re-alert a dismissed result.
     case "thread.unsettled":
     case "thread.auto-settle-set":
     case "thread.pinned":
