@@ -51,6 +51,7 @@ describe("captureFreshScreenshot", () => {
       };
       const fiber = yield* h.capture(params).pipe(Effect.forkChild);
       yield* Effect.promise(() => h.copying.promise);
+      expect(h.capturePage).toHaveBeenCalledWith(undefined, { stayHidden: true });
       h.reply.resolve({ data: "fresh-cdp-image" });
       expect(yield* Fiber.join(fiber)).toEqual({ data: "fresh-cdp-image" });
       h.copy.resolve(h.image);

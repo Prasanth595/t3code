@@ -29,7 +29,7 @@ export const captureFreshScreenshot = Effect.fn("Preview.captureFreshScreenshot"
   // CDP requests a redraw, but an occluded guest needs page copies to present it.
   // Discard those copies: only the CDP reply carries the requested clip and scale.
   const copies = Effect.forever(
-    Effect.tryPromise(() => contents.capturePage()).pipe(
+    Effect.tryPromise(() => contents.capturePage(undefined, { stayHidden: true })).pipe(
       // A cold guest can reject its first copy with Chromium's UnknownVizError.
       Effect.retry({ times: 2, schedule: Schedule.spaced("120 millis") }),
       Effect.filterOrFail(
