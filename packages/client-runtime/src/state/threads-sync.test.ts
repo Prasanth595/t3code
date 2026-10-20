@@ -83,6 +83,7 @@ function testSession(
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
+    receivedFrames: Effect.succeed(0),
     closed: Effect.never,
   };
 }
@@ -2138,6 +2139,7 @@ describe("EnvironmentThreads", () => {
       }
       expect(yield* Ref.get(harness.subscriptionCount)).toBe(3);
 
+      yield* Queue.offer(harness.wakeups, "application-refocused");
       yield* Queue.offer(harness.wakeups, "application-active-reconnect");
       for (let attempt = 0; attempt < 10; attempt += 1) {
         yield* Effect.yieldNow;

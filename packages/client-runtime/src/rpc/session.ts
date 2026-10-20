@@ -53,6 +53,8 @@ export interface RpcSession {
   ) => ServerConfigSubscription;
   readonly ready: Effect.Effect<void, ConnectionAttemptError>;
   readonly probe: Effect.Effect<void, ConnectionAttemptError>;
+  /** Message arrivals, including Effect's application pongs, before RPC backpressure. */
+  readonly receivedFrames: Effect.Effect<number>;
   readonly closed: Effect.Effect<never, ConnectionAttemptError>;
 }
 
@@ -206,9 +208,29 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.asVoid,
       ),
     });
-    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
-      openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    // RPC reads can stall behind a full subscription buffer while the link still delivers.
+    let receivedFrames = 0;
+    const countFrame = () => {
+      receivedFrames += 1;
+    };
+    const layerSocket = Layer.effect(
+      Socket.Socket,
+      Socket.fromWebSocket(
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            const socket = webSocketConstructor(connection.socketUrl);
+            socket.addEventListener("message", countFrame);
+            return socket;
+          }),
+          (socket) =>
+            Effect.sync(() => {
+              socket.removeEventListener("message", countFrame);
+              socket.close(1000);
+            }),
+        ),
+        { openTimeout: SOCKET_OPEN_TIMEOUT },
+      ),
+    );
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
@@ -412,6 +434,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         Effect.raceFirst(Deferred.await(disconnected)),
       ),
       probe,
+      receivedFrames: Effect.sync(() => receivedFrames),
       closed: Effect.raceFirst(
         Deferred.await(disconnected),
         Deferred.await(configSubscriptionClosed),

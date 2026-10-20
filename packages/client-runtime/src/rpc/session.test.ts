@@ -1154,6 +1154,11 @@ describe("RpcSessionFactory", () => {
         }),
       );
       yield* Deferred.await(consuming);
+
+      // Arrival must be visible even while the full stream blocks RPC reads.
+      const before = yield* session.receivedFrames;
+      socket.serverMessage(encodeJson({ _tag: "Pong" }));
+      expect(yield* session.receivedFrames).toBe(before + 1);
       yield* Fiber.interrupt(streamFiber);
 
       const probeFiber = yield* Effect.forkChild(session.probe);

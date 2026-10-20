@@ -6,6 +6,8 @@ export type ConnectionWakeup =
   | "application-active"
   | "application-active-probe"
   | "application-active-reconnect"
+  // Inactive-only mobile returns wake retries without probing or resubscribing.
+  | "application-refocused"
   | "credentials-changed"
   | "network-changed";
 
@@ -13,7 +15,8 @@ function isApplicationActiveWakeup(reason: ConnectionWakeup): boolean {
   return (
     reason === "application-active" ||
     reason === "application-active-probe" ||
-    reason === "application-active-reconnect"
+    reason === "application-active-reconnect" ||
+    reason === "application-refocused"
   );
 }
 
@@ -22,6 +25,7 @@ export function resetsRetryBackoff(reason: ConnectionWakeup): boolean {
 }
 
 // A long resume replaces the session, and the new session subscribes on its own.
+// A refocus never suspended the socket, so its streams are still live.
 export function shouldResubscribeAfterWakeup(reason: ConnectionWakeup): boolean {
   return reason === "application-active" || reason === "application-active-probe";
 }
