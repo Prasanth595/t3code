@@ -572,16 +572,13 @@ const make = Effect.gen(function* () {
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
-  // What subscribers last received. A reload that finds the same settings, such as our own
-  // write coming back through the watcher, publishes nothing.
-  const publishedRef = yield* Ref.make(Option.none<ServerSettings>());
+  // The file contents of our last save, set only once the save is published. The watcher skips
+  // a reload that reads exactly these bytes; any other contents are published as before.
+  const publishedSaveRef = yield* Ref.make(Option.none<string>());
   const parseFailureLoggedRef = yield* Ref.make(false);
 
   const emitChange = (settings: ServerSettings) =>
-    Ref.set(publishedRef, Option.some(settings)).pipe(
-      Effect.andThen(PubSub.publish(changesPubSub, settings)),
-      Effect.asVoid,
-    );
+    PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
 
   const readConfigExists = fs.exists(settingsPath).pipe(
     Effect.mapError(
@@ -610,13 +607,12 @@ const make = Effect.gen(function* () {
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         stripDefaultServerSettings(settings, DEFAULT_SERVER_SETTINGS) ?? {},
       );
+      const contents = `${sparseSettingsJson}\n`;
 
-      return yield* writeFileStringAtomically({
-        filePath: settingsPath,
-        contents: `${sparseSettingsJson}\n`,
-      }).pipe(
+      return yield* writeFileStringAtomically({ filePath: settingsPath, contents }).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, pathService),
+        Effect.as(contents),
       );
     },
     Effect.mapError(
@@ -664,9 +660,11 @@ const make = Effect.gen(function* () {
     let legacyProviders: Readonly<Record<string, unknown>> | undefined;
     let legacySourceControl: Parameters<typeof migrateLegacySourceControlSettings>[1] = {};
     let parseFailure = Option.none<unknown>();
+    let isPublishedSave = false;
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
+      isPublishedSave = Option.contains(yield* Ref.get(publishedSaveRef), raw);
       const decoded = decodeServerSettingsJsonExit(raw);
       const legacySettings = decodeLegacyProviderSettingsJsonExit(raw);
       if (legacySettings._tag === "Success") {
@@ -801,27 +799,35 @@ const make = Effect.gen(function* () {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
-    return { settings: migrated, parseFailure };
+    return { settings: migrated, parseFailure, isPublishedSave };
   });
 
-  const settingsCache = yield* Cache.makeWith((_key: typeof cacheKey) => loadSettingsFromDisk, {
-    capacity: 1,
-    timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
-  });
+  const settingsCache = yield* Cache.makeWith(
+    (_key: typeof cacheKey) =>
+      loadSettingsFromDisk.pipe(
+        Effect.map(({ settings, parseFailure }) => ({ settings, parseFailure })),
+      ),
+    {
+      capacity: 1,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    },
+  );
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey).pipe(
     Effect.map((loaded) => loaded.settings),
   );
-  // A file caught mid-write or left invalid keeps the settings that last loaded instead of
-  // resetting them to defaults. Its parse failure still blocks saves.
+  // Loads beside the cached entry and then replaces it, so readers never wait on a reload or
+  // see a half-finished one. A file caught mid-write or left invalid keeps the settings that
+  // last loaded instead of resetting them to defaults; its parse failure still blocks saves.
   const reloadSettings = Effect.gen(function* () {
+    const { isPublishedSave, ...loaded } = yield* loadSettingsFromDisk;
     const previous = yield* Cache.getSuccess(settingsCache, cacheKey);
-    yield* Cache.invalidate(settingsCache, cacheKey);
-    const loaded = yield* Cache.get(settingsCache, cacheKey);
-    if (Option.isNone(loaded.parseFailure) || Option.isNone(previous)) return loaded;
-    const kept = { settings: previous.value.settings, parseFailure: loaded.parseFailure };
-    yield* Cache.set(settingsCache, cacheKey, kept);
-    return kept;
+    const next =
+      Option.isSome(loaded.parseFailure) && Option.isSome(previous)
+        ? { settings: previous.value.settings, parseFailure: loaded.parseFailure }
+        : loaded;
+    yield* Cache.set(settingsCache, cacheKey, next);
+    return { ...next, isPublishedSave };
   });
 
   const materializeSettingsSecrets = Effect.fn("serverSettings.materializeSettingsSecrets")(
@@ -1035,7 +1041,7 @@ const make = Effect.gen(function* () {
         const updated = yield* update(current);
         const persisted = yield* persistSettingsSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
-        const materialized = yield* Effect.uninterruptibleMask(() =>
+        const { materialized, written } = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
             const rollbackSecretChanges = yield* applySettingsSecretChanges(persisted.changes);
             const materializedExit = yield* Effect.exit(materializeSettingsSecrets(next));
@@ -1048,11 +1054,12 @@ const make = Effect.gen(function* () {
               yield* rollbackSecretChanges;
               return yield* Effect.failCause(writeExit.cause);
             }
-            return materializedExit.value;
+            return { materialized: materializedExit.value, written: writeExit.value };
           }),
         );
         yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
         yield* emitChange(next);
+        yield* Ref.set(publishedSaveRef, Option.some(written));
         return resolveTextGenerationProvider(materialized);
       }),
     );
@@ -1068,10 +1075,11 @@ const make = Effect.gen(function* () {
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const { settings } = yield* reloadSettings;
-      const published = yield* Ref.get(publishedRef);
-      if (Option.isSome(published) && Equal.equals(published.value, settings)) return;
+      const { settings, parseFailure, isPublishedSave } = yield* reloadSettings;
+      // Subscribers already have our own save, and keep what they have while the file is invalid.
+      if (isPublishedSave || Option.isSome(parseFailure)) return;
       yield* emitChange(settings);
+      yield* Ref.set(publishedSaveRef, Option.none());
     }),
   );
 
@@ -1159,12 +1167,7 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      const { settings } = yield* reloadSettings;
-      // Clients start from a snapshot of these, so they count as published.
-      yield* Ref.update(
-        publishedRef,
-        Option.orElseSome(() => settings),
-      );
+      yield* reloadSettings;
     });
 
     const startupExit = yield* Effect.exit(startup);

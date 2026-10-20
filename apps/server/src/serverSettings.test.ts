@@ -18,6 +18,7 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
@@ -66,8 +67,13 @@ const layerServerSettingsWithSecrets = () =>
     ),
   );
 
-// Reports each read of settings.json, so a test knows when the watcher has reloaded the file.
-const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
+// Runs the service's reads of settings.json through `aroundRead`, so a test can tell when the
+// watcher has reloaded the file, or hold a reload open.
+const layerServerSettingsAroundReads = (
+  aroundRead: (
+    read: Effect.Effect<string, PlatformError.PlatformError>,
+  ) => Effect.Effect<string, PlatformError.PlatformError>,
+) =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(
@@ -79,13 +85,9 @@ const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
           return FileSystem.FileSystem.of({
             ...fs,
             readFileString: (path, encoding) =>
-              fs
-                .readFileString(path, encoding)
-                .pipe(
-                  Effect.ensuring(
-                    path === settingsPath ? Queue.offer(reads, undefined) : Effect.void,
-                  ),
-                ),
+              path === settingsPath
+                ? aroundRead(fs.readFileString(path, encoding))
+                : fs.readFileString(path, encoding),
           });
         }),
       ),
@@ -98,6 +100,11 @@ const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
         }),
       ),
     ),
+  );
+
+const layerServerSettingsReportingReads = (reads: Queue.Queue<void>) =>
+  layerServerSettingsAroundReads((read) =>
+    read.pipe(Effect.ensuring(Queue.offer(reads, undefined))),
   );
 
 const usageScript = {
@@ -475,6 +482,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const changes = yield* service.subscribeChanges;
 
           yield* service.updateSettings({ responseStreamingMode: "turn" });
+          const savedContents = yield* fs.readFileString(config.settingsPath);
           // One read is the save's own; the next is the watcher reloading the saved file.
           yield* Queue.take(reads);
           yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
@@ -482,9 +490,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             config.settingsPath,
             JSON.stringify({ responseStreamingMode: "turn", defaultProjectScripts: [usageScript] }),
           );
+          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+          yield* service.withSettingsSnapshot(() => Effect.void);
+          // Once another edit is published, the saved contents are an edit of their own.
+          yield* fs.writeFileString(config.settingsPath, savedContents);
 
-          const [saved, edited] = yield* changes.pipe(
-            Stream.take(2),
+          const [saved, edited, restored] = yield* changes.pipe(
+            Stream.take(3),
             Stream.runCollect,
             Effect.timeout("2 seconds"),
           );
@@ -494,6 +506,79 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             edited?.defaultProjectScripts.map((script) => script.id),
             ["usage"],
           );
+          assert.deepEqual(restored?.defaultProjectScripts, []);
+        }),
+      ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("serves the last good settings while a reload of an invalid file is in flight", () =>
+    Effect.gen(function* () {
+      const started = yield* Queue.unbounded<void>();
+      const reloads = yield* Latch.make(true);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          yield* fs.writeFileString(config.settingsPath, `{ "responseStreamingMode": "turn" }`);
+          yield* service.start;
+          yield* Queue.clear(started);
+
+          yield* reloads.close;
+          yield* fs.writeFileString(config.settingsPath, `{ "responseStreamingMode": `);
+          yield* Queue.take(started).pipe(Effect.timeout("2 seconds"));
+          const during = yield* service.getSettings.pipe(Effect.timeout("2 seconds"));
+          yield* reloads.open;
+
+          assert.equal(during.responseStreamingMode, "turn");
+          const after = yield* service.withSettingsSnapshot(Effect.succeed);
+          assert.equal(after.responseStreamingMode, "turn");
+        }),
+      ).pipe(
+        Effect.provide(
+          layerServerSettingsAroundReads((read) =>
+            Queue.offer(started, undefined).pipe(
+              Effect.andThen(reloads.await),
+              Effect.andThen(read),
+            ),
+          ),
+        ),
+      );
+    }).pipe(TestClock.withLive),
+  );
+
+  it.effect("publishes a provider key that another program rotates in settings.json", () =>
+    Effect.gen(function* () {
+      const reads = yield* Queue.unbounded<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const config = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const instanceId = ProviderInstanceId.make("antigravity");
+          const withApiKey = (apiKey: string) =>
+            JSON.stringify({
+              providerInstances: { antigravity: { driver: "antigravity", config: { apiKey } } },
+            });
+          yield* fs.writeFileString(config.settingsPath, withApiKey("first-key"));
+          // Startup moves the key into the secret store and rewrites the file, which the
+          // watcher then reloads.
+          yield* service.start;
+          yield* Queue.take(reads);
+          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
+          yield* service.withSettingsSnapshot(() => Effect.void);
+          const changes = yield* service.subscribeChanges;
+
+          yield* fs.writeFileString(config.settingsPath, withApiKey("second-key"));
+
+          const change = yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds"));
+          assert.propertyVal(
+            Option.getOrUndefined(change)?.providerInstances[instanceId]?.config,
+            "apiKey",
+            "second-key",
+          );
+          assert.notInclude(yield* fs.readFileString(config.settingsPath), "second-key");
         }),
       ).pipe(Effect.provide(layerServerSettingsReportingReads(reads)));
     }).pipe(TestClock.withLive),
