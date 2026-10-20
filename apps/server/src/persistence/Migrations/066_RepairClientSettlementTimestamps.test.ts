@@ -9,7 +9,7 @@ import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as ProjectionMaintenance from "../../orchestration-v2/ProjectionMaintenance.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import { runMigrations } from "../Migrations.ts";
-import Migration0065 from "./066_RepairClientSettlementTimestamps.ts";
+import Migration0066 from "./066_RepairClientSettlementTimestamps.ts";
 
 const layer = it.layer(
   ProjectionMaintenance.layer.pipe(
@@ -360,7 +360,7 @@ layer("066_RepairClientSettlementTimestamps", (it) => {
       ]);
       const repaired = yield* snapshot;
       assert.deepEqual(yield* runMigrations({ toMigrationInclusive: 66 }), []);
-      yield* Migration0065;
+      yield* Migration0066;
       assert.deepEqual(yield* snapshot, repaired);
 
       const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
