@@ -174,17 +174,19 @@ const SURFACE_DISABLED_REASONS = {
   device: "Devices are only available from a thread.",
 } as const;
 
-// Closed popups can stay mounted, such as the pull request composer.
+// Closed keepMounted popups must stop blocking shortcuts once their exit transition ends.
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
-  '[data-slot="dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="alert-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="command-dialog-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="menu-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="select-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="popover-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="combobox-popup"]:is([data-open],[data-ending-style])',
-  '[data-slot="autocomplete-popup"]:is([data-open],[data-ending-style])',
-].join(",");
+  "dialog-popup",
+  "alert-dialog-popup",
+  "command-dialog-popup",
+  "menu-popup",
+  "select-popup",
+  "popover-popup",
+  "combobox-popup",
+  "autocomplete-popup",
+]
+  .map((slot) => `[data-slot="${slot}"]:is([data-open],[data-ending-style])`)
+  .join(",");
 
 const SURFACE_UNAVAILABLE_HINTS = {
   browser: "Only available in the desktop app.",
