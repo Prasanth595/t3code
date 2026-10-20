@@ -90,7 +90,7 @@ import {
   type GateStepError,
 } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import { runProject } from "./runner/run.ts";
+import { projectForRun, runProject } from "./runner/run.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
 import * as Events from "./t3/events.ts";
@@ -442,6 +442,7 @@ export const liveWorld = (
   // relaunch, `interrupted` decides one. The tracker and the sessions are the same for both.
   const interruptContext = (repo: Repo, project: ProjectConfig): InterruptContext => ({
     ...buildingContext(repo, project),
+    repoProject: repo.project,
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
     tracker: trackerFor(repo.watched),
@@ -461,9 +462,7 @@ export const liveWorld = (
       ...(gateRemoteBase !== undefined && { remoteBase: gateRemoteBase }),
     },
   });
-  /** The repo's project as the run sees it (`runProject`), from the run's ledger. */
-  const projectFor = (repo: Repo, run: RunId) =>
-    ledger(() => runProject(repo.project, readProgress(readRun(dataDir, run).entries)));
+  const projectFor = (repo: Repo, run: RunId) => projectForRun(dataDir, repo.project, run);
   const recordError = (run: RunId, step: CauseStep, kind: ErrorKind, message: string) =>
     ledger(() => {
       const out = Ledger.open(dataDir, run, { clock });

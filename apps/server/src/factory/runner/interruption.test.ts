@@ -500,6 +500,7 @@ const rigFor = (
     trackerUser: "rawphp",
     machine: "mac-mini",
     project: projectConfig(),
+    repoProject: projectConfig(),
     dataDir,
     tracker,
     sessions,

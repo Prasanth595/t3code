@@ -78,6 +78,7 @@ import {
 import { launchable } from "./launchTarget.ts";
 import {
   APPROVAL_RECHECKED,
+  LAUNCH_BASE,
   LAUNCH_SENDING,
   LAUNCH_SENDING_RESUMED,
   readProgress,
@@ -657,8 +658,10 @@ type Launch =
  * with was really made from.
  *
  * The run's base is the issue's `## Base` when it names a branch, else `factory.base` (see
- * `runBase`), and the `session_launched` line records it for every later pass. A plain start
- * from a named base starts from its tip on `origin`.
+ * `runBase`), decided once like the resume: a named base is in the `launch-base <branch>` step
+ * before `launch-sending`, and a call sent again reads it from there. The `session_launched`
+ * line records the base for every later pass. A plain start from a named base starts from its
+ * tip on `origin`.
  */
 const launchSession = (
   ctx: StartContext,
@@ -682,14 +685,11 @@ const launchSession = (
       };
     }
     const project = target.success;
-    const based = yield* runBase(ctx, detail);
-    if (!based.ok) {
-      return {
-        ok: false,
-        reason: based.reason,
-        detail: seen.launchSent ? sessionMayExistNote(based.reason, commandId) : based.reason,
-      };
-    }
+    // A launch sent again keeps the base the first send was decided on.
+    const based = seen.launchSent
+      ? ({ ok: true, base: seen.launchBase ?? ctx.project.base } as const)
+      : yield* runBase(ctx, detail);
+    if (!based.ok) return { ok: false, reason: based.reason, detail: based.reason };
     const base = based.base;
     const named = base !== ctx.project.base;
     const resumed = seen.launchSent
@@ -698,6 +698,14 @@ const launchSession = (
         : yield* recordedResume(ctx, run, seen.launchResumedFrom)
       : yield* resumeFrom(ctx, run, issue);
     if (!seen.launchSent) {
+      if (named) {
+        yield* ledger(() =>
+          out.append(
+            { event: "step_changed", data: { step: `${LAUNCH_BASE}${base}` } },
+            makeCause("start", "launch-sending"),
+          ),
+        );
+      }
       yield* ledger(() =>
         out.append(
           {
@@ -865,7 +873,11 @@ const runBase = (
     if (named === null || named === ctx.project.base) {
       return { ok: true, base: ctx.project.base } as const;
     }
-    if (!isPlainRefName(named)) return { ok: false, reason: baseNotABranch(named) } as const;
+    // `branchTip` refuses an empty or dot segment, so such a name is refused here too.
+    const segments = named.split("/");
+    if (!isPlainRefName(named) || segments.some((s) => s === "" || s === "." || s === "..")) {
+      return { ok: false, reason: baseNotABranch(named) } as const;
+    }
     const tip = yield* Effect.result(ctx.tracker.branchTip(named));
     if (tip._tag === "Success") return { ok: true, base: named } as const;
     if (isNotFound(tip.failure)) return { ok: false, reason: baseNotOnOrigin(named) } as const;

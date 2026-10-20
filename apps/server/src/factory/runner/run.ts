@@ -12,12 +12,13 @@ import { InvalidTransition, transition, type Action, type State } from "../domai
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type CauseStep } from "../ledger/events.ts";
 import type { Ledger } from "../ledger/ledger.ts";
+import { readRun } from "../ledger/read.ts";
 import type { RunId } from "../ledger/runId.ts";
 import type { BoundGitHub, GitHubError, IssueDetail, PullRequest } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, MessageRejectedError, SessionsError } from "../t3/sessions.ts";
 import { questionsComment, statusBody, stuckComment, type WorkLeft } from "./messages.ts";
-import { GATE_RESULTS_POSTED, type Seen } from "./progress.ts";
+import { GATE_RESULTS_POSTED, readProgress, type Seen } from "./progress.ts";
 
 /** What the stop, finish and gate-action paths can fail with. */
 export type RunError =
@@ -124,6 +125,14 @@ export const progressFrom = (step: CauseStep, seen: Seen, fallback: State): Prog
  */
 export const runProject = <P extends { readonly base: string }>(project: P, seen: Seen): P =>
   seen.base === null || seen.base === project.base ? project : { ...project, base: seen.base };
+
+/** `runProject` with the run's ledger read for it: what a step's context is built with. */
+export const projectForRun = <P extends { readonly base: string }>(
+  dataDir: string,
+  project: P,
+  run: RunId,
+): Effect.Effect<P, LedgerError> =>
+  ledger(() => runProject(project, readProgress(readRun(dataDir, run).entries)));
 
 /** The words for what a failed call said: its message when it has one. */
 export const describe = (cause: unknown): string =>

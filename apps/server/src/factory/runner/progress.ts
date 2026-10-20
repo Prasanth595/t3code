@@ -120,6 +120,11 @@ export interface Seen {
    * reads it and never asks GitHub again.
    */
   readonly launchResumedFrom: string | null;
+  /**
+   * The branch in a `launch-base <branch>` step: the base the first launch call was decided on,
+   * when it is not the repo's. A launch sent again reads it and never the issue again.
+   */
+  readonly launchBase: string | null;
   /** The `approval-rechecked` step: the issue text was checked again after the launch. */
   readonly rechecked: boolean;
   /** The `session_launched` line's worktree path. */
@@ -285,6 +290,8 @@ export const committingFeedback = (seen: Seen): Relaunch | null =>
 export const LAUNCH_SENDING = "launch-sending";
 /** The start of the `launch-sending` step of a launch that resumes from an earlier run's branch: `launch-sending resumed-from <branch>`. */
 export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
+/** The step written before `launch-sending` when the run's base is not the repo's: `launch-base <branch>`. */
+export const LAUNCH_BASE = "launch-base ";
 /** The ledger step that says the issue text was checked again after the launch. */
 export const APPROVAL_RECHECKED = "approval-rechecked";
 /** The ledger step written before the reminder is sent: `result-line-reminding <k>`, `k` the ordinal of the run that ended. */
@@ -374,6 +381,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let threadId: string | null = null;
   let launchSent = false;
   let launchResumedFrom: string | null = null;
+  let launchBase: string | null = null;
   let rechecked = false;
   let worktree: string | null = null;
   let worktreeDone = false;
@@ -520,6 +528,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         } else if (step.startsWith(LAUNCH_SENDING_RESUMED)) {
           launchSent = true;
           launchResumedFrom = step.slice(LAUNCH_SENDING_RESUMED.length);
+        } else if (step.startsWith(LAUNCH_BASE)) {
+          launchBase = step.slice(LAUNCH_BASE.length);
         }
         const gateSending = parseGateSending(step);
         if (gateSending !== null) {
@@ -795,6 +805,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     threadId,
     launchSent,
     launchResumedFrom,
+    launchBase,
     rechecked,
     worktree,
     worktreeDone,
