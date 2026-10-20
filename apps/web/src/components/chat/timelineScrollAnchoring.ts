@@ -186,7 +186,7 @@ export function rememberTimelinePosition(
 const TIMELINE_END_PIN_TOLERANCE_PX = 2;
 const TIMELINE_END_PIN_QUIET_FRAMES = 6;
 const TIMELINE_END_PIN_MAX_FRAMES = 180;
-const TIMELINE_END_PIN_INTERRUPTS = ["wheel", "touchmove", "pointerdown"] as const;
+const TIMELINE_END_PIN_INTERRUPTS = ["wheel", "touchmove"] as const;
 
 export function isTimelineScrolledAwayFromEnd(element: HTMLElement): boolean {
   return (
@@ -220,6 +220,10 @@ export function pinTimelineToEnd(
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
     for (const type of TIMELINE_END_PIN_INTERRUPTS) element.removeEventListener(type, stop);
+    element.removeEventListener("pointerdown", onPointerDown);
+  };
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.target === element) stop();
   };
   const tick = () => {
     frame = null;
@@ -239,6 +243,7 @@ export function pinTimelineToEnd(
   for (const type of TIMELINE_END_PIN_INTERRUPTS) {
     element.addEventListener(type, stop, { passive: true });
   }
+  element.addEventListener("pointerdown", onPointerDown, { passive: true });
   frame = requestAnimationFrame(tick);
   return stop;
 }

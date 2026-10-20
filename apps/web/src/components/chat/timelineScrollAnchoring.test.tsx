@@ -324,12 +324,13 @@ describe("pinTimelineToEnd", () => {
       return nextHandle++;
     });
     vi.stubGlobal("cancelAnimationFrame", (handle: number) => queue.delete(handle));
-    const listeners = new Map<string, () => void>();
+    const listeners = new Map<string, (event: { target: unknown }) => void>();
     const element = {
       clientHeight: 700,
       scrollHeight: heights[0] ?? 700,
       scrollTop: 0,
-      addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+      addEventListener: (type: string, listener: (event: { target: unknown }) => void) =>
+        listeners.set(type, listener),
       removeEventListener: (type: string) => listeners.delete(type),
     };
     const scrollToEnd = vi.fn(() => {
@@ -379,12 +380,42 @@ describe("pinTimelineToEnd", () => {
   });
 
   it("stops when the user scrolls", () => {
-    const { list, listeners, scrollToEnd, runFrame, runAllFrames } = setup([1200, 3000, 5000]);
+    const { element, list, listeners, scrollToEnd, runFrame, runAllFrames } = setup([
+      1200, 3000, 5000,
+    ]);
     pinTimelineToEnd(list, () => true);
     runFrame();
     expect(scrollToEnd).toHaveBeenCalledTimes(1);
 
-    listeners.get("wheel")?.();
+    listeners.get("wheel")?.({ target: element });
+
+    expect(runAllFrames()).toBe(0);
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
+    expect(listeners.size).toBe(0);
+  });
+
+  it("keeps following row growth after a click inside a message", () => {
+    const { element, list, listeners, runFrame, runAllFrames } = setup([1200, 1200, 5000]);
+    pinTimelineToEnd(list, () => true);
+    runFrame();
+
+    listeners.get("pointerdown")?.({ target: {} });
+    element.scrollHeight = 5000;
+    runAllFrames();
+
+    expect(element.scrollHeight).toBe(5000);
+    expect(element.scrollHeight - element.clientHeight - element.scrollTop).toBe(0);
+    expect(listeners.size).toBe(0);
+  });
+
+  it("stops correcting row growth when the user grabs the scrollbar", () => {
+    const { element, list, listeners, runFrame, runAllFrames, scrollToEnd } = setup([
+      1200, 1200, 5000,
+    ]);
+    pinTimelineToEnd(list, () => true);
+    runFrame();
+
+    listeners.get("pointerdown")?.({ target: element });
 
     expect(runAllFrames()).toBe(0);
     expect(scrollToEnd).toHaveBeenCalledTimes(1);
