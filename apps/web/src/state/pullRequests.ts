@@ -288,11 +288,13 @@ function createMergedEnvironmentQuery<Input, A>(
       const targets = JSON.parse(key) as ReadonlyArray<EnvironmentQueryTarget<Input>>;
       const values: Array<readonly [EnvironmentId, A]> = [];
       const observations: Array<readonly [EnvironmentId, A, number]> = [];
+      const pendingEnvironments = new Set<EnvironmentId>();
       let error: string | null = null;
       let isPending = false;
       for (const target of targets) {
         const result = get(atomFor(target));
         isPending ||= result.waiting;
+        if (result.waiting) pendingEnvironments.add(target.environmentId);
         if (result._tag === "Failure" && error === null) {
           error = formatEnvironmentQueryError(result.cause);
         }
@@ -307,7 +309,15 @@ function createMergedEnvironmentQuery<Input, A>(
           }
         }
       }
-      return { values, error, isPending, observations };
+      return {
+        values,
+        error,
+        isPending,
+        // Another batch can still find a readable checkout on this environment.
+        observations: observations.filter(
+          ([environmentId]) => !pendingEnvironments.has(environmentId),
+        ),
+      };
     }).pipe(Atom.withLabel(`${label}:${key}`)),
   );
   const empty = Atom.make<MergedEnvironmentQueryView<A>>({
