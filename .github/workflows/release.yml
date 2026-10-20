@@ -255,8 +255,8 @@ jobs:
       - name: Typecheck
         run: vp run typecheck
 
-  # Keep tests on their own runners, using the same package split and server
-  # shards as CI, so the release check job does not spend its budget on tests.
+  # Keep tests on their own runners, using the same package split as CI, so the
+  # release check job does not spend its budget on tests.
   test:
     name: Release tests
     needs: [preflight]
@@ -286,12 +286,39 @@ jobs:
           sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config build-essential
 
-      # The web package's browser project runs React tests in headless Chromium.
+      - name: Install Chromium for browser tests
+        run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
+
+      - name: Test
+        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
+
+  # Same split as CI's Test Web job. Sharing a runner with the other packages
+  # starved the web browser tests of CPU, so tests that start real workers ran
+  # past their deadlines here while passing in CI.
+  test_web:
+    name: Release web tests
+    needs: [preflight]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup dependencies
+        uses: ./.github/actions/setup-ci-deps
+
       - name: Install Chromium for web browser tests
         run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
 
       - name: Test
-        run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
+        run: vp run --filter @t3tools/web test
 
   test_server:
     name: Release server tests ${{ matrix.shard }}
@@ -693,6 +720,7 @@ jobs:
         relay_public_config,
         quality,
         test,
+        test_web,
         test_server,
         desktop_mac_arm64,
         desktop_mac_x64,
@@ -701,7 +729,7 @@ jobs:
         desktop_win_x64,
         desktop_win_arm64,
       ]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.test.result == 'success' && needs.test_web.result == 'success' && needs.test_server.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
