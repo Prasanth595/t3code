@@ -28,6 +28,7 @@ import * as Crypto from "effect/Crypto";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
 import * as Metric from "effect/Metric";
 import * as Layer from "effect/Layer";
@@ -632,11 +633,12 @@ export const layer = Layer.effect(
           ),
         );
 
-    const markRunning = (id: ScheduledTaskId, startedAtIso: string) =>
+    const markRunning = (id: ScheduledTaskId, startedAtIso: string, webhookDeliveryId?: string) =>
       sql<{ task_id: string }>`
         UPDATE scheduled_tasks
         SET updated_at = ${startedAtIso},
             last_run_at = ${startedAtIso},
+            last_run_webhook_delivery_id = ${webhookDeliveryId ?? null},
             last_run_status = 'running',
             last_run_error = NULL
         WHERE task_id = ${id}
@@ -788,7 +790,7 @@ export const layer = Layer.effect(
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
-                yield* markRunning(active.id, startedAtIso);
+                yield* markRunning(active.id, startedAtIso, webhook.deliveryId);
                 // Recovery must distinguish this delivery from other windows waiting on the same task.
                 yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'running' WHERE delivery_id = ${webhook.deliveryId}`;
               }),
@@ -989,6 +991,7 @@ export const layer = Layer.effect(
                     run_count = run_count + CASE WHEN EXISTS (
                       SELECT 1 FROM scheduled_task_webhook_pending
                       WHERE task_id IS ${row.task_id} AND state = 'running'
+                        AND delivery_id = scheduled_tasks.last_run_webhook_delivery_id
                     ) THEN 0 ELSE 1 END
                 WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
               `;
@@ -1006,6 +1009,7 @@ export const layer = Layer.effect(
                   run_count = run_count + CASE WHEN EXISTS (
                     SELECT 1 FROM scheduled_task_webhook_pending
                     WHERE task_id IS ${row.task_id} AND state = 'running'
+                        AND delivery_id = scheduled_tasks.last_run_webhook_delivery_id
                   ) THEN 0 ELSE 1 END
               WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
             `;
@@ -2048,17 +2052,19 @@ export const layer = Layer.effect(
                   const request = yield* decodePendingRequest(entry.request_json);
                   const frameId = Buffer.from(yield* crypto.randomBytes(6)).toString("hex");
                   return { task, rendered: renderWebhookPrompt(task.prompt, request, frameId) };
-                }).pipe(Effect.result);
-                if (Result.isFailure(prepared)) {
+                }).pipe(Effect.exit);
+                if (Exit.isFailure(prepared)) {
+                  if (Cause.hasInterruptsOnly(prepared.cause))
+                    return yield* Effect.failCause(prepared.cause);
                   yield* markDeliveryFailed(
                     entry.delivery_id,
-                    "The pending webhook payload could not be decoded.",
+                    "The pending webhook payload could not be prepared.",
                   );
                   yield* releaseFailedDelivery(entry.delivery_id);
                   yield* remove;
                   continue;
                 }
-                const { task, rendered } = prepared.success;
+                const { task, rendered } = prepared.value;
                 if (rendered.prompt.trim().length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
                   yield* markDeliveryFailed(entry.delivery_id, PROMPT_TOO_LONG);
                   yield* releaseFailedDelivery(entry.delivery_id);
