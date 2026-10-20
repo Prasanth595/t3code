@@ -47,6 +47,19 @@ export function enrichedThreadLinkCustomization(href: string) {
   return chipCustomization(enrichedThreadLinkPresentation(href));
 }
 
+export function withChipIcon(
+  customization: MarkdownLinkCustomization | undefined,
+  iconUri: string | undefined,
+): MarkdownLinkCustomization | undefined {
+  return iconUri && customization?.chip
+    ? {
+        ...customization,
+        icon: { uri: iconUri },
+        chip: { ...customization.chip, tintsIcon: false },
+      }
+    : customization;
+}
+
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,

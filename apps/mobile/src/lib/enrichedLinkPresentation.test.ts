@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
   enrichedThreadLinkPresentation,
   ENRICHED_INLINE_FILE_LINK_REGEX,
+  threadChipTargets,
 } from "./enrichedLinkPresentation";
 
 describe("Enriched link presentation", () => {
@@ -60,5 +62,37 @@ describe("Enriched link presentation", () => {
     ]) {
       expect(enrichedThreadLinkPresentation(href), href).toBeUndefined();
     }
+  });
+
+  it("finds each linked thread once and resolves thread records to their own environment", () => {
+    const here = "env-here" as EnvironmentId;
+    const there = "env-there" as EnvironmentId;
+    expect(
+      threadChipTargets(
+        here,
+        "See [A](t3-thread://v1/thread_a), [A again](t3-thread://v1/thread_a) and [B](t3-thread://v1/thread_b).",
+        [
+          {
+            version: 1,
+            contextId: "thr1" as ComposerContextId,
+            kind: "thread",
+            label: "C",
+            environmentId: there,
+            threadId: "thread_c" as ThreadId,
+            title: "C",
+          },
+        ],
+      ),
+    ).toEqual([
+      { href: "t3-thread://v1/thread_a", environmentId: here, threadId: "thread_a", link: true },
+      { href: "t3-thread://v1/thread_b", environmentId: here, threadId: "thread_b", link: true },
+      {
+        href: "t3-context://v1/thread/thr1",
+        environmentId: there,
+        threadId: "thread_c",
+        link: false,
+      },
+    ]);
+    expect(threadChipTargets(here, "No links here.")).toEqual([]);
   });
 });
