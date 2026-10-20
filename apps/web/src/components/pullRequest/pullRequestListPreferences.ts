@@ -30,7 +30,7 @@ export interface PullRequestListPreferences {
   readonly review?: NonNullable<PullRequestListFilters["review"]>;
   readonly checks?: NonNullable<PullRequestListFilters["checks"]>;
   readonly author?: string;
-  readonly assignee?: string;
+  readonly assignee?: string | undefined;
   readonly labels?: ReadonlyArray<string>;
   readonly sort?: PullRequestListSort;
 }

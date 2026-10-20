@@ -81,6 +81,9 @@ export function PullRequestAssigneePicker({
       });
       return;
     }
+    // The command reads the loaded list again, but a search result is keyed by what was typed, so
+    // the one on screen is read here or it keeps showing the old assignment.
+    if (searchesHost) searchResult.refresh();
     toastManager.add({
       type: "success",
       title: candidate.isAssigned ? `Unassigned ${candidate.login}` : `Assigned ${candidate.login}`,
@@ -106,7 +109,13 @@ export function PullRequestAssigneePicker({
           query.trim().length > 0 &&
           (searchQuery !== query.trim() || searchResult.isPending))
       }
-      error={candidatesQuery.data === null ? candidatesQuery.error : null}
+      error={
+        candidatesQuery.data === null
+          ? candidatesQuery.error
+          : searchesHost && candidates.length === 0
+            ? searchResult.error
+            : null
+      }
       candidates={candidates}
       emptyLabel="Nobody can be assigned on this repository."
       noMatchLabel="Nobody who can be assigned matches that."
