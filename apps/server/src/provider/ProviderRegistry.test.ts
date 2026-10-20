@@ -4031,7 +4031,11 @@ it.layer(
         const instance = yield* ClaudeDriver.create({
           instanceId: ProviderInstanceId.make("claude-usage-cache"),
           displayName: undefined,
-          environment: [],
+          environment: [
+            { name: "ANTHROPIC_BASE_URL", value: "", sensitive: false },
+            { name: "ANTHROPIC_API_KEY", value: "", sensitive: true },
+            { name: "ANTHROPIC_AUTH_TOKEN", value: "", sensitive: true },
+          ],
           enabled: true,
           config: { ...defaultClaudeSettings, homePath },
         });
