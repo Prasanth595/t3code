@@ -1519,14 +1519,16 @@ describe("MessagesTimeline scroll position", () => {
         </div>
       );
     }
-    const chat = await renderElement(<Chat />);
-    const viewport = await waitForList(props);
-    await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true));
+    let offset: number;
+    {
+      await using _chat = await renderElement(<Chat />);
+      const viewport = await waitForList(props);
+      await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true));
 
-    await userEvent.wheel(viewport, { delta: { y: -600 } });
-    await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(false));
-    const offset = viewport.scrollTop;
-    await chat[Symbol.asyncDispose]();
+      await userEvent.wheel(viewport, { delta: { y: -600 } });
+      await vi.waitFor(() => expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(false));
+      offset = viewport.scrollTop;
+    }
     expect(readTimelinePosition(props.routeThreadKey)).toMatchObject({
       atEnd: false,
       scrollOffset: offset,

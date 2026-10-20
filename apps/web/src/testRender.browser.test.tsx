@@ -2,7 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
-import { render, stubGlobal } from "../test/render";
+import { render, stubGlobal, type Screen } from "../test/render";
 
 function Crash(): never {
   throw new Error("crashed while rendering");
@@ -20,13 +20,15 @@ function RoutedProbe({ onUnmount }: { onUnmount: () => void }) {
 
 it("unmounts, removes the container and detaches the router on dispose", async () => {
   const onUnmount = vi.fn();
-  const screen = await render(<RoutedProbe onUnmount={onUnmount} />, { router: "/start" });
-  const { container, router } = screen;
-  await expect.element(screen.getByRole("link", { name: "home" })).toBeVisible();
-  expect(router?.state.location.pathname).toBe("/start");
-  expect(router?.history.subscribers.size).toBeGreaterThan(0);
-
-  await screen[Symbol.asyncDispose]();
+  let mounted: Screen;
+  {
+    await using screen = await render(<RoutedProbe onUnmount={onUnmount} />, { router: "/start" });
+    mounted = screen;
+    await expect.element(screen.getByRole("link", { name: "home" })).toBeVisible();
+    expect(screen.router?.state.location.pathname).toBe("/start");
+    expect(screen.router?.history.subscribers.size).toBeGreaterThan(0);
+  }
+  const { container, router } = mounted;
 
   expect(onUnmount).toHaveBeenCalledOnce();
   expect(container.isConnected).toBe(false);

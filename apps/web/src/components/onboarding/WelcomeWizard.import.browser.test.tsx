@@ -215,14 +215,18 @@ function projectCheckboxes() {
 
 async function mountImport(remote = false) {
   state.selectedEnvironment = remote ? "remote" : "primary";
-  const screen = await render(
-    <RegistryContext.Provider value={appAtomRegistry}>
-      <WelcomeWizard localAvailable={!remote} onDone={state.onDone} />
-    </RegistryContext.Provider>,
+  await using stack = new AsyncDisposableStack();
+  const screen = stack.use(
+    await render(
+      <RegistryContext.Provider value={appAtomRegistry}>
+        <WelcomeWizard localAvailable={!remote} onDone={state.onDone} />
+      </RegistryContext.Provider>,
+    ),
   );
   await click("Continue");
   await click("Continue");
   expect(pageText()).toContain("Import your projects");
+  stack.move();
   return screen;
 }
 
