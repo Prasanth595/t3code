@@ -2488,7 +2488,7 @@ function useChatMarkdownState({
             target !== null &&
             resolveRemoteOpenState({
               target,
-              sshAlias: null,
+              sshTarget: null,
               remoteOpenTargets: undefined,
               isDesktopRenderer: window.desktopBridge !== undefined,
             }).mode !== "local-exec"
