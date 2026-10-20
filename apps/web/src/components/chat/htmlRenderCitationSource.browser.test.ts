@@ -30,6 +30,7 @@ afterEach(() => {
 function setup(ready = true) {
   const root = document.createElement("div");
   const frame = document.createElement("iframe");
+  frame.style.cssText = "width: 400px; height: 300px; border: 0";
   if (ready) frame.dataset.htmlSelectionReady = "true";
   const scrollNode = document.createElement("div");
   root.append(frame);
