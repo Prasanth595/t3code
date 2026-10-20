@@ -22,6 +22,7 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
+import { museUsageReader } from "./usage.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -53,9 +54,10 @@ export type MuseDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
+export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv, Path.Path> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
+  usage: museUsageReader,
   configSchema: MuseSettings,
   defaultConfig: () => decodeMuseSettings({}),
   create: Effect.fn("MuseDriver.create")(function* ({
