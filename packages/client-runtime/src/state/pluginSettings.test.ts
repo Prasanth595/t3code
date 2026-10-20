@@ -193,6 +193,46 @@ describe("plugin settings form", () => {
     });
   });
 
+  it("saves explicit false and empty edits for unset fields", () => {
+    const declarations: ReadonlyArray<PluginSettingField> = [
+      { type: "boolean", key: "enabled", label: "Enabled" },
+      { type: "text", key: "name", label: "Name" },
+      { type: "secret", key: "token", label: "Token" },
+      { type: "number", key: "count", label: "Count" },
+    ];
+    const rows = pluginSettingRows(declarations, {
+      installationId: INSTALLATION_ID,
+      values: [],
+      secrets: [],
+    });
+    expect(pluginSettingForm(rows, new Map())).toMatchObject({ changes: [], invalid: false });
+    const drafts = new Map<string, string | boolean>([
+      ["enabled", false],
+      ["name", ""],
+      ["token", ""],
+    ]);
+    const form = pluginSettingForm(rows, drafts);
+    expect(form).toMatchObject({
+      changes: [
+        { key: "enabled", value: false },
+        { key: "name", value: "" },
+      ],
+      invalid: false,
+    });
+    const saved = pluginSettingRows(declarations, {
+      installationId: INSTALLATION_ID,
+      values: [
+        { key: "enabled", value: false },
+        { key: "name", value: "" },
+      ],
+      secrets: [],
+    });
+    expect(pluginSettingForm(saved, drafts)).toMatchObject({ changes: [], invalid: false });
+    const remaining = pluginSettingDraftsAfterSave(drafts, form.changes);
+    expect([...remaining]).toEqual([["token", ""]]);
+    expect(pluginSettingForm(rows, new Map([["count", ""]])).invalid).toBe(true);
+  });
+
   it("reads only the user's edits for keys named like object properties", () => {
     const named: ReadonlyArray<PluginSettingField> = [
       { type: "text", key: "constructor", label: "Constructor", default: "base" },

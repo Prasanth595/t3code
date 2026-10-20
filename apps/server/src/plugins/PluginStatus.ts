@@ -94,7 +94,7 @@ export const make = Effect.fn("PluginStatus.make")(function* () {
   const generations = new WeakMap<Scope.Scope, Generation>();
 
   /** The calling process's state, created on its first status call. */
-  const generationOf = Effect.fnUntraced(function* (lifetime: Scope.Scope) {
+  const generationOf = Effect.fn("PluginStatus.generationOf")(function* (lifetime: Scope.Scope) {
     const existing = generations.get(lifetime);
     if (existing !== undefined) return existing;
     const generation: Generation = {
@@ -115,80 +115,77 @@ export const make = Effect.fn("PluginStatus.make")(function* () {
   });
 
   /** Runs `body` under the process's lock, refused once the process has stopped. */
-  const serialized = <A>(
+  const serialized = Effect.fn("PluginStatus.serialized")(function* <A>(
     call: HostCall,
     body: (generation: Generation) => Effect.Effect<A, PluginHostCallError>,
-  ) =>
-    Effect.gen(function* () {
-      const generation = yield* generationOf(call.lifetime);
-      return yield* generation.lock.withPermit(
-        Effect.suspend(() =>
-          generation.closed
-            ? Effect.fail(STOPPED)
-            : call.admitted.pipe(Effect.andThen(body(generation))),
-        ),
-      );
-    });
+  ) {
+    const generation = yield* generationOf(call.lifetime);
+    return yield* generation.lock.withPermit(
+      Effect.suspend(() =>
+        generation.closed
+          ? Effect.fail(STOPPED)
+          : call.admitted.pipe(Effect.andThen(body(generation))),
+      ),
+    );
+  });
 
-  const statusSet: PluginHostMethod = (call) =>
-    Effect.gen(function* () {
-      yield* checkCapability(call.registration);
-      const input = yield* decodeSetInput(call.input).pipe(
-        Effect.mapError(() =>
-          hostError(
-            "A status needs threadId, key and text strings; tone is neutral, info, success, warning or error.",
-          ),
+  const statusSet: PluginHostMethod = Effect.fn("PluginStatus.statusSet")(function* (call) {
+    yield* checkCapability(call.registration);
+    const input = yield* decodeSetInput(call.input).pipe(
+      Effect.mapError(() =>
+        hostError(
+          "A status needs threadId, key and text strings; tone is neutral, info, success, warning or error.",
         ),
-      );
-      yield* checkKey(input.key);
-      const clears =
-        normalizeContributionStatusText(input.text, CONTRIBUTION_STATUS_TEXT_MAX_LENGTH).length ===
-        0;
-      return yield* serialized(call, (generation) =>
-        Effect.gen(function* () {
-          const existing = generation.threads.get(input.threadId);
-          if (clears) {
-            if (existing !== undefined) yield* clearKey(generation, input.threadId, input.key);
-            return null;
-          }
-          if (existing?.keys.has(input.key) !== true) {
-            let shown = 0;
-            for (const thread of generation.threads.values()) shown += thread.keys.size;
-            if (shown >= PLUGIN_STATUS_LIMITS.maxItems)
-              return yield* hostError(
-                `A plugin can show at most ${PLUGIN_STATUS_LIMITS.maxItems} statuses at once; clear one first.`,
-              );
-          }
-          if (!(yield* generation.bucket.take))
-            return yield* hostError(
-              `Too many status updates: at most ${PLUGIN_STATUS_LIMITS.burst} at once, then ${1000 / PLUGIN_STATUS_LIMITS.refillMillis} per second.`,
-            );
-          const thread = existing ?? (yield* openThread(call, generation, input.threadId));
-          yield* thread.handle.set({
-            key: input.key,
-            text: input.text,
-            ...(input.tone === undefined ? {} : { tone: input.tone }),
-            ...(input.tooltip === undefined ? {} : { tooltip: input.tooltip }),
-          });
-          // The store drops a new status when the thread already shows its
-          // most plugin sources or items; tell the plugin instead of claiming it shows.
-          if (!(yield* thread.handle.items).some((item) => item.key === input.key)) {
-            thread.keys.delete(input.key);
-            if (thread.keys.size === 0) {
-              generation.threads.delete(input.threadId);
-              yield* Scope.close(thread.scope, Exit.void);
-            }
-            return yield* hostError(
-              "The thread already shows as many plugin statuses as it can; this one was not shown.",
-            );
-          }
-          thread.keys.add(input.key);
+      ),
+    );
+    yield* checkKey(input.key);
+    const clears =
+      normalizeContributionStatusText(input.text, CONTRIBUTION_STATUS_TEXT_MAX_LENGTH).length === 0;
+    return yield* serialized(call, (generation) =>
+      Effect.gen(function* () {
+        const existing = generation.threads.get(input.threadId);
+        if (clears) {
+          if (existing !== undefined) yield* clearKey(generation, input.threadId, input.key);
           return null;
-        }),
-      );
-    });
+        }
+        if (existing?.keys.has(input.key) !== true) {
+          let shown = 0;
+          for (const thread of generation.threads.values()) shown += thread.keys.size;
+          if (shown >= PLUGIN_STATUS_LIMITS.maxItems)
+            return yield* hostError(
+              `A plugin can show at most ${PLUGIN_STATUS_LIMITS.maxItems} statuses at once; clear one first.`,
+            );
+        }
+        if (!(yield* generation.bucket.take))
+          return yield* hostError(
+            `Too many status updates: at most ${PLUGIN_STATUS_LIMITS.burst} at once, then ${1000 / PLUGIN_STATUS_LIMITS.refillMillis} per second.`,
+          );
+        const thread = existing ?? (yield* openThread(call, generation, input.threadId));
+        yield* thread.handle.set({
+          key: input.key,
+          text: input.text,
+          ...(input.tone === undefined ? {} : { tone: input.tone }),
+          ...(input.tooltip === undefined ? {} : { tooltip: input.tooltip }),
+        });
+        // The store drops a new status when the thread already shows its
+        // most plugin sources or items; tell the plugin instead of claiming it shows.
+        if (!(yield* thread.handle.items).some((item) => item.key === input.key)) {
+          thread.keys.delete(input.key);
+          if (thread.keys.size === 0) {
+            generation.threads.delete(input.threadId);
+            yield* Scope.close(thread.scope, Exit.void);
+          }
+          return yield* hostError(
+            "The thread already shows as many plugin statuses as it can; this one was not shown.",
+          );
+        }
+        thread.keys.add(input.key);
+        return null;
+      }),
+    );
+  });
 
-  const openThread = Effect.fnUntraced(function* (
+  const openThread = Effect.fn("PluginStatus.openThread")(function* (
     call: HostCall,
     generation: Generation,
     threadId: ThreadId,
@@ -208,7 +205,7 @@ export const make = Effect.fn("PluginStatus.make")(function* () {
     return thread;
   });
 
-  const clearKey = Effect.fnUntraced(function* (
+  const clearKey = Effect.fn("PluginStatus.clearKey")(function* (
     generation: Generation,
     threadId: ThreadId,
     key: string,
@@ -220,17 +217,16 @@ export const make = Effect.fn("PluginStatus.make")(function* () {
     yield* Scope.close(thread.scope, Exit.void);
   });
 
-  const statusClear: PluginHostMethod = (call) =>
-    Effect.gen(function* () {
-      yield* checkCapability(call.registration);
-      const input = yield* decodeClearInput(call.input).pipe(
-        Effect.mapError(() => hostError("Clearing a status needs threadId and key strings.")),
-      );
-      yield* checkKey(input.key);
-      return yield* serialized(call, (generation) =>
-        clearKey(generation, input.threadId, input.key).pipe(Effect.as(null)),
-      );
-    });
+  const statusClear: PluginHostMethod = Effect.fn("PluginStatus.statusClear")(function* (call) {
+    yield* checkCapability(call.registration);
+    const input = yield* decodeClearInput(call.input).pipe(
+      Effect.mapError(() => hostError("Clearing a status needs threadId and key strings.")),
+    );
+    yield* checkKey(input.key);
+    return yield* serialized(call, (generation) =>
+      clearKey(generation, input.threadId, input.key).pipe(Effect.as(null)),
+    );
+  });
 
   yield* supervisor.serveHostMethod("status.set", statusSet);
   yield* supervisor.serveHostMethod("status.clear", statusClear);
