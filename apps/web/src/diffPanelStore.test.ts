@@ -3,6 +3,7 @@ import { EnvironmentId, ThreadId, RunId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  selectThreadDiffPanelBaseRef,
   selectThreadDiffPanelSelection,
   useDiffPanelSessionStore,
   useDiffPanelStore,
@@ -187,5 +188,21 @@ describe("diffPanelStore", () => {
       filePath: "src/app.ts",
       revealRequestId: 1,
     });
+  });
+});
+
+describe("selectThreadDiffPanelBaseRef", () => {
+  beforeEach(() => useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} }));
+
+  it("keeps bases scoped to their environment and thread", () => {
+    const otherEnvironmentRef = scopeThreadRef(
+      EnvironmentId.make("environment-2"),
+      THREAD_REF.threadId,
+    );
+    useDiffPanelStore.getState().selectBranchBaseRef(THREAD_REF, "origin/release");
+    expect(
+      selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), otherEnvironmentRef),
+    ).toBeNull();
+    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), null)).toBeNull();
   });
 });

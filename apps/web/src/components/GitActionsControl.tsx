@@ -58,6 +58,7 @@ import {
   resolveLiveThreadBranchUpdate,
   resolveThreadBranchMetadataPatch,
   resolveQuickAction,
+  resolveChangesTotals,
   resolveThreadBranchUpdate,
 } from "./GitActionsControl.logic";
 import { WizardPopup, WizardHeader, WizardSteps, WizardPanel, WizardFooter } from "./ui/wizard";
@@ -120,6 +121,10 @@ import { getSourceControlPresentation, sourceControlIcon } from "~/sourceControl
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useOpenLink } from "~/browser/useOpenLink";
+import { selectThreadDiffPanelBaseRef, useDiffPanelStore } from "~/diffPanelStore";
+import { useClientSettings } from "~/hooks/useSettings";
+import { useFilesystemReadAccess } from "~/state/filesystem";
+import { reviewEnvironment } from "~/state/review";
 
 interface GitActionsControlProps {
   presentation?: "toolbar" | "menu";
@@ -130,6 +135,7 @@ interface GitActionsControlProps {
   displayMode?: "toolbar" | "panel";
   compact?: boolean;
   onOpenChanges?: () => void;
+  workspaceMutationId?: string | null;
 }
 
 interface PendingDefaultBranchAction {
@@ -954,6 +960,94 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   );
 }
 
+function ThreadChangesControl({
+  gitCwd,
+  activeThreadRef,
+  workspaceMutationId,
+  gitStatus,
+  onOpenChanges,
+}: Pick<GitActionsControlProps, "gitCwd" | "activeThreadRef" | "workspaceMutationId"> & {
+  gitStatus: VcsStatusResult | null;
+  onOpenChanges: GitActionsControlProps["onOpenChanges"];
+}) {
+  const baseRef = useDiffPanelStore((state) =>
+    selectThreadDiffPanelBaseRef(state, activeThreadRef),
+  );
+  const ignoreWhitespace = useClientSettings((settings) => settings.diffIgnoreWhitespace);
+  const useDiffPreview = baseRef !== null;
+  const { canReadFiles } = useFilesystemReadAccess(
+    useDiffPreview ? (activeThreadRef?.environmentId ?? null) : null,
+  );
+  const previewAtom =
+    canReadFiles && baseRef !== null && activeThreadRef && gitCwd
+      ? reviewEnvironment.diffPreview({
+          environmentId: activeThreadRef.environmentId,
+          input: { cwd: gitCwd, baseRef, ignoreWhitespace },
+        })
+      : null;
+  const changesDiffPreview = useEnvironmentQuery(previewAtom);
+  const statusKey = gitStatus
+    ? JSON.stringify([
+        gitStatus.refName,
+        gitStatus.branchChanges?.baseRef ?? null,
+        gitStatus.branchChanges?.insertions ?? null,
+        gitStatus.branchChanges?.deletions ?? null,
+        gitStatus.workingTree.insertions,
+        gitStatus.workingTree.deletions,
+        gitStatus.workingTree.files.length,
+      ])
+    : null;
+  const lastRefreshRef = useRef<{
+    atom: typeof previewAtom;
+    statusKey: typeof statusKey;
+    workspaceMutationId: typeof workspaceMutationId;
+  } | null>(null);
+  const { refresh, isPending } = changesDiffPreview;
+  useEffect(() => {
+    if (previewAtom === null) {
+      lastRefreshRef.current = null;
+      return;
+    }
+    const previous = lastRefreshRef.current;
+    if (previous?.atom === previewAtom) {
+      // Equal status totals can hide content changes against a custom base.
+      if (previous.statusKey === statusKey && previous.workspaceMutationId === workspaceMutationId)
+        return;
+      // A change during the fetch still needs a refresh after it settles.
+      if (isPending) return;
+    }
+    lastRefreshRef.current = { atom: previewAtom, statusKey, workspaceMutationId };
+    if (!isPending) refresh();
+  }, [previewAtom, statusKey, workspaceMutationId, isPending, refresh]);
+  const changesTotals = resolveChangesTotals({
+    gitStatus,
+    useDiffPreview,
+    diffPreview: canReadFiles ? changesDiffPreview.data : null,
+  });
+
+  return (
+    <ThreadDetailsControl
+      type="button"
+      variant="ghost"
+      size="sm"
+      part="row"
+      disabled={!onOpenChanges}
+      onClick={onOpenChanges}
+    >
+      <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+      <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
+      <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
+        <span className="text-diff-addition">
+          +{formatDiffCount(changesTotals?.insertions ?? 0)}
+        </span>
+        <span className="text-diff-deletion">
+          -{formatDiffCount(changesTotals?.deletions ?? 0)}
+        </span>
+      </span>
+    </ThreadDetailsControl>
+  );
+}
+
 export default function GitActionsControl({
   presentation = "toolbar",
   gitCwd,
@@ -962,6 +1056,7 @@ export default function GitActionsControl({
   displayMode = "toolbar",
   compact = false,
   onOpenChanges,
+  workspaceMutationId = null,
 }: GitActionsControlProps) {
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
@@ -1090,7 +1185,6 @@ export default function GitActionsControl({
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
-  const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   // Changed-file paths are repository-relative, so they must resolve against
@@ -1827,25 +1921,13 @@ export default function GitActionsControl({
       )}
 
       {isPanel && isRepo ? (
-        <ThreadDetailsControl
-          type="button"
-          variant="ghost"
-          size="sm"
-          part="row"
-          disabled={!onOpenChanges}
-          onClick={onOpenChanges}
-        >
-          <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-          <span className={cn("flex-1 text-left", THREAD_DETAILS_PANEL_LABEL_CLASS)}>Changes</span>
-          <span className="flex items-center gap-1 font-mono text-2xs tabular-nums">
-            <span className="text-diff-addition">
-              +{formatDiffCount(changesTotals?.insertions ?? 0)}
-            </span>
-            <span className="text-diff-deletion">
-              -{formatDiffCount(changesTotals?.deletions ?? 0)}
-            </span>
-          </span>
-        </ThreadDetailsControl>
+        <ThreadChangesControl
+          gitCwd={gitCwd}
+          activeThreadRef={activeThreadRef}
+          workspaceMutationId={workspaceMutationId}
+          gitStatus={gitStatusForActions}
+          onOpenChanges={onOpenChanges}
+        />
       ) : null}
 
       <Dialog
