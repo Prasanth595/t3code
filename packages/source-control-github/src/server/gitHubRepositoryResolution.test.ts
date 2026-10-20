@@ -48,6 +48,46 @@ describe("selectGitHubBaseRepository", () => {
     );
   });
 
+  it("honors a marked SSH alias origin over upstream", () => {
+    for (const url of [
+      "git@github.com-scale:me/web.git",
+      "ssh://git@github.com-scale:22/me/web.git",
+      "git@github-work:me/web.git",
+    ]) {
+      const input = {
+        remotes: remotes(["origin", url], ["upstream", "https://github.com/acme/web.git"]),
+        resolved: "remote.origin.gh-resolved base",
+      };
+      assert.deepStrictEqual(select(input), { owner: "me", name: "web" }, url);
+      assert.deepStrictEqual(
+        resolveGitHubRepository({ ...input, hostHint: undefined, defaultHost: "github.com" }),
+        { host: "github.com", locator: { host: "github.com", owner: "me", name: "web" } },
+        url,
+      );
+    }
+  });
+
+  it("does not honor a github.com mark on a different or unrecognized host", () => {
+    for (const url of [
+      "git@github.com-evil.example:me/web.git",
+      "git@github.com.evil.example:me/web.git",
+      "git@evil-github.com:me/web.git",
+      "https://github.com-scale/me/web.git",
+      "git@work:me/web.git",
+    ]) {
+      const input = {
+        remotes: remotes(["origin", url], ["upstream", "https://github.com/acme/web.git"]),
+        resolved: "remote.origin.gh-resolved base",
+      };
+      assert.strictEqual(select(input), null, url);
+      assert.deepStrictEqual(
+        resolveGitHubRepository({ ...input, hostHint: "github.com", defaultHost: "github.com" }),
+        { host: "github.com", locator: { host: "github.com", owner: "acme", name: "web" } },
+        url,
+      );
+    }
+  });
+
   it("leaves gh to choose when it might weigh the remotes differently", () => {
     for (const input of [
       { remotes: "" },
@@ -60,7 +100,7 @@ describe("selectGitHubBaseRepository", () => {
           ["mirror", "git@gitlab.com:me/web.git"],
         ),
       },
-      { remotes: remotes(["origin", "git@github-work:me/web.git"]) },
+      { remotes: remotes(["origin", "git@work:me/web.git"]) },
       {
         remotes: remotes(
           ["origin", "git@github.com:me/web.git"],
