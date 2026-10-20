@@ -99,12 +99,28 @@ if ($null -ne $env:T3_SSH_AUTH_SECRET) {\r
 exit 1\r
 `;
 
+// Nothing removes the runtime directory, so every interactive ssh command shares one per
+// process. A fresh one replaces it if a temp cleaner deleted it or another user owns the path.
+let defaultSshAskpassRuntimeDirectory: string | undefined;
+
 const getDefaultSshAskpassDirectory = Effect.fn("ssh/auth.getDefaultSshAskpassDirectory")(
   function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const parentDirectory = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" });
-    return path.join(parentDirectory, SSH_ASKPASS_DIR_NAME);
+    const userId = yield* HostProcess.UserId;
+    const cached = defaultSshAskpassRuntimeDirectory;
+    if (cached !== undefined) {
+      const reusable = yield* fs.stat(cached).pipe(
+        Effect.map((info) => userId === undefined || Option.getOrUndefined(info.uid) === userId),
+        Effect.orElseSucceed(() => false),
+      );
+      if (reusable) {
+        return path.join(cached, SSH_ASKPASS_DIR_NAME);
+      }
+    }
+    const runtimeDirectory = yield* fs.makeTempDirectory({ prefix: "t3code-ssh-runtime-" });
+    defaultSshAskpassRuntimeDirectory = runtimeDirectory;
+    return path.join(runtimeDirectory, SSH_ASKPASS_DIR_NAME);
   },
 );
 

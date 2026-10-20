@@ -55,6 +55,36 @@ describe("ssh auth", () => {
     ),
   );
 
+  it.effect("reuses the default askpass directory across interactive commands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const askpassPath = () =>
+        buildSshChildEnvironment({ interactiveAuth: true, authSecret: "pw" }).pipe(
+          Effect.map((env) => env.SSH_ASKPASS ?? ""),
+        );
+      const runtimeDirectoryOf = (askpass: string) => path.dirname(path.dirname(askpass));
+
+      const first = yield* askpassPath();
+      assert.equal(yield* askpassPath(), first);
+
+      yield* fs.remove(runtimeDirectoryOf(first), { recursive: true });
+      const recreated = yield* askpassPath();
+      assert.notEqual(recreated, first);
+      assert.equal(yield* fs.exists(recreated), true);
+
+      const otherUser = yield* askpassPath().pipe(
+        Effect.provideService(HostProcess.UserId, (process.getuid?.() ?? 0) + 1),
+      );
+      assert.notEqual(otherUser, recreated);
+
+      yield* fs.remove(runtimeDirectoryOf(recreated), { recursive: true });
+      yield* fs.remove(runtimeDirectoryOf(otherUser), { recursive: true });
+    }).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "linux"))),
+    ),
+  );
+
   it.effect("builds a windows askpass launcher pair", () =>
     Effect.gen(function* () {
       const descriptor = yield* buildSshAskpassHelperDescriptor({
