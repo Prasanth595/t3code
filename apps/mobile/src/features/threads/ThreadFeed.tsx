@@ -235,7 +235,7 @@ import {
 } from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
-import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
+import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
 import {
   MarkdownImageAvailableWidthContext,
@@ -1801,6 +1801,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       path: fileRoutePathSegments(path),
     });
   };
+  const resolveLinkedThread = (href: string) => {
+    const linkedThreadId = parseThreadLinkHref(href);
+    if (!linkedThreadId) return null;
+    const source = scopeThreadRef(props.environmentId, linkedThreadId);
+    return (
+      resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
+      source
+    );
+  };
   const onMarkdownLinkPress = (href: string, imageEmbed = false) => {
     const skill = enrichedSkillReference(href, props.skills);
     if (skill) {
@@ -1808,12 +1817,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (instructionsPath) openSkillInstructions(instructionsPath);
       return;
     }
-    const linkedThreadId = parseThreadLinkHref(href);
-    if (linkedThreadId) {
-      const source = scopeThreadRef(props.environmentId, linkedThreadId);
-      const target =
-        resolveThreadLinkRef(source, appAtomRegistry.get(environmentThreadShells.threadRefsAtom)) ??
-        source;
+    const target = resolveLinkedThread(href);
+    if (target) {
       navigation.navigate("Thread", {
         environmentId: String(target.environmentId),
         threadId: String(target.threadId),
@@ -1896,6 +1901,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ],
         };
       }
+      const thread = resolveLinkedThread(href);
+      if (thread) {
+        return {
+          title:
+            appAtomRegistry.get(environmentThreadShells.threadShellAtom(thread))?.title ?? "Thread",
+          actions: [
+            { id: "open-thread", title: "Open thread" },
+            { id: "copy-thread-link", title: "Copy link" },
+          ],
+        };
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       return target ? fileChipMenu(target) : undefined;
     },
@@ -1907,15 +1923,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         else if (actionId === "copy-skill") copyTextWithHaptic(`$${skill.name}`);
         return;
       }
+      if (resolveLinkedThread(href)) {
+        if (actionId === "open-thread") onMarkdownLinkPress(href);
+        else if (actionId === "copy-thread-link") copyTextWithHaptic(href);
+        return;
+      }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
       if (!target) return;
-      switch (actionId as FileChipAction) {
+      switch (actionId) {
         case "copy-full-path":
-          if (target.fullPath) copyTextWithHaptic(target.fullPath);
+        case "copy-relative-path": {
+          const clipboardPath = fileChipClipboardPath(target, actionId);
+          if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
           return;
-        case "copy-relative-path":
-          if (target.relativePath) copyTextWithHaptic(target.relativePath);
-          return;
+        }
         case "open-file":
           onMarkdownLinkPress(href);
           return;

@@ -161,6 +161,7 @@ class GitRefsRefreshCacheKey extends Data.Class<{
 interface GitRepositoryPaths {
   readonly gitCommonDir: string;
   readonly worktreeRoot: string | null;
+  readonly isAtRepositoryRoot: boolean | undefined;
   readonly currentBranch: string | null;
 }
 
@@ -1233,7 +1234,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
+  const readCurrentUpstreamRef = Effect.fn("readCurrentUpstreamRef")(function* (cwd: string) {
     const upstreamRef = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
@@ -1242,6 +1243,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ).pipe(Effect.map((stdout) => stdout.trim()));
 
     if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
+      return null;
+    }
+    return upstreamRef;
+  });
+
+  const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (
+    cwd: string,
+    knownUpstreamRef?: string,
+  ) {
+    const upstreamRef = knownUpstreamRef ?? (yield* readCurrentUpstreamRef(cwd));
+    if (upstreamRef === null) {
       return null;
     }
 
@@ -1324,6 +1336,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveRepositoryPathsUncached = Effect.fn("resolveRepositoryPathsUncached")(function* (
     cwd: string,
   ) {
+    // Git reports relative paths from the physical cwd, which can differ from a symlink.
     const commonDirResult = yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.resolveRepositoryPaths.commonDir",
       cwd,
@@ -1352,9 +1365,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     }
 
     const commonDirOutput = commonDirResult.stdout.trim();
+    const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
     const resolvedGitCommonDir = path.isAbsolute(commonDirOutput)
       ? path.normalize(commonDirOutput)
-      : path.resolve(cwd, commonDirOutput);
+      : path.resolve(physicalCwd, commonDirOutput);
     const gitCommonDir = yield* fileSystem
       .realPath(resolvedGitCommonDir)
       .pipe(Effect.orElseSucceed(() => resolvedGitCommonDir));
@@ -1395,6 +1409,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               : path.resolve(cwd, worktreeRootOutput),
           )
         : null;
+    // Git reports physical roots, so resolve project aliases before comparing.
+    const isAtRepositoryRoot =
+      worktreeRoot === null
+        ? undefined
+        : yield* fileSystem.realPath(cwd).pipe(
+            Effect.map((physicalCwd) => path.relative(worktreeRoot, physicalCwd) === ""),
+            Effect.orElseSucceed(() => undefined),
+          );
     const currentBranchOutput = currentBranchResult.stdout.trim();
     const currentBranch =
       currentBranchResult.exitCode === 0 && currentBranchOutput.length > 0
@@ -1404,6 +1426,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       gitCommonDir,
       worktreeRoot,
+      isAtRepositoryRoot,
       currentBranch,
     } satisfies GitRepositoryPaths;
   });
@@ -1921,8 +1944,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const branchValue = branchResult.stdout.trim();
       branch = branchValue.length > 0 && branchValue !== "HEAD" ? branchValue : null;
     }
-    const upstream = yield* resolveCurrentUpstream(cwd);
-    const upstreamRef = upstream?.upstreamRef ?? null;
+    const currentUpstreamRef = yield* readCurrentUpstreamRef(cwd);
+    let upstreamRef =
+      currentUpstreamRef === null
+        ? null
+        : (parseUpstreamRefByFirstSeparator(currentUpstreamRef)?.upstreamRef ?? null);
+    // Trimming a remote that starts with Unicode whitespace can leave a leading slash.
+    if (currentUpstreamRef?.startsWith("/")) {
+      upstreamRef = (yield* resolveCurrentUpstream(cwd, currentUpstreamRef))?.upstreamRef ?? null;
+    }
     let aheadCount = 0;
     let behindCount = 0;
 
@@ -3361,7 +3391,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           [
             ...gitDirArgs,
             "for-each-ref",
-            "--format=%(refname)%09%(committerdate:unix)%09%(symref)",
+            "--format=%(refname)%09%(committerdate:unix)%09%(symref)%09%(upstream)",
             "refs/heads",
             "refs/remotes",
           ],
@@ -3430,7 +3460,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     for (const line of refsResult.stdout.split("\n")) {
       if (line.length === 0) continue;
-      const [fullRefName, lastCommitRaw, symbolicTarget] = line.split("\t");
+      const [fullRefName, lastCommitRaw, symbolicTarget, upstreamRef] = line.split("\t");
       if (!fullRefName || symbolicTarget) continue;
       const parsedLastCommit = Number.parseInt(lastCommitRaw ?? "0", 10);
       const lastCommit = Number.isFinite(parsedLastCommit) ? parsedLastCommit : 0;
@@ -3444,6 +3474,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             isRemote: false,
             isDefault: name === defaultBranch,
             worktreePath: worktreeMap.get(name) ?? null,
+            ...(upstreamRef ? { upstreamRef } : {}),
           },
           lastCommit,
         });
@@ -3640,6 +3671,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       });
 
       return {
+        ...(repositoryPaths.isAtRepositoryRoot === undefined
+          ? {}
+          : { isAtRepositoryRoot: repositoryPaths.isAtRepositoryRoot }),
         refs: [...refs.refs],
         isRepo: true,
         hasPrimaryRemote: snapshot.hasPrimaryRemote,

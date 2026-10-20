@@ -26,10 +26,13 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import {
   GitCommandError,
   ReviewDiffPreviewInput,
+  VcsRef,
+  VcsListRefsResult,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration } from "../observability/Metrics.ts";
 import {
@@ -43,6 +46,8 @@ import { gitConfigEnv } from "./VcsProcess.ts";
 import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
+const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
+const decodeVcsListRefsResult = Schema.decodeUnknownSync(VcsListRefsResult);
 
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -3153,6 +3158,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.skipIf(!symlinksSupported)(
+      "lists the real repository through a symlink when a decoy repo occupies the lexical common dir",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const sandbox = yield* makeTmpDir("git-symlink-subdir-");
+          yield* initRepoWithCommit(sandbox);
+          yield* git(sandbox, ["branch", "-M", "decoy-only"]);
+          const repo = pathService.join(sandbox, "repo");
+          const link = pathService.join(sandbox, "nest", "link");
+          yield* fileSystem.makeDirectory(pathService.join(repo, "sub", "dir"), {
+            recursive: true,
+          });
+          yield* fileSystem.makeDirectory(pathService.dirname(link), { recursive: true });
+          yield* fileSystem.symlink(pathService.join(repo, "sub", "dir"), link);
+
+          yield* initRepoWithCommit(repo);
+          yield* git(repo, ["checkout", "-b", "real-only"]);
+
+          // The decoy must exist before the first lookup, which caches repository paths.
+          const refs = yield* (yield* GitVcsDriver.GitVcsDriver).listRefs({ cwd: link });
+          assert.isTrue(refs.isRepo);
+          assert.isFalse(refs.refs.some((ref) => ref.name === "decoy-only"));
+          assert.isTrue(refs.refs.some((ref) => ref.name === "real-only"));
+        }),
+    );
+
     it.effect("reads Changes totals with untracked files when requested", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
@@ -3513,14 +3546,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"]);
 
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const commands: ReadonlyArray<string>[] = [];
         let originHeadReads = 0;
         let failFirstOriginHead = false;
         const spawner = ChildProcessSpawner.make((command) =>
           Effect.gen(function* () {
-            if (
-              ChildProcess.isStandardCommand(command) &&
-              command.args.join(" ") === "symbolic-ref refs/remotes/origin/HEAD"
-            ) {
+            if (!ChildProcess.isStandardCommand(command)) {
+              return yield* Effect.die("expected a standard Git command");
+            }
+            commands.push(command.args);
+            if (command.args.join(" ") === "symbolic-ref refs/remotes/origin/HEAD") {
               originHeadReads++;
               if (failFirstOriginHead && originHeadReads === 1) return makeNonRepositoryHandle();
             }
@@ -3536,12 +3571,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(status.isRepo, true);
         assert.equal(status.branch, "feature/remote-status");
         assert.equal(status.defaultBranch, "trunk");
+        assert.equal(status.isDefaultBranch, false);
+        assert.equal(status.upstreamRef, "origin/feature/remote-status");
         assert.equal(status.hasUpstream, true);
         assert.equal(status.aheadCount, 0);
         assert.equal(status.behindCount, 0);
         assert.equal(status.aheadOfDefaultCount, 1);
         assert.notProperty(status, "workingTree");
         assert.notProperty(status, "hasWorkingTreeChanges");
+        assert.deepEqual(
+          commands.filter((args) => args.length === 1 && args[0] === "remote"),
+          [],
+          `cached remote status should not enumerate remotes: ${JSON.stringify(commands)}`,
+        );
         assert.equal(originHeadReads, 1);
 
         // With no main/master fallback, the retry must resolve trunk to preserve the ahead count.
@@ -3789,7 +3831,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
-    it.effect("optionally includes remote refs that match local branches", () =>
+    it.effect("lists root and upstream metadata and optionally includes matching remote refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
@@ -3797,6 +3839,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(remote, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", remote]);
         yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "add", "team/upstream", remote]);
+        yield* git(cwd, ["push", "team/upstream", "HEAD:refs/heads/feature/a"]);
+        yield* git(cwd, ["branch", "--track", "feature/a", "team/upstream/feature/a"]);
+        yield* git(cwd, ["branch", "--no-track", "local-only"]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
 
         const deduplicated = yield* driver.listRefs({ cwd });
@@ -3805,7 +3851,19 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           false,
         );
 
-        const complete = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
+        const worktreePath = yield* makeTmpDir("git-vcs-driver-worktree-");
+        yield* git(cwd, ["worktree", "add", worktreePath, "feature/a"]);
+        yield* writeTextFile(worktreePath, "packages/app/file.txt", "nested project\n");
+        const pathService = yield* Path.Path;
+        const nestedCwd = pathService.join(worktreePath, "packages", "app");
+        const complete = yield* driver.listRefs({
+          cwd: nestedCwd,
+          includeMatchingRemoteRefs: true,
+        });
+        const untracked = complete.refs.find((ref) => ref.name === "local-only");
+        assert.ok(untracked);
+        assert.equal("upstreamRef" in untracked, false);
+        assert.deepEqual(decodeVcsRef(untracked), untracked);
         assert.equal(
           complete.refs.some((ref) => ref.name === initialBranch),
           true,
@@ -3824,6 +3882,25 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(remoteOnly.refs.length, 1);
         assert.equal(remoteOnly.refs[0]?.name, `origin/${initialBranch}`);
         assert.equal(remoteOnly.refs[0]?.isRemote, true);
+
+        const tracked = complete.refs.find((ref) => ref.name === "feature/a");
+        assert.ok(tracked);
+        assert.deepEqual(decodeVcsRef(tracked), {
+          ...tracked,
+          upstreamRef: "refs/remotes/team/upstream/feature/a",
+        });
+        const aliasCwd = pathService.join(cwd, "worktree-alias");
+        NodeFS.symlinkSync(worktreePath, aliasCwd, "junction");
+        const aliased = yield* driver.listRefs({ cwd: aliasCwd });
+        const expected = [
+          { ...complete, isAtRepositoryRoot: false },
+          { ...aliased, isAtRepositoryRoot: true },
+        ];
+        assert.deepEqual([complete, aliased], expected);
+        assert.deepEqual(
+          [decodeVcsListRefsResult(complete), decodeVcsListRefsResult(aliased)],
+          expected,
+        );
       }),
     );
 
