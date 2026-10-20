@@ -131,7 +131,11 @@ const imageUrl = `data:image/svg+xml,${encodeURIComponent(
 
 function addFiles(paths: string[]) {
   state.entries = paths.map((path) => ({ path, kind: "file" }));
-  for (const path of paths) state.assets.set(path, Atom.make<AssetResult>(AsyncResult.initial()));
+  // The fake server result lives only in the registry node. Without keepAlive, a URL
+  // published after a row renders but before its effect subscribes is dropped with the node.
+  for (const path of paths) {
+    state.assets.set(path, Atom.make<AssetResult>(AsyncResult.initial()).pipe(Atom.keepAlive));
+  }
 }
 
 function fileRow(path: string) {
