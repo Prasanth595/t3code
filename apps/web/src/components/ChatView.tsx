@@ -360,6 +360,7 @@ import {
 import { type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "./settings/ConnectionDiagnosisDetails";
+import { environmentReconnectActionLabel } from "../connection/environmentReconnectAction";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -2343,6 +2344,10 @@ export default function ChatView(props: ChatViewProps) {
       unavailableConnection !== null &&
       (unavailableConnection.phase === "connecting" ||
         unavailableConnection.phase === "reconnecting");
+    const reconnectActionLabel =
+      unavailableConnection === null
+        ? null
+        : environmentReconnectActionLabel(unavailableConnection.phase);
     const suppressUnavailableBanner =
       environmentReconnecting && (updateRunning || !reconnectWarningGraceElapsed);
     if (activeEnvironmentUnavailableState && unavailableConnection && !suppressUnavailableBanner) {
@@ -2356,7 +2361,7 @@ export default function ChatView(props: ChatViewProps) {
         ) : undefined,
         actions: (
           <>
-            {!environmentReconnecting ? (
+            {reconnectActionLabel !== null ? (
               <Button
                 size="xs"
                 variant="ghost"
@@ -2366,7 +2371,7 @@ export default function ChatView(props: ChatViewProps) {
                   )
                 }
               >
-                Reconnect
+                {reconnectActionLabel}
               </Button>
             ) : null}
             {disconnectAction}
