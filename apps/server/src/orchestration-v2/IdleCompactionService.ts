@@ -27,54 +27,60 @@ export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
-  const compactWhenDue = (threadId: ThreadId, runId: RunId): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const current = yield* settings.getSettings;
-      if (!current.compactIdleThreads) return;
-      const records = yield* projections.getThreadRecords(
-        threadId,
-        [
-          "runs",
-          "messages",
-          "providerThreads",
-          "providerTurns",
-          "runtimeRequests",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
-      );
-      if (
-        !resolveProjectProviderInstanceEnabled(
-          current,
-          records.thread.projectId,
-          records.thread.providerInstanceId,
+  const compactWhenDue = Effect.fn("IdleCompactionService.compactWhenDue")(
+    function* (threadId: ThreadId, runId: RunId) {
+      // Loops once after the wait: the thread may have moved on.
+      while (true) {
+        const current = yield* settings.getSettings;
+        if (!current.compactIdleThreads) return;
+        const records = yield* projections.getThreadRecords(
+          threadId,
+          [
+            "runs",
+            "messages",
+            "providerThreads",
+            "providerTurns",
+            "runtimeRequests",
+            "turnItems",
+            "contextTransfers",
+          ],
+          { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
+        );
+        if (
+          !resolveProjectProviderInstanceEnabled(
+            current,
+            records.thread.projectId,
+            records.thread.providerInstanceId,
+          )
         )
-      )
+          return;
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+        const window = idleCompactionWindow(records, nowMs);
+        if (window?.runId !== runId) return;
+        if (nowMs < window.startMs) {
+          yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
+          continue;
+        }
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          // One compaction per completed run, even across duplicate events.
+          commandId: CommandId.make(`server:idle-compact:${threadId}:${runId}`),
+          messageId: MessageId.make(`idle-compact:${threadId}:${runId}`),
+          threadId,
+          text: "/compact",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "server",
+          dispatchMode: { type: "start_immediately" },
+        });
         return;
-      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-      const window = idleCompactionWindow(records, nowMs);
-      if (window?.runId !== runId) return;
-      if (nowMs < window.startMs) {
-        // Recheck after the wait: the thread may have moved on.
-        yield* Effect.sleep(Duration.millis(window.startMs - nowMs));
-        return yield* compactWhenDue(threadId, runId);
       }
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        // One compaction per completed run, even across duplicate events.
-        commandId: CommandId.make(`server:idle-compact:${threadId}:${runId}`),
-        messageId: MessageId.make(`idle-compact:${threadId}:${runId}`),
-        threadId,
-        text: "/compact",
-        attachments: [],
-        createdBy: "agent",
-        creationSource: "server",
-        dispatchMode: { type: "start_immediately" },
-      });
-    }).pipe(
-      Effect.catch((cause) => Effect.logWarning("idle compaction skipped", { threadId, cause })),
-    );
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((cause) => Effect.logWarning("idle compaction skipped", { threadId, cause })),
+      ),
+  );
 
   const start = Effect.fn("IdleCompactionService.start")(function* () {
     // Keyed by thread: a newer completed run replaces the waiting timer.
