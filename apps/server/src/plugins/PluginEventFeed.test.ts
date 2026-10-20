@@ -318,7 +318,9 @@ it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
           const installationId = PluginInstallationId.make("removed-before-startup");
           yield* sql`INSERT INTO plugin_event_cursors (installation_id, acknowledged_sequence) VALUES (${installationId}, 0)`;
           const scope = yield* Scope.make();
-          const { receipts } = yield* startServer(scope);
+          const observed = yield* Deferred.make<void>();
+          const { receipts } = yield* startServer(scope, {}, { catalog: observedAfter(observed) });
+          yield* Deferred.succeed(observed, undefined);
           yield* next(receipts, "Forgotten", installationId);
           expect(yield* storedCursor(installationId)).toBeUndefined();
           yield* Scope.close(scope, Exit.void);
