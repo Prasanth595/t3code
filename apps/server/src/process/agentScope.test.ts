@@ -42,7 +42,13 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
   }) => Effect.Effect<A, E>,
-  { oomPolicy = true }: { readonly oomPolicy?: boolean } = {},
+  {
+    oomPolicy = true,
+    delegate = true,
+  }: {
+    readonly oomPolicy?: boolean;
+    readonly delegate?: boolean;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -66,6 +72,9 @@ const withFakeSystemd = <A, E>(
         Effect.sync(() => {
           calls.push(args);
           if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
+            return output("", 1);
+          }
+          if (!delegate && args.some((arg) => arg.startsWith("--property=Delegate="))) {
             return output("", 1);
           }
           const [, verb, unit = ""] = args;
@@ -206,6 +215,19 @@ describe("AgentScope service", () => {
           calls.filter((args) => args.some((arg) => arg.startsWith("DelegateControllers="))),
         ).toEqual([]);
       }),
+    ),
+  );
+
+  it.effect("falls back when systemd rejects delegation", () =>
+    withFakeSystemd(
+      ({ scope }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(agent.args).not.toContain("--property=Delegate=cpu cpuset io memory pids");
+          expect(agent.args).toContain("--property=OOMPolicy=stop");
+          expect(agent.args).toContain("--property=TimeoutStopSec=10s");
+        }),
+      { delegate: false },
     ),
   );
 });
