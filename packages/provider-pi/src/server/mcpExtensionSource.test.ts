@@ -298,6 +298,36 @@ describe("Pi MCP tool exposure", () => {
     ]);
   });
 
+  it("keeps an existing thread's eager loadout after the gateway opts out", async () => {
+    const event = { systemPrompt: "" };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionProjection: () => ({ messages: [] }) },
+      ui: { notify: assert.fail },
+    };
+    const eager = await loadMcpBridge({ modern: true, toolSearchAvailable: true });
+    await eager.handlers.get("session_start")!(event, gatewayContext);
+    const eagerLoadout = [...eager.getActiveTools()];
+    assert.include(eagerLoadout, "mcp__t3-code__preview_snapshot");
+
+    // Pi restores the thread's saved loadout when it resumes under the opt-out.
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+    });
+    bridge.restoreActiveTools(eagerLoadout);
+    for (const hookName of [
+      "session_start",
+      "model_select",
+      "session_tree",
+      "before_agent_start",
+    ]) {
+      await bridge.handlers.get(hookName)!(event, gatewayContext);
+      assert.deepEqual(bridge.getActiveTools(), eagerLoadout);
+    }
+  });
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {
