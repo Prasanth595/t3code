@@ -153,8 +153,7 @@ export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances"
     const instances = yield* pool.list;
     yield* Effect.forEach(
       instances,
-      // Exceeds the backend's 30s graceful termination and output drain budget.
-      (instance) => instance.stop({ timeout: Duration.seconds(45) }),
+      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
       { concurrency: "unbounded" },
     );
   },
