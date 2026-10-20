@@ -103,11 +103,14 @@ export class CodexInstallationError extends Schema.TaggedError<CodexInstallation
   {
     operation: Schema.String,
     detail: Schema.String,
+    httpStatus: Schema.optional(Schema.Number),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message() {
-    return this.detail;
+    return this.httpStatus === undefined
+      ? this.detail
+      : `The Codex download server returned HTTP ${this.httpStatus}. Try again later.`;
   }
 }
 const isInstallationError = Schema.is(CodexInstallationError);
@@ -607,14 +610,19 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     },
     Effect.scoped,
     Effect.catchTags({
-      HttpClientError: (cause) =>
-        installationError(
-          "download",
-          cause.reason._tag === "StatusCodeError"
-            ? `The Codex download server returned HTTP ${cause.reason.response.status}. Try again later.`
-            : "The Codex download was interrupted. Check your internet connection, then retry installation.",
+      HttpClientError: (cause) => {
+        const httpStatus =
+          cause.reason._tag === "StatusCodeError" ? cause.reason.response.status : undefined;
+        return new CodexInstallationError({
+          operation: "download",
+          detail:
+            httpStatus === undefined
+              ? "The Codex download was interrupted. Check your internet connection, then retry installation."
+              : "The Codex download server returned an HTTP error. Try again later.",
+          ...(httpStatus === undefined ? {} : { httpStatus }),
           cause,
-        ),
+        });
+      },
     }),
     Effect.mapError(
       wrapFailure(
@@ -662,7 +670,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
                     message: cancelled
                       ? "Installation cancelled. The previous runtime is unchanged."
                       : Option.isSome(error)
-                        ? error.value.detail
+                        ? error.value.message
                         : "Could not finish the Codex installation. Check disk space and directory access.",
                   } satisfies ProviderInstallState;
                 })
