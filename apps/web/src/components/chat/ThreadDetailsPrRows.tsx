@@ -1,3 +1,4 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import type { EnvironmentId, ScopedThreadRef, ThreadPullRequestLink } from "@t3tools/contracts";
 import {
@@ -9,7 +10,11 @@ import {
 import { Minus, Plus } from "lucide";
 import { useState, type ComponentProps, type MouseEvent as ReactMouseEvent } from "react";
 
-import { findProjectOnChangeRequestHost, parseChangeRequestUrl } from "~/lib/openPullRequestLink";
+import {
+  findProjectForChangeRequest,
+  findProjectOnChangeRequestHost,
+  parseChangeRequestUrl,
+} from "~/lib/openPullRequestLink";
 
 import { useProjects } from "~/state/entities";
 import { threadEnvironment } from "~/state/threads";
@@ -20,15 +25,23 @@ import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadSta
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 
+function threadPullRequestLabel(link: ThreadPullRequestLink, project: EnvironmentProject | null) {
+  return project !== null && findProjectForChangeRequest([project], link) !== undefined
+    ? `#${link.number}`
+    : `${link.repository}#${link.number}`;
+}
+
 function ThreadDetailsPrLinkRow({
   environmentId,
   link,
+  threadProject,
   onOpen,
   onActed,
   onStopWatching,
 }: {
   environmentId: EnvironmentId;
   link: ThreadPullRequestLink;
+  threadProject: EnvironmentProject | null;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
@@ -44,6 +57,7 @@ function ThreadDetailsPrLinkRow({
         ) ?? null);
   const linked = linkedPullRequestSnapshotStatus(link);
   const pr = linked?.pr ?? null;
+  const referenceLabel = threadPullRequestLabel(link, threadProject);
   return (
     <ThreadDetailsPrRow
       environmentId={environmentId}
@@ -52,7 +66,8 @@ function ThreadDetailsPrLinkRow({
       reference={link}
       status={prStatusIndicator(pr, linked?.sourceControlProvider)}
       project={project}
-      label={`#${link.number}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
+      label={`${referenceLabel}${link.snapshot === null ? "" : `: ${link.snapshot.title}`}`}
+      referenceLabel={referenceLabel}
       openAriaLabel={link.url}
       onOpen={onOpen}
       onStopWatching={onStopWatching}
@@ -89,7 +104,20 @@ export function ThreadDetailsPrRows({
               watching: false,
             },
           });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+  const referenceLabel =
+    currentLink === null ? `#${row.number}` : threadPullRequestLabel(currentLink, row.project);
+  const currentRow = (
+    <ThreadDetailsPrRow
+      {...row}
+      label={
+        currentLink === null
+          ? row.label
+          : `${referenceLabel}${row.pr?.title.trim() ? `: ${row.pr.title}` : ""}`
+      }
+      referenceLabel={referenceLabel}
+      onStopWatching={stopWatching(currentLink)}
+    />
+  );
   const rest =
     currentLink === null
       ? []
@@ -108,6 +136,7 @@ export function ThreadDetailsPrRows({
               key={threadPullRequestKeyOf(link)}
               environmentId={row.environmentId}
               link={link}
+              threadProject={row.project}
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}
               onStopWatching={stopWatching(link)}

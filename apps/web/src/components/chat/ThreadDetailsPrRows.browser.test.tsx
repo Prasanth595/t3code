@@ -1,4 +1,6 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId, ProjectId, ThreadId, type ThreadPullRequestLink } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -6,7 +8,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 
 const watchCommand = vi.hoisted(() => vi.fn());
-const fixture = vi.hoisted(() => ({ realRows: false }));
+const fixture = vi.hoisted(() => ({ realRows: false, loaded: false }));
 
 // List-only cases isolate query-backed rows; the density case uses their real layout.
 vi.mock(import("./ThreadDetailsPrRow"), async (importOriginal) => {
@@ -28,6 +30,7 @@ vi.mock(import("./ThreadDetailsPrRow"), async (importOriginal) => {
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useProjects: () => [],
+  useServerConfigs: (() => new Map()) as never,
   useQuietThreadShell: (() => ({
     environmentId: "environment",
     projectId: "project",
@@ -39,6 +42,29 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
 vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
   useAtomCommand: (() => watchCommand) as never,
+}));
+const detail = {
+  number: 2,
+  title: "Change 2",
+  state: "open",
+  isDraft: false,
+  mergeability: "mergeable",
+  headBranch: "layer-two",
+  baseBranch: "layer-one",
+  changedFiles: 1,
+  additions: 1,
+  deletions: 0,
+  checks: [],
+  capabilities: { actions: ["merge"], mergeMethods: ["merge"] },
+  viewerPermissions: { actions: ["merge"] },
+  mergeCapabilities: { merge: true, squash: false, rebase: false },
+};
+vi.mock(import("~/state/query"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentQuerySelector: ((_atom: unknown, select: (result: unknown) => unknown) =>
+    select(AsyncResult.success(fixture.loaded ? detail : null))) as never,
+  useEnvironmentQueryIsNewer: () => true,
+  useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
 }));
 
 vi.mock(import("./ChatCanvasContext"), async (original) => ({
@@ -57,6 +83,7 @@ vi.mock(import("./ThreadAutomationsPanel"), () => ({ ThreadAutomationsPanel: () 
 vi.mock(import("./ThreadRelationshipsControl"), () => ({ ThreadRelationshipsPanel: () => null }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (original) => ({
   ...(await original()),
+  usePullRequestActionRunner: () => ({ actionPending: false, perform: vi.fn() }),
   usePullRequestHandoffs: () => ({ handoff: null, startAsk: vi.fn(), startHandoff: vi.fn() }),
 }));
 vi.mock(import("../BranchToolbarBranchSelector"), () => ({
@@ -79,6 +106,7 @@ vi.mock(import("../BranchToolbarBranchSelector"), () => ({
   ),
 }));
 
+import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 import { PopoverCreateHandle } from "../ui/popover";
 import { ThreadDetailsPanel } from "./ThreadDetailsPanel";
 import { ThreadDetailsPrRows } from "./ThreadDetailsPrRows";
@@ -96,12 +124,13 @@ function link(
   headBranch: string,
   baseBranch: string,
   updatedAt: string,
+  repository = "pingdotgg/t3code",
 ): ThreadPullRequestLink {
   return {
     host: "github.com",
-    repository: "pingdotgg/t3code",
+    repository,
     number,
-    url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+    url: `https://github.com/${repository}/pull/${number}`,
     source: "manual",
     linkedAt: updatedAt,
     snapshot: {
@@ -121,11 +150,35 @@ const bottom = link(1, "layer-one", "main", "2026-01-01T00:00:10.000Z");
 const top = link(2, "layer-two", "layer-one", "2026-01-01T00:00:20.000Z");
 const other = link(3, "unrelated", "main", "2026-01-01T00:00:05.000Z");
 
+const project: EnvironmentProject = {
+  environmentId: EnvironmentId.make("environment"),
+  id: ProjectId.make("project"),
+  title: "T3 Code",
+  workspaceRoot: "/workspace/t3code",
+  repositoryIdentity: {
+    canonicalKey: "github.com/pingdotgg/t3code",
+    provider: "github",
+    owner: "pingdotgg",
+    name: "t3code",
+    locator: {
+      source: "git-remote",
+      remoteName: "upstream",
+      remoteUrl: "https://github.com/pingdotgg/t3code.git",
+    },
+  },
+  defaultModelSelection: null,
+  scripts: [],
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+};
+
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  fixture.loaded = false;
   container = document.createElement("div");
+  container.style.width = "240px";
   document.body.append(container);
   root = createRoot(container);
 });
@@ -136,7 +189,13 @@ afterEach(() => {
   fixture.realRows = false;
 });
 
-function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPullRequestLink) {
+function render(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+  current: ThreadPullRequestLink,
+  threadProject: EnvironmentProject | null = project,
+) {
+  const linked = linkedPullRequestSnapshotStatus(current);
+  const pr = linked?.pr ?? null;
   act(() => {
     root.render(
       <ThreadDetailsPrRows
@@ -148,19 +207,23 @@ function render(links: ReadonlyArray<ThreadPullRequestLink>, current: ThreadPull
         currentLink={current}
         onOpenLink={vi.fn()}
         environmentId={EnvironmentId.make("environment")}
-        pr={null}
+        pr={pr}
         number={current.number}
         reference={current}
-        status={null}
-        project={null}
-        label={`#${current.number}`}
-        openAriaLabel="Open pull request"
+        status={prStatusIndicator(pr, linked?.sourceControlProvider)}
+        project={threadProject}
+        label={`#${current.number}: ${current.snapshot?.title ?? ""}`}
+        openAriaLabel={current.url}
         onOpen={vi.fn()}
       />,
     );
   });
 }
 
+const rowButtons = () => [
+  ...container.querySelectorAll<HTMLButtonElement>('button[aria-label^="https://"]'),
+];
+const labels = () => rowButtons().map((button) => button.textContent?.trim());
 const rows = () =>
   [...container.querySelectorAll("[data-row]")].map((node) => node.getAttribute("data-row"));
 const toggleButton = () =>
@@ -285,4 +348,92 @@ it("keeps workspace controls after expanding and collapsing 70 linked pull reque
   await expect.element(page.getByRole("button", { name: "Open pull request #1" })).toBeVisible();
   await expect.element(runContext).toBeVisible();
   await expect.element(editor).toBeVisible();
+});
+
+it.each([
+  { name: "known project", threadProject: project, ownPrefix: "" },
+  { name: "unknown project", threadProject: null, ownPrefix: "pingdotgg/t3code" },
+])(
+  "labels primary and expanded rows by repository with a $name",
+  ({ threadProject, ownPrefix }) => {
+    fixture.realRows = true;
+    const foreign = link(3, "unrelated", "main", "2026-01-01T00:00:05.000Z", "vercel/next.js");
+    render([bottom, top, foreign], top, threadProject);
+    expect(labels()).toEqual([`${ownPrefix}#2: Change 2`]);
+    toggle();
+    expect(labels()).toEqual([
+      `${ownPrefix}#2: Change 2`,
+      `${ownPrefix}#1: Change 1`,
+      "vercel/next.js#3: Change 3",
+    ]);
+
+    render([bottom, top, foreign], foreign, threadProject);
+    expect(labels()[0]).toBe("vercel/next.js#3: Change 3");
+  },
+);
+
+it("keeps the same repository reference in the row and tooltip before and after details load", async () => {
+  fixture.realRows = true;
+  for (const loaded of [false, true]) {
+    fixture.loaded = loaded;
+    render([top], top);
+    const button = rowButtons()[0]!;
+    await act(() => userEvent.hover(button));
+    await expect
+      .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
+      .toContain("#2");
+    expect
+      .soft(document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
+      .not.toContain("pingdotgg/t3code");
+    await act(() => userEvent.unhover(button));
+    await expect
+      .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]'))
+      .toBeNull();
+  }
+});
+
+it("fits long repository references and their tooltips without hiding row controls", async () => {
+  fixture.realRows = true;
+  fixture.loaded = true;
+  const repository = `${"organization".repeat(8)}/${"repository".repeat(12)}`;
+  const long = link(2, "layer-two", "main", "2026-01-01T00:00:20.000Z", repository);
+  render([long], long);
+  expect(container.textContent).toContain(`${repository}#2`);
+  expect.soft(container.scrollWidth).toBeLessThanOrEqual(container.clientWidth);
+  const merge = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent === "Merge",
+  )!;
+  const panelBounds = container.getBoundingClientRect();
+  const mergeBounds = merge.getBoundingClientRect();
+  expect.soft(mergeBounds.right).toBeLessThanOrEqual(panelBounds.right);
+  expect
+    .soft(
+      document.elementFromPoint(
+        mergeBounds.x + mergeBounds.width / 2,
+        mergeBounds.y + mergeBounds.height / 2,
+      ),
+    )
+    .toBe(merge);
+
+  await act(() => userEvent.hover(rowButtons()[0]!));
+  await expect
+    .poll(() => document.querySelector('[data-slot="tooltip-popup"][data-open]')?.textContent)
+    .toContain(`${repository}#2`);
+  const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"][data-open]')!;
+  const reference = [...tooltip.querySelectorAll("span")].find(
+    (span) => span.textContent === `${repository}#2`,
+  )!;
+  expect.soft(reference.scrollWidth).toBeLessThanOrEqual(reference.clientWidth);
+  expect.soft(tooltip.scrollWidth).toBeLessThanOrEqual(tooltip.clientWidth);
+  expect
+    .soft(reference.getBoundingClientRect().right)
+    .toBeLessThanOrEqual(tooltip.getBoundingClientRect().right);
+
+  await act(() => userEvent.unhover(rowButtons()[0]!));
+  await act(() => userEvent.click(merge));
+  const description = document.querySelector<HTMLElement>(
+    '[data-slot="alert-dialog-description"]',
+  )!;
+  expect.soft(description.textContent).toBe(`This merges ${repository}#2 using merge.`);
+  expect.soft(description.scrollWidth).toBeLessThanOrEqual(description.clientWidth);
 });
