@@ -20,8 +20,11 @@ import {
   resolveExplicitDiffOpenOnActivate,
   resolveThreadSwitchTimeline,
   timelineHasEphemeralPreviewUrls,
+  draftSendState,
   recallCheckoutIsRepo,
+  releaseDraftSendStateIfIdle,
   rememberCheckoutIsRepo,
+  retainDraftSendState,
 } from "./ChatView.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { useLogicalProjectEnvironments } from "../hooks/useLogicalProjectEnvironments";
@@ -657,26 +660,11 @@ type EnvironmentUnavailableState = {
   readonly connection: EnvironmentConnectionPresentation;
 };
 
-// Kept per route so a send in flight, and the multiple-model selections, survive
-// ChatView remounting while the user navigates.
+// Kept per route so the multiple-model selections survive ChatView remounting
+// while the user navigates.
 const draftFanoutSelectionsAtom = Atom.family((_routeKey: string) =>
   Atom.make<ReadonlyArray<ModelSelection> | null>(null).pipe(Atom.keepAlive),
 );
-const draftSendStateByRouteKey = new Map<
-  string,
-  {
-    readonly sendInFlight: { current: boolean };
-    readonly uncertainSubmissions: { current: Map<string, ThreadId> };
-  }
->();
-function draftSendState(routeKey: string) {
-  let state = draftSendStateByRouteKey.get(routeKey);
-  if (!state) {
-    state = { sendInFlight: { current: false }, uncertainSubmissions: { current: new Map() } };
-    draftSendStateByRouteKey.set(routeKey, state);
-  }
-  return state;
-}
 
 /**
  * Starts one thread of a multiple-model send. A request that may have
@@ -688,6 +676,7 @@ async function startFanoutThread(input: {
   readonly retryKey: string;
   readonly model: string;
   readonly uncertainSubmissions: Map<string, ThreadId>;
+  readonly onRetryAllowed: () => void;
   readonly start: (threadId: ThreadId) => Promise<AtomCommandResult<unknown, unknown>>;
   readonly openThread: (threadId: ThreadId) => void;
 }): Promise<boolean> {
@@ -739,6 +728,7 @@ async function startFanoutThread(input: {
                             uncertainSubmissions.get(retryKey) === retainedThreadId
                           ) {
                             uncertainSubmissions.delete(retryKey);
+                            input.onRetryAllowed();
                             toastManager.close(failureToastId);
                           }
                         },
@@ -1443,8 +1433,13 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const fanoutSelectionsAtom = draftFanoutSelectionsAtom(routeThreadKey);
+  const routeSendState = draftSendState(routeThreadKey);
   const { sendInFlight: sendInFlightRef, uncertainSubmissions: uncertainMultipleSubmissionsRef } =
-    draftSendState(routeThreadKey);
+    routeSendState;
+  useEffect(
+    () => retainDraftSendState(routeThreadKey, routeSendState),
+    [routeSendState, routeThreadKey],
+  );
   const [resumingThreadKeys, setResumingThreadKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -6875,6 +6870,7 @@ export default function ChatView(props: ChatViewProps) {
               ]),
               model: target.selection.model,
               uncertainSubmissions: uncertainMultipleSubmissionsRef.current,
+              onRetryAllowed: () => releaseDraftSendStateIfIdle(routeThreadKey, routeSendState),
               start: (targetThreadId) => {
                 const supportsInlineMessageContext =
                   appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
@@ -6933,10 +6929,17 @@ export default function ChatView(props: ChatViewProps) {
             else failedSelections.push(target.selection);
           }),
         );
+        // The composer is free again, but a start that fails from here on
+        // records an uncertain submission on this route's state.
+        const releaseStarts = retainDraftSendState(routeThreadKey, routeSendState);
         sendInFlightRef.current = false;
         resetLocalDispatch();
         releasedComposer = true;
-        await starts;
+        try {
+          await starts;
+        } finally {
+          releaseStarts();
+        }
         if (startedCount > 0) {
           toastManager.add(
             stackedThreadToast({
