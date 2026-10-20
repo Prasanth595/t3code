@@ -45,13 +45,17 @@ vi.mock("~/terminal/ghostty/surface", async (importOriginal) => ({
     create: async (_mount: HTMLElement, options: { onData: (data: string) => void }) => {
       transport.surfaces.push(options);
       // Every surface method is a no-op; the test only feeds keystrokes through onData.
-      return new Proxy({}, { get: () => () => undefined });
+      return new Proxy(
+        {},
+        { get: (_target, key) => (key === "then" ? undefined : () => undefined) },
+      );
     },
   },
 }));
 vi.mock("~/state/entities", () => {
   const project = { workspaceRoot: "/repo" };
   return {
+    readEnvironmentSupportsServerBrowser: () => false,
     useQuietThreadShell: (ref: ScopedThreadRef) => ({
       environmentId: ref.environmentId,
       projectId: "project-a",
@@ -101,8 +105,6 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  // jsdom has no canvas; the terminal theme reader falls back without one.
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
   transport.attached = [];
   transport.commands = [];
   transport.surfaces = [];
