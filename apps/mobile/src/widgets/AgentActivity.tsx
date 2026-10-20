@@ -217,6 +217,8 @@ export function AgentActivity(
       ? `t3code://${deepLinkRow.deepLink.slice(1)}`
       : null;
 
+  const linkModifiers = deepLink ? [widgetURL(deepLink)] : [];
+
   // A scannable status glyph per phase — reads faster than colored words and
   // ties the compact / expanded / banner / watch presentations together.
   type SFName = NonNullable<ComponentProps<typeof Image>["systemName"]>;
@@ -244,8 +246,8 @@ export function AgentActivity(
   // SF Symbols, like the logo, ignore frame/foregroundStyle applied directly to
   // the image; size + tint them through a container. Preserve the symbol's
   // intrinsic aspect ratio when the resizable image fills that frame.
-  const renderGlyph = (systemName: SFName, size: number, color: Foreground) => (
-    <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color)]}>
+  const renderGlyph = (systemName: SFName, size: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
+    <HStack modifiers={[frame({ width: size, height: size }), foregroundStyle(color), ...modifiers]}>
       <Image
         systemName={systemName}
         modifiers={[resizable(), aspectRatio({ contentMode: "fit" })]}
@@ -292,8 +294,8 @@ export function AgentActivity(
   // frame the resizable image fills and tint it through the container's
   // foreground style, which the template image inherits. The 3:2 frame matches
   // the glyph's aspect ratio so it never distorts.
-  const renderLogo = (height: number, color: Foreground) => (
-    <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color)]}>
+  const renderLogo = (height: number, color: Foreground, modifiers: typeof linkModifiers = []) => (
+    <HStack modifiers={[frame({ width: height * 1.5, height }), foregroundStyle(color), ...modifiers]}>
       <Image assetName="T3Mark" modifiers={[resizable()]} />
     </HStack>
   );
@@ -575,9 +577,9 @@ export function AgentActivity(
   return {
     banner,
     bannerSmall: renderCompactLayout(),
-    compactLeading: renderLogo(14, tint),
+    compactLeading: renderLogo(14, tint, linkModifiers),
     compactTrailing: (
-      <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint)]}>
+      <Text modifiers={[font({ weight: "semibold", size: 11 }), foregroundStyle(tint), ...linkModifiers]}>
         {attentionRow
           ? attentionRow.phase === "waiting_for_approval"
             ? "Approval"
@@ -592,8 +594,8 @@ export function AgentActivity(
     // mark (all-done shows the hero row's checkmark/cross).
     minimal:
       (attentionRow || failedRow || allDone) && heroRow
-        ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase))
-        : renderLogo(11, tint),
+        ? renderGlyph(phaseSymbol(heroRow.phase), 13, phaseTint(heroRow.phase), linkModifiers)
+        : renderLogo(11, tint, linkModifiers),
     expandedLeading: (
       <HStack spacing={5} alignment="center" modifiers={[padding({ leading: 4, vertical: 4 })]}>
         {renderLogo(15, tint)}
