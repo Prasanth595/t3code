@@ -165,9 +165,10 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
 
   const lastSyncedAt = new Map<string, number>();
-  const requested = new Map<string, number>();
-  let requestGeneration = 0;
-  // Requested keys wait in `requested` for one queued sweep, so a burst of links (an agent
+  const requested = new Set<string>();
+  // Requests arriving during a host read wait for the next sweep.
+  const pendingRequests = new Set<string>();
+  // PR keys wait in `pendingRequests` for one queued sweep, so a burst of links (an agent
   // linking dozens of pull requests) is read together and shares the summary batches.
   let requestedSweepQueued = false;
   const retryStacks = new Set<string>();
@@ -208,18 +209,27 @@ export const make = Effect.gen(function* () {
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of threads) {
       for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
-        const key = threadPullRequestKeyOf(link);
+        // Reads depend on the project's checkout and credentials, including their failures.
+        const key = `${thread.projectId}\0${threadPullRequestKeyOf(link)}`;
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
         groups.set(key, entries);
       }
     }
 
+    // A host-level refresh reaches every project, each retaining its own pending retry.
+    for (const [key, entries] of groups) {
+      if (pendingRequests.has(threadPullRequestKeyOf(entries[0]!.link))) requested.add(key);
+    }
+    pendingRequests.clear();
+
     for (const key of lastSyncedAt.keys()) if (!groups.has(key)) lastSyncedAt.delete(key);
     for (const key of retryStacks) if (!groups.has(key)) retryStacks.delete(key);
     for (const key of requested.keys()) if (!groups.has(key)) requested.delete(key);
 
     const linkedThisSweep = new Set<string>();
+    // Fresh stack reads by group, so a member flagged by a sibling is compared against what the
+    // host answered this sweep, not the saved layers that sibling is about to replace.
     const stacksReadThisSweep = new Map<string, ThreadPullRequestStack | null>();
     const persistence = yield* Semaphore.make(1);
 
@@ -292,19 +302,19 @@ export const make = Effect.gen(function* () {
         repository: first.link.repository,
         number: first.link.number,
       };
-      const generation = requested.get(key);
+      const refreshRequested = requested.has(key);
       // A held merged summary is served without asking the host, so a snapshot still missing its
       // merge time has to drop it or the slow-cadence re-read would hand back the same gap.
       const missingMergedAt = entries.some(
         (entry) => entry.link.snapshot?.state === "merged" && entry.link.snapshot.mergedAt == null,
       );
       // A stack retry reads past the cache, or it could get back the layer list it is retrying.
-      const invalidated = generation !== undefined || missingMergedAt || retryStacks.has(key);
+      const invalidated = refreshRequested || missingMergedAt || retryStacks.has(key);
       if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
       const fields = snapshotFieldsOf(summary);
       const needsStack =
-        generation !== undefined ||
+        refreshRequested ||
         retryStacks.has(key) ||
         entries.some(
           (entry) =>
@@ -350,10 +360,13 @@ export const make = Effect.gen(function* () {
         // A layer pushed above an older member changes none of that member's own fields, so it
         // would keep its shorter layer list. Members of this stack whose layer list differs read
         // their stack once, in this sweep if still pending or the next; agreeing ones read none.
+        // Only groups of the same project: another project reads with its own credential and
+        // may see a different layer list, so flagging across projects would never settle.
         if (fetched !== null) {
           const fetchedKey = nativeStackKeyOf(first.link, fetched);
           for (const [siblingKey, siblingEntries] of groups) {
             if (siblingKey === key) continue;
+            if (siblingEntries[0]!.thread.projectId !== first.thread.projectId) continue;
             const readThisSweep = stacksReadThisSweep.get(siblingKey);
             const stale = siblingEntries.some(({ link }) => {
               const stack = readThisSweep === undefined ? link.stack : readThisSweep;
@@ -369,8 +382,7 @@ export const make = Effect.gen(function* () {
       }
       // The host answered, so the cadence clock ticks even if a dispatch below is rejected.
       lastSyncedAt.set(key, nowMs);
-      // A refresh requested while the host read was in flight belongs to the next sweep.
-      if (requested.get(key) === generation) requested.delete(key);
+      requested.delete(key);
       yield* Effect.forEach(
         entries,
         (entry) =>
@@ -512,7 +524,7 @@ export const make = Effect.gen(function* () {
 
   const requestSync: PullRequestSyncReactor["Service"]["requestSync"] = (key) =>
     Effect.suspend(() => {
-      requested.set(threadPullRequestKeyOf(key), ++requestGeneration);
+      pendingRequests.add(threadPullRequestKeyOf(key));
       if (requestedSweepQueued) return Effect.void;
       requestedSweepQueued = true;
       return worker.enqueue("requested");
