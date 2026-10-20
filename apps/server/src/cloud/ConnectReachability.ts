@@ -196,7 +196,11 @@ const make = Effect.gen(function* () {
   const runtime = yield* ManagedEndpointRuntime.CloudManagedEndpointRuntime;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = yield* HttpClient.HttpClient;
-  const latestRef = yield* Ref.make(Option.none<EnvironmentConnectReachability>());
+  // `order` ranks checks by start, so a slow older one cannot replace a newer result.
+  const latestRef = yield* Ref.make(
+    Option.none<{ readonly order: number; readonly result: EnvironmentConnectReachability }>(),
+  );
+  const checkCounter = yield* Ref.make(0);
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const readExitNode = readTailscaleExitNode.pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -248,12 +252,18 @@ const make = Effect.gen(function* () {
   });
 
   const check = Effect.gen(function* () {
+    const order = yield* Ref.updateAndGet(checkCounter, (count) => count + 1);
     const facts = yield* gatherFacts;
     const result = classifyReachability(facts, DateTime.formatIso(yield* DateTime.now));
-    const previous = yield* Ref.getAndSet(latestRef, Option.some(result));
+    const previous = yield* Ref.modify(latestRef, (current) =>
+      Option.isSome(current) && current.value.order > order
+        ? [null, current]
+        : [current, Option.some({ order, result })],
+    );
+    if (previous === null) return result;
     const changed = Option.match(previous, {
       onNone: () => true,
-      onSome: (last) =>
+      onSome: ({ result: last }) =>
         last.status !== result.status ||
         (last.status === "unreachable" &&
           result.status === "unreachable" &&
@@ -288,7 +298,10 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  return ConnectReachability.of({ check, latest: Ref.get(latestRef) });
+  return ConnectReachability.of({
+    check,
+    latest: Ref.get(latestRef).pipe(Effect.map(Option.map(({ result }) => result))),
+  });
 });
 
 export const layer = Layer.effect(ConnectReachability, make);
