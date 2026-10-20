@@ -369,6 +369,41 @@ it.effect.each([
     expected: Option.none(),
   },
   {
+    case: "gives no answer when a config spreads the config but replaces a computed extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, ["extra"]: {} });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config spreads the config but replaces extra by shorthand",
+    files: {
+      "app.config.js": `const extra = {};\nmodule.exports = ({ config }) => ({ ...config, extra });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config has more extra entries than are read",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config, ${"extra: { ...config, ".repeat(40)}${"}".repeat(40)} } });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when a config assigns extra in brackets after a literal id",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => {
+        const c = { ...config, extra: { eas: { projectId: "${ID_A}" } } };
+        c["extra"] = other();
+        return c;
+      };`,
+    },
+    expected: Option.none(),
+  },
+  {
     case: "gives no answer when a config spreads the config but replaces eas",
     files: {
       "app.config.js": `module.exports = ({ config }) => ({

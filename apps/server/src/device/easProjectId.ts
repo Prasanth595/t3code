@@ -73,14 +73,21 @@ const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => 
 const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
 // A config may replace the object holding the entry, or the whole config,
 // from somewhere this scan cannot read: an assignment to `.extra` or `.eas`,
-// or another file it requires or imports.
-const REPLACES_HOLDER = /\.\s*(?:extra|eas)\s*=(?!=)|\brequire\s*\(|\bimport\s*\(/;
+// (as a property or in brackets), or another file it requires or imports.
+const REPLACES_HOLDER =
+  /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\brequire\s*\(|\bimport\s*\(/;
 // An `extra:` or `eas:` entry in a config that takes its id from app.json:
 // unless its value is an object that starts by spreading `config`'s own,
-// it replaces app.json's (`extra: {}` drops the id).
-const EXTRA_OR_EAS = /(?:\b(?:extra|eas)|["'`](?:extra|eas)["'`])\s*:\s*/g;
+// it replaces app.json's (`extra: {}` drops the id). The key may be quoted
+// or computed; a shorthand `extra` or `eas` entry replaces it too. More
+// entries than mentions are allowed are not read.
+const EXTRA_OR_EAS = /(?:\b(?:extra|eas)|["'`](?:extra|eas)["'`]\s*\]?)\s*:\s*/g;
+const SHORTHAND_EXTRA_OR_EAS = /(?<![.\p{ID_Continue}$])(?:extra|eas)\s*(?=[,}])/u;
 const keepsStaticExtra = (source: string): boolean => {
+  if (SHORTHAND_EXTRA_OR_EAS.test(source)) return false;
+  let entries = 0;
   for (const entry of source.matchAll(EXTRA_OR_EAS)) {
+    if (++entries > MAX_MENTIONS) return false;
     let at = entry.index + entry[0].length;
     if (source[at] !== "{") return false;
     at++;
