@@ -3,6 +3,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { StrictMode } from "react";
 import { fakeTimers, render } from "../../test/render";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
+import { DesktopThreadSwipeNavigation } from "./DesktopThreadSwipeNavigation";
+import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 
 const sensors: SidebarPointerSensor[] = [];
 let hidden = false;
@@ -290,5 +294,168 @@ describe("sidebar pointer lifecycle", () => {
     expect(previous.onCancel).toHaveBeenCalledOnce();
     expect(previous.onEnd).not.toHaveBeenCalled();
     expect(next.onEnd).toHaveBeenCalledOnce();
+  });
+});
+
+describe("desktop thread swipe navigation", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const navigate = vi.fn(() => true);
+
+  beforeEach(() => {
+    navigate.mockClear();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root.render(<DesktopThreadSwipeNavigation navigate={navigate} />));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  function wheel(values: WheelEventInit, target: EventTarget = container) {
+    const event = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      ...values,
+    });
+    act(() => {
+      target.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  it("navigates once per swipe, including momentum and reversal, until the gesture is idle", () => {
+    wheel({ deltaX: 75 });
+    expect(navigate).not.toHaveBeenCalled();
+    wheel({ deltaX: 45 });
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
+
+    wheel({ deltaX: 160 });
+    wheel({ deltaX: -160 });
+    const scroller = document.createElement("div");
+    scroller.style.cssText = "width: 100px; overflow-x: auto";
+    scroller.innerHTML = '<div style="width:300px;height:20px"></div>';
+    container.append(scroller);
+    act(() => vi.advanceTimersByTime(179));
+    expect(wheel({ deltaX: 160 }, scroller).defaultPrevented).toBe(true);
+    act(() => vi.advanceTimersByTime(179));
+    wheel({ deltaX: -160 });
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
+
+    act(() => vi.advanceTimersByTime(180));
+    wheel({ deltaX: -75 });
+    expect(navigate).toHaveBeenCalledTimes(1);
+    wheel({ deltaX: -45 });
+    expect(navigate.mock.calls).toEqual([["next"], ["previous"]]);
+  });
+
+  it("leaves horizontal scrolling to content, including inside a shadow root", () => {
+    const host = document.createElement("div");
+    container.append(host);
+    const shadowRoot = host.attachShadow({ mode: "open" });
+
+    for (const parent of [container, shadowRoot]) {
+      const scroller = document.createElement("div");
+      scroller.style.cssText = "width: 100px; overflow-x: auto";
+      const content = document.createElement("div");
+      content.style.cssText = "width: 300px; height: 20px";
+      scroller.append(content);
+      parent.append(scroller);
+      expect(scroller.scrollWidth).toBeGreaterThan(scroller.clientWidth);
+
+      expect(wheel({ deltaX: 160 }, content).defaultPrevented).toBe(false);
+      expect(navigate).not.toHaveBeenCalled();
+    }
+
+    const input = document.createElement("input");
+    input.style.width = "80px";
+    input.value = "long editable text ".repeat(30);
+    container.append(input);
+    expect(input.scrollWidth).toBeGreaterThan(input.clientWidth);
+    expect(wheel({ deltaX: 160 }, input).defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    expect(wheel({ deltaX: 120 }).defaultPrevented).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
+  });
+
+  it("keeps the background thread still while an overlay owns the interaction", () => {
+    act(() =>
+      root.render(
+        <>
+          <DesktopThreadSwipeNavigation navigate={navigate} />
+          <Dialog open>
+            <DialogPopup>
+              <DialogTitle>Thread action</DialogTitle>
+            </DialogPopup>
+          </Dialog>
+        </>,
+      ),
+    );
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(wheel({ deltaX: 160 }, dialog!).defaultPrevented).toBe(false);
+    expect(wheel({ deltaX: 160 }).defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    act(() =>
+      root.render(
+        <>
+          <DesktopThreadSwipeNavigation navigate={navigate} />
+          <Menu open>
+            <MenuTrigger>Thread actions</MenuTrigger>
+            <MenuPopup>
+              <MenuItem>Rename</MenuItem>
+            </MenuPopup>
+          </Menu>
+        </>,
+      ),
+    );
+    const menu = document.querySelector('[role="menu"]');
+    expect(menu).not.toBeNull();
+    expect(wheel({ deltaX: 160 }, menu!).defaultPrevented).toBe(false);
+    expect(navigate).not.toHaveBeenCalled();
+
+    act(() =>
+      root.render(
+        <>
+          <DesktopThreadSwipeNavigation navigate={navigate} />
+          <Popover open={false}>
+            <PopoverTrigger>Comment</PopoverTrigger>
+            <PopoverPopup keepMounted>Draft comment</PopoverPopup>
+          </Popover>
+        </>,
+      ),
+    );
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(wheel({ deltaX: 120 }).defaultPrevented).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
+  });
+
+  it("ignores modified, non-pixel, vertical and already handled wheel events", () => {
+    const ignored: WheelEventInit[] = [
+      { ctrlKey: true },
+      { metaKey: true },
+      { altKey: true },
+      { shiftKey: true },
+      { deltaMode: WheelEvent.DOM_DELTA_LINE },
+      { deltaMode: WheelEvent.DOM_DELTA_PAGE },
+      { deltaY: 200 },
+    ];
+    for (const values of ignored) {
+      expect(wheel({ deltaX: 160, ...values }).defaultPrevented).toBe(false);
+    }
+    container.addEventListener("wheel", (event) => event.preventDefault(), { once: true });
+    wheel({ deltaX: 160 });
+    expect(navigate).not.toHaveBeenCalled();
+
+    wheel({ deltaX: 75 });
+    expect(navigate).not.toHaveBeenCalled();
+    wheel({ deltaX: 45 });
+    expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
   });
 });
