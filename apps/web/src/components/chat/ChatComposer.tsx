@@ -5730,7 +5730,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       text.length === 0 ||
       isConnecting ||
       isComposerApprovalState ||
-      pendingUserInputs.length > 0 ||
+      activePendingIsResponding ||
+      (pendingUserInputs.length > 0 && !activePendingProgress?.activeQuestion) ||
       projectSelectionRequired ||
       (options?.citationCommentAnchor && !composerEditorRef.current)
     ) {
@@ -5806,10 +5807,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         toastManager.add({
           type: "error",
           title: "Unable to add folder",
-          description:
-            pendingUserInputs.length > 0
-              ? "Finish answering the current question, then add the folder to your next message."
-              : "The composer is busy; try again once it is ready.",
+          description: "The composer is busy; try again once it is ready.",
         });
         break;
       }
