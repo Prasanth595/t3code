@@ -15,6 +15,7 @@ import {
   type ScheduledTaskListWebhookDeliveriesResult,
   type ScheduledTaskRotateWebhookTokenInput,
   type ScheduledTaskWebhookDeliveryOutcome,
+  type ScheduledTaskWebhookFilter,
   type ScheduledTaskListResult,
   type ScheduledTaskMutationResult,
   type ScheduledTaskRunNowInput,
@@ -62,6 +63,7 @@ import {
   decodePendingRequest,
   dedupeError,
 } from "./webhookDedupe.ts";
+import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
@@ -71,6 +73,7 @@ const WEBHOOK_DELIVERY_RETENTION = 50;
 const WEBHOOK_DEDUPE_DELIVERY_RETENTION = 20;
 const WEBHOOK_FILTERED_DELIVERY_RETENTION = 20;
 const WEBHOOK_DEDUPE_LOG_PER_MINUTE = 10;
+const WEBHOOK_FILTERED_LOG_PER_MINUTE = 10;
 const WEBHOOK_DELIVERY_LOG_BODY_LIMIT = 64 * 1024;
 const WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT = 64 * 1024;
 const WEBHOOK_MAX_QUEUED_PER_TASK = 20;
@@ -137,6 +140,7 @@ export type WebhookDeliveryOutcome =
   | "disabled"
   | "rejected_signature"
   | "expired"
+  | "filtered"
   | "not_found"
   | "error";
 
@@ -144,7 +148,7 @@ export type WebhookTriggerResult =
   | {
       readonly _tag: "accepted";
       readonly deliveryId: ScheduledTaskWebhookDeliveryId;
-      readonly outcome: "accepted" | "duplicate" | "coalesced" | "prompt_too_long";
+      readonly outcome: "accepted" | "duplicate" | "coalesced" | "prompt_too_long" | "filtered";
     }
   | { readonly _tag: "not_found" }
   | { readonly _tag: "rejected_signature" }
@@ -154,6 +158,9 @@ export type WebhookTriggerResult =
       readonly outcome: "rate_limited" | "queue_full";
     }
   | { readonly _tag: "expired" };
+
+const webhookFilters = (filters: ReadonlyArray<ScheduledTaskWebhookFilter> | undefined) =>
+  filters?.length ? { filters } : {};
 
 const decodeTask = Schema.decodeUnknownEffect(ScheduledTask);
 const decodeTaskId = Schema.decodeUnknownOption(ScheduledTaskId);
@@ -414,6 +421,9 @@ export const layer = Layer.effect(
       ReadonlyMap<ScheduledTaskId, ReadonlyArray<number>>
     >(new Map());
     const pendingInFlight = yield* Ref.make<ReadonlySet<string>>(new Set());
+    const webhookFilteredLogWindows = yield* Ref.make<
+      ReadonlyMap<ScheduledTaskId, ReadonlyArray<number>>
+    >(new Map());
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Sliding(1) coalesces the dirty-signal: every notification triggers a
     // full list() re-emit anyway, so a slow subscriber only ever needs the
@@ -1089,6 +1099,14 @@ export const layer = Layer.effect(
                   ? { dedupe: existingTask.schedule.dedupe }
                   : {}
                 : { dedupe: input.schedule.dedupe }),
+              ...webhookFilters(
+                // Omitted keeps the stored filters, so a client that predates
+                // them can re-save a task without clearing them.
+                input.schedule.filters ??
+                  (existingTask?.schedule.type === "webhook"
+                    ? existingTask.schedule.filters
+                    : undefined),
+              ),
             }
           : input.schedule;
       const webhook =
@@ -1209,6 +1227,11 @@ export const layer = Layer.effect(
             return next;
           }),
           Ref.update(webhookDedupeLogWindows, (windows) => {
+            const next = new Map(windows);
+            next.delete(id);
+            return next;
+          }),
+          Ref.update(webhookFilteredLogWindows, (windows) => {
             const next = new Map(windows);
             next.delete(id);
             return next;
@@ -1512,6 +1535,17 @@ export const layer = Layer.effect(
         Effect.provideService(SqlClient.SqlClient, sql),
         Effect.mapError(dedupeError),
       );
+    /** Sliding one-minute window of filtered requests written to the delivery log. */
+    const takeFilteredLogSlot = (id: ScheduledTaskId, nowMs: number) =>
+      Ref.modify(
+        webhookFilteredLogWindows,
+        (windows): readonly [boolean, ReadonlyMap<ScheduledTaskId, ReadonlyArray<number>>] => {
+          const recent = (windows.get(id) ?? []).filter((at) => nowMs - at < 60_000);
+          return recent.length >= WEBHOOK_FILTERED_LOG_PER_MINUTE
+            ? [false, windows]
+            : [true, new Map(windows).set(id, [...recent, nowMs])];
+        },
+      );
 
     const webhookPermit = Effect.fn("ScheduledTaskService.webhookPermit")(function* (
       id: ScheduledTaskId,
@@ -1767,17 +1801,6 @@ export const layer = Layer.effect(
             yield* observe("rate_limited");
             return yield* releaseClaim({ _tag: "rate_limited", outcome: "rate_limited" } as const);
           }
-          const runWindow = (yield* Ref.get(webhookRateWindows)).get(task.id);
-          if (
-            schedule.dedupe === undefined &&
-            (runWindow?.accepted.filter((entry) => DateTime.toEpochMillis(now) - entry.at < 60_000)
-              .length ?? 0) >= WEBHOOK_RATE_LIMIT_PER_MINUTE
-          ) {
-            if ((yield* takeRateSlot(task.id, DateTime.toEpochMillis(now))) === "first_rejected")
-              yield* log("rate_limited");
-            yield* observe("rate_limited");
-            return yield* releaseClaim({ _tag: "rate_limited", outcome: "rate_limited" } as const);
-          }
           if (!task.enabled) {
             yield* log("disabled");
             yield* observe("disabled");
@@ -1819,6 +1842,34 @@ export const layer = Layer.effect(
             });
           });
 
+          const failedFilter = findFailedWebhookFilter(schedule.filters ?? [], request);
+          if (failedFilter !== null) {
+            if (yield* takeFilteredLogSlot(task.id, DateTime.toEpochMillis(now))) {
+              yield* log("filtered", {
+                signatureVerified: signature !== null,
+                error: describeFailedWebhookFilter(failedFilter),
+              });
+            }
+            yield* refundRejectionSlot;
+            yield* observe("filtered");
+            return yield* releaseClaim({
+              _tag: "accepted" as const,
+              deliveryId,
+              outcome: "filtered" as const,
+            });
+          }
+
+          const runWindow = (yield* Ref.get(webhookRateWindows)).get(task.id);
+          if (
+            schedule.dedupe === undefined &&
+            (runWindow?.accepted.filter((entry) => DateTime.toEpochMillis(now) - entry.at < 60_000)
+              .length ?? 0) >= WEBHOOK_RATE_LIMIT_PER_MINUTE
+          ) {
+            if ((yield* takeRateSlot(task.id, DateTime.toEpochMillis(now))) === "first_rejected")
+              yield* log("rate_limited");
+            yield* observe("rate_limited");
+            return yield* releaseClaim({ _tag: "rate_limited", outcome: "rate_limited" } as const);
+          }
           const reserve = takeRateSlot(task.id, DateTime.toEpochMillis(now)).pipe(
             Effect.flatMap((slot) => (slot === "allowed" ? Effect.void : Effect.fail(slot))),
           );

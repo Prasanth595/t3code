@@ -10,7 +10,13 @@ import type {
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
-import { parseMaxDeliveryAge } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  parseMaxDeliveryAge,
+  parseWebhookFilterDrafts,
+  webhookFilterDrafts,
+  webhookFilterDraftsChanged,
+  type WebhookFilterDraft,
+} from "@t3tools/client-runtime/scheduled-task-webhook";
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
@@ -54,6 +60,9 @@ export type ScheduleDraft = {
   readonly replayKey: string;
   readonly coalesceKey: string;
   readonly coalesceWindowSeconds: string;
+  readonly filters: ReadonlyArray<WebhookFilterDraft>;
+  /** The filter rows the form opened with. */
+  readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -66,6 +75,8 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   replayKey: "",
   coalesceKey: "",
   coalesceWindowSeconds: "",
+  filters: [],
+  savedFilters: [],
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
@@ -99,6 +110,8 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
           task.schedule.maxDeliveryAgeMinutes == null
             ? ""
             : String(task.schedule.maxDeliveryAgeMinutes),
+        filters: webhookFilterDrafts(task.schedule.filters),
+        savedFilters: webhookFilterDrafts(task.schedule.filters),
       };
   }
 }
@@ -120,6 +133,8 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         coalesceWindowSeconds > 3600)
     )
       return null;
+    const parsedFilters = parseWebhookFilterDrafts(draft.filters);
+    if (!("filters" in parsedFilters)) return null;
     // No secret is sent, so the server keeps the stored one.
     return {
       type: "webhook",
@@ -141,6 +156,10 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
             },
           }
         : { dedupe: {} }),
+      // Only edited filters are sent; the server keeps the stored ones otherwise.
+      ...(webhookFilterDraftsChanged(draft.savedFilters, draft.filters)
+        ? { filters: parsedFilters.filters }
+        : {}),
     };
   }
   if (draft.mode === "interval") {
@@ -198,6 +217,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.replayKey,
     draft.schedule.coalesceKey,
     draft.schedule.coalesceWindowSeconds,
+    draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,
