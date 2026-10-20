@@ -2,6 +2,7 @@ import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/Th
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
+  composerDraftUserContentSignature,
   isThreadWokeUnseen,
   mergeDirectPreviewAnnotation,
   resolveBackgroundDraftWorkspaceOptions,
@@ -6485,6 +6486,15 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
 
+    const draftContentForSend = composerDraftUserContentSignature(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+    );
+    const draftChangedDuringPreparation = () =>
+      composerDraftUserContentSignature(
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+      ) !== draftContentForSend;
+    const changedDraftError =
+      "Draft changed while preparing this message. Review it and send again.";
     sendInFlightRef.current = true;
     const sendGeneration = ++composerSendGenerationRef.current;
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
@@ -6547,6 +6557,15 @@ export default function ChatView(props: ChatViewProps) {
       );
       void dockTransition.catch(() => resolveDockStarted?.());
       await dockStarted;
+    }
+
+    if (draftChangedDuringPreparation()) {
+      sendInFlightRef.current = false;
+      setThreadError(threadIdForSend, changedDraftError);
+      setDockedDraftHeroThreadKey((currentThreadKey) =>
+        currentThreadKey === activeThreadKey ? null : currentThreadKey,
+      );
+      return;
     }
 
     const attachmentCapabilitiesBeforeDispatch = readLiveAttachmentCapabilities();
@@ -6615,6 +6634,7 @@ export default function ChatView(props: ChatViewProps) {
       // fails every selection; the draft restore below still runs.
       const sendResult = await settlePromise(async () => {
         const attachments = await turnAttachmentsPromise;
+        if (draftChangedDuringPreparation()) throw new Error(changedDraftError);
         const fileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
         if (fileBlockReason !== null) throw new Error(fileBlockReason);
         const context = buildOutgoingMessageContext(
