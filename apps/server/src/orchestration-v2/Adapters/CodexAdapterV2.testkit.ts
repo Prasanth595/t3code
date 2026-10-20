@@ -49,6 +49,7 @@ export function withCodexReplayChildMetadata(
   readMetadata: (
     threadId: string,
     method: "thread/read" | "thread/resume",
+    params: unknown,
   ) => Effect.Effect<unknown, CodexError.CodexAppServerError> = (threadId) =>
     Effect.succeed({ thread: { id: threadId }, model: null }),
 ): CodexClient.CodexAppServerClient["Service"] {
@@ -76,7 +77,7 @@ export function withCodexReplayChildMetadata(
         (method === "thread/read" ? params.includeTurns === false : params.excludeTurns === true) &&
         typeof params.threadId === "string" &&
         childThreadIds.has(params.threadId)
-          ? readMetadata(params.threadId, method)
+          ? readMetadata(params.threadId, method, params)
           : client.raw.request(method, params),
     },
   };

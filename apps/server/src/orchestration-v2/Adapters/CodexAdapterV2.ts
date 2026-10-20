@@ -1334,7 +1334,7 @@ const CODEX_T3_MCP_TOOL_TIMEOUT_SEC = 65 * 60;
 export function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
-  readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly runtimePolicy?: Partial<ProviderAdapter.ProviderAdapterV2RuntimePolicy>;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -3041,7 +3041,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                             excludeTurns: true,
                             ...codexThreadRuntimeParams({
                               mcpSession: undefined,
-                              runtimePolicy: sessionRuntimePolicy,
+                              ...(sessionRuntimePolicy.nativeSpawningDisabled === true
+                                ? { runtimePolicy: { nativeSpawningDisabled: true } }
+                                : {}),
                             }),
                           })
                           .pipe(Effect.flatMap(decodeCodexChildModel))

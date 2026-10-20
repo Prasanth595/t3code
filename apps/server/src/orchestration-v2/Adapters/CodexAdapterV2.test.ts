@@ -2033,6 +2033,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    runtimePolicy = CODEX_TEST_RUNTIME_POLICY,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2092,12 +2093,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         threadId,
         providerSessionId: ProviderSessionId.make(`provider-session-${transcript.scenario}`),
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
       const providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        runtimePolicy,
       });
       const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
       const firstTerminal = yield* Deferred.make<void>();
@@ -8294,25 +8295,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect.each(["failed", "malformed", "wrong child", "blank model"] as const)(
-    "resumes child metadata after a %s read",
-    (readResult) =>
+  it.effect.each(
+    (["failed", "malformed", "wrong child", "blank model"] as const).flatMap((readResult) =>
+      [false, true].map((governed) => ({ readResult, governed })),
+    ),
+  )(
+    "resumes child metadata after a $readResult read (governed=$governed) without changing its cwd",
+    ({ readResult, governed }) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            ...CODEX_TEST_RUNTIME_POLICY,
+            ...(governed ? { nativeSpawningDisabled: true } : {}),
+          });
           const modelReported = yield* Deferred.make<void>();
           const model = "gpt-6-sol";
           const metadataRequests: Array<string> = [];
+          const transcript = governed
+            ? {
+                ...resumeSubagentTranscript,
+                entries: resumeSubagentTranscript.entries.map((entry) =>
+                  entry.type === "expect_outbound" &&
+                  Predicate.isObject(entry.frame) &&
+                  entry.frame.method === "thread/start"
+                    ? {
+                        ...entry,
+                        frame: {
+                          ...entry.frame,
+                          params: {
+                            config: {
+                              ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                              "features.multi_agent": false,
+                              "features.multi_agent_v2": false,
+                            },
+                          },
+                        },
+                      }
+                    : entry,
+                ),
+              }
+            : resumeSubagentTranscript;
           const harness = yield* makeCodexReplayHarness(
-            resumeSubagentTranscript,
+            transcript,
             (event) =>
               event.type === "subagent.updated" && event.subagent.model === model
                 ? Deferred.succeed(modelReported, undefined)
                 : Effect.void,
             undefined,
-            (threadId, method) => {
+            (threadId, method, params) => {
               assert.equal(threadId, RESUME_CHILD_THREAD);
               metadataRequests.push(method);
               if (method === "thread/resume") {
+                assert.notProperty(params, "cwd");
+                assert.deepEqual(params, {
+                  threadId,
+                  excludeTurns: true,
+                  config: {
+                    ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                    ...(governed
+                      ? { "features.multi_agent": false, "features.multi_agent_v2": false }
+                      : {}),
+                  },
+                });
                 return Effect.succeed({ thread: { id: threadId }, model });
               }
               switch (readResult) {
@@ -8332,16 +8376,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   return Effect.succeed({ thread: { id: threadId, model: " \t " } });
               }
             },
+            runtimePolicy,
           );
-          yield* harness.runtime.startTurn(
-            makeCodexTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attemptId: RunAttemptId.make("attempt-child-model-fallback"),
-              text: RESUME_PROMPT,
-            }),
-          );
+          const turnInput = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-model-fallback"),
+            text: RESUME_PROMPT,
+          });
+          yield* harness.runtime.startTurn({ ...turnInput, runtimePolicy });
           yield* Deferred.await(modelReported);
           yield* TestClock.adjust("100 millis");
           yield* harness.firstTerminal;

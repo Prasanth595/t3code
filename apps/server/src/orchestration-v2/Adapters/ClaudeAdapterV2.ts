@@ -2041,7 +2041,16 @@ function permissionModeForClaudeRuntimePolicy(
 }
 
 // SDK denylist is enforced even in bypassPermissions; canUseTool alone is not.
-const GOVERNED_CLAUDE_DISALLOWED_TOOLS = ["Agent", "Task", "TeamCreate", "Teammate"] as const;
+// SendMessage can resume completed agents; Workflow and RemoteTrigger launch agents too.
+const GOVERNED_CLAUDE_DISALLOWED_TOOLS = [
+  "Agent",
+  "Task",
+  "TeamCreate",
+  "Teammate",
+  "SendMessage",
+  "Workflow",
+  "RemoteTrigger",
+] as const;
 
 export interface ClaudeRuntimeQueryPolicy {
   readonly disallowedTools?: ReadonlyArray<string>;

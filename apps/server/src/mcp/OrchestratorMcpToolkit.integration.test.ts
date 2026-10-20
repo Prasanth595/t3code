@@ -208,6 +208,7 @@ function makeDeterministicAdapter(input: {
   ) => Deferred.Deferred<void> | undefined;
   readonly response: (turn: ProviderAdapter.ProviderAdapterV2TurnInput) => string;
   readonly allowFork?: boolean;
+  readonly beforeInterrupt?: Effect.Effect<void>;
   readonly steerReceived?: (
     steer: ProviderAdapter.ProviderAdapterV2SteerInput,
   ) => Deferred.Deferred<void> | undefined;
@@ -387,6 +388,7 @@ function makeDeterministicAdapter(input: {
           },
           interruptTurn: ({ providerThread, providerTurnId }) =>
             Effect.gen(function* () {
+              yield* input.beforeInterrupt ?? Effect.void;
               const turnInput = turnInputs.get(providerTurnId);
               const completedAt = yield* DateTime.now;
               if (turnInput !== undefined) {
@@ -957,6 +959,146 @@ it.live(
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   30_000,
+);
+
+it.live.each(["starting", "running"] as const)(
+  "archiving a governed %s child retains budget until native cancellation",
+  (state) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace(`governed-archive-${state}`);
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const interruptStarted = yield* Deferred.make<void>();
+        const allowInterrupt = yield* Deferred.make<void>();
+        const registry = ProviderAdapterRegistry.layerFromAdapters([
+          makeDeterministicAdapter({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            capabilities: CodexProviderCapabilitiesV2,
+            capturedTurns,
+            shouldComplete: () => false,
+            response: () => "unused",
+            beforeInterrupt: Deferred.succeed(interruptStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(allowInterrupt)),
+            ),
+          }),
+        ]);
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const database = Layer.succeed(SqlClient.SqlClient, sql);
+          const child = yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const store = yield* ProjectionStore.ProjectionStoreV2;
+            yield* createPolicyRoot(parentThreadId, cwd);
+            yield* policyMessage(parentThreadId, "archive-root", cancellationPrompt);
+            yield* policyRequest(parentThreadId, "archive-child");
+            const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+            expect(yield* store.getDelegationBudget(parentThreadId)).toEqual({
+              active: 1,
+              total: 1,
+            });
+            if (state === "starting") {
+              yield* orchestrator.dispatch({
+                type: "thread.archive",
+                commandId: CommandId.make("archive-queued-child"),
+                threadId: task.childThreadId!,
+              });
+              expect(yield* store.getDelegationBudget(parentThreadId)).toEqual({
+                active: 1,
+                total: 1,
+              });
+              expect(yield* Ref.get(capturedTurns)).toEqual([]);
+            }
+            return task.childThreadId!;
+          }).pipe(
+            Effect.provide(
+              Layer.merge(
+                ProjectionStore.layer.pipe(Layer.provide(database)),
+                ProviderReplayHarness.layerWithRegistry({ name: `archive-${state}` }, registry, {
+                  databaseLayer: database,
+                  runEffectWorker: false,
+                  delegationPolicy: governedLimits,
+                }),
+              ),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            const store = yield* ProjectionStore.ProjectionStoreV2;
+            if (state === "running") {
+              yield* awaitPolicyEvent(
+                child,
+                (e) => e.type === "provider-turn.updated" && e.payload.status === "running",
+              );
+              yield* policyMessage(child, "archive-queued-followup", cancellationPrompt, true);
+              expect(
+                (yield* orchestrator.getThreadProjection(child)).runs.some(
+                  (run) => run.status === "queued",
+                ),
+              ).toBe(true);
+              yield* orchestrator.dispatch({
+                type: "thread.archive",
+                commandId: CommandId.make("archive-running-child"),
+                threadId: child,
+              });
+              yield* Deferred.await(interruptStarted);
+              expect(yield* store.getDelegationBudget(parentThreadId)).toEqual({
+                active: 1,
+                total: 1,
+              });
+              yield* Deferred.succeed(allowInterrupt, undefined);
+              yield* waitForProjection(orchestrator, parentThreadId, (p) =>
+                p.subagents.every((t) => ["cancelled", "interrupted", "failed"].includes(t.status)),
+              );
+              const projection = yield* orchestrator.getThreadProjection(child);
+              expect(
+                projection.runs.every((run) =>
+                  ["cancelled", "interrupted", "failed"].includes(run.status),
+                ),
+              ).toBe(true);
+            }
+            if (state === "starting") {
+              // Archive does not cancel an already accepted provider-start effect.
+              yield* awaitPolicyEvent(
+                child,
+                (e) => e.type === "provider-turn.updated" && e.payload.status === "running",
+              );
+              expect(yield* store.getDelegationBudget(parentThreadId)).toEqual({
+                active: 1,
+                total: 1,
+              });
+              yield* Deferred.succeed(allowInterrupt, undefined);
+              const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+              expect(
+                (yield* invokePolicyTool(parentThreadId, "task_cancel", { taskId: task.id }))
+                  .isError,
+              ).toBe(false);
+              yield* waitForProjection(orchestrator, parentThreadId, (p) =>
+                p.subagents.every((t) => ["cancelled", "interrupted", "failed"].includes(t.status)),
+              );
+            }
+            expect(yield* store.getDelegationBudget(parentThreadId)).toEqual({
+              active: 0,
+              total: 1,
+            });
+            const memory = yield* Effect.service(ProjectionStore.ProjectionStoreV2).pipe(
+              Effect.provide(ProjectionStore.layerMemory),
+            );
+            const sink = yield* EventSink.EventSinkV2;
+            const through = yield* sink.latestSequence();
+            yield* sink.stream({ afterSequence: 0 }).pipe(
+              Stream.takeUntil((stored) => stored.sequence >= through),
+              Stream.runForEach((stored) => memory.apply(stored.event)),
+            );
+            expect(yield* memory.getDelegationBudget(parentThreadId)).toEqual({
+              active: 0,
+              total: 1,
+            });
+          }).pipe(Effect.provide(policyToolkitLayer(registry, cwd, database)));
+        }).pipe(Effect.provide(SqlitePersistence.layerMemory));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  15_000,
 );
 
 describe("orchestrator MCP toolkit", () => {
