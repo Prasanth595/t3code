@@ -152,7 +152,7 @@ const ScheduleTaskTool = Tool.make("schedule_task", {
 const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
   parameters: OrchestratorMcpListScheduledTasksInput,
   description:
-    "List scheduled tasks. Omit `projectId` for this thread's project. Use `scheduledTaskId` with update or delete. In a scheduled run, do not call this to find your task. Do the prompt.",
+    "List scheduled tasks. Omit `projectId` for this thread's project. `modelSelection`: the provider and model its runs use. Use `scheduledTaskId` with update or delete. In a scheduled run, do not call this to find your task. Do the prompt.",
   success: OrchestratorMcpListScheduledTasksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -214,7 +214,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
 
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
-    "List threads in a project, newest first. Omit `projectId` for yours. Filter by status, title, settled, or snoozed. Page with the cursor.",
+    "List threads in a project, newest first. Omit `projectId` for yours. Filter by status, title, settled, or snoozed. `branch`, `worktreePath`: its checkout. Page with the cursor.",
   parameters: OrchestratorMcpThreadListInput,
   success: OrchestratorMcpThreadListResult,
   failure: OrchestratorMcpFailure,
