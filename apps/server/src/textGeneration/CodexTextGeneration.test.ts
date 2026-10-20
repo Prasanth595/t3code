@@ -42,7 +42,7 @@ interface FakeCodexInput {
   stdinMustNotContain?: string;
   /** The process must run in an empty directory other than this one. */
   isolatedFrom?: string;
-  mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
+  mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number | string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -72,7 +72,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "const args = process.argv.slice(2);",
         'if (args.includes("mcp") && args.includes("list")) {',
         '  if (typeof check.mcpServers === "number") process.exit(check.mcpServers);',
-        "  process.stdout.write(JSON.stringify(check.mcpServers));",
+        "  process.stdout.write(typeof check.mcpServers === 'string' ? check.mcpServers : JSON.stringify(check.mcpServers));",
         "  process.exit(0);",
         "}",
         'const originalArgs = ` ${args.join(" ")} `;',
@@ -344,6 +344,29 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           expect(result.branch).toBe("remove-default-shapes");
         }),
     ),
+  );
+
+  it.effect.each([2, "{not-json"])(
+    "refuses isolated text generation when MCP discovery fails (%s)",
+    (mcpServers) =>
+      withFakeCodexEnv(
+        { output: JSON.stringify({ title: "Should never run" }), mcpServers },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration
+              .generateThreadTitle({
+                cwd: null,
+                message: "Untrusted failure report",
+                modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              })
+              .pipe(Effect.result);
+            expect(Result.isFailure(result)).toBe(true);
+            if (Result.isFailure(result)) {
+              expect(result.failure).toBeInstanceOf(TextGenerationError);
+              expect(result.failure.detail).toContain("Could not discover Codex MCP servers");
+            }
+          }),
+      ),
   );
 
   it.effect("keeps plugins and apps off over launch args that turn them on", () =>

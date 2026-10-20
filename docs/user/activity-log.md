@@ -27,7 +27,7 @@ messages, what probably went wrong. The answer appears in the banner as **What h
 
 Explain runs only when you choose it, and each use spends credits on the provider behind your text
 generation model. The model sees the error text, the provider and model names, the runtime mode, your
-last message of that run, how many images it had, and whether each recent action succeeded. It does
+last message of that run, how many images it had, and the kind, tool name (including dynamic tool names), and status of each recent action. It does
 not see file contents, command text, tool output, or image names. It runs outside your project folder
 with its tools turned off where the provider allows it. If the explanation fails, the banner says so and **Try again** is available. Explain is not
 repeated on its own when you reconnect or reopen the thread.
