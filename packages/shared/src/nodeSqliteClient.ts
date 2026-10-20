@@ -33,6 +33,8 @@ export interface SqliteClientConfig {
   readonly readonly?: boolean | undefined;
   readonly allowExtension?: boolean | undefined;
   readonly prepareCacheSize?: number | undefined;
+  readonly cacheSizeKiB?: number | undefined;
+  readonly mmapSizeBytes?: number | undefined;
   readonly prepareCacheTTL?: Duration.Input | undefined;
   readonly spanAttributes?: Record<string, unknown> | undefined;
   readonly transformResultNames?: ((str: string) => string) | undefined;
@@ -189,6 +191,10 @@ try {
     allowExtension: workerData.allowExtension,
   });
   next.exec("PRAGMA busy_timeout = 5000;");
+  if (workerData.cacheSizeKiB !== undefined)
+    next.exec("PRAGMA cache_size = " + -Math.trunc(workerData.cacheSizeKiB));
+  if (workerData.mmapSizeBytes !== undefined)
+    next.exec("PRAGMA mmap_size = " + Math.trunc(workerData.mmapSizeBytes));
   // Without WAL a reader's shared lock blocks the writer's commits, so refuse.
   const mode = String(next.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase();
   if (mode !== "wal") throw new Error("database uses journal_mode " + mode + ", not wal");
@@ -301,6 +307,8 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
         filename: options.filename,
         allowExtension: options.allowExtension ?? false,
         prepareCacheSize: options.prepareCacheSize ?? 200,
+        cacheSizeKiB: options.cacheSizeKiB,
+        mmapSizeBytes: options.mmapSizeBytes,
       },
     });
     let announce: (startup: ReaderStartup) => void = () => {};
@@ -847,11 +855,22 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const makeConnection = Effect.gen(function* () {
     const scope = yield* Effect.scope;
     const db = yield* Effect.try({
-      try: () =>
-        new NodeSqlite.DatabaseSync(options.filename, {
+      try: () => {
+        const connection = new NodeSqlite.DatabaseSync(options.filename, {
           readOnly: options.readonly ?? false,
           allowExtension: options.allowExtension ?? false,
-        }),
+        });
+        try {
+          if (options.cacheSizeKiB !== undefined)
+            connection.exec(`PRAGMA cache_size = ${-Math.trunc(options.cacheSizeKiB)}`);
+          if (options.mmapSizeBytes !== undefined)
+            connection.exec(`PRAGMA mmap_size = ${Math.trunc(options.mmapSizeBytes)}`);
+          return connection;
+        } catch (cause) {
+          connection.close();
+          throw cause;
+        }
+      },
       catch: (cause) =>
         new SqlError({
           reason: classifyError(cause, "Failed to open database", "open"),
