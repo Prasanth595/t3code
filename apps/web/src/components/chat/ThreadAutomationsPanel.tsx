@@ -37,6 +37,24 @@ const STATUS_DOT_CLASS: Record<ScheduledTask["lastRunStatus"], string> = {
   failed: "bg-destructive",
 };
 
+function taskScheduleLine(task: ScheduledTask, timeZone: string | undefined) {
+  return (
+    <>
+      {scheduleLabel(task.schedule, timeZone)}
+      {task.enabled && task.nextRunAt !== null ? (
+        <>
+          {" · next "}
+          <ScheduledRelativeLabel value={task.nextRunAt} />
+        </>
+      ) : task.enabled ? (
+        ""
+      ) : (
+        " · paused"
+      )}
+    </>
+  );
+}
+
 export function ThreadAutomationsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -162,36 +180,22 @@ export function ThreadAutomationsPanel(props: {
                 aria-hidden
               />
             </span>
-            <div className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground/80">
-                {task.title}
-              </span>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <p
-                      tabIndex={0}
-                      className="truncate rounded-sm text-2xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  {scheduleLabel(task.schedule, tasksQuery.data?.timeZone)}
-                  {task.enabled && task.nextRunAt !== null ? (
-                    <>
-                      {" · next "}
-                      <ScheduledRelativeLabel value={task.nextRunAt} />
-                    </>
-                  ) : task.enabled ? (
-                    ""
-                  ) : (
-                    " · paused"
-                  )}
-                </TooltipTrigger>
-                <TooltipPopup>
-                  {scheduleLabel(task.schedule, tasksQuery.data?.timeZone)}
-                </TooltipPopup>
-              </Tooltip>
-            </div>
+            <Tooltip>
+              <TooltipTrigger render={<div className="min-w-0 flex-1" />}>
+                <span className="block truncate text-sm font-medium text-foreground/80">
+                  {task.title}
+                </span>
+                <p className="truncate text-2xs text-muted-foreground">
+                  {taskScheduleLine(task, tasksQuery.data?.timeZone)}
+                </p>
+              </TooltipTrigger>
+              <TooltipPopup side="left">
+                <p className="font-medium">{task.title}</p>
+                <p className="text-muted-foreground">
+                  {taskScheduleLine(task, tasksQuery.data?.timeZone)}
+                </p>
+              </TooltipPopup>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
