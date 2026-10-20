@@ -409,9 +409,13 @@ it("captures the native display viewport after page script reassigns the globals
       offset: { x: 0, y: 0 },
     });
     const { windowId } = await cdp.send("Browser.getWindowForTarget");
-    // CDP acknowledges the bounds change before the renderer applies the resize.
+    // CDP acknowledges the bounds change before the renderer applies it, and a resize event can
+    // fire for a size on the way there. Page script replaced innerWidth, so read the layout.
     const resize = await page.evaluateHandle(`({
-      done: new Promise(resolve => window.addEventListener("resize", () => resolve(), { once: true })),
+      done: new Promise(resolve => window.addEventListener("resize", () => {
+        const { clientWidth, clientHeight } = document.documentElement;
+        if (clientWidth === 390 && clientHeight === 844) resolve();
+      })),
     })`);
     await cdp.send("Browser.setWindowBounds", {
       windowId,
