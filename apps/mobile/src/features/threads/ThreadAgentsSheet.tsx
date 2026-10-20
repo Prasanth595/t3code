@@ -21,7 +21,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { NativeHeader, NativeScreen } from "../../native/ThemedScreenStack";
-import { SubagentRow } from "./SubagentRow";
+import { SubagentElapsedText, SubagentRow } from "./SubagentRow";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
@@ -178,9 +178,7 @@ function AgentElapsed(props: {
   readonly tickSeconds: boolean;
 }) {
   const elapsed = useSubagentElapsed(props.subagent, props.tickSeconds);
-  return elapsed === null ? null : (
-    <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
-  );
+  return elapsed === null ? null : <SubagentElapsedText>{elapsed}</SubagentElapsedText>;
 }
 
 function useSubagentElapsed(

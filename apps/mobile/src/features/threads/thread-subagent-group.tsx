@@ -19,7 +19,7 @@ import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
 import { subagentCardElapsed } from "./subagent-card-presentation";
-import { SubagentRow } from "./SubagentRow";
+import { SubagentElapsedText, SubagentRow } from "./SubagentRow";
 import { WorkLogBlock } from "./work-log-layout";
 
 type SubagentItem = Extract<OrchestrationV2TurnItem, { type: "subagent" }>;
@@ -42,9 +42,7 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
     return () => clearInterval(intervalId);
   }, [appActive, focused, live]);
   const elapsed = subagentCardElapsed(agents, nowMs);
-  return elapsed ? (
-    <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
-  ) : null;
+  return elapsed ? <SubagentElapsedText>{elapsed}</SubagentElapsedText> : null;
 }
 
 function SubagentAvatar(props: {

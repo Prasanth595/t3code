@@ -3,7 +3,7 @@ import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/stat
 import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-import { View } from "react-native";
+import { Text as SystemText, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -27,6 +27,22 @@ type SubagentRowSubagent = Pick<
   | "progress"
   | "result"
 >;
+
+/**
+ * Renders a ticking subagent duration in the system font: DM Sans has no
+ * tabular figures, so `tabular-nums` alone would still let the width jitter.
+ */
+export function SubagentElapsedText(props: { readonly children: string }) {
+  return (
+    <SystemText
+      className="shrink-0 text-xs text-foreground-muted"
+      numberOfLines={1}
+      style={{ fontVariant: ["tabular-nums"] }}
+    >
+      {props.children}
+    </SystemText>
+  );
+}
 
 export function SubagentRow(props: {
   readonly environmentId: EnvironmentId;
