@@ -754,8 +754,13 @@ function WebhookDeliveriesDialog({
                 ) : null}
               </div>
               {selected.error ? <p className="text-sm text-destructive">{selected.error}</p> : null}
-              <DeliveryBlock title="Prompt sent to the agent">
-                {selected.renderedPrompt ?? "No run was started for this request."}
+              <DeliveryBlock
+                title={selected.pendingWindow ? "Scheduled run" : "Prompt sent to the agent"}
+              >
+                {selected.renderedPrompt ??
+                  (selected.pendingWindow
+                    ? "Run scheduled when the window closes; no run started yet."
+                    : "No run was started for this request.")}
               </DeliveryBlock>
               {selected.missingFields.length > 0 ? (
                 <p className="text-sm text-muted-foreground">
