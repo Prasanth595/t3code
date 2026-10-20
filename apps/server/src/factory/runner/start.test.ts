@@ -2256,6 +2256,60 @@ describe("start: an issue that names its base", () => {
     }),
   );
 
+  it.effect("a base with an empty or dot segment is not a branch name", () =>
+    Effect.gen(function* () {
+      for (const name of ["feature/", "/x", "a//b", "a/./b"]) {
+        const dataDir = tempDir();
+        const { tracker, calls } = fakeTracker({ issues: [withBody(`## Base\n${name}\n`)] });
+        const t3 = fakeSessions(dataDir, {});
+        const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+        const reason = `base branch ${name} is not a branch name`;
+        assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason });
+        assert.deepStrictEqual(lookups(calls), []);
+      }
+    }),
+  );
+
+  it.effect(
+    "a launch sent again keeps the base the first send decided and asks GitHub nothing",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        seedRun(dataDir, [
+          ...startedLines().slice(0, 3),
+          {
+            line: { event: "step_changed", data: { step: "launch-base feature/x" } },
+            cause: cause("launch-sending"),
+          },
+          startedLines()[3]!,
+        ]);
+        // An instructor took the heading out after the first send.
+        const { tracker, calls } = fakeTracker({
+          issues: [{ ...detail("triage", [USER]), body: "Build it." }],
+        });
+        const t3 = fakeSessions(dataDir, {});
+        assert.strictEqual((yield* startIn(dataDir, tracker, t3.sessions)).kind, "started");
+        assert.deepStrictEqual(lookups(calls), []);
+        const request = t3.launchRequests[0]!;
+        assert.strictEqual(request.baseRef, "feature/x");
+        assert.strictEqual(request.startFromOrigin, true);
+        assert.strictEqual(baseOf(dataDir), "feature/x");
+      }),
+  );
+
+  it.effect("the first send records the base it decided before the launch", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({ issues: [withBody("## Base\nfeature/x\n")] });
+      const t3 = fakeSessions(dataDir, {});
+      yield* startIn(dataDir, tracker, t3.sessions);
+      const steps = entriesOf(dataDir)
+        .filter((e) => e.event === "step_changed")
+        .map((e) => (e.data as { step: string }).step);
+      assert.deepStrictEqual(steps.slice(1, 3), ["launch-base feature/x", "launch-sending"]);
+    }),
+  );
+
   it.effect("a base whose lookup fails claims and waits for the next pass", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();

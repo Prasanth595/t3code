@@ -56,6 +56,7 @@ import {
 } from "./building.ts";
 import { launchMessage, type ResumeFrom } from "./messages.ts";
 import { readProgress } from "./progress.ts";
+import { projectForRun } from "./run.ts";
 import { resume, start } from "./start.ts";
 
 const tempDir = useTempDirs();
@@ -1450,6 +1451,40 @@ describe("interrupted: a thread that is gone", () => {
         ),
       );
       assertPlainStart(rig);
+    }),
+  );
+
+  it.effect("relaunched without a branch starts the next attempt from the run's own base", () =>
+    Effect.gen(function* () {
+      const onFeature = startedWith(null).map((event) =>
+        event.event === "session_launched"
+          ? { ...event, data: { ...event.data, base: "feature/x" } }
+          : event,
+      );
+      const rig = rigFor(onFeature);
+      rig.world.issue = { ...rig.world.issue, body: "Build it.\n\n## Base\nfeature/x\n" };
+      // As the factory builds a run's context: the run's base, and the repo's project beside it.
+      const repoProject = rig.ctx.project;
+      rig.ctx = {
+        ...rig.ctx,
+        project: yield* projectForRun(rig.dataDir, repoProject, rig.run),
+        repoProject,
+      };
+      assert.strictEqual(rig.ctx.project.base, "feature/x");
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "feature/x");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.strictEqual(
+        request.message,
+        launchMessage(REPO, 10, "rawphp", "/gh/rawphp", undefined, "feature/x"),
+      );
+      const launched = readRun(rig.dataDir, run10b).entries.find(
+        (entry) => entry.event === "session_launched",
+      );
+      assert.strictEqual(field(launched?.data, "base"), "feature/x");
     }),
   );
 

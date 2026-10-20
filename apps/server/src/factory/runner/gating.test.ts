@@ -75,7 +75,7 @@ import {
   prepareOutputTail,
   prepareSessionText,
 } from "./messages.ts";
-import { applyActions, progressFrom, runProject, type Progress } from "./run.ts";
+import { applyActions, progressFrom, projectForRun, runProject, type Progress } from "./run.ts";
 import { readProgress, type Moved } from "./progress.ts";
 
 const tempDir = useTempDirs();
@@ -5750,7 +5750,8 @@ describe("gate: a run whose launch recorded a base other than the project's", ()
   it.effect("gates against that base's tip, and a move of main does not re-gate", () =>
     Effect.gen(function* () {
       const rig = rigFor(onFeature);
-      rig.project = runProject(rig.project, readProgress(readRun(rig.dataDir, rig.run).entries));
+      rig.project = yield* projectForRun(rig.dataDir, rig.project, rig.run);
+      assert.strictEqual(rig.project.base, "feature/x");
       rig.gh.pr = { ...defaultPr(), baseRef: "feature/x" };
       rig.gh.tips = { main: MOVED, "feature/x": BASE };
       setRun(rig, "completed", 1);
