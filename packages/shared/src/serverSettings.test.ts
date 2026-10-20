@@ -95,6 +95,25 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(edited, { deviceHosts: [] }).deviceHosts).toEqual([]);
   });
 
+  it("replaces EAS host lists the same way", () => {
+    const host = {
+      kind: "eas" as const,
+      id: "eas",
+      label: "EAS Simulator",
+      accessToken: "",
+      maxSessionMinutes: 30,
+      idleMinutes: 10,
+      maxConcurrentSessions: 2,
+    };
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { easDeviceHosts: [host] });
+    expect(saved.easDeviceHosts).toEqual([host]);
+    const edited = applyServerSettingsPatch(saved, {
+      easDeviceHosts: [{ ...host, maxSessionMinutes: 60 }],
+    });
+    expect(edited.easDeviceHosts).toEqual([{ ...host, maxSessionMinutes: 60 }]);
+    expect(applyServerSettingsPatch(edited, { easDeviceHosts: [] }).easDeviceHosts).toEqual([]);
+  });
+
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
     const action = {
