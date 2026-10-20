@@ -20,6 +20,15 @@ function trimLinkEnd(url: string): string {
   let end = url.length;
   while (end > 0) {
     const character = url[end - 1]!;
+    if (character === ";") {
+      // GFM drops an entity-like `&name;` suffix whole, not just its `;`.
+      let nameStart = end - 1;
+      while (nameStart > 0 && /[A-Za-z]/.test(url[nameStart - 1]!)) nameStart -= 1;
+      if (nameStart < end - 1 && url[nameStart - 1] === "&") {
+        end = nameStart - 1;
+        continue;
+      }
+    }
     if (character === ")" && unbalancedCloses > 0) unbalancedCloses -= 1;
     else if (!TRAILING_PUNCTUATION.has(character)) break;
     end -= 1;

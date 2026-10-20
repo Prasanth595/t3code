@@ -23,6 +23,19 @@ describe("findComposerLinks", () => {
     ]);
   });
 
+  it("drops entity-like suffixes whole, as GFM does", () => {
+    expect(
+      linkTexts(
+        "https://example.com?q=x&hl; https://example.com/a.&hl;&gt; https://example.com/b&1; https://example.com/c&;",
+      ),
+    ).toEqual([
+      "https://example.com?q=x",
+      "https://example.com/a",
+      "https://example.com/b&1",
+      "https://example.com/c&",
+    ]);
+  });
+
   it("matches GFM's boundaries and keeps quotes inside the path", () => {
     expect(
       linkTexts('[https://github.com] 1https://example.com/a\'b "https://example.com/c"'),
