@@ -1,5 +1,3 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -7,18 +5,16 @@ import {
   ProviderInstanceId,
   type RuntimeMode,
   type TerminalOpenInput,
-  type TerminalWriteInput,
+  TerminalNotRunningError,
+  type TerminalSessionSnapshot,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../../../project/ProjectService.ts";
-import * as TerminalManager from "../../../terminal/Manager.ts";
+import * as ThreadTerminalLauncher from "../../../terminal/ThreadTerminalLauncher.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { liveThreadShell } from "../../McpToolAccess.testkit.ts";
@@ -28,7 +24,6 @@ import { TerminalToolkit } from "./tools.ts";
 const callerId = ThreadId.make("terminal-caller");
 const worktreeThreadId = ThreadId.make("terminal-worktree-thread");
 const projectId = ProjectId.make("project:mcp-test");
-const workspaceRoot = "/workspace/project";
 const worktreePath = "/workspace/worktrees/feature";
 
 interface TerminalToolInput {
@@ -40,16 +35,27 @@ interface TerminalToolInput {
 }
 
 interface Options {
+  readonly error?: ThreadTerminalLauncher.ThreadTerminalLaunchError;
   readonly callerMode?: RuntimeMode;
   readonly capabilities?: ReadonlyArray<McpInvocationContext.McpCapability>;
 }
 
 const openTerminal = (input: TerminalToolInput, options: Options = {}) =>
   Effect.gen(function* () {
-    const calls: Array<
-      | { readonly kind: "open"; readonly input: TerminalOpenInput }
-      | { readonly kind: "write"; readonly input: TerminalWriteInput }
-    > = [];
+    const calls: Array<ThreadTerminalLauncher.ThreadTerminalLaunchInput> = [];
+    const snapshot: TerminalSessionSnapshot = {
+      threadId: worktreeThreadId,
+      terminalId: "session-terminal",
+      cwd: "/session/cwd",
+      worktreePath,
+      status: "running",
+      pid: 4242,
+      history: "",
+      exitCode: null,
+      exitSignal: null,
+      label: "session-terminal",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
     const shells = new Map([
       [callerId, liveThreadShell(callerId, { runtimeMode: options.callerMode ?? "full-access" })],
       [worktreeThreadId, { ...liveThreadShell(worktreeThreadId), worktreePath }],
@@ -73,36 +79,12 @@ const openTerminal = (input: TerminalToolInput, options: Options = {}) =>
         getProjectThreadRecords: ({ threadId }) =>
           Effect.succeed({ thread: shells.get(threadId) } as never),
       }),
-      Layer.mock(ProjectService.ProjectService)({
-        getById: (id) =>
-          Effect.succeed(
-            id === projectId ? Option.some({ id, workspaceRoot } as never) : Option.none(),
-          ),
-      }),
-      Layer.mock(TerminalManager.TerminalManager)({
-        open: (openInput) => {
-          calls.push({ kind: "open", input: openInput });
-          return Effect.succeed({
-            threadId: openInput.threadId,
-            terminalId: openInput.terminalId,
-            cwd: openInput.cwd,
-            worktreePath: openInput.worktreePath ?? null,
-            status: "running",
-            pid: 4242,
-            history: "",
-            exitCode: null,
-            exitSignal: null,
-            label: openInput.terminalId,
-            updatedAt: "2026-01-01T00:00:00.000Z",
-          });
-        },
-        write: (writeInput) => {
-          calls.push({ kind: "write", input: writeInput });
-          return Effect.void;
+      Layer.mock(ThreadTerminalLauncher.ThreadTerminalLauncher)({
+        open: (input) => {
+          calls.push(input);
+          return options.error ? Effect.fail(options.error) : Effect.succeed(snapshot);
         },
       }),
-      NodeCrypto.layer,
-      NodeServices.layer,
     );
     const toolkit = yield* TerminalToolkit.pipe(
       Effect.provide(
@@ -112,86 +94,55 @@ const openTerminal = (input: TerminalToolInput, options: Options = {}) =>
     const result = yield* toolkit
       .handle("t3_terminal_open", input)
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
-    return { result: result.at(-1)?.result, calls };
+    return { result: result.at(-1)?.result, calls, snapshot };
   });
 
-it.effect("opens a terminal for the calling thread in its workspace by default", () =>
+it.effect("maps the session snapshot and passes the thread and input to the launcher", () =>
   Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const { result, calls } = yield* openTerminal({});
-    expect(calls).toHaveLength(1);
-    const open = calls[0]!;
-    expect(open.kind).toBe("open");
-    expect(open.input).toMatchObject({
-      threadId: callerId,
-      cwd: path.resolve(workspaceRoot),
-      worktreePath: null,
-      env: { T3CODE_PROJECT_ROOT: workspaceRoot },
-    });
-    expect(open.input.terminalId).toMatch(/^agent-[0-9a-f]{8}$/);
-    expect(result).toEqual({
-      threadId: callerId,
-      terminalId: open.input.terminalId,
-      cwd: path.resolve(workspaceRoot),
-      pid: 4242,
-      status: "running",
-    });
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
-it.effect("passes cwd and env through and types the command after opening", () =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const { result, calls } = yield* openTerminal({
+    const input = {
       threadId: worktreeThreadId,
       cwd: "packages/app",
       env: { FOO: "bar" },
       command: "echo hello",
       terminalId: "login",
-    });
-    const cwd = path.resolve(worktreePath, "packages/app");
+    };
+    const { result, calls, snapshot } = yield* openTerminal(input);
     expect(calls).toEqual([
       {
-        kind: "open",
-        input: {
-          threadId: worktreeThreadId,
-          terminalId: "login",
-          cwd,
-          worktreePath,
-          env: {
-            T3CODE_PROJECT_ROOT: workspaceRoot,
-            T3CODE_WORKTREE_PATH: worktreePath,
-            FOO: "bar",
-          },
-        },
-      },
-      {
-        kind: "write",
-        input: { threadId: worktreeThreadId, terminalId: "login", data: " echo hello\r" },
+        thread: { id: worktreeThreadId, projectId, worktreePath },
+        cwd: input.cwd,
+        env: input.env,
+        command: input.command,
+        terminalId: input.terminalId,
       },
     ]);
-    expect(result).toMatchObject({ threadId: worktreeThreadId, terminalId: "login", cwd });
-  }).pipe(Effect.provide(NodeServices.layer)),
+    expect(result).toEqual({
+      threadId: snapshot.threadId,
+      terminalId: snapshot.terminalId,
+      cwd: snapshot.cwd,
+      pid: snapshot.pid,
+      status: snapshot.status,
+    });
+  }),
 );
 
-it.effect("accepts an absolute cwd inside the project root for a worktree thread", () =>
+it.effect("maps a cwd outside the workspace to invalid_request", () =>
   Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const cwd = path.resolve(workspaceRoot, "docs");
-    const { calls } = yield* openTerminal({ threadId: worktreeThreadId, cwd });
+    const error = new ThreadTerminalLauncher.ThreadTerminalCwdOutsideWorkspaceError({
+      threadId: callerId,
+    });
+    const { result, calls } = yield* openTerminal({}, { error });
+    expect(result).toMatchObject({ code: "invalid_request", message: error.message });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ kind: "open", input: { cwd } });
-  }).pipe(Effect.provide(NodeServices.layer)),
+  }),
 );
 
-it.effect.each([
-  { name: "a relative escape", cwd: "../elsewhere" },
-  { name: "an unrelated absolute path", cwd: "/somewhere/else" },
-])("rejects $name as cwd without opening a terminal", ({ cwd }) =>
+it.effect("maps other terminal errors to orchestration_error", () =>
   Effect.gen(function* () {
-    const { result, calls } = yield* openTerminal({ cwd });
-    expect(result).toMatchObject({ code: "invalid_request" });
-    expect(calls).toEqual([]);
+    const error = new TerminalNotRunningError({ threadId: callerId, terminalId: "login" });
+    const { result, calls } = yield* openTerminal({}, { error });
+    expect(result).toMatchObject({ code: "orchestration_error" });
+    expect(calls).toHaveLength(1);
   }),
 );
 

@@ -24,6 +24,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
+import * as ThreadTerminalLauncher from "../terminal/ThreadTerminalLauncher.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -1034,7 +1035,9 @@ export const layerEnvironmentToolkit = toolkitRegistration(
 
 const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
 
-const layerTerminalRegistration = toolkitRegistration(TerminalToolkit, TerminalHandlers.layer);
+const layerTerminalRegistration = toolkitRegistration(TerminalToolkit, TerminalHandlers.layer).pipe(
+  Layer.provide(ThreadTerminalLauncher.layer),
+);
 
 export const layerAttachmentToolkit = toolkitRegistration(
   AttachmentToolkit,

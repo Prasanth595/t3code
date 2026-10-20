@@ -5,14 +5,11 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
-import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as ProjectService from "../../../project/ProjectService.ts";
-import * as TerminalManager from "../../../terminal/Manager.ts";
+import * as ThreadTerminalLauncher from "../../../terminal/ThreadTerminalLauncher.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const TerminalOpenTool = Tool.make("t3_terminal_open", {
@@ -37,10 +34,7 @@ const TerminalOpenTool = Tool.make("t3_terminal_open", {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
-    ProjectService.ProjectService,
-    TerminalManager.TerminalManager,
-    Crypto.Crypto,
-    Path.Path,
+    ThreadTerminalLauncher.ThreadTerminalLauncher,
   ],
 })
   .annotate(Tool.Title, "Open a thread terminal")
