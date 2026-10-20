@@ -13,6 +13,7 @@ const KIND_LABELS = {
   tests: "Tests",
   mocks: "Mocks",
   generated: "Generated",
+  docs: "Docs",
 } satisfies Record<keyof NonNullable<PullRequestChangeBreakdown>, string>;
 
 type DiffTotals = { additions: number; deletions: number };
