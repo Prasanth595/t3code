@@ -1,10 +1,5 @@
 import { DeviceHostUpdates } from "~/components/device/DeviceHostUpdates";
-import type {
-  DevicePlatform,
-  DeviceServiceState,
-  DeviceSummary,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { DevicePlatform, DeviceServiceState, DeviceSummary } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
