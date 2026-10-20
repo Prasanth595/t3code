@@ -21,6 +21,7 @@ import {
 import { createIncomingSharePayloadReader } from "./incoming-share-native";
 import { IncomingShareInbox } from "./incoming-share-inbox";
 import { persistComposerAttachmentFile } from "../../lib/composerImages";
+import { scheduleUnusedComposerAttachmentCleanup } from "../../state/use-composer-drafts";
 import {
   loadIncomingShareDrafts,
   removeIncomingShareDraft,
@@ -38,6 +39,7 @@ type IncomingShareContextValue = {
     expectedDestination: IncomingShareDestination,
   ) => Promise<void>;
   readonly consumeShare: (shareId: string) => Promise<void>;
+  readonly discardShare: (shareId: string) => Promise<void>;
   readonly refresh: () => Promise<void>;
 };
 
@@ -71,7 +73,9 @@ async function resolvedPayloadsForFiles(): Promise<ReadonlyArray<ResolvedSharePa
   }
 }
 
-async function incomingShareIdForPayloads(payloads: ReadonlyArray<SharePayload>): Promise<string> {
+async function incomingShareFingerprintForPayloads(
+  payloads: ReadonlyArray<SharePayload>,
+): Promise<string> {
   const fingerprint = JSON.stringify(
     payloads.map((payload) => ({
       shareType: payload.shareType,
@@ -195,7 +199,8 @@ const incomingShareInbox = new IncomingShareInbox({
     };
   },
   cleanupReplayedPayloads: removeReplayedPayloadFiles,
-  idForPayloads: incomingShareIdForPayloads,
+  fingerprintForPayloads: incomingShareFingerprintForPayloads,
+  createId: () => `share-${Crypto.randomUUID()}`,
   now: () => new Date().toISOString(),
   onClearError: (error) => {
     console.warn("[incoming-share] could not acknowledge native payload", error);
@@ -297,6 +302,19 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       setDrafts(snapshot);
     }
   }, []);
+  const discardShare = useCallback(
+    async (shareId: string) => {
+      const discarded = drafts.find((draft) => draft.id === shareId);
+      const snapshot = await incomingShareInbox.consume(shareId);
+      if (discarded) {
+        scheduleUnusedComposerAttachmentCleanup(discarded.attachments);
+      }
+      if (mountedRef.current) {
+        setDrafts(snapshot);
+      }
+    },
+    [drafts],
+  );
   const reserveShare = useCallback(
     async (shareId: string, destination: IncomingShareDestination) => {
       const snapshot = await incomingShareInbox.reserve(shareId, destination);
@@ -329,10 +347,12 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
       releaseShareReservation,
       reserveShare,
       consumeShare,
+      discardShare,
       refresh,
     }),
     [
       consumeShare,
+      discardShare,
       drafts,
       error,
       getShare,

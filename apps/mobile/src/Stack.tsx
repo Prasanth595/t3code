@@ -18,7 +18,7 @@ import {
   createNativeStackScreen,
   type NativeStackNavigationOptions,
 } from "@react-navigation/native-stack";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Platform,
   Pressable,
@@ -142,6 +142,7 @@ import { useAppShortcuts } from "./features/shortcuts/useAppShortcuts";
 import { useIncomingShare } from "./features/sharing/IncomingShareProvider";
 import {
   EMPTY_INCOMING_SHARE_PRESENTATION_STATE,
+  incomingShareIdOfSheetRoute,
   transitionIncomingSharePresentation,
 } from "./features/sharing/incoming-share-presentation";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "./native/native-glass";
@@ -597,10 +598,16 @@ function ThreadOutboxDrainWorker() {
 function RootStackLayout(props: {
   readonly children: React.ReactNode;
   readonly state: NavigationState;
+  // Layout effects run before the container's focus listener is registered;
+  // navigator-owned helpers can dispatch on that first commit.
+  readonly navigation: {
+    readonly navigate: (name: "NewTaskSheet", params: object) => void;
+  };
 }) {
-  const navigation = useNavigation();
-  const { pendingShare } = useIncomingShare();
+  const { navigation } = props;
+  const { pendingShare, discardShare } = useIncomingShare();
   const sharePresentationRef = useRef(EMPTY_INCOMING_SHARE_PRESENTATION_STATE);
+  const [sharePresentationRetry, setSharePresentationRetry] = useState(0);
   const path = getPathFromState(props.state, navigationPathConfig);
   const pathname = path.startsWith("/") ? path : `/${path}`;
   const workspaceLocation = workspaceLocationFromState(props.state);
@@ -608,12 +615,27 @@ function RootStackLayout(props: {
   useConnectOnboardingNavigation();
   useAppShortcuts(props.state);
   useEffect(() => {
-    const topRouteName = props.state.routes[props.state.index]?.name;
+    const sheet = incomingShareIdOfSheetRoute(props.state, "NewTaskSheet");
     const transition = transitionIncomingSharePresentation(sharePresentationRef.current, {
-      isShareSheetPresented: topRouteName === "NewTaskSheet",
+      isSheetPresented: sheet.isSheetPresented,
+      sheetShareId: sheet.shareId,
       pendingShareId: pendingShare?.id ?? null,
     });
     sharePresentationRef.current = transition.state;
+    if (transition.shareIdToDiscard) {
+      const shareId = transition.shareIdToDiscard;
+      discardShare(shareId).catch((error: unknown) => {
+        console.warn("[incoming-share] could not discard dismissed share", error);
+        if (sharePresentationRef.current.discardedShareId === shareId) {
+          // A newer sheet may already be open when this discard rejects.
+          sharePresentationRef.current = {
+            ...sharePresentationRef.current,
+            discardedShareId: null,
+          };
+          setSharePresentationRetry((attempt) => attempt + 1);
+        }
+      });
+    }
     if (!transition.shareIdToPresent) {
       return;
     }
@@ -621,7 +643,7 @@ function RootStackLayout(props: {
       screen: "NewTask",
       params: { incomingShareId: transition.shareIdToPresent },
     });
-  }, [navigation, pendingShare, props.state]);
+  }, [discardShare, navigation, pendingShare, props.state, sharePresentationRetry]);
 
   return (
     <HardwareKeyboardCommandProvider pathname={pathname}>
