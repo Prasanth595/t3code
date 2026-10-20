@@ -125,12 +125,15 @@ export function PullRequestReviewerPicker({
       errorLabel="The people with access could not be read."
       truncated={
         candidatesQuery.data?.truncated === true &&
-        (query.trim().length === 0 || (searched && searchResult.error !== null))
+        (query.trim().length === 0 ||
+          (searched && (searchResult.error !== null || searchResult.data?.truncated === true)))
       }
       truncatedLabel={
         searched && searchResult.error !== null
           ? `Only the people already listed are matched: the host search failed. ${searchResult.error}`
-          : "This repository has more people with access than are listed here. Search to find them."
+          : searched
+            ? "More people match than the host returned. Keep typing to narrow it down."
+            : "This repository has more people with access than are listed here. Search to find them."
       }
       candidateKey={(candidate) => `${candidate.kind}:${candidate.id}`}
       disabled={pending !== null}
