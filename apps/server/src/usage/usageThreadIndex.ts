@@ -198,12 +198,8 @@ export class UsageThreadIndex {
   ): NativeThreadRef | undefined {
     const entries = index.get(`${driver}\u0000${nativeId}`) ?? [];
     const matching = entries.filter((entry) => entry.instanceId === instanceId);
-    const candidates =
-      matching.length > 0
-        ? matching
-        : instanceId === null
-          ? entries
-          : entries.filter((entry) => entry.instanceId === null);
+    // Directory ownership is only a fallback; a unique native binding remains authoritative.
+    const candidates = matching.length > 0 ? matching : entries;
     const first = candidates[0];
     if (first === undefined || candidates.some((entry) => entry.threadId !== first.threadId))
       return undefined;

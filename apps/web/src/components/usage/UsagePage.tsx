@@ -34,6 +34,8 @@ import { isCompatibleUsageContractVersion, type MergedUsage } from "@t3tools/sha
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { usePrimarySettings } from "../../hooks/useSettings";
+import { resolveHour12 } from "../../timestampFormat";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
@@ -155,6 +157,7 @@ export function UsagePage() {
   const [explorerPreferences, setExplorerPreferences] = useState(readUsageExplorerPreferences);
   useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const shortcutTitle = (
     option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
   ) => {
@@ -711,8 +714,9 @@ export function UsagePage() {
             days: timeline.days,
             hours: timeline.hours,
             resolution: timeline.hours.length > 0 ? "hour" : "day",
-            timeZone: window.timeZone,
+            timeZone: shownWindow.timeZone,
             referenceTime: shownWindow.untilTime,
+            hour12,
           }}
           onSetPrice={(model) => setPriceDialog({ model })}
         />

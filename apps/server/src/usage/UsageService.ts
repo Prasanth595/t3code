@@ -62,6 +62,8 @@ import { claudeSubagentId, EMPTY_ATTRIBUTION, UsageThreadIndex } from "./usageTh
 
 const LITELLM_RATES_URL =
   "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const LITELLM_RATES_API_URL =
+  "https://api.github.com/repos/BerriAI/litellm/contents/model_prices_and_context_window.json?ref=main";
 
 const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -223,6 +225,7 @@ export const make = Effect.gen(function* () {
     );
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
+  let ratesLastFailedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
   const ratesLock = yield* Semaphore.make(1);
 
@@ -233,6 +236,18 @@ export const make = Effect.gen(function* () {
       ratesFetchedAtMs === null ? null : DateTime.formatIso(DateTime.makeUnsafe(ratesFetchedAtMs)),
     knownModels: rates.size,
   });
+
+  const fetchRates = (url: string, accept = "application/json") =>
+    httpClient.get(url, { headers: { accept } }).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap((response) => response.json),
+      Effect.map((document) => {
+        const parsed = parseRateTable(document);
+        return parsed.size > 0 ? { document, parsed } : null;
+      }),
+      Effect.timeout(10_000),
+      Effect.catchCause(() => Effect.succeed(null)),
+    );
 
   const loadRates = Effect.fn("UsageService.loadRates")(function* (force: boolean) {
     const now = yield* Clock.currentTimeMillis;
@@ -255,25 +270,24 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const fetched = yield* httpClient.get(LITELLM_RATES_URL).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.json),
-      Effect.timeout(10_000),
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
+    if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS) return;
+
+    let fetched = yield* fetchRates(LITELLM_RATES_URL);
     if (fetched === null) {
+      fetched = yield* fetchRates(LITELLM_RATES_API_URL, "application/vnd.github.raw+json");
+    }
+    if (fetched === null) {
+      ratesLastFailedAtMs = yield* Clock.currentTimeMillis;
       if (rates.size > 0) ratesStatus = "cached";
       return;
     }
 
-    const parsed = parseRateTable(fetched);
-    if (parsed.size === 0) return;
-
-    rates = parsed;
+    rates = fetched.parsed;
     ratesFetchedAtMs = now;
+    ratesLastFailedAtMs = null;
     ratesStatus = "fresh";
 
-    yield* encodeRatesCache({ fetchedAtMs: now, document: fetched }).pipe(
+    yield* encodeRatesCache({ fetchedAtMs: now, document: fetched.document }).pipe(
       Effect.flatMap((contents) => writeCacheFile(ratesCachePath, contents)),
       Effect.ignoreCause,
     );
@@ -355,7 +369,7 @@ export const make = Effect.gen(function* () {
             ([filePath, entry]) =>
               entry.provider === provider &&
               entry.mtimeMs >= retentionCutoffMs &&
-              entry.records.length + entry.tailRecords.length > 0 &&
+              (entry.records.length + entry.tailRecords.length > 0 || entry.malformedRecords > 0) &&
               isWithinDirectory(filePath, dir),
           );
         const volumeId =
@@ -461,94 +475,90 @@ export const make = Effect.gen(function* () {
    * than completion order: saved records of deleted transcripts aggregate in
    * cache order, where the first copy of a duplicate wins.
    */
-  const readFileRecords = (
+  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
     format: TranscriptUsageFormat<unknown>,
-  ): Effect.Effect<{
+  ): Effect.fn.Return<{
     readonly records: readonly UsageRecord[];
+    readonly malformedRecords: number;
     readonly cwd: string | null;
     readonly label: string | null;
     readonly failed?: true;
     readonly update?: { readonly entry: CachedFile; readonly replaces: CachedFile | undefined };
-  }> =>
-    Effect.gen(function* () {
-      const cached = fileCache.get(filePath);
-      // Provider is part of the identity: if both providers were ever pointed
-      // at one directory, a hit parsed by the other parser must not be reused.
-      if (
-        cached &&
-        cached.size === size &&
-        cached.mtimeMs === mtimeMs &&
-        cached.provider === provider
-      ) {
-        return {
-          records:
-            cached.tailRecords.length === 0
-              ? cached.records
-              : [...cached.records, ...cached.tailRecords],
-          cwd: cached.cwd,
-          label: cached.label,
-        };
-      }
-
-      // Only a strictly grown file may resume. Same size with a new mtime, or
-      // a shrunken file, means rewritten content; re-parse it whole.
-      const resumeFrom =
-        cached !== undefined && cached.provider === provider && size > cached.size
-          ? cached.position
-          : undefined;
-
-      const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, format, resumeFrom),
-      );
-      // A read failure is not an empty transcript: caching it under this
-      // (size, mtime) would silently drop the file's usage until it changes.
-      if (parsed === null) {
-        const usable = cached?.provider === provider ? cached : undefined;
-        return {
-          records: usable === undefined ? [] : [...usable.records, ...usable.tailRecords],
-          cwd: usable?.cwd ?? null,
-          label: usable?.label ?? null,
-          failed: true,
-        };
-      }
-
-      const base = parsed.resumed && cached !== undefined ? cached.records : [];
-      const seen = new Set<string>();
-      const records = dedupeWithinFile([...base, ...parsed.records], seen);
-      const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
-      // A session belongs to the folder it started in. A resumed read only saw
-      // appended lines, so the folder found before the resume point wins.
-      const cwd = parsed.resumed ? (cached?.cwd ?? parsed.cwd) : parsed.cwd;
-      // Re-read with the transcript, so a description written or edited
-      // since the last parse shows up.
-      const label =
-        provider === "claude" && claudeSubagentId(filePath) !== null
-          ? yield* readSubagentLabel(filePath)
-          : null;
-
+  }> {
+    const cached = fileCache.get(filePath);
+    // Provider is part of the identity: if both providers were ever pointed
+    // at one directory, a hit parsed by the other parser must not be reused.
+    if (
+      cached &&
+      cached.size === size &&
+      cached.mtimeMs === mtimeMs &&
+      cached.provider === provider
+    ) {
       return {
-        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
-        cwd,
-        label,
-        update: {
-          entry: {
-            size,
-            mtimeMs,
-            provider,
-            records,
-            tailRecords,
-            position: parsed.position,
-            cwd,
-            label,
-          },
-          replaces: cached,
-        },
+        records:
+          cached.tailRecords.length === 0
+            ? cached.records
+            : [...cached.records, ...cached.tailRecords],
+        malformedRecords: cached.malformedRecords,
+        cwd: cached.cwd,
+        label: cached.label,
       };
-    });
+    }
+
+    // Only a strictly grown file may resume. Same size with a new mtime, or
+    // a shrunken file, means rewritten content; re-parse it whole.
+    const resumeFrom =
+      cached !== undefined && cached.provider === provider && size > cached.size
+        ? cached.position
+        : undefined;
+
+    const parsed = yield* Effect.promise(() => readTranscriptRecords(filePath, format, resumeFrom));
+    // A read failure is not an empty transcript: caching it under this
+    // (size, mtime) would silently drop the file's usage until it changes.
+    if (parsed === null)
+      return {
+        records: cached?.provider === provider ? [...cached.records, ...cached.tailRecords] : [],
+        malformedRecords: cached?.provider === provider ? cached.malformedRecords : 0,
+        cwd: cached?.provider === provider ? cached.cwd : null,
+        label: cached?.provider === provider ? cached.label : null,
+        failed: true,
+      };
+
+    const base = parsed.resumed && cached !== undefined ? cached.records : [];
+    const seen = new Set<string>();
+    const records = dedupeWithinFile([...base, ...parsed.records], seen);
+    const tailRecords = dedupeWithinFile(parsed.tailRecords, seen);
+
+    const cwd = parsed.resumed ? (cached?.cwd ?? parsed.cwd) : parsed.cwd;
+    const label =
+      provider === "claude" && claudeSubagentId(filePath) !== null
+        ? yield* readSubagentLabel(filePath)
+        : null;
+    return {
+      cwd,
+      label,
+      records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+      malformedRecords: parsed.malformedRecords,
+      update: {
+        entry: {
+          size,
+          mtimeMs,
+          provider,
+          records,
+          tailRecords,
+          malformedRecords: parsed.malformedRecords,
+          position: parsed.position,
+          cwd,
+          label,
+        },
+        replaces: cached,
+      },
+    };
+  });
 
   /**
    * Claude Code saves what each sub-agent was asked to do beside its
@@ -585,6 +595,7 @@ export const make = Effect.gen(function* () {
   interface ScannedFile {
     readonly path: string;
     readonly records: readonly UsageRecord[];
+    readonly malformedRecords: number;
     readonly cwd?: string | null;
     readonly label?: string | null;
   }
@@ -609,8 +620,8 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: TRANSCRIPT_READ_CONCURRENCY },
     );
-    const parsedFiles = read.map(({ path, records, cwd, label, update }) => {
-      if (update === undefined) return { path, records, cwd, label };
+    const parsedFiles = read.map(({ path, records, cwd, label, malformedRecords, update }) => {
+      if (update === undefined) return { path, records, cwd, label, malformedRecords };
       // A scan of another window may have cached its own read of this file
       // meanwhile. Then keep whichever read saw the later file, so a slower
       // scan never replaces newer usage with older.
@@ -623,7 +634,7 @@ export const make = Effect.gen(function* () {
         fileCache.set(path, update.entry);
         cacheDirty = true;
       }
-      return { path, records, cwd, label };
+      return { path, records, cwd, label, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
     return {
@@ -669,6 +680,7 @@ export const make = Effect.gen(function* () {
                     : Effect.succeed(volumeId),
                   (resolved): ScannedDir => ({
                     ...source,
+                    files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
                     provider: reader.provider,
                     volumeId: resolved,
                   }),
@@ -802,6 +814,7 @@ export const make = Effect.gen(function* () {
         retainedFiles.push({
           path: filePath,
           records: [...entry.records, ...entry.tailRecords],
+          malformedRecords: entry.malformedRecords,
           cwd: entry.cwd,
           label: entry.label,
         });
@@ -827,11 +840,13 @@ export const make = Effect.gen(function* () {
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
+      let malformedRecords = 0;
       // Distinct per directory. Buckets carry per-cell session counts, but a
       // session spans days and models, so clients total this figure instead.
       const sessionIds = new Set<string>();
 
       for (const file of filesByDir[index] ?? []) {
+        malformedRecords += file.malformedRecords;
         if (file.records.length === 0) {
           skippedFiles += 1;
           continue;
@@ -878,15 +893,31 @@ export const make = Effect.gen(function* () {
         }
       }
 
+      const sourceMessage =
+        message ?? (files === null ? "No transcript directory on this environment." : null);
       sources.push({
         fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
-        status: files === null && scannedFiles === 0 ? "missing" : (status ?? "ok"),
+        status:
+          files === null && scannedFiles === 0
+            ? "missing"
+            : malformedRecords > 0
+              ? status === undefined || status === "ok"
+                ? "partial"
+                : status
+              : (status ?? "ok"),
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords,
         distinctSessions: sessionIds.size,
         message:
-          message ?? (files === null ? "No transcript directory on this environment." : null),
+          malformedRecords > 0
+            ? [
+                sourceMessage,
+                `${malformedRecords} malformed or inconsistent usage record(s) were skipped; usage may be incomplete.`,
+              ]
+                .filter(Boolean)
+                .join(" ")
+            : sourceMessage,
         ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });

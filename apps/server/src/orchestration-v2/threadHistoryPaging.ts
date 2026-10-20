@@ -79,6 +79,27 @@ function bytesOfJson(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
+/**
+ * Proves overflow without serializing: a string's UTF-16 length never exceeds
+ * its UTF-8 JSON bytes, and local items are encoded once per array they sit in.
+ */
+function timelineTextExceedsBudget(
+  projection: OrchestrationV2ThreadProjection,
+  budget: number,
+): boolean {
+  let length = 0;
+  const exceeds = (item: OrchestrationV2TurnItem): boolean => {
+    if ("text" in item) {
+      length += item.text.length;
+    }
+    return length > budget;
+  };
+  return (
+    projection.visibleTurnItems.some((row) => exceeds(row.item)) ||
+    projection.turnItems.some(exceeds)
+  );
+}
+
 export function projectedRowEncodedBytes(row: HistoryRow): number {
   return bytesOfJson(row);
 }
@@ -417,7 +438,10 @@ function messagesForBoundedProjection(
     (message) =>
       retainedMessageIds.has(String(message.id)) ||
       (message.runId !== null && retainedRunIds.has(String(message.runId))) ||
-      message.delegatedCompletion !== undefined,
+      message.delegatedCompletion !== undefined ||
+      // Clients open a workflow coordinator's thread from its script, however
+      // far back the history window starts. A thread has at most one.
+      message.workflowScript === true,
   );
 }
 
@@ -482,8 +506,10 @@ export function buildBoundedThreadProjection(input: {
     turnItems: [],
     visibleTurnItems: [],
   });
+  // Control state (checkpoint file lists, an active plan) cannot be paged, so it may claim at most
+  // half the budget; past that the window would shrink to the one row every page admits.
   const windowBudget = Math.max(
-    0,
+    policy.maxEncodedBytes / 2,
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
   const windowPolicy: ThreadHistoryPagePolicy = {
@@ -557,6 +583,8 @@ export function buildBoundedThreadProjection(input: {
     hasMoreHistory: window.hasMoreHistory,
     latestLocalTurnOrdinal,
     payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
+      controlBytes > policy.maxEncodedBytes ||
+      timelineTextExceedsBudget(projection, policy.maxEncodedBytes) ||
+      bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }
