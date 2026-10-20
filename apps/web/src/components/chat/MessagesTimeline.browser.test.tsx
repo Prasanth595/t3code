@@ -1543,16 +1543,20 @@ describe("MessagesTimeline scroll position", () => {
   );
 
   it("does not interrupt a smooth jump when following is re-enabled without new rows", async () => {
-    const props = baseProps();
+    const onIsAtEndChange = vi.fn();
+    const props = { ...baseProps(), onIsAtEndChange };
     const timeline = (following: boolean) => (
       <MessagesTimeline {...props} timelineEntries={tallEntries} liveFollowEnabled={following} />
     );
     await renderElement(timeline(false));
     const viewport = await waitForList(props);
+    const list = props.listRef.current!;
     await act(async () => {
-      viewport.scrollTop = 0;
+      await list.scrollToEnd({ animated: false });
+      await list.scrollToOffset({ offset: 0, animated: false });
       viewport.dispatchEvent(new Event("scroll"));
     });
+    expect(onIsAtEndChange).toHaveBeenLastCalledWith(false);
     const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
     const scrollTo = vi.spyOn(scrollable, "scrollTo");
 
@@ -1569,7 +1573,8 @@ describe("MessagesTimeline scroll position", () => {
   });
 
   it("lets an explicit smooth jump cancel an active end pin", async () => {
-    const props = baseProps();
+    const onIsAtEndChange = vi.fn();
+    const props = { ...baseProps(), onIsAtEndChange };
     const cancelEndPinRef = createRef<(() => void) | null>();
     const timeline = (entries: Entry[]) => (
       <MessagesTimeline {...props} timelineEntries={entries} cancelEndPinRef={cancelEndPinRef} />
@@ -1577,6 +1582,15 @@ describe("MessagesTimeline scroll position", () => {
     await renderElement(timeline(tallEntries));
     const viewport = await waitForList(props);
     const list = props.listRef.current!;
+    // Finish initial positioning and leave LegendList's follow threshold before
+    // adding rows, so its own maintenance cannot satisfy the correction first.
+    await act(async () => {
+      await list.scrollToEnd({ animated: false });
+      await list.scrollToOffset({ offset: 0, animated: false });
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(onIsAtEndChange).toHaveBeenLastCalledWith(false);
+    expect(list.getState().isWithinMaintainScrollAtEndThreshold).toBe(false);
     const scrollable: { scrollTo(options: ScrollToOptions): void } = viewport;
     const scrollTo = vi.spyOn(scrollable, "scrollTo");
     const originalScrollToEnd = list.scrollToEnd.bind(list);
