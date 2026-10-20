@@ -67,6 +67,7 @@ export class ProviderRegistry extends Context.Service<
     /** Only refreshed instances can verify an update; the published list still includes every row. */
     readonly refreshAfterUpdate: (
       provider: ProviderDriverKind,
+      selectedInstanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     readonly refreshWorkspaceSnapshot: (input: {
@@ -697,10 +698,13 @@ export const layer = Layer.effect(
 
     const refreshAfterUpdate = Effect.fn("refreshAfterUpdate")(function* (
       provider: ProviderDriverKind,
+      selectedInstanceId: ProviderInstanceId,
     ) {
       yield* manifestService.forceRefresh;
       const instances = (yield* instanceRegistry.listInstances).filter(
-        (instance) => instance.driverKind === provider && instance.enabled,
+        (instance) =>
+          instance.driverKind === provider &&
+          (instance.enabled || instance.instanceId === selectedInstanceId),
       );
       const failedInstances = new Set<ProviderInstanceId>();
       const recoverInstanceFailure = Effect.fn("recoverPostUpdateRefreshFailure")(function* (

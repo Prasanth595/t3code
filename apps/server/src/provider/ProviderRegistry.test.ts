@@ -1958,6 +1958,7 @@ it.layer(
       "unauthenticated",
       "sibling defects",
       "selected defect",
+      "selected disabled",
     ] as const;
     it.effect.each(updateScenarios)("refreshes account caches after update (%s)", (scenario) =>
       Effect.gen(function* () {
@@ -2055,11 +2056,11 @@ it.layer(
           };
         };
         const instances = [
-          makeInstance("personal", {
-            binaryPath: "/personal/agent",
-            home: "/personal",
-            model: "personal-model",
-          }),
+          makeInstance(
+            "personal",
+            { binaryPath: "/personal/agent", home: "/personal", model: "personal-model" },
+            scenario !== "selected disabled",
+          ),
           makeInstance("work", { binaryPath: "/work/agent", home: "/work", model: "work-model" }),
           ...(scenario === "sibling defects"
             ? ["broken-maintenance", "broken-discovery"].map((id) =>
