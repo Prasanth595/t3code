@@ -746,13 +746,14 @@ it.effect("checkpoint capture does not rerun clean filters for unchanged indexed
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each(
-  [false, true].flatMap((nested) =>
+it.effect.each([
+  ...[false, true].flatMap((nested) =>
     (["sparse", "flags", "manual-skip", "missing", "non-cone-missing"] as const).map(
       (indexState) => ({ nested, indexState }),
     ),
   ),
-)(
+  { nested: true, indexState: "cached-exclusion" as const },
+])(
   "sparse checkpoint preserves two captures (nested=$nested, index=$indexState)",
   ({ nested, indexState }) =>
     Effect.gen(function* () {
@@ -774,27 +775,65 @@ it.effect.each(
       ]) {
         yield* write(name, "original\n");
       }
+      yield* write("scope/in/stable", "unchanged\n");
+      yield* write(".gitattributes", "stable filter=probe\n");
+      yield* write(
+        ".git/filter.cjs",
+        'require("node:fs").appendFileSync(".git/reads", "read\\n"); process.stdin.pipe(process.stdout);',
+      );
+      yield* git(["config", "filter.probe.clean", "node .git/filter.cjs"]);
+      yield* fs.utimes(path.join(cwd, "scope/in/stable"), 1_700_000_000, 1_700_000_000);
       yield* git(["add", "."]);
       yield* git(["commit", "-m", "sparse fixture"]);
       yield* git(["sparse-checkout", "set", "--cone", "--sparse-index", "scope/in", "elsewhere"]);
       if (indexState === "non-cone-missing")
         yield* git(["sparse-checkout", "set", "--no-cone", "/scope/in/", "/elsewhere/"]);
-      yield* write("scope/in/edit", "staged\n");
+      if (indexState === "cached-exclusion") {
+        yield* git(["config", "core.trustctime", "false"]);
+        yield* git(["sparse-checkout", "reapply", "--no-sparse-index"]);
+        for (const name of ["scope/in/edit", "scope/out/present"]) {
+          yield* write(name, "original\n");
+          yield* fs.utimes(path.join(cwd, name), 1_700_000_000, 1_700_000_000);
+        }
+        yield* git(["add", "--sparse", "scope/in/edit", "scope/out/present"]);
+        yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+        yield* git(["update-index", "--skip-worktree", "scope/out/present"]);
+      } else yield* write("scope/in/edit", "staged\n");
       yield* write("elsewhere/file", "staged outside\n");
       yield* git(["add", "."]);
       if (indexState === "flags")
         yield* git(["update-index", "--assume-unchanged", "scope/in/delete"]);
       if (indexState === "manual-skip")
         yield* git(["update-index", "--skip-worktree", "scope/in/delete"]);
+      if (indexState === "cached-exclusion") {
+        yield* git(["update-index", "--assume-unchanged", "scope/in/edit", "scope/in/delete"]);
+        yield* git(["update-index", "--skip-worktree", "scope/in/edit", "scope/in/delete"]);
+        yield* fs.writeFileString(
+          path.join(cwd, ".git/info/exclude"),
+          "scope/in/edit\nscope/in/delete\n",
+        );
+      }
       yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
-      yield* write("scope/in/edit", "working\n");
-      yield* write("scope/out/present", "modified skipped\n");
+      yield* write("scope/in/edit", indexState === "cached-exclusion" ? "modified\n" : "working\n");
+      const outsideContent =
+        indexState === "cached-exclusion" ? "modified\n" : "modified skipped\n";
+      yield* write("scope/out/present", outsideContent);
+      if (indexState === "cached-exclusion") {
+        for (const name of ["scope/in/edit", "scope/out/present"])
+          yield* fs.utimes(path.join(cwd, name), 1_700_000_000, 1_700_000_000);
+      }
       yield* write("scope/out/new file", "new outside cone\n");
       yield* write("elsewhere/file", "working outside\n");
       yield* fs.remove(path.join(cwd, "scope/in/delete"));
       const indexPath = path.join(cwd, ".git/index");
       if (indexState.endsWith("missing")) yield* fs.remove(indexPath);
       const originalIndex = yield* fs.readFile(indexPath).pipe(Effect.orElseSucceed(() => null));
+      const originalMtime = yield* fs.stat(indexPath).pipe(
+        Effect.map((stat) => stat.mtime),
+        Effect.orElseSucceed(() => null),
+      );
+      const originalConfig = yield* fs.readFile(path.join(cwd, ".git/config"));
+      assert.include(yield* fs.readFileString(path.join(cwd, ".git/reads")), "read\n");
       const captureCwd = nested ? path.join(cwd, "scope") : cwd;
       for (const turn of [1, 2]) {
         const ref = CheckpointRef.make(`refs/t3/checkpoints/sparse/${turn}`);
@@ -803,6 +842,7 @@ it.effect.each(
           yield* fs.remove(path.join(cwd, "scope/out/new file"));
           yield* write("scope/out/second", "second addition\n");
         }
+        yield* fs.writeFileString(path.join(cwd, ".git/reads"), "");
         const capture = driver.checkpoints.captureCheckpoint({
           cwd: captureCwd,
           checkpointRef: ref,
@@ -818,8 +858,15 @@ it.effect.each(
         yield* capture;
         for (const [name, content] of [
           ["scope/out/deep/absent", "original\n"],
-          ["scope/out/present", "modified skipped\n"],
-          ["scope/in/edit", turn === 1 ? "working\n" : "second\n"],
+          ["scope/out/present", outsideContent],
+          [
+            "scope/in/edit",
+            turn === 1
+              ? indexState === "cached-exclusion"
+                ? "modified\n"
+                : "working\n"
+              : "second\n",
+          ],
           ["elsewhere/file", nested ? "original\n" : "working outside\n"],
           [
             turn === 1 ? "scope/out/new file" : "scope/out/second",
@@ -835,6 +882,16 @@ it.effect.each(
           yield* fs.readFile(indexPath).pipe(Effect.orElseSucceed(() => null)),
           originalIndex,
         );
+        assert.deepEqual(
+          yield* fs.stat(indexPath).pipe(
+            Effect.map((stat) => stat.mtime),
+            Effect.orElseSucceed(() => null),
+          ),
+          originalMtime,
+        );
+        assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/config")), originalConfig);
+        if (indexState !== "missing")
+          assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/reads")), "");
         assert.isFalse(yield* fs.exists(path.join(cwd, "scope/out/deep/absent")));
         assert.strictEqual(
           yield* fs.readFileString(path.join(cwd, "elsewhere/file")),
@@ -905,14 +962,38 @@ it.effect.each(["normal", "flags", "sparse"] as const)(
       );
       yield* git(["config", "filter.probe.clean", "node .git/filter.cjs"]);
       yield* fs.utimes(path.join(cwd, "stable"), 1_700_000_000, 1_700_000_000);
+      const flagged = ["z-assumed-é", "z-skipped", "z-both"];
+      if (indexMode === "flags") {
+        yield* git(["config", "core.trustctime", "false"]);
+        for (const name of flagged) {
+          yield* fs.writeFileString(path.join(cwd, name), "original\n");
+          yield* fs.utimes(path.join(cwd, name), 1_700_000_000, 1_700_000_000);
+          yield* fs.writeFileString(path.join(cwd, `${name}-deleted`), "original\n");
+        }
+      }
       yield* git(["add", "."]);
       yield* git(["commit", "-m", "inspection fixture"]);
-      if (indexMode === "flags") yield* git(["update-index", "--skip-worktree", "z-skipped"]);
+      if (indexMode === "flags") {
+        yield* fs.writeFileString(path.join(cwd, ".git/info/exclude"), "z-*\n");
+        for (const name of flagged) {
+          if (name !== "z-skipped")
+            yield* git(["update-index", "--assume-unchanged", name, `${name}-deleted`]);
+          if (name !== "z-assumed-é")
+            yield* git(["update-index", "--skip-worktree", name, `${name}-deleted`]);
+          yield* fs.writeFileString(path.join(cwd, name), "modified\n");
+          yield* fs.utimes(path.join(cwd, name), 1_700_000_000, 1_700_000_000);
+          yield* fs.remove(path.join(cwd, `${name}-deleted`));
+        }
+      }
       if (indexMode === "sparse")
         yield* git(["sparse-checkout", "set", "--cone", "--sparse-index", "included"]);
-      yield* fs.writeFileString(path.join(cwd, "z-skipped"), "modified\n");
+      if (indexMode !== "flags")
+        yield* fs.writeFileString(path.join(cwd, "z-skipped"), "modified\n");
+      assert.include(yield* fs.readFileString(path.join(cwd, ".git/reads")), "read\n");
       yield* fs.writeFileString(path.join(cwd, ".git/reads"), "");
       const originalIndex = yield* fs.readFile(path.join(cwd, ".git/index"));
+      const originalMtime = (yield* fs.stat(path.join(cwd, ".git/index"))).mtime;
+      const originalConfig = yield* fs.readFile(path.join(cwd, ".git/config"));
       const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
         Effect.provideService(VcsProcess.VcsProcess, {
           run: (input) =>
@@ -932,9 +1013,134 @@ it.effect.each(["normal", "flags", "sparse"] as const)(
       );
       yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
       assert.strictEqual((yield* git(["show", `${checkpointRef}:z-skipped`])).stdout, "modified\n");
-      if (indexMode !== "flags")
-        assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/reads")), "");
+      if (indexMode === "flags") {
+        const files = (yield* git(["ls-tree", "-rz", "--name-only", checkpointRef])).stdout.split(
+          "\0",
+        );
+        for (const name of flagged) {
+          assert.strictEqual(
+            (yield* git(["show", `${checkpointRef}:${name}`])).stdout,
+            "modified\n",
+          );
+          assert.notInclude(files, `${name}-deleted`);
+        }
+      }
       assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/index")), originalIndex);
+      assert.deepEqual((yield* fs.stat(path.join(cwd, ".git/index"))).mtime, originalMtime);
+      assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/config")), originalConfig);
+      assert.strictEqual(yield* fs.readFileString(path.join(cwd, ".git/reads")), "");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each(["repair", "invalid-utf8", "gitlink"] as const)(
+  "checkpoint handles unsafe private index repair (%s)",
+  (failure) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-repair-fallback-" });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* fs.makeDirectory(path.join(cwd, "included"));
+      yield* fs.makeDirectory(path.join(cwd, "excluded/deep"), { recursive: true });
+      yield* fs.writeFileString(path.join(cwd, "included/edit"), "before\n");
+      yield* fs.writeFileString(path.join(cwd, "excluded/deep/absent"), "keep\n");
+      if (failure === "gitlink") {
+        yield* git(["init", "module"]);
+        yield* git(["-C", "module", "config", "user.name", "Test"]);
+        yield* git(["-C", "module", "config", "user.email", "test@test.com"]);
+        yield* git(["-C", "module", "commit", "--allow-empty", "-m", "initial module"]);
+      }
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "fallback fixture"]);
+      if (failure !== "gitlink") {
+        yield* git(["sparse-checkout", "set", "--cone", "included"]);
+        if (failure === "invalid-utf8")
+          yield* git(["sparse-checkout", "set", "--no-cone", "/included/"]);
+      }
+      yield* git([
+        "update-index",
+        "--assume-unchanged",
+        failure === "gitlink" ? "module" : "included/edit",
+      ]);
+      yield* fs.writeFileString(path.join(cwd, "included/edit"), "after!\n");
+      if (failure === "gitlink")
+        yield* git(["-C", "module", "commit", "--allow-empty", "-m", "changed module"]);
+      const indexPath = path.join(cwd, ".git/index");
+      const originalIndex = yield* fs.readFile(indexPath);
+      const originalMtime = (yield* fs.stat(indexPath)).mtime;
+      const originalConfig = yield* fs.readFile(path.join(cwd, ".git/config"));
+      let injected = false;
+      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: Effect.fn(function* (input: VcsProcess.VcsProcessInput) {
+            if (failure === "invalid-utf8" && input.args.includes("ls-files")) {
+              const chunks: Buffer[] = [];
+              const result = yield* liveProcess.run({
+                ...input,
+                onStdoutChunk: (chunk) => chunks.push(Buffer.from(chunk)),
+              });
+              const bytes = Buffer.concat(chunks);
+              const nameOffset = bytes.indexOf("included/edit");
+              assert.isAtLeast(nameOffset, 0);
+              bytes[nameOffset] = 0xff;
+              input.onStdoutChunk?.(bytes);
+              injected = true;
+              return result;
+            }
+            const result = yield* liveProcess.run(input);
+            if (failure === "repair" && input.args.includes("--index-info")) {
+              // Force fallback to discard the failed write instead of trusting its index.
+              yield* fs
+                .writeFileString(input.env!.GIT_INDEX_FILE!, "interrupted index write")
+                .pipe(Effect.orDie);
+              injected = true;
+              return yield* new VcsProcessExitError({
+                operation: input.operation,
+                command: "git update-index",
+                cwd: input.cwd,
+                exitCode: 1,
+                detail: "injected private index write failure",
+              });
+            }
+            return result;
+          }),
+        }),
+      );
+
+      const result = yield* Effect.result(
+        captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
+      );
+
+      assert.deepEqual(yield* fs.readFile(indexPath), originalIndex);
+      assert.deepEqual((yield* fs.stat(indexPath)).mtime, originalMtime);
+      assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/config")), originalConfig);
+      if (failure === "invalid-utf8") {
+        assert.strictEqual(result._tag, "Failure");
+        assert.isFalse(yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef }));
+      } else {
+        assert.strictEqual(result._tag, "Success");
+        assert.strictEqual(
+          (yield* git(["show", `${checkpointRef}:included/edit`])).stdout,
+          "after!\n",
+        );
+        assert.strictEqual(
+          (yield* git(["show", `${checkpointRef}:excluded/deep/absent`])).stdout,
+          "keep\n",
+        );
+        if (failure === "gitlink") {
+          const head = (yield* git(["-C", "module", "rev-parse", "HEAD"])).stdout.trim();
+          assert.strictEqual(
+            (yield* git(["ls-tree", checkpointRef, "--", "module"])).stdout,
+            `160000 commit ${head}\tmodule\n`,
+          );
+        }
+      }
+      if (failure !== "gitlink") {
+        assert.isFalse(yield* fs.exists(path.join(cwd, "excluded/deep/absent")));
+        assert.isTrue(injected);
+      }
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
@@ -1065,47 +1271,58 @@ it.effect.each(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect("checkpoint capture preserves racy edits made after resetting the index", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const liveProcess = yield* VcsProcess.VcsProcess;
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
-    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-racy-reset-" });
-    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-    const racyPath = path.join(cwd, "racy.txt");
-    const indexPath = path.join(cwd, ".git", "index");
-    const timestamp = 1_700_000_000;
-    yield* git(["config", "core.trustctime", "false"]);
-    yield* fileSystem.writeFileString(racyPath, "before\n");
-    yield* fileSystem.utimes(racyPath, timestamp, timestamp);
-    yield* git(["add", "."]);
-    yield* git(["commit", "-m", "record racy file"]);
-    yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "staged\n");
-    yield* git(["add", "file.txt"]);
-    yield* fileSystem.utimes(indexPath, timestamp, timestamp);
-    const originalIndex = yield* fileSystem.readFile(indexPath);
-    const originalIndexMtime = (yield* fileSystem.stat(indexPath)).mtime;
-    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
-      Effect.provideService(VcsProcess.VcsProcess, {
-        run: Effect.fn(function* (input: VcsProcess.VcsProcessInput) {
-          const result = yield* liveProcess.run(input);
-          if (input.args.includes("read-tree") && input.args.includes("--reset")) {
-            yield* fileSystem.writeFileString(racyPath, "after!\n").pipe(Effect.orDie);
-            yield* fileSystem.utimes(racyPath, timestamp, timestamp).pipe(Effect.orDie);
-          }
-          return result;
+it.effect.each([false, true])(
+  "checkpoint capture preserves racy edits after private index writes (flagged=%s)",
+  (flagged) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const liveProcess = yield* VcsProcess.VcsProcess;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-racy-reset-",
+      });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      const racyPath = path.join(cwd, "racy.txt");
+      const indexPath = path.join(cwd, ".git", "index");
+      const timestamp = 1_700_000_000;
+      yield* git(["config", "core.trustctime", "false"]);
+      yield* fileSystem.writeFileString(racyPath, "before\n");
+      if (flagged) yield* fileSystem.writeFileString(path.join(cwd, "flagged.txt"), "unchanged\n");
+      yield* fileSystem.utimes(racyPath, timestamp, timestamp);
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "record racy file"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "file.txt"), "staged\n");
+      yield* git(["add", "file.txt"]);
+      if (flagged) yield* git(["update-index", "--assume-unchanged", "flagged.txt"]);
+      yield* fileSystem.utimes(indexPath, timestamp, timestamp);
+      const originalIndex = yield* fileSystem.readFile(indexPath);
+      const originalIndexMtime = (yield* fileSystem.stat(indexPath)).mtime;
+      const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+        Effect.provideService(VcsProcess.VcsProcess, {
+          run: Effect.fn(function* (input: VcsProcess.VcsProcessInput) {
+            // Editing immediately before staging catches a timestamp restored too early.
+            if (flagged && input.args.includes("add")) {
+              yield* fileSystem.writeFileString(racyPath, "after!\n").pipe(Effect.orDie);
+              yield* fileSystem.utimes(racyPath, timestamp, timestamp).pipe(Effect.orDie);
+            }
+            const result = yield* liveProcess.run(input);
+            if (!flagged && input.args.includes("read-tree") && input.args.includes("--reset")) {
+              yield* fileSystem.writeFileString(racyPath, "after!\n").pipe(Effect.orDie);
+              yield* fileSystem.utimes(racyPath, timestamp, timestamp).pipe(Effect.orDie);
+            }
+            return result;
+          }),
         }),
-      }),
-    );
+      );
 
-    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
 
-    assert.strictEqual((yield* git(["show", `${checkpointRef}:racy.txt`])).stdout, "after!\n");
-    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "staged\n");
-    assert.deepEqual(yield* fileSystem.readFile(indexPath), originalIndex);
-    assert.deepEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
-  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:racy.txt`])).stdout, "after!\n");
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "staged\n");
+      assert.deepEqual(yield* fileSystem.readFile(indexPath), originalIndex);
+      assert.deepEqual((yield* fileSystem.stat(indexPath)).mtime, originalIndexMtime);
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each(

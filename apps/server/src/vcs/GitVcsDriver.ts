@@ -890,65 +890,132 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
             if (indexTime <= 0) return false;
             yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
+            // Preserve skip bits until inspection can invalidate present exclusions' cached stat.
+            const inspectConfig = sparseCheckout
+              ? [...indexConfig, "-c", "sparse.expectFilesOutsideOfPatterns=true"]
+              : indexConfig;
             yield* execute({
               operation,
               cwd: input.cwd,
-              args: [...indexConfig, "read-tree", "--reset", "HEAD"],
+              args: [...inspectConfig, "read-tree", "--reset", "HEAD"],
               env: commitEnv,
             });
-            // read-tree can rewrite the index, so restore its racy timestamp afterward.
-            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
-            let specialFlags = false;
-            let recordStart = true;
-            let skipped = false;
-            let skippedRecord: number[] = [];
-            const skippedPaths: string[] = [];
+            let invalid = false;
+            let record: number[] = [];
+            const repairEntries: string[] = [];
+            const sparseEntries = new Map<string, { entry: string; assumed: boolean }>();
             yield* vcsProcess.run({
               operation,
               command: "git",
               cwd: input.cwd,
-              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "-v", "-z"],
+              args: [
+                ...inspectConfig,
+                "ls-files",
+                "--full-name",
+                "--sparse",
+                "--stage",
+                "-v",
+                "-z",
+              ],
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
+              // The retained output is capped; callbacks still receive every complete record.
               onStdoutChunk: (chunk) => {
                 for (const byte of chunk) {
-                  if (recordStart) skipped = byte === 83;
-                  if (skipped && sparseCheckout) {
-                    if (byte !== 0) skippedRecord.push(byte);
-                    else {
-                      if (skippedRecord.at(-1) !== 47) {
-                        const name = Buffer.from(skippedRecord).subarray(2);
-                        if (!NodeBuffer.isUtf8(name)) specialFlags = true;
-                        else skippedPaths.push(name.toString("utf8"));
-                      }
-                      skippedRecord = [];
-                    }
+                  if (invalid) return;
+                  if (byte !== 0) {
+                    record.push(byte);
+                    continue;
                   }
+                  const bytes = Buffer.from(record);
+                  record = [];
+                  if (!NodeBuffer.isUtf8(bytes)) {
+                    invalid = true;
+                    return;
+                  }
+                  const line = bytes.toString("utf8");
                   if (
-                    recordStart &&
-                    ((byte >= 97 && byte <= 122) || (!sparseCheckout && byte === 83))
+                    !/^[HhSs] (?:040000|100644|100755|120000|160000) (?:[0-9a-f]{40}|[0-9a-f]{64}) [0-3]\t.+$/s.test(
+                      line,
+                    )
                   ) {
-                    specialFlags = true;
+                    invalid = true;
+                    return;
                   }
-                  recordStart = byte === 0;
+                  const tag = line[0];
+                  const entry = line.slice(2);
+                  const name = entry.slice(entry.indexOf("\t") + 1);
+                  if (entry.startsWith("040000 ")) {
+                    if (!sparseCheckout || tag !== "S" || !name.endsWith("/")) invalid = true;
+                  } else if (tag !== "H") {
+                    if (entry.startsWith("160000 ")) invalid = true;
+                    else if (sparseCheckout) {
+                      sparseEntries.set(name, { entry, assumed: tag === "h" || tag === "s" });
+                    } else repairEntries.push(entry);
+                  }
                 }
               },
             });
-            if (skippedPaths.length > 0 && !specialFlags) {
-              const selected = yield* execute({
+            if (invalid || record.length > 0) return false;
+            if (sparseEntries.size > 0) {
+              const selected = yield* vcsProcess.run({
+                operation,
+                command: "git",
+                cwd: input.cwd,
+                args: [...inspectConfig, "sparse-checkout", "check-rules", "-z"],
+                stdin: [...sparseEntries.keys()].join("\0") + "\0",
+                env: commitEnv,
+              });
+              if (
+                selected.stdoutTruncated ||
+                selected.stderrTruncated ||
+                selected.stdoutInvalidUtf8 ||
+                (selected.stdout.length > 0 && !selected.stdout.endsWith("\0"))
+              )
+                return false;
+              for (const name of selected.stdout.split("\0").slice(0, -1)) {
+                const skipped = sparseEntries.get(name);
+                if (!skipped) return false;
+                repairEntries.push(skipped.entry);
+                sparseEntries.delete(name);
+              }
+              // Excluded assumed entries need the fresh sparse index's exclusion semantics.
+              if ([...sparseEntries.values()].some((entry) => entry.assumed)) return false;
+              // Git clears skip bits on present exclusions during add, so invalidate their stat too.
+              for (const { entry } of sparseEntries.values()) repairEntries.push(entry);
+            }
+            if (repairEntries.length > 0) {
+              // Reinsertion clears both flags and stat without losing ignored tracked paths.
+              const repaired = yield* execute({
                 operation,
                 cwd: input.cwd,
-                args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
-                stdin: skippedPaths.join("\0") + "\0",
+                args: [...inspectConfig, "update-index", "-z", "--index-info"],
+                stdin: repairEntries.join("\0") + "\0",
                 env: commitEnv,
-                maxOutputBytes: 1,
-                outputMode: "truncate",
               });
-              specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
+              if (repaired.stdoutTruncated || repaired.stderrTruncated) return false;
+              if (sparseEntries.size > 0) {
+                // --stdin paths are cwd-relative, whereas index-info paths are root-relative.
+                const root = yield* execute({
+                  operation,
+                  cwd: input.cwd,
+                  args: ["rev-parse", "--show-toplevel"],
+                });
+                if (root.stdoutTruncated || !root.stdout.trim()) return false;
+                const reflagged = yield* execute({
+                  operation,
+                  cwd: root.stdout.trim(),
+                  args: [...inspectConfig, "update-index", "--skip-worktree", "-z", "--stdin"],
+                  stdin: [...sparseEntries.keys()].join("\0") + "\0",
+                  env: commitEnv,
+                });
+                if (reflagged.stdoutTruncated || reflagged.stderrTruncated) return false;
+              }
             }
-            // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
-            return !specialFlags;
+            // Every private index write must retain the source index's conservative racy boundary.
+            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            return true;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
             if (sparseCheckout) {
