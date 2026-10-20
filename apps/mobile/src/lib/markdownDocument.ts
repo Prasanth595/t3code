@@ -67,15 +67,20 @@ type AnchorState = { readonly pending: string[]; open: number };
 // Code spans keep their text; an odd trailing backslash would escape the closing "]".
 function escapeLinkLabel(text: string): string {
   return text
-    .replace(/(`+)[\s\S]*?\1|\\?[[\]]/g, (match) =>
-      match.startsWith("`") || match.length === 2 ? match : `\\${match}`,
+    .replace(/(`+)[\s\S]*?\1|\\*[[\]]/g, (match) =>
+      match.startsWith("`") || match.length % 2 === 0
+        ? match
+        : `${match.slice(0, -1)}\\${match.slice(-1)}`,
     )
     .replace(/\\+$/, (slashes) => (slashes.length % 2 ? `${slashes}\\` : slashes));
 }
 
 // An unescaped "!" before the inserted "[" would turn the link into an image.
 function bangBefore(text: string, index: number): boolean {
-  return text[index - 1] === "!" && text[index - 2] !== "\\";
+  if (text[index - 1] !== "!") return false;
+  let backslashes = 0;
+  while (text[index - 2 - backslashes] === "\\") backslashes += 1;
+  return backslashes % 2 === 0;
 }
 
 /**
