@@ -51,6 +51,7 @@ interface ProjectQueryState<A> {
 interface ProjectFileQueryState extends ProjectQueryState<ProjectReadFileResult> {
   readonly readError: ProjectReadFileError | null;
   readonly isNotFile: boolean;
+  readonly isFile: boolean;
 }
 
 function getProjectEntriesQueryAtom(
@@ -266,16 +267,17 @@ export function useProjectFileQuery(
   const refresh = () => refreshAtom();
   const readData = Option.getOrNull(AsyncResult.value(result));
   const isMissing = readData?.exists === false;
-  const data = isMissing ? null : readData;
   const optimisticResult = useAtomValue(
     optimisticFileAtom(environmentId, cwd, relativePath ?? EMPTY_PROJECT_FILE_PATH),
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
   const readError = isProjectReadFileError(cause) ? cause : null;
+  const data = canReadFiles ? (optimisticFile?.data ?? (isMissing ? null : readData)) : null;
+  const isNotFile = readError?.failure === "path_not_file";
 
   return {
-    data: canReadFiles ? (optimisticFile?.data ?? data) : null,
+    data,
     error:
       !isQueryEnabled || fileAccess.isPending
         ? null
@@ -286,7 +288,9 @@ export function useProjectFileQuery(
           : (fileAccess.error ?? "This connection cannot read host files."),
     isPending: isQueryEnabled && (fileAccess.isPending || result.waiting),
     readError,
-    isNotFile: readError?.failure === "path_not_file",
+    isNotFile,
+    // A folder error overrides cached contents retained across failed refreshes.
+    isFile: !isNotFile && (data !== null || readError?.failure === "binary_file"),
     refresh,
   };
 }
