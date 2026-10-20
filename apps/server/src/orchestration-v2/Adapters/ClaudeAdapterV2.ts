@@ -10044,7 +10044,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const existing = yield* Ref.get(queryContext);
             const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId;
             const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
-            if (subagent?.task.threadId !== input.providerThread.appThreadId) {
+            if (
+              subagent !== undefined &&
+              subagent.task.threadId !== input.providerThread.appThreadId
+            ) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: "Claude subagent has no known owning task to confirm its outcome.",
@@ -10052,13 +10055,32 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
             if (
               input.requestedAt !== undefined &&
-              subagent.task.startedAt !== null &&
+              subagent?.task.startedAt != null &&
               DateTime.toEpochMillis(subagent.task.startedAt) >
                 DateTime.toEpochMillis(input.requestedAt)
             )
               return;
-            const confirmed = subagent.confirmedOutcome;
+            const confirmed = subagent?.confirmedOutcome;
             if (confirmed !== undefined) return confirmed;
+            if (
+              nativeThreadId != null &&
+              nativeThreadId.length > 0 &&
+              (existing === null ||
+                existing.nativeThreadId !== nativeThreadId ||
+                (subagent !== undefined && existing.subagentsFromEarlierProcesses.has(subagent)))
+            ) {
+              return {
+                status: "interrupted" as const,
+                completedAt: yield* DateTime.now,
+                result: null,
+              };
+            }
+            if (subagent === undefined) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent has no known owning task to confirm its outcome.",
+              });
+            }
             if (
               existing === null ||
               existing.nativeThreadId !== nativeThreadId ||

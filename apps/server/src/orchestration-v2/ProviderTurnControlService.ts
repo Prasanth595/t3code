@@ -9,7 +9,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -187,12 +187,11 @@ export const layer: Layer.Layer<
             : yield* sessions.get(input.providerSessionId);
           if (Option.isNone(session)) {
             if (input.subagent !== undefined) {
-              return yield* new ProviderTurnControlError({
-                threadId: input.threadId,
-                operation: "interrupt",
-                providerTurnId: input.providerTurnId,
-                cause: "No live provider session can confirm this subagent's outcome.",
-              });
+              return {
+                status: "interrupted" as const,
+                completedAt: yield* DateTime.now,
+                result: null,
+              };
             }
             return;
           }

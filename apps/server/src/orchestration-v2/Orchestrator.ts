@@ -9303,7 +9303,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const ended = yield* endOrphanedNativeSubagent({
           projection,
           subagentId: subagent.id,
-          result: outcome.result,
+          ...(outcome.status === "interrupted" ? {} : { result: outcome.result }),
           status: outcome.status,
           completedAt: outcome.completedAt,
           now,

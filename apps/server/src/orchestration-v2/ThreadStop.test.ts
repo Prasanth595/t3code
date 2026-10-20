@@ -1133,7 +1133,7 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
 );
 
 it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)(
-  "a native child Stop only settles a confirmed %s outcome and preserves its owner and sibling",
+  "a native child Stop settles a %s outcome and preserves its owner and sibling",
   (providerState) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1156,6 +1156,7 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
           nativeId: "claude-task",
           strength: "strong" as const,
         },
+        result: "Retained partial native result",
         status: "running" as const,
         startedAt: now,
       };
@@ -1254,16 +1255,14 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       });
       yield* send(threadId, "queued", "queue_after_active");
       const stateBefore = yield* threadState(threadId);
+      const messagesBefore = (yield* orchestrator.getThreadProjection(threadId)).messages;
       const eventStore = yield* EventStore.EventStoreV2;
       const afterSequence = yield* eventStore.latestSequence({ threadId });
-      const confirmedStatus =
-        providerState === "completed" || providerState === "failed" || providerState === "cancelled"
-          ? providerState
-          : null;
+      const expectedStatus = providerState === "missing session" ? "interrupted" : providerState;
       const confirmedOutcome =
-        confirmedStatus === null
+        providerState === "missing session"
           ? undefined
-          : { status: confirmedStatus, completedAt: now, result: "Actual provider outcome" };
+          : { status: providerState, completedAt: now, result: "Actual provider outcome" };
       const commandId = CommandId.make("stop-native-child");
       yield* orchestrator.dispatch({
         type: "subagent.stop",
@@ -1300,6 +1299,7 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       assert.isTrue(Exit.isFailure(unrelated));
       yield* TestClock.adjust("1 second");
       yield* sql`DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${commandId}`;
+      const completedAt = providerState === "missing session" ? yield* DateTime.now : now;
       if (providerState === "missing session") {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         yield* worker.drain();
@@ -1315,34 +1315,12 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
       }
       const settled = yield* orchestrator.getThreadProjection(threadId);
       const cancelled = settled.subagents.find((task) => task.id === subagent.id)!;
-      if (confirmedOutcome === undefined) {
-        const events = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
-        assert.isFalse(
-          events.some(
-            ({ event }) =>
-              (event.type === "subagent.updated" ||
-                event.type === "node.updated" ||
-                event.type === "turn-item.updated") &&
-              ["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status),
-          ),
-        );
-        assert.equal(cancelled.status, "running");
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(childRoot.threadId)).nodes.find(
-            (node) => node.id === childRoot.id,
-          )?.status,
-          "running",
-        );
-        assert.deepEqual(yield* threadState(threadId), stateBefore);
-        return;
-      }
-
       const repaired = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
       const terminal = repaired.flatMap(({ event }) =>
         (event.type === "subagent.updated" ||
           event.type === "node.updated" ||
           event.type === "turn-item.updated") &&
-        event.payload.status === confirmedStatus
+        event.payload.status === expectedStatus
           ? [event]
           : [],
       );
@@ -1355,29 +1333,32 @@ it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)
         assert.equal(event.nodeId, subagent.id);
         assert.equal(
           DateTime.toEpochMillis(event.payload.completedAt!),
-          DateTime.toEpochMillis(confirmedOutcome!.completedAt),
+          DateTime.toEpochMillis(completedAt),
         );
         if (event.type === "subagent.updated" || event.type === "turn-item.updated") {
           assert.isDefined(event.payload.updatedAt);
         }
       }
 
-      assert.equal(cancelled.status, confirmedStatus);
+      assert.equal(cancelled.status, expectedStatus);
       assert.isNotNull(cancelled.completedAt);
       assert.equal(
         DateTime.toEpochMillis(cancelled.completedAt!),
-        DateTime.toEpochMillis(confirmedOutcome!.completedAt),
+        DateTime.toEpochMillis(completedAt),
       );
-      assert.equal(cancelled.result, confirmedOutcome!.result);
+      assert.equal(cancelled.result, confirmedOutcome?.result ?? subagent.result);
+      assert.deepEqual(settled.messages, messagesBefore);
+      assert.equal(settled.runs.find((candidate) => candidate.id === run.id)?.status, "completed");
       assert.equal(
         settled.turnItems.find((candidate) => candidate.id === item.id)?.status,
-        confirmedStatus,
+        expectedStatus,
       );
       const child = yield* orchestrator.getThreadProjection(childRoot.threadId);
-      assert.equal(child.nodes.find((node) => node.id === childRoot.id)?.status, confirmedStatus);
+      assert.equal(child.nodes.find((node) => node.id === childRoot.id)?.status, expectedStatus);
       assert.isNotNull(child.nodes.find((node) => node.id === childRoot.id)?.completedAt);
       assert.equal(settled.subagents.find((task) => task.id === sibling.id)?.status, "running");
       assert.deepEqual(yield* threadState(threadId), stateBefore);
+      if (confirmedOutcome === undefined) return;
       yield* TestClock.adjust("1 second");
       const resumedAt = yield* DateTime.now;
       yield* projections.apply({

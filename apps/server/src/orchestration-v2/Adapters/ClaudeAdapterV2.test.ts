@@ -11927,6 +11927,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("acknowledges an orphaned native Stop when no query owns the recorded thread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const outcome = yield* harness.runtime.stopSubagent!({
+          providerThread: harness.providerThread,
+          nativeTaskId: "historical-orphan",
+        });
+        assert.equal(outcome?.status, "interrupted");
+        assert.isNull(outcome?.result);
+        assert.deepEqual(outcome?.completedAt, yield* DateTime.now);
+        assert.lengthOf(harness.offeredMessages, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const makeStopFixture = (options?: Parameters<typeof makeWakeHarnessWithOptions>[0]) =>
     Effect.gen(function* () {
       const requests = yield* Queue.unbounded<void>();
@@ -12002,6 +12022,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         requests,
       };
     });
+
+  it.effect("only acknowledges ownership loss when the recorded query is absent", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeStopFixture();
+        const unknown = yield* Effect.exit(
+          fixture.runtime.stopSubagent!({
+            providerThread: fixture.providerThread,
+            nativeTaskId: "unknown-live-task",
+          }),
+        );
+        assert.isTrue(Exit.isFailure(unknown));
+        const outcome = yield* fixture.runtime.stopSubagent!({
+          providerThread: {
+            ...fixture.providerThread,
+            nativeThreadRef: {
+              ...fixture.providerThread.nativeThreadRef!,
+              nativeId: "historical-native-thread",
+            },
+          },
+          nativeTaskId: "stop-agent",
+        });
+        assert.equal(outcome?.status, "interrupted");
+        assert.isNull(outcome?.result);
+        assert.deepEqual(outcome?.completedAt, yield* DateTime.now);
+        assert.isTrue(yield* fixture.hasPendingBackgroundWork);
+        assert.equal(yield* Queue.size(fixture.requests), 0);
+        assert.equal(
+          fixture.events.findLast((event) => event.type === "subagent.updated")?.subagent.status,
+          "running",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect.each([
     [false, "no notification"],

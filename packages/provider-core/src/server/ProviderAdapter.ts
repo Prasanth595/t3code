@@ -542,7 +542,7 @@ export interface ProviderAdapterV2McpApps {
 }
 
 export type ProviderAdapterV2SubagentOutcome = {
-  readonly status: "completed" | "failed" | "cancelled";
+  readonly status: "completed" | "failed" | "cancelled" | "interrupted";
   readonly completedAt: NonNullable<OrchestrationV2Subagent["completedAt"]>;
   readonly result: OrchestrationV2Subagent["result"];
 };
