@@ -112,14 +112,13 @@ jobs:
     steps:
       # windows-11-arm keeps the workspace, TEMP, and pnpm store on its
       # network-attached C: disk and leaves a local NVMe disk unformatted. Run
-      # from that disk as D:, which the image already excludes from Defender
+      # from that disk as a D: Dev Drive; D: is already excluded from Defender
       # (real-time scanning stays on there because tamper protection blocks
-      # the image's attempt to disable it). In benchmarks a cold install went
-      # from 177-250s to 54s, close to windows-2025 x64's 43s, and a whole
-      # unsigned arm64 job from 613-733s to 460s. The junction
-      # keeps every GITHUB_WORKSPACE path unchanged, and the store shares the
-      # volume so pnpm can still hard link. Without a raw NVMe disk the job
-      # stays on C:.
+      # the image's attempt to disable it). In a full unsigned arm64 job this
+      # cut dependency install from 269s to 63s and the job from 571s to 320s;
+      # NTFS on the same disk measured the same. The junction keeps every
+      # GITHUB_WORKSPACE path unchanged, and the store shares the volume so
+      # pnpm can still hard link. Without a raw NVMe disk the job stays on C:.
       - name: Use local NVMe for Windows ARM builds
         if: inputs.platform == 'win' && inputs.arch == 'arm64'
         shell: powershell
@@ -138,7 +137,7 @@ jobs:
           $disk |
             Initialize-Disk -PartitionStyle GPT -PassThru |
             New-Partition -DriveLetter D -UseMaximumSize |
-            Format-Volume -FileSystem NTFS -NewFileSystemLabel Work -Confirm:$false -Force |
+            Format-Volume -DevDrive -FileSystem ReFS -NewFileSystemLabel DevDrive -Confirm:$false -Force |
             Out-Null
           New-Item -ItemType Directory -Force -Path D:\workspace, D:\tmp, D:\pnpm-store | Out-Null
           # This shell starts inside the empty workspace, which blocks removing it.
