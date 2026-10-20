@@ -125,15 +125,16 @@ describe("buildTraitsTriggerDisplay", () => {
       buildTraitsTriggerDisplay({
         provider: ProviderDriverKind.make("cursor"),
         descriptors: [
-          { ...EFFORT, id: "reasoning" },
+          CONTEXT_WINDOW,
+          { ...EFFORT, id: "reasoning_effort" },
           fastModeDescriptor(true),
           { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
         ],
-        primarySelectDescriptorId: "reasoning",
+        primarySelectDescriptorId: CONTEXT_WINDOW.id,
         ultrathinkPromptControlled: false,
         fastModeIndicator: "text",
       }),
-    ).toEqual({ label: "High Fast · Thinking On", speedIcon: null });
+    ).toEqual({ label: "1M · High Fast · Thinking On", speedIcon: null });
   });
 
   it.each([true, false])("keeps boolean thinking %s independent of Fast", (currentValue) => {
