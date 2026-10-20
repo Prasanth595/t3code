@@ -6935,11 +6935,8 @@ export default function ChatView(props: ChatViewProps) {
         sendInFlightRef.current = false;
         resetLocalDispatch();
         releasedComposer = true;
-        try {
-          await starts;
-        } finally {
-          releaseStarts();
-        }
+        // Not try/finally: React Compiler skips components that use it.
+        await starts.finally(releaseStarts);
         if (startedCount > 0) {
           toastManager.add(
             stackedThreadToast({
