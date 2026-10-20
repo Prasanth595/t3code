@@ -252,6 +252,52 @@ describe("Pi MCP tool exposure", () => {
     assert.include(bridge.getActiveTools(), "mcp__t3-code__preview_snapshot");
   });
 
+  it("declares only called T3 tools for gateways that opt out of eager schemas", async () => {
+    const bridge = await loadMcpBridge({
+      modern: true,
+      toolSearchAvailable: true,
+      gatewayTools: "called",
+    });
+    const messages: Array<{
+      role: string;
+      content: Array<{ type: string; name?: string }>;
+    }> = [];
+    const event = { systemPrompt: "" };
+    const gatewayContext = {
+      model: { api: "openai-completions" },
+      sessionManager: { buildSessionContext: () => ({ messages }) },
+      ui: { notify: assert.fail },
+    };
+    await bridge.handlers.get("session_start")!(event, gatewayContext);
+    await bridge.handlers.get("before_agent_start")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), ["read", "tool_search"]);
+
+    messages.push(
+      { role: "user", content: [{ type: "text" }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text" },
+          { type: "toolCall", name: "mcp__t3-code__preview_snapshot" },
+          { type: "toolCall", name: "bash" },
+        ],
+      },
+    );
+    await bridge.handlers.get("model_select")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), [
+      "read",
+      "tool_search",
+      "mcp__t3-code__preview_snapshot",
+    ]);
+    bridge.restoreActiveTools(["read"]);
+    await bridge.handlers.get("session_tree")!(event, gatewayContext);
+    assert.deepEqual(bridge.getActiveTools(), [
+      "read",
+      "tool_search",
+      "mcp__t3-code__preview_snapshot",
+    ]);
+  });
+
   it.each(["legacy Pi", "disabled tool search"])(
     "keeps tool execution available with %s",
     async (mode) => {

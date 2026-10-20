@@ -8,6 +8,7 @@ import {
   PI_T3_MCP_EXTENSION_FILENAME,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
+  T3_PI_GATEWAY_TOOLS_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
@@ -105,6 +106,21 @@ describe("pi T3 MCP injection", () => {
     });
 
     assert.equal(launch.env[T3_PI_RUNTIME_MODE_ENV], "approval-required");
+  });
+
+  it("passes the completion gateway tool opt-out only to the T3 bridge", () => {
+    const launch = (options: { readonly eagerCompletionGatewayTools?: boolean }) =>
+      buildPiRpcLaunch({
+        launchArgs: [],
+        environment: { [T3_PI_GATEWAY_TOOLS_ENV]: "called" },
+        mcpSession,
+        extensionPath: "/tmp/cache/pi-t3-mcp-extension.ts",
+        ...options,
+      }).env[T3_PI_GATEWAY_TOOLS_ENV];
+
+    assert.isUndefined(launch({}));
+    assert.isUndefined(launch({ eagerCompletionGatewayTools: true }));
+    assert.equal(launch({ eagerCompletionGatewayTools: false }), "called");
   });
 
   it("forces tools and user extensions off for unattended text generation", () => {

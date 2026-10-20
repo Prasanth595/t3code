@@ -115,6 +115,7 @@ const settings = {
   enabled: true,
   binaryPath: "pi",
   launchArgs: "",
+  eagerCompletionGatewayTools: true,
   customModels: [],
 } as const;
 

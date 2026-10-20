@@ -67,7 +67,13 @@ it.effect("puts linked source control context in the Pi thread title prompt", ()
   Effect.gen(function* () {
     const pi = yield* makeFakePi(encodeJsonLine({ title: "Route Reset Credits Through Hub" }));
     const textGeneration = yield* makePiTextGeneration(
-      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {
+        enabled: true,
+        binaryPath: "pi",
+        launchArgs: "",
+        eagerCompletionGatewayTools: true,
+        customModels: [],
+      },
       {},
     ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
 
@@ -90,7 +96,13 @@ it.effect("names the model and the disabled extensions when Pi cannot load it", 
   Effect.gen(function* () {
     const pi = yield* makeFakePi("", "Model not found: demo/demo-model");
     const textGeneration = yield* makePiTextGeneration(
-      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {
+        enabled: true,
+        binaryPath: "pi",
+        launchArgs: "",
+        eagerCompletionGatewayTools: true,
+        customModels: [],
+      },
       {},
     ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
 
