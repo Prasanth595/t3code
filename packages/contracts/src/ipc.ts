@@ -952,6 +952,7 @@ export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
   tabId: DesktopPreviewTabIdSchema,
   zoomFactor: Schema.optional(Schema.Number.check(Schema.isGreaterThan(0))),
   colorScheme: Schema.optional(DesktopPreviewColorSchemeSchema),
+  audioMuted: Schema.optional(Schema.Boolean),
   serverTab: Schema.optional(
     Schema.Struct({ threadId: TrimmedNonEmptyString, tabId: TrimmedNonEmptyString }),
   ),
@@ -960,6 +961,7 @@ export const DesktopPreviewCreateTabInputSchema = Schema.Struct({
 export interface DesktopPreviewTabDefaults {
   readonly zoomFactor?: number | undefined;
   readonly colorScheme?: DesktopPreviewColorScheme | undefined;
+  readonly audioMuted?: boolean | undefined;
   readonly serverTab?: { readonly threadId: string; readonly tabId: string } | undefined;
 }
 

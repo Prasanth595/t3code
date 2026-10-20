@@ -1274,3 +1274,12 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("browserDefaultAudioMuted", () => {
+  it("defaults off and accepts an opt-in", () => {
+    expect(decodeClientSettings({}).browserDefaultAudioMuted).toBe(false);
+    expect(decodeClientSettingsPatch({ browserDefaultAudioMuted: true })).toMatchObject({
+      browserDefaultAudioMuted: true,
+    });
+  });
+});
