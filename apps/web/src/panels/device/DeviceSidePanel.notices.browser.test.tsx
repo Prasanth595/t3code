@@ -231,7 +231,7 @@ describe("DevicePanel thread switches", () => {
 
     await show(threadA);
     expect(startButton()?.disabled).toBe(false);
-    expect(errors()).toHaveLength(1);
+    expect(errors()).toHaveLength(0);
 
     await show(target);
     expect(startButton()?.disabled).toBe(false);

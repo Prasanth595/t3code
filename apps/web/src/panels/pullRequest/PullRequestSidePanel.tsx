@@ -4,13 +4,15 @@ import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDeta
 import { PullRequestDetailGhost } from "~/components/pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "~/components/pullRequest/PullRequestsUnavailableState";
 import type { ShortcutMatchContext } from "~/keybindings";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironment } from "~/state/environments";
 
 import { usePanelHost } from "../panelHost";
 
 interface PullRequestSidePanelProps {
   reference: PullRequestRef;
+  initialTab?: PullRequestDetailTab;
+  onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
   context: "page" | "thread";
   /** True only while this surface is the visible, active tab. */
   shortcutsEnabled: boolean;
@@ -27,6 +29,8 @@ export default function PullRequestSidePanel({
   shortcutsEnabled,
   getShortcutContext,
   onBack,
+  initialTab = "summary",
+  onTabChange,
 }: PullRequestSidePanelProps) {
   const { threadRef, composerDraftTarget } = usePanelHost();
   const serverConfig = useEnvironment(threadRef.environmentId)?.serverConfig ?? null;
@@ -56,6 +60,8 @@ export default function PullRequestSidePanel({
       reference={reference}
       context={context}
       composerDraftTarget={composerDraftTarget}
+      initialTab={initialTab}
+      onTabChange={onTabChange}
       onBack={onBack}
     />
   );

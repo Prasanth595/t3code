@@ -383,8 +383,8 @@ export const make = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
-      minHeight: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
+      minWidth: 840,
+      minHeight: 620,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),

@@ -292,6 +292,26 @@ it.layer(NodeServices.layer)("PluginSupervisor", (it) => {
       }),
     );
 
+    it.effect("cancels an interrupted caller and releases its concurrency slot", () =>
+      Effect.gen(function* () {
+        const supervisor = yield* makeSupervisor({ maxConcurrentCalls: 1 });
+        const subscription = yield* supervisor.subscribe;
+        const { registration } = yield* preparePlugin("test.interrupted-call");
+        const pluginId = registration.manifest.id;
+        yield* supervisor.enable(registration);
+        const pid = pidOf(yield* supervisor.invoke(pluginId, "ping", null));
+        const call = yield* supervisor
+          .invoke(pluginId, "cooperative", null)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* awaitLog(subscription, pluginId, "cooperative-started");
+        yield* Fiber.interrupt(call);
+        yield* awaitLog(subscription, pluginId, "cooperative-settled");
+        expect(pidOf(yield* supervisor.invoke(pluginId, "ping", null))).toBe(pid);
+        yield* supervisor.disable(pluginId);
+        expect(isProcessAlive(pid)).toBe(false);
+      }),
+    );
+
     it.effect("fails in-flight calls on disable and drops the plugin's late answer", () =>
       Effect.gen(function* () {
         const supervisor = yield* makeSupervisor();

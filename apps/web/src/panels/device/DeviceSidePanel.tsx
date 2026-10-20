@@ -1,5 +1,10 @@
 import { DeviceHostUpdates } from "~/components/device/DeviceHostUpdates";
-import type { DevicePlatform, DeviceServiceState, DeviceSummary } from "@t3tools/contracts";
+import type {
+  DevicePlatform,
+  DeviceServiceState,
+  DeviceSummary,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 
@@ -15,7 +20,11 @@ import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "~/components/device/DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness } from "~/components/device/DeviceSetup";
+import {
+  DeviceSetup,
+  deviceHubReadiness,
+  isAndroidDiscoveryUncertain,
+} from "~/components/device/DeviceSetup";
 import { DeviceWorkspace } from "~/components/device/DeviceWorkspace";
 import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
 import { usePanelHost } from "../panelHost";
@@ -44,6 +53,11 @@ export default function DeviceSidePanel(props: {
     readonly pending: DeviceSummary | null;
     readonly error: string | null;
   } | null>(null);
+  const [operationScope, setOperationScope] = useState(scope);
+  if (operationScope !== scope) {
+    setOperationScope(scope);
+    setOperation(null);
+  }
   const pendingDevice = operation?.scope === scope ? operation.pending : null;
   const operationError = operation?.scope === scope ? operation.error : null;
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
@@ -310,6 +324,7 @@ export default function DeviceSidePanel(props: {
                   </div>
                 ) : null}
                 {hostReady &&
+                !isAndroidDiscoveryUncertain(state) &&
                 !state.devices.some((device) => device.platform === "android") &&
                 !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                   <p className="max-w-sm text-xs">
