@@ -215,6 +215,7 @@ export const layerRuntime = (input: {
           namedProjectsRoot: path.join(input.worktreesDir, "..", "projects"),
           scratchRoot: Effect.succeedNone,
           folderForThread: () => Effect.succeedNone,
+          isScratchProject: () => Effect.succeed(false),
         }),
       );
       const layerLaunch = ThreadLaunch.layer.pipe(
