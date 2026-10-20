@@ -88,6 +88,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -2878,7 +2879,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               createdBy: "agent",
               creationSource: "provider",
             });
-            const subagent = {
+            const subagent: CodexSubagentThreadContext = {
               parentContext: input.context,
               providerThread,
               childThread,
@@ -2895,7 +2896,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }),
               turnItemOrdinal,
               task,
-            } satisfies CodexSubagentThreadContext;
+            };
 
             yield* Ref.update(subagentThreads, (current) => {
               const updated = new Map(current);
@@ -3002,45 +3003,66 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
             if (task.model === null) {
-              yield* client.raw
-                .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
-                .pipe(
-                  Effect.flatMap(decodeCodexChildThread),
-                  Effect.map((response): typeof CodexChildSelection.Type | null =>
-                    response.thread.id === input.nativeThreadId && response.thread.model?.trim()
-                      ? {
-                          thread: response.thread,
-                          model: response.thread.model,
-                          reasoningEffort: response.thread.reasoningEffort,
-                        }
-                      : null,
-                  ),
-                  Effect.catch(() => Effect.succeed(null)),
-                  Effect.flatMap((response) =>
-                    response === null
-                      ? client.raw
-                          .request("thread/resume", {
-                            threadId: input.nativeThreadId,
-                            excludeTurns: true,
-                          })
-                          .pipe(Effect.flatMap(decodeCodexChildModel))
-                      : Effect.succeed(response),
-                  ),
-                  Effect.timeout("5 seconds"),
-                  Effect.flatMap((response) =>
-                    response.thread.id === input.nativeThreadId &&
-                    !subagentSelections.has(input.nativeThreadId)
-                      ? updateSubagentSelection(
-                          input.nativeThreadId,
-                          response.model,
-                          response.reasoningEffort,
-                          response.serviceTier,
-                        )
-                      : Effect.void,
-                  ),
-                  Effect.catch(() => Effect.void),
-                  Effect.forkIn(scope),
+              const shouldLookup = () =>
+                !subagentSelections.has(input.nativeThreadId) &&
+                subagent.task.status !== "interrupted" &&
+                subagent.task.status !== "failed" &&
+                subagent.task.status !== "cancelled";
+              yield* Effect.gen(function* () {
+                if (!shouldLookup()) return;
+                const read = yield* client.raw
+                  .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
+                  .pipe(
+                    Effect.flatMap(decodeCodexChildThread),
+                    Effect.map((response): typeof CodexChildSelection.Type | null =>
+                      response.thread.id === input.nativeThreadId && response.thread.model?.trim()
+                        ? {
+                            thread: response.thread,
+                            model: response.thread.model,
+                            reasoningEffort: response.thread.reasoningEffort,
+                          }
+                        : null,
+                    ),
+                    Effect.catch(() => Effect.succeed(null)),
+                  );
+                if (!shouldLookup()) return;
+                const response =
+                  read ??
+                  (yield* client.raw
+                    .request("thread/resume", {
+                      threadId: input.nativeThreadId,
+                      excludeTurns: true,
+                    })
+                    .pipe(Effect.flatMap(decodeCodexChildModel)));
+                if (response.thread.id !== input.nativeThreadId || !shouldLookup()) return;
+                yield* updateSubagentSelection(
+                  input.nativeThreadId,
+                  response.model,
+                  response.reasoningEffort,
+                  response.serviceTier,
                 );
+              }).pipe(
+                Effect.retry({
+                  times: 2,
+                  schedule: Schedule.spaced("250 millis"),
+                  while: (error) =>
+                    shouldLookup() &&
+                    error._tag === "CodexAppServerRequestError" &&
+                    error.code === -32603 &&
+                    /rollout at .+ is empty\b/.test(error.errorMessage),
+                }),
+                Effect.timeout("5 seconds"),
+                Effect.catch((error) =>
+                  Effect.logWarning("orchestration-v2.codex-child-model-lookup-failed", {
+                    nativeThreadId: input.nativeThreadId,
+                    errorTag: error._tag,
+                    ...(error._tag === "CodexAppServerRequestError"
+                      ? { errorCode: error.code }
+                      : {}),
+                  }),
+                ),
+                Effect.forkIn(scope),
+              );
             }
           });
 

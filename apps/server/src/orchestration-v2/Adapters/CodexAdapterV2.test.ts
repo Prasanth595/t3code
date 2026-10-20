@@ -8281,6 +8281,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each([
+    { name: "recovers transient empty rollouts", failures: 1, emptyRollout: true, attempts: 2 },
+    {
+      name: "bounds persistent empty rollouts",
+      failures: Infinity,
+      emptyRollout: true,
+      attempts: 3,
+    },
+    {
+      name: "does not retry unrelated errors",
+      failures: Infinity,
+      emptyRollout: false,
+      attempts: 1,
+    },
+  ])("$name during child metadata lookup", ({ failures, emptyRollout, attempts }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const firstRead = yield* Deferred.make<void>();
+        const modelReported = yield* Deferred.make<void>();
+        const requests: Array<string> = [];
+        let resumes = 0;
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.model === "gpt-6-luna"
+              ? Deferred.succeed(modelReported, undefined)
+              : Effect.void,
+          undefined,
+          (threadId, method) =>
+            Effect.gen(function* () {
+              assert.equal(threadId, RESUME_CHILD_THREAD);
+              requests.push(method);
+              if (method === "thread/read") return { thread: { id: threadId }, model: null };
+              resumes++;
+              yield* Deferred.succeed(firstRead, undefined);
+              if (resumes <= failures) {
+                return yield* new CodexError.CodexAppServerRequestError({
+                  method,
+                  code: -32603,
+                  errorMessage: emptyRollout
+                    ? "failed to read session metadata: rollout at <child-rollout> is empty"
+                    : "failed to read thread: permission denied",
+                });
+              }
+              return {
+                thread: { id: threadId },
+                model: "gpt-6-luna",
+                reasoningEffort: "high",
+                serviceTier: "priority",
+              };
+            }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-metadata-retry"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        yield* Deferred.await(firstRead);
+        yield* TestClock.adjust("1 second");
+        yield* harness.firstTerminal;
+        assert.deepEqual(requests.slice(0, 2), ["thread/read", "thread/resume"]);
+        assert.equal(resumes, attempts);
+        assert.equal(yield* Deferred.isDone(modelReported), failures === 1);
+        const child = harness.subagentUpdates().at(-1)!.subagent;
+        assert.equal(child.model, failures === 1 ? "gpt-6-luna" : null);
+        if (failures === 1) {
+          assert.deepEqual(child.modelSelection?.options, [
+            { id: "reasoningEffort", value: "high" },
+            { id: "serviceTier", value: "priority" },
+          ]);
+        }
+        const settledRequests = requests.length;
+        yield* TestClock.adjust("10 seconds");
+        assert.equal(requests.length, settledRequests);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["failed", "malformed", "wrong child", "blank model"] as const)(
     "resumes child metadata after a %s read",
     (readResult) =>
@@ -8350,6 +8436,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const releaseMetadata = yield* Deferred.make<void>();
           const observed = yield* Deferred.make<void>();
           const model = "gpt-5.6-sol";
+          let resumes = 0;
           const notification: CodexReplay.CodexAppServerReplayEntry = {
             type: "emit_inbound",
             frame: {
@@ -8413,10 +8500,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 ? Deferred.succeed(observed, undefined)
                 : Effect.void,
             undefined,
-            (threadId) =>
-              Deferred.await(releaseMetadata).pipe(
-                Effect.as({ thread: { id: threadId }, model: "gpt-6-astra" }),
-              ),
+            (threadId, requestMethod) =>
+              Effect.gen(function* () {
+                if (requestMethod === "thread/read") return {};
+                resumes++;
+                yield* Deferred.await(releaseMetadata);
+                if (method === "model/rerouted") {
+                  return yield* CodexError.CodexAppServerRequestError.internalError(
+                    "rollout at <child-rollout> is empty",
+                  );
+                }
+                return { thread: { id: threadId }, model: "gpt-6-astra" };
+              }),
           );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -8432,6 +8527,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "completed");
           yield* Deferred.succeed(releaseMetadata, undefined);
           yield* TestClock.adjust("30 seconds");
+          assert.equal(resumes, 1);
           assert.equal(harness.subagentUpdates().at(-1)?.subagent.model, model);
           assert.deepEqual(harness.subagentUpdates().at(-1)?.subagent.modelSelection?.options, [
             { id: "reasoningEffort", value: "low" },
@@ -8612,6 +8708,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ([nativeStatus, expectedStatus]) =>
       Effect.scoped(
         Effect.gen(function* () {
+          const stopsLookup = ["interrupted", "cancelled", "failed"].includes(expectedStatus);
+          const metadataStarted = yield* Deferred.make<void>();
+          const releaseMetadata = yield* Deferred.make<void>();
+          let resumes = 0;
           const marker = yield* Deferred.make<void>();
           const firstCompletion = yield* Deferred.make<void>();
           const stateEntry = (
@@ -8683,7 +8783,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               afterMs: 100,
             });
           } else {
-            entries.push(stateEntry(nativeStatus, "status-update"));
+            entries.push({
+              ...stateEntry(nativeStatus, "status-update"),
+              ...(stopsLookup ? { afterMs: 1 } : {}),
+            });
           }
           if (nativeStatus === "late-activity-completed") {
             entries.push({
@@ -8728,6 +8831,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 : event.type === "subagent.updated" && event.subagent.status === "completed"
                   ? Deferred.succeed(firstCompletion, undefined)
                   : Effect.void,
+            undefined,
+            stopsLookup
+              ? (threadId, method) =>
+                  Effect.gen(function* () {
+                    if (method === "thread/read") return { thread: { id: threadId } };
+                    resumes++;
+                    yield* Deferred.succeed(metadataStarted, undefined);
+                    yield* Deferred.await(releaseMetadata);
+                    return yield* CodexError.CodexAppServerRequestError.internalError(
+                      "rollout at <child-rollout> is empty",
+                    );
+                  })
+              : undefined,
           );
           yield* harness.runtime.startTurn(
             makeCodexTestTurnInput({
@@ -8738,11 +8854,20 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: RESUME_PROMPT,
             }),
           );
+          if (stopsLookup) {
+            yield* Deferred.await(metadataStarted);
+            yield* TestClock.adjust("1 millis");
+          }
           if (nativeStatus === "stale-running" || nativeStatus === "duplicate-completed") {
             yield* Deferred.await(firstCompletion);
             yield* TestClock.adjust("100 millis");
           }
           yield* Deferred.await(marker);
+          if (stopsLookup) {
+            yield* Deferred.succeed(releaseMetadata, undefined);
+            yield* TestClock.adjust("1 second");
+            assert.equal(resumes, 1);
+          }
           const latest = harness.subagentUpdates().at(-1)!.subagent;
           assert.equal(latest.status, expectedStatus);
           if (nativeStatus === "duplicate-completed") {
