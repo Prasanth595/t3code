@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import type { AddToChatResult } from "~/components/files/FileBrowserPanel";
 import { useComposerHandleContext } from "~/composerHandleContext";
@@ -22,7 +22,7 @@ export function useScopeLifetime(scopeKey: string): () => boolean {
       liveRef.current = null;
     };
   }, [visit]);
-  return useCallback(() => liveRef.current === visit, [visit]);
+  return () => liveRef.current === visit;
 }
 
 /**
@@ -32,15 +32,12 @@ export function useScopeLifetime(scopeKey: string): () => boolean {
  */
 export function useScopedComposerInsert(isScopeCurrent: () => boolean) {
   const composerRef = useComposerHandleContext();
-  return useCallback(
-    (text: string): AddToChatResult => {
-      if (!isScopeCurrent()) return "dropped";
-      const composer = composerRef?.current;
-      if (!composer) return "no-composer";
-      return composer.insertTextAtEnd(text, { ensureLeadingBoundary: true })
-        ? "inserted"
-        : "not-ready";
-    },
-    [composerRef, isScopeCurrent],
-  );
+  return (text: string): AddToChatResult => {
+    if (!isScopeCurrent()) return "dropped";
+    const composer = composerRef?.current;
+    if (!composer) return "no-composer";
+    return composer.insertTextAtEnd(text, { ensureLeadingBoundary: true })
+      ? "inserted"
+      : "not-ready";
+  };
 }

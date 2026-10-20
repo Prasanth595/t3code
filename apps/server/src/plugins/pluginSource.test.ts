@@ -112,6 +112,30 @@ it.layer(NodeServices.layer)("digestPluginSource", (it) => {
       }),
     );
 
+    it.effect.each(["wide", "deep"])("bounds empty directory trees (%s)", (shape) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* makeTree({});
+        for (let index = 0; index < 4; index++)
+          yield* fs.makeDirectory(
+            path.join(
+              directory,
+              shape === "wide"
+                ? `dir-${index}`
+                : Array(index + 1)
+                    .fill("dir")
+                    .join("/"),
+            ),
+            { recursive: true },
+          );
+        const error = yield* digestPluginSource(directory, { maxFiles: 3, maxBytes: 100 }).pipe(
+          Effect.flip,
+        );
+        expect(error.reason).toBe("it has more than 3 directories.");
+      }),
+    );
+
     it.effect("refuses trees past the file or byte limit", () =>
       Effect.gen(function* () {
         const directory = yield* makeTree({ "a.js": "12345", "b.js": "67890" });

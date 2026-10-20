@@ -96,12 +96,16 @@ export function RightPanelSurfaceContent(props: {
           id="pull-request"
           getShortcutContext={props.getShortcutContext}
           shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
-          key={`${surface.host ?? ""}:${surface.repository}#${surface.number}`}
+          key={`${scopedThreadKey(threadRef)}:${surface.id}`}
           reference={{
             projectId: surface.projectId as ProjectId,
             ...(surface.host ? { host: surface.host } : {}),
             repository: surface.repository,
             number: surface.number,
+          }}
+          initialTab={surface.detailTab ?? "summary"}
+          onTabChange={(tab) => {
+            useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}
           context={pullRequestPanelContext(
             {
@@ -138,6 +142,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <RegisteredSidePanel
           id="files"
+          openInShortcutEnabled={visible && props.activeSurfaceId === surface.id}
           key={`${props.environmentId}:${
             attachment ? `attachment:${attachment.id}` : files.workspaceRoot
           }`}
