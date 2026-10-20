@@ -71,6 +71,16 @@ describe("classifyReachability", () => {
         checkedAt,
       ),
     ).toMatchObject({ cause: "origin_unreachable" });
+    expect(
+      classifyReachability(
+        facts({
+          connector: { readyConnections: null, hostname: "env.example.test", protocol: null },
+          endpoint: { kind: "status", status: 502 },
+          edgeReachable: false,
+        }),
+        checkedAt,
+      ),
+    ).toMatchObject({ cause: "origin_unreachable" });
     // Failed DNS also fails the edge lookups.
     expect(
       classifyReachability(

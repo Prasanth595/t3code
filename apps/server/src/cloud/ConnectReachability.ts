@@ -25,6 +25,8 @@ const EDGE_CONNECT_TIMEOUT = Duration.seconds(5);
 const ENDPOINT_REQUEST_TIMEOUT = Duration.seconds(10);
 // cloudflared registers several connections within a few seconds; they are one change.
 const READINESS_CHANGE_DEBOUNCE = Duration.seconds(3);
+// Readiness changes miss failures and recoveries past cloudflared (DNS, origin, edge errors).
+const RECHECK_INTERVAL = Duration.minutes(5);
 
 export type EndpointProbe =
   | { readonly kind: "status"; readonly status: number }
@@ -84,10 +86,11 @@ export function classifyReachability(
       protocol: connector.protocol,
     };
   }
-  // The edge test is TCP only. With QUIC connections up, or with DNS already failing, a
-  // failed TCP test would hide the real cause.
+  // The edge test is TCP only. With QUIC connections up, a 502 from a working tunnel, or
+  // DNS already failing, a failed TCP test would hide the real cause.
   if (
     facts.edgeReachable === false &&
+    status !== 502 &&
     !(connector.readyConnections && connector.readyConnections > 0) &&
     endpoint?.kind !== "dns_failed"
   ) {
@@ -277,6 +280,11 @@ const make = Effect.gen(function* () {
   yield* runtime.readinessChanged.pipe(
     Stream.debounce(READINESS_CHANGE_DEBOUNCE),
     Stream.runForEach(() => check),
+    Effect.forkScoped,
+  );
+  yield* Effect.sleep(RECHECK_INTERVAL).pipe(
+    Effect.andThen(check),
+    Effect.forever,
     Effect.forkScoped,
   );
 
