@@ -77,17 +77,29 @@ const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
 const REPLACES_HOLDER =
   /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\brequire\s*\(|\bimport\s*\(/;
 // An `extra:` or `eas:` entry in a config that takes its id from app.json:
-// unless its value is an object that starts by spreading `config`'s own,
-// it replaces app.json's (`extra: {}` drops the id). The key may be quoted
+// unless its value is an object that starts by spreading that same entry
+// of `config` (`config.extra`, `config.extra.eas`; spreading the whole
+// config there puts the id elsewhere), it replaces app.json's (`extra: {}`
+// drops the id). The key may be quoted
 // or computed; a shorthand `extra` or `eas` entry replaces it too. More
 // entries than mentions are allowed are not read.
-const EXTRA_OR_EAS = /(?:\b(?:extra|eas)|["'`](?:extra|eas)["'`]\s*\]?)\s*:\s*/g;
+const EXTRA_OR_EAS = /(?:\b(extra|eas)|["'`](extra|eas)["'`]\s*\]?)\s*:\s*/g;
+const EXTRA_OF_CONFIG = String.raw`config(?:\s*\??\.\s*extra|\s*\[\s*["'\x60]extra["'\x60]\s*\])`;
+const EAS_OF_CONFIG =
+  EXTRA_OF_CONFIG + String.raw`(?:\s*\??\.\s*eas|\s*\[\s*["'\x60]eas["'\x60]\s*\])`;
+// The holder, and nothing more of it: no further property, call or operator.
+const HOLDER_END = String.raw`(?![\p{ID_Continue}$\u200c\u200d\\]|\s*[.?\[(])`;
+const HOLDER_AT = {
+  extra: new RegExp(EXTRA_OF_CONFIG + HOLDER_END, "uy"),
+  eas: new RegExp(EAS_OF_CONFIG + HOLDER_END, "uy"),
+};
 const SHORTHAND_EXTRA_OR_EAS = /(?<![.\p{ID_Continue}$])(?:extra|eas)\s*(?=[,}])/u;
 const keepsStaticExtra = (source: string): boolean => {
   if (SHORTHAND_EXTRA_OR_EAS.test(source)) return false;
   let entries = 0;
   for (const entry of source.matchAll(EXTRA_OR_EAS)) {
     if (++entries > MAX_MENTIONS) return false;
+    const holder = HOLDER_AT[(entry[1] ?? entry[2]) as "extra" | "eas"];
     let at = entry.index + entry[0].length;
     if (source[at] !== "{") return false;
     at++;
@@ -105,8 +117,8 @@ const keepsStaticExtra = (source: string): boolean => {
       if (!filler) break;
       at += filler[0].length;
     }
-    CONFIG_AT.lastIndex = at;
-    if (!CONFIG_AT.test(source)) return false;
+    holder.lastIndex = at;
+    if (!holder.test(source)) return false;
   }
   return true;
 };

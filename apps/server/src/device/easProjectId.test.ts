@@ -387,7 +387,7 @@ it.effect.each([
   {
     case: "gives no answer when a config has more extra entries than are read",
     files: {
-      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config, ${"extra: { ...config, ".repeat(40)}${"}".repeat(40)} } });`,
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config.extra, ${"extra: { ...config.extra, ".repeat(40)}${"}".repeat(40)} } });`,
       "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
     },
     expected: Option.none(),
@@ -402,6 +402,33 @@ it.effect.each([
       };`,
     },
     expected: Option.none(),
+  },
+  {
+    case: "gives no answer when an extra entry spreads the whole config, not its extra",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config } });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "gives no answer when an eas entry spreads the config's extra, not its eas",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({ ...config, extra: { ...config.extra, eas: { ...config.extra } } });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.none(),
+  },
+  {
+    case: "reads app.json's id through extra and eas entries that spread their own",
+    files: {
+      "app.config.js": `module.exports = ({ config }) => ({
+        ...config,
+        extra: { ...config?.["extra"], eas: { ...config.extra?.eas, build: { experimental: true } }, other: 1 },
+      });`,
+      "app.json": JSON.stringify({ expo: { extra: { eas: { projectId: ID_A } } } }),
+    },
+    expected: Option.some(ID_A),
   },
   {
     case: "gives no answer when a config spreads the config but replaces eas",
