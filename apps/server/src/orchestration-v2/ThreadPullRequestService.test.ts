@@ -171,14 +171,90 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     };
   };
 
+  const automaticPrCases = [
+    {
+      scenario: "종료 시점을 모르는 같은 브랜치",
+      sameBranch: true,
+      terminalAt: null,
+      latestUserAuthoredMessageAt: null,
+      keep: true,
+    },
+    {
+      scenario: "대화 생성 전에 종료",
+      sameBranch: true,
+      terminalAt: "2026-09-19T00:00:00.000Z",
+      latestUserAuthoredMessageAt: null,
+      keep: false,
+    },
+    {
+      scenario: "현재 작업 중 종료",
+      sameBranch: true,
+      terminalAt: "2026-09-21T00:00:00.000Z",
+      latestUserAuthoredMessageAt: null,
+      keep: true,
+    },
+    {
+      scenario: "원래 대화에서 종료 후 설명을 요청",
+      sameBranch: true,
+      terminalAt: "2026-09-21T00:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-09-22T00:00:00.000Z",
+      keep: true,
+    },
+    {
+      scenario: "잘못된 종료 시점",
+      sameBranch: true,
+      terminalAt: "invalid-date",
+      latestUserAuthoredMessageAt: null,
+      keep: true,
+    },
+    {
+      scenario: "작업 시작과 같은 시점에 종료",
+      sameBranch: true,
+      terminalAt: "2026-09-20T00:00:00.000Z",
+      latestUserAuthoredMessageAt: null,
+      keep: true,
+    },
+  ] as const;
+
   it.effect.each([
-    { state: "closed", sameBranch: false },
-    { state: "merged", sameBranch: false },
-    { state: "closed", sameBranch: true },
-    { state: "merged", sameBranch: true },
-  ] as const)(
-    "restores a $state automatic PR only for its own branch (sameBranch=$sameBranch)",
-    ({ state, sameBranch }) =>
+    ...(["closed", "merged"] as const).flatMap((state) => [
+      {
+        state,
+        scenario: "다른 브랜치의 저장된 PR",
+        sameBranch: false,
+        terminalAt: null,
+        latestUserAuthoredMessageAt: null,
+        detected: false,
+        saved: true,
+        keep: false,
+      },
+      ...automaticPrCases.flatMap((scenario) =>
+        [false, true].map((detected) => ({ ...scenario, state, detected, saved: true })),
+      ),
+      {
+        state,
+        scenario: "새 대화에서 과거 PR을 처음 발견",
+        sameBranch: true,
+        terminalAt: "2026-09-19T00:00:00.000Z",
+        latestUserAuthoredMessageAt: null,
+        detected: true,
+        saved: false,
+        keep: false,
+      },
+    ]),
+    {
+      state: "open" as const,
+      scenario: "재개방된 PR을 처음 발견",
+      sameBranch: true,
+      terminalAt: "2026-09-19T00:00:00.000Z",
+      latestUserAuthoredMessageAt: "2026-09-22T00:00:00.000Z",
+      detected: true,
+      saved: false,
+      keep: true,
+    },
+  ])(
+    "$state 자동 연결: $scenario (조회=$detected)",
+    ({ state, sameBranch, terminalAt, latestUserAuthoredMessageAt, detected, saved, keep }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const savedReference = {
@@ -190,8 +266,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           const thread = {
             ...threadShell("branch-pr-thread"),
             branch: "main",
-            branchPullRequest: savedReference,
+            branchPullRequest: saved ? savedReference : null,
             linkedPullRequest: savedReference,
+            latestUserAuthoredMessageAt:
+              latestUserAuthoredMessageAt === null
+                ? null
+                : DateTime.makeUnsafe(latestUserAuthoredMessageAt),
           };
           const project: OrchestrationProjectShell = {
             id: thread.projectId,
@@ -228,19 +308,41 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               getShell: () => Effect.succeed(Option.some(project)),
             }),
             Layer.mock(GitManager.GitManager)({
-              branchPullRequest: () => Effect.succeed(null),
+              branchPullRequest: () =>
+                Effect.succeed(
+                  detected
+                    ? {
+                        number: savedReference.number,
+                        url: savedReference.url,
+                        title: "Branch work",
+                        state,
+                        isDraft: false,
+                        headRef: thread.branch,
+                        baseRef: "release",
+                        updatedAt: "2026-09-23T00:00:00.000Z",
+                        closedAt: terminalAt,
+                        mergedAt: state === "merged" ? terminalAt : null,
+                        headSha: null,
+                        repositoryKey: "github.com/acme/project",
+                      }
+                    : null,
+                ),
             }),
             Layer.mock(PullRequestService.PullRequestService)({
               summary: () =>
-                Effect.succeed({
-                  ...savedReference,
-                  provider: SourceControlProviderKind.make("github"),
-                  title: "Previous branch work",
-                  state,
-                  headBranch: sameBranch ? thread.branch : "feature/previous-work",
-                  baseBranch: "release",
-                  updatedAt: "2026-09-19T00:00:00.000Z",
-                }),
+                detected
+                  ? Effect.die(new Error("이미 조회한 PR의 추가 원격 조회 실패"))
+                  : Effect.succeed({
+                      ...savedReference,
+                      provider: SourceControlProviderKind.make("github"),
+                      title: "Previous branch work",
+                      state,
+                      headBranch: sameBranch ? thread.branch : "feature/previous-work",
+                      baseBranch: "release",
+                      updatedAt: "2026-09-19T00:00:00.000Z",
+                      closedAt: terminalAt,
+                      mergedAt: state === "merged" ? terminalAt : null,
+                    }),
             }),
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
               resolve: () =>
@@ -274,14 +376,14 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             yield* service.drain;
           }).pipe(Effect.provide(dependencies));
 
-          if (sameBranch) {
+          if (keep === saved) {
             expect(commands).toEqual([]);
           } else {
             expect(commands).toHaveLength(1);
             expect(commands[0]).toMatchObject({
               type: "thread.pull-request.sync",
               threadId: thread.id,
-              branchPullRequest: null,
+              branchPullRequest: keep ? savedReference : null,
             });
             expect(commands[0]).not.toHaveProperty("linkedPullRequest");
           }

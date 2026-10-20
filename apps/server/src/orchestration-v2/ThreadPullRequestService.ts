@@ -7,6 +7,7 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ThreadShell,
+  type PullRequestSummary,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -61,6 +63,23 @@ function pullRequestMatchesProject(
     canonicalRepositoryKey(pullRequest.repositoryKey) ===
       canonicalRepositoryKey(project.repositoryIdentity.canonicalKey)
   );
+}
+
+function pullRequestPredatesThread(
+  thread: Pick<OrchestrationV2ThreadShell, "createdAt">,
+  pullRequest: Pick<PullRequestSummary, "state" | "mergedAt" | "closedAt">,
+): boolean {
+  const terminalAt =
+    pullRequest.state === "merged"
+      ? pullRequest.mergedAt
+      : pullRequest.state === "closed"
+        ? pullRequest.closedAt
+        : null;
+  if (terminalAt == null) return false;
+  const terminalMs = Date.parse(terminalAt);
+  if (Number.isNaN(terminalMs)) return false;
+
+  return terminalMs < DateTime.toEpochMillis(thread.createdAt);
 }
 
 export const resolveProjectForPullRequestDiscovery = Effect.fn(
@@ -213,9 +232,12 @@ export const make = Effect.gen(function* () {
 
           const plans = yield* Effect.forEach(group, (thread) =>
             Effect.gen(function* () {
-              let branchPullRequest = detectedReference;
+              let branchPullRequest =
+                detected !== null && pullRequestPredatesThread(thread, detected)
+                  ? null
+                  : detectedReference;
               if (
-                branchPullRequest === null &&
+                detectedReference === null &&
                 thread.branch !== null &&
                 thread.worktreePath === null &&
                 thread.branchPullRequest != null
@@ -225,7 +247,8 @@ export const make = Effect.gen(function* () {
                 });
                 if (
                   previous.headBranch === thread.branch &&
-                  (previous.state === "merged" || previous.state === "closed")
+                  (previous.state === "merged" || previous.state === "closed") &&
+                  !pullRequestPredatesThread(thread, previous)
                 ) {
                   branchPullRequest = thread.branchPullRequest;
                 }
