@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
 
+import { assertRuntimePin, type RuntimePin } from "./runtime-pin.ts";
 import { formatStamp, type ArtifactStamp } from "./stamp.ts";
 
 export const CANVAS_FORMAT = "nofun-canvas-artifact-bundle";
@@ -21,6 +22,8 @@ export const MANIFEST_KEYS = [
   "createdAt",
   "sha256",
 ] as const;
+/** Optional keys; `runtime` pins the No Fun UI runtime the page was built for (see runtime-pin.ts). */
+export const OPTIONAL_MANIFEST_KEYS = ["runtime"] as const;
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/;
 
@@ -69,12 +72,17 @@ const escapeHtml = (text: string) =>
     (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]!,
   );
 
-function stampMeta(stamp: ArtifactStamp): string {
-  return `<meta name="nofun-artifact" content="${escapeHtml(formatStamp(stamp))}">`;
+// A linked page names its runtime in the entry meta (`linked=<version>`, last piece), as the hosts
+// read it (Canvas `WebArtifactStamp`, the Notes viewer). Rewriting the compiler's meta from the
+// ArtifactStamp alone used to drop it, so the piece is carried here, from the same value that
+// goes into stamp.json and manifest.runtime.version.
+function stampMeta(stamp: ArtifactStamp, linked?: string): string {
+  const content = linked ? `${formatStamp(stamp)};linked=${linked}` : formatStamp(stamp);
+  return `<meta name="nofun-artifact" content="${escapeHtml(content)}">`;
 }
 
-function withStamp(html: string, stamp: ArtifactStamp): string {
-  const tag = stampMeta(stamp);
+function withStamp(html: string, stamp: ArtifactStamp, linked?: string): string {
+  const tag = stampMeta(stamp, linked);
   if (/<meta\s+name="nofun-artifact"\s+content="[^"]*"\s*\/?>/i.test(html)) {
     return html.replace(/<meta\s+name="nofun-artifact"\s+content="[^"]*"\s*\/?>/i, tag);
   }
@@ -145,6 +153,8 @@ export interface CanvasBundleInput {
   readonly sourceFile: { readonly name: string; readonly bytes: Buffer };
   /** Optional `stamp.json` `linked` value. Omitted when unset. */
   readonly linked?: string;
+  /** Runtime version and digest written to `manifest.runtime`. Omitted for unpinned (legacy) bundles. */
+  readonly runtime?: RuntimePin;
   /** Stage images copied under `assets/`. Paths must stay inside that directory. */
   readonly assets?: ReadonlyArray<{ readonly bundlePath: string; readonly bytes: Buffer }>;
 }
@@ -160,6 +170,7 @@ export interface CanvasManifest {
   readonly source: { readonly kind: "nofun-artifact-render"; readonly ref: string };
   readonly createdAt: string;
   readonly sha256: string;
+  readonly runtime?: RuntimePin;
 }
 
 /** Writes a Canvas bundle. Returns the manifest that was written. */
@@ -177,8 +188,22 @@ export function writeCanvasBundle(input: CanvasBundleInput): CanvasManifest {
       `source file name ${JSON.stringify(input.sourceFile.name)} is not a single path segment.`,
     );
   }
+  // Only absence is "unpinned": an explicit null/undefined/falsy `runtime` is refused, not dropped.
+  const runtime = Object.hasOwn(input, "runtime") ? assertRuntimePin(input.runtime) : undefined;
+  const linked = input.linked === undefined ? undefined : input.linked.toLowerCase();
+  if (linked !== undefined && !/^[0-9a-f]{8,64}$/.test(linked)) {
+    throw new Error(`linked runtime must be 8...64 hex characters (got ${JSON.stringify(input.linked)}).`);
+  }
+  if (runtime && linked === undefined) {
+    throw new Error(
+      "a runtime pin needs a linked page: pass the linked runtime so the entry meta carries linked=<version>.",
+    );
+  }
+  if (runtime && linked !== runtime.version) {
+    throw new Error(`runtime pin ${runtime.version} disagrees with the linked runtime ${input.linked}.`);
+  }
   const sourceHash = createHash("sha256").update(input.sourceFile.bytes).digest("hex");
-  const html = stripNetworkUrls(withCanvasFrame(withStamp(input.html, stamp), background));
+  const html = stripNetworkUrls(withCanvasFrame(withStamp(input.html, stamp, linked), background));
   const sha256 = createHash("sha256").update(html).digest("hex");
   const stampFile: {
     components: string;
@@ -194,7 +219,8 @@ export function writeCanvasBundle(input: CanvasBundleInput): CanvasManifest {
     theme: stamp.theme,
     at,
   };
-  if (input.linked) stampFile.linked = input.linked;
+  if (linked) stampFile.linked = linked;
+  // Only absence is "unpinned": an explicit null/undefined/falsy `runtime` is refused, not dropped.
   const sourceMeta: { kind: ArtifactStamp["lane"]; file: string; theme?: string } = {
     kind: stamp.lane,
     file: sourceName,
@@ -214,6 +240,7 @@ export function writeCanvasBundle(input: CanvasBundleInput): CanvasManifest {
     },
     createdAt: at,
     sha256,
+    ...(runtime ? { runtime } : {}),
   };
   NodeFs.mkdirSync(outDir, { recursive: true });
   writeRegular(NodePath.join(outDir, "index.html"), html);
