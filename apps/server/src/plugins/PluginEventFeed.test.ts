@@ -75,6 +75,7 @@ const startServer = Effect.fn("startServer")(function* (
   feedSees: {
     readonly catalog?: (catalog: Catalog) => Catalog;
     readonly eventSink?: (eventSink: Sink) => Sink;
+    readonly sql?: (sql: SqlClient.SqlClient) => SqlClient.SqlClient;
   } = {},
 ) {
   const delivery = yield* PluginEventDelivery.make;
@@ -92,6 +93,10 @@ const startServer = Effect.fn("startServer")(function* (
     Effect.provideService(Scope.Scope, scope),
   );
   const feed = yield* PluginEventFeed.make(options).pipe(
+    Effect.provideService(
+      SqlClient.SqlClient,
+      feedSees.sql?.(yield* SqlClient.SqlClient) ?? (yield* SqlClient.SqlClient),
+    ),
     Effect.provideService(PluginCatalog.PluginCatalog, feedSees.catalog?.(catalog) ?? catalog),
     Effect.provideService(
       EventSink.EventSinkV2,
@@ -311,6 +316,92 @@ const withStores = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
 
 it.layer(NodeServices.layer)("PluginEventFeed", (it) => {
   describe("delivery", () => {
+    it.effect(
+      "keeps a newly enabled cursor when reconciliation sees an older catalogue snapshot",
+      () =>
+        withStores(
+          Effect.gen(function* () {
+            const captured = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            const reconciled = yield* Deferred.make<void>();
+            const scope = yield* Scope.Scope;
+            const { catalog } = yield* startServer(
+              scope,
+              {},
+              {
+                catalog: (catalog) => ({
+                  ...catalog,
+                  subscribe: Stream.fromEffect(catalog.list).pipe(
+                    Stream.tap(() =>
+                      Deferred.succeed(captured, undefined).pipe(
+                        Effect.andThen(Deferred.await(release)),
+                      ),
+                    ),
+                    Stream.concat(
+                      Stream.fromEffect(Deferred.succeed(reconciled, undefined)).pipe(Stream.drain),
+                    ),
+                    Stream.concat(catalog.subscribe),
+                  ),
+                }),
+              },
+            );
+            yield* Deferred.await(captured);
+            const plugin = yield* preparePlugin("test.concurrent-enable");
+            const installationId = yield* install(catalog, plugin.directory);
+            const cursor = yield* storedCursor(installationId);
+            expect(cursor).toBeDefined();
+            yield* seedThread;
+            yield* finalizeRun("after-enable-before-reconcile");
+            yield* Deferred.succeed(release, undefined);
+            yield* Deferred.await(reconciled);
+            expect(yield* storedCursor(installationId)).toBe(cursor);
+          }),
+        ),
+    );
+
+    it.effect("recovers from a reconciliation SQL failure using a fresh catalogue snapshot", () =>
+      withStores(
+        Effect.gen(function* () {
+          const failed = yield* Deferred.make<void>();
+          let fail = true;
+          let reconciliations = 0;
+          const { catalog, receipts } = yield* startServer(
+            yield* Scope.Scope,
+            { maxRetryBackoff: "1 second" },
+            {
+              sql: (sql) =>
+                new Proxy(sql, {
+                  apply: (target, self, args) => {
+                    const parts = args[0] as ReadonlyArray<string>;
+                    if (parts.join(" ").includes("FROM plugin_event_cursors")) reconciliations++;
+                    if (fail && parts.join(" ").includes("FROM plugin_event_cursors")) {
+                      fail = false;
+                      return Deferred.succeed(failed, undefined).pipe(
+                        Effect.andThen(sql`SELECT * FROM missing_reconciliation_table`),
+                      );
+                    }
+                    return Reflect.apply(target, self, args);
+                  },
+                }),
+            },
+          );
+          yield* Deferred.await(failed);
+          const plugin = yield* preparePlugin("test.reconciliation-recovery");
+          const installationId = yield* install(catalog, plugin.directory);
+          yield* TestClock.adjust("1 second");
+          expect(reconciliations).toBeGreaterThan(1);
+          expect(yield* next(receipts, "Started", installationId)).toMatchObject({
+            installationId,
+          });
+          yield* catalog.disable({ installationId });
+          yield* catalog.enable({ installationId });
+          expect(yield* next(receipts, "Started", installationId)).toMatchObject({
+            installationId,
+          });
+        }),
+      ),
+    );
+
     it.effect("forgets a persisted cursor absent from the first catalog snapshot", () =>
       withStores(
         Effect.gen(function* () {

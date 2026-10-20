@@ -29,6 +29,7 @@ import {
   type PluginRemoveResult,
   type PluginSource,
   PluginInstallationId,
+  PluginSourceDigest,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -59,7 +60,13 @@ import { PluginSupervisor, type PluginInvokeError } from "./PluginSupervisor.ts"
 
 /** What is persisted: the wire record without the live process and delivery states. */
 const PluginInstallationRecord = PluginInstallation.mapFields(
-  ({ hostState: _hostState, eventDelivery: _eventDelivery, ...fields }) => fields,
+  ({ hostState: _hostState, eventDelivery: _eventDelivery, ...fields }) => ({
+    ...fields,
+    // A successful file swap stays committed when a later consent changes.
+    replacement: Schema.optionalKey(
+      Schema.Struct({ digest: PluginSourceDigest, committed: Schema.Boolean }),
+    ),
+  }),
 );
 type PluginInstallationRecord = typeof PluginInstallationRecord.Type;
 
@@ -185,8 +192,9 @@ export class PluginCatalog extends Context.Service<
     ) => Effect.Effect<PluginInstallationResult, PluginCatalogError>;
     /**
      * Settles a `replace` that was cut short, by a crash or a failed `restore`,
-     * as one management step. If the installation has consent to `digest`, the
-     * replacement committed and nothing changes. Otherwise `files.restore`,
+     * as one management step. A persisted swap outcome records whether the
+     * replacement committed, independently of later consent. Otherwise
+     * `files.restore`,
      * when given, puts the old files back after claiming `files.paths` (see
      * `changeFiles`), and the files are inspected again. The installation
      * stays disabled, and consent is never granted.
@@ -334,17 +342,16 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
   });
 
   /**
-   * Saves `record` (normally with `enabled: false`), revokes the registration,
-   * and waits for the process to exit. The row is written first and
-   * everything but the wait finishes even if the caller goes away, so a
-   * disable that was cut short never comes back enabled at the next start. A
-   * failed save changes nothing.
+   * Revokes the registration, saves `record` (normally with `enabled: false`),
+   * and waits for the process to exit. Everything but the wait finishes even
+   * if the caller goes away, so a disable that was cut short never comes
+   * back enabled at the next start. A failed save leaves the registration revoked, so changed bytes cannot run.
    */
   const revoke = (installation: Installation, record: PluginInstallationRecord) =>
     Effect.uninterruptibleMask((restore) =>
       Effect.gen(function* () {
-        if (record !== installation.record) yield* commit(installation, record);
         const stopping = yield* unregister(installation);
+        if (record !== installation.record) yield* commit(installation, record);
         if (stopping) yield* restore(Fiber.join(stopping));
       }),
     );
@@ -442,8 +449,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     });
 
   const toWire = Effect.fnUntraced(function* (installation: Installation) {
+    const { replacement: _replacement, ...record } = installation.record;
     const registered = installation.registered;
-    if (registered === undefined) return installation.record;
+    if (registered === undefined) return record;
     const hostState = yield* supervisor.state(registered.pluginId);
     const eventDelivery = Option.isSome(eventDeliveries)
       ? yield* eventDeliveries.value.state(
@@ -452,7 +460,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         )
       : Option.none();
     const wire: PluginInstallation = {
-      ...installation.record,
+      ...record,
       ...(Option.isSome(hostState) ? { hostState: hostState.value } : {}),
       ...(Option.isSome(eventDelivery) ? { eventDelivery: eventDelivery.value } : {}),
     };
@@ -554,6 +562,9 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
       );
     yield* commit(installation, {
       ...installation.record,
+      ...(installation.record.replacement?.digest === input.digest
+        ? { replacement: { digest: input.digest, committed: true } }
+        : {}),
       consent: {
         digest: inspection.source.digest,
         capabilities: inspection.registration.manifest.capabilities,
@@ -655,6 +666,10 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     const installation = yield* find(input.installationId);
     const wasEnabled = installation.record.enabled;
     yield* claimFiles([installation.record.directory, ...files.paths], installation);
+    yield* commit(installation, {
+      ...installation.record,
+      replacement: { digest: input.digest, committed: false },
+    });
     const enableAgain = (inspection: Inspection) =>
       wasEnabled && inspection._tag === "ok" && isReady(installation.record)
         ? register(installation, inspection.registration)
@@ -675,6 +690,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         Effect.gen(function* () {
           yield* commit(installation, {
             ...installation.record,
+            replacement: { digest: inspection.source.digest, committed: true },
             consent: {
               digest: inspection.source.digest,
               capabilities: inspection.registration.manifest.capabilities,
@@ -705,7 +721,13 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
     files: Parameters<PluginCatalog["Service"]["settleReplace"]>[1],
   ) {
     const installation = yield* find(input.installationId);
-    if (installation.record.consent?.digest === input.digest) return "committed" as const;
+    // Older records have no swap marker; preserve their consent-based recovery.
+    const replacement = installation.record.replacement;
+    const committed =
+      replacement?.digest === input.digest
+        ? replacement.committed
+        : installation.record.consent?.digest === input.digest;
+    if (committed) return "committed" as const;
     if (files !== undefined) {
       yield* claimFiles([installation.record.directory, ...files.paths], installation);
       yield* files.restore;
