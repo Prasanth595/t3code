@@ -87,6 +87,13 @@ const makeSuccessfulHandle = (stdout: string) =>
     getOutputFd: () => Stream.empty,
   });
 
+const makeFailedHandle = (stderr: string) =>
+  ChildProcessSpawner.makeHandle({
+    ...makeNonRepositoryHandle(),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+    stderr: Stream.encodeText(Stream.make(stderr)),
+  });
+
 const makeTmpDir = (
   prefix = "git-vcs-driver-test-",
 ): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> =>
@@ -1611,6 +1618,129 @@ it.effect("retries a fetch that lost a ref update to another Git process", () =>
   }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+describe("rejected git refs", () => {
+  const remoteUrl = "https://user:token-123@git.example.invalid/org/secret-repo.git";
+  const failedPush = `error: failed to push some refs to '${remoteUrl}'`;
+  const leakedText = [
+    "token-123",
+    "secret-repo",
+    "git.example.invalid",
+    "private-branch",
+    "workflow scope",
+  ];
+
+  const failWith = (stderr: string) => {
+    const spawner = ChildProcessSpawner.make(() => Effect.succeed(makeFailedHandle(stderr)));
+    const layer = GitVcsDriver.layer.pipe(
+      Layer.provide(layerServerConfig),
+      Layer.provideMerge(
+        Layer.merge(
+          NodeServices.layer,
+          Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      return yield* driver
+        .execute({
+          operation: "GitVcsDriver.test.rejectedRef",
+          cwd: "/repo",
+          args: ["push", "origin", "HEAD"],
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(layer));
+  };
+
+  it.effect.each([
+    {
+      label: "a ref the remote refused",
+      stderr: [
+        "remote: Unable to determine if workflow can be created; workflow scope may be required.",
+        `To ${remoteUrl}`,
+        " ! [remote rejected] private-branch -> private-branch (workflow scope may be required.)",
+        failedPush,
+      ],
+      reason: "push_rejected_by_remote" as const,
+      detail: "The remote rejected the push.",
+    },
+    {
+      label: "a non-fast-forward push",
+      stderr: [
+        `To ${remoteUrl}`,
+        " ! [rejected]        private-branch -> private-branch (non-fast-forward)",
+        failedPush,
+        "hint: Updates were rejected because the tip of your current branch is behind",
+      ],
+      reason: "push_rejected_non_fast_forward" as const,
+      detail: "Pull or rebase",
+    },
+    {
+      label: "a push that needs a fetch first",
+      stderr: [
+        `To ${remoteUrl}`,
+        " ! [rejected]        private-branch -> private-branch (fetch first)",
+        failedPush,
+      ],
+      reason: "push_rejected_non_fast_forward" as const,
+      detail: "Pull or rebase",
+    },
+  ])("names $label without quoting stderr", ({ stderr, reason, detail }) =>
+    Effect.gen(function* () {
+      const error = yield* failWith(stderr.join("\n"));
+
+      assert.deepInclude(error, { reason });
+      assert.include(error.detail, detail);
+      assert.include(error.message, `(${reason})`);
+      for (const text of leakedText) assert.notInclude(error.message, text);
+    }),
+  );
+
+  it.effect.each([
+    {
+      label: "a tag a fetch would clobber",
+      stderr: [
+        `From ${remoteUrl}`,
+        " ! [rejected]        v1         -> v1  (would clobber existing tag)",
+      ],
+      reason: "tag_would_be_clobbered" as const,
+    },
+    {
+      label: "a tag that already exists on the remote",
+      stderr: [
+        `To ${remoteUrl}`,
+        " ! [rejected]        v1 -> v1 (already exists)",
+        failedPush,
+        "hint: Updates were rejected because the tag already exists in the remote.",
+      ],
+      reason: undefined,
+    },
+    {
+      // Only push ends with "failed to push some refs"; a fetch into a local
+      // branch prints the same rejected line.
+      label: "a fetch into a diverged local branch",
+      stderr: [`From ${remoteUrl}`, " ! [rejected]        main       -> side  (non-fast-forward)"],
+      reason: undefined,
+    },
+    {
+      label: "rejection lines echoed behind the remote prefix",
+      stderr: [
+        "remote: ! [remote rejected] private-branch -> private-branch (declined)",
+        "remote:  ! [rejected]        private-branch -> private-branch (non-fast-forward)",
+        failedPush,
+      ],
+      reason: undefined,
+    },
+  ])("leaves $label as it was", ({ stderr, reason }) =>
+    Effect.gen(function* () {
+      const error = yield* failWith(stderr.join("\n"));
+
+      assert.equal(error.reason, reason);
+      assert.equal(error.detail, "Git command exited with a non-zero status.");
+    }),
+  );
+});
+
 it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   describe("process environment", () => {
     it.effect("preserves the caller locale for general Git subprocesses", () =>
@@ -1954,7 +2084,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("does not read remote hook output as a git failure reason", () =>
+    it.effect("reads a hook-declined push from git's rejection line, not the hook's output", () =>
       Effect.gen(function* () {
         const parent = yield* makeTmpDir();
         const pathService = yield* Path.Path;
@@ -1983,7 +2113,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           })
           .pipe(Effect.flip);
 
-        assert.notProperty(error, "reason");
+        assert.deepInclude(error, { reason: "push_rejected_by_remote" });
         assert.notInclude(error.message, "(authentication_failed)");
       }),
     );
