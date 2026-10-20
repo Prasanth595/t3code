@@ -1,3 +1,4 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Runs a real shell to reproduce adb joining arguments before Android executes them.
 import * as NodeChildProcess from "node:child_process";
 
 import { describe, expect, it } from "@effect/vitest";
