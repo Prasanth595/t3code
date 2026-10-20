@@ -1,25 +1,29 @@
-// @vitest-environment jsdom
-
-import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  BUILT_IN_BROWSER_PROFILES,
+  DEFAULT_BROWSER_PROFILE_ID,
+  INCOGNITO_BROWSER_PROFILE_ID,
+} from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
+// The profile list normally comes from client settings; the built-ins are enough to choose from.
+vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/browser/browserDefaults")>()),
+  useBrowserDefaults: () => ({ profiles: BUILT_IN_BROWSER_PROFILES }),
+}));
 
 import { RightPanelTabs } from "./RightPanelTabs";
 
-const threadRef: ScopedThreadRef = {
-  environmentId: EnvironmentId.make("environment-a"),
-  threadId: ThreadId.make("thread-a"),
-};
-
 let root: Root;
 let container: HTMLDivElement;
+let opened: string[];
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  // Browser is desktop-only; the launcher offers it once the preview bridge exists.
+  vi.stubGlobal("desktopBridge", { preview: {} });
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -30,7 +34,7 @@ beforeEach(() => {
   );
   // jsdom lacks the Web Animations API that the tab bar's scroll area waits on.
   Element.prototype.getAnimations ??= () => [];
-  useRightPanelStore.setState({ byThreadKey: {} });
+  opened = [];
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -42,12 +46,13 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-// Shows the thread's surfaces from the real right-panel store and opens the
-// terminal into it the way ChatView's addTerminalSurface does.
-function Harness({ terminalAvailable }: { terminalAvailable: boolean }) {
-  const surfaces = useRightPanelStore(
-    (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
-  );
+// Records Browser opens the way ChatView's createBrowserSurface does: one
+// handler for the default open and the profile chooser, where an omitted
+// profile means the default one.
+function Harness() {
+  const openBrowser = (profileId?: string) => {
+    opened.push(profileId ?? DEFAULT_BROWSER_PROFILE_ID);
+  };
   return (
     <RightPanelTabs
       mode="inline"
@@ -60,9 +65,9 @@ function Harness({ terminalAvailable }: { terminalAvailable: boolean }) {
         isWeb: true,
         isDesktop: false,
       })}
-      surfaces={surfaces}
-      environmentId={threadRef.environmentId}
-      activeSurfaceId={surfaces[0]?.id ?? null}
+      surfaces={[]}
+      environmentId={null}
+      activeSurfaceId={null}
       pendingSurfaceIds={new Set()}
       previewSessions={{}}
       desktopByTabId={{}}
@@ -74,32 +79,36 @@ function Harness({ terminalAvailable }: { terminalAvailable: boolean }) {
       onCloseAllSurfaces={() => undefined}
       onCopyFilePath={() => undefined}
       panels={{
-        preview: { available: false, onOpen: () => undefined },
+        preview: { available: true, onOpen: openBrowser },
         diff: { available: false, onOpen: () => undefined },
-        terminal: {
-          available: terminalAvailable,
-          onOpen: () => useRightPanelStore.getState().openTerminal(threadRef, "term-1"),
-        },
+        terminal: { available: false, onOpen: () => undefined },
         device: { available: false, onOpen: () => undefined },
         "pull-request": { available: false, onOpen: () => undefined },
         "pull-requests": { available: false, onOpen: () => undefined },
         files: { available: false, onOpen: () => undefined },
       }}
-      onAddBrowserInProfile={() => undefined}
+      onAddBrowserInProfile={openBrowser}
     >
       {null}
     </RightPanelTabs>
   );
 }
 
-function launcherRow(label: string): HTMLElement {
+function launcherRow(label: string): HTMLButtonElement {
   const launcher = container.querySelector('[aria-label="Open a surface"]');
-  // Unavailable rows render as aria-disabled elements rather than buttons.
-  const row = [
-    ...(launcher?.querySelectorAll<HTMLElement>('button, [aria-disabled="true"]') ?? []),
-  ].find((element) => element.textContent?.startsWith(label));
+  const row = [...(launcher?.querySelectorAll("button") ?? [])].find((button) =>
+    button.textContent?.startsWith(label),
+  );
   if (!row) throw new Error(`No launcher row ${label}`);
   return row;
+}
+
+function menuItem(label: string): HTMLElement {
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+    (element) => element.textContent === label,
+  );
+  if (!item) throw new Error(`No menu item ${label}`);
+  return item;
 }
 
 async function click(element: Element) {
@@ -112,26 +121,15 @@ async function click(element: Element) {
   });
 }
 
-const threadSurfaces = () =>
-  selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef).surfaces;
+describe("opening Browser from the launcher", () => {
+  it("opens the default profile from the row and another profile from the chooser", async () => {
+    await act(async () => root.render(<Harness />));
 
-describe("opening Terminal from the launcher", () => {
-  it("opens a terminal surface from the row when a project allows it", async () => {
-    await act(async () => root.render(<Harness terminalAvailable />));
+    await click(launcherRow("Browser"));
+    expect(opened).toEqual([DEFAULT_BROWSER_PROFILE_ID]);
 
-    await click(launcherRow("Terminal"));
-    expect(threadSurfaces()).toMatchObject([{ kind: "terminal", activeTerminalId: "term-1" }]);
-    expect(container.querySelector('[aria-label="Open a surface"]')).toBeNull();
-    expect(container.textContent).toContain("Terminal 1");
-  });
-
-  it("keeps the row disabled and opens nothing without a project", async () => {
-    await act(async () => root.render(<Harness terminalAvailable={false} />));
-
-    const row = launcherRow("Terminal");
-    expect(row.getAttribute("aria-disabled")).toBe("true");
-    await click(row);
-    expect(threadSurfaces()).toEqual([]);
-    expect(container.querySelector('[aria-label="Open a surface"]')).not.toBeNull();
+    await click(container.querySelector('[aria-label="Open browser in a profile"]')!);
+    await click(menuItem("Incognito"));
+    expect(opened).toEqual([DEFAULT_BROWSER_PROFILE_ID, INCOGNITO_BROWSER_PROFILE_ID]);
   });
 });
