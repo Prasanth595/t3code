@@ -125,11 +125,11 @@ afterEach(async () => {
 });
 
 function buttonWithText(text: string) {
-  const button = [...document.querySelectorAll("button")].find((element) =>
+  const button = [...document.querySelectorAll('button, [role="button"]')].find((element) =>
     element.textContent?.includes(text),
   );
   expect(button, `button ${text}`).toBeDefined();
-  return button!;
+  return button as HTMLElement;
 }
 
 async function chooseOption() {

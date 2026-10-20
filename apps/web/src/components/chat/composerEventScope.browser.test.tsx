@@ -6,6 +6,7 @@ import { ComposerHandleContext, type ComposerHandleRef } from "../../composerHan
 import {
   isInsideCollapsedComposerControls,
   isInsideComposerFloatingLayer,
+  isInsidePendingUserInputSelectableText,
   isInsideRestingComposerControlScope,
   useComposerMenuProps,
 } from "./composerEventScope";
@@ -95,6 +96,17 @@ describe("composer event scopes", () => {
       isInsideRestingComposerControlScope(elementInside("<button data-target></button>")),
     ).toBe(false);
     expect(isInsideRestingComposerControlScope(null)).toBe(false);
+  });
+
+  it("recognizes pending question text that must stay selectable", () => {
+    const target = elementInside(
+      '<div data-pending-user-input-selectable=""><p data-target>Copy ticket T3-16821</p></div>',
+    );
+    expect(isInsidePendingUserInputSelectableText(target)).toBe(true);
+    expect(
+      isInsidePendingUserInputSelectableText(elementInside("<p data-target>Ask anything</p>")),
+    ).toBe(false);
+    expect(isInsidePendingUserInputSelectableText(null)).toBe(false);
   });
 
   it("recognizes banner and drawer controls docked above the surface", () => {
