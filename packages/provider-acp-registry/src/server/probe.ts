@@ -25,8 +25,14 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { parseSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
-import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
+import {
+  findModelConfigOption,
+  parseSessionModeState,
+} from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  acpProviderOptionDescriptors,
+  flattenSelectChoices,
+} from "@t3tools/provider-acp/server/sessionConfig";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
@@ -51,17 +57,6 @@ export function normalizeAcpRegistryWebUrl(value: string): string | undefined {
   if (value.length > 2_048 || !URL.canParse(value)) return undefined;
   const url = new URL(value);
   return url.protocol === "https:" || url.protocol === "http:" ? url.href : undefined;
-}
-
-function modelConfigOptions(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
-): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
-  return (configOptions ?? []).flatMap((option) => {
-    if (option.category !== "model" || option.type !== "select") return [];
-    return option.options.flatMap((candidate) =>
-      "value" in candidate ? [candidate] : candidate.options,
-    );
-  });
 }
 
 function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegistryProbeModel {
@@ -180,9 +175,7 @@ export function normalizeAcpRegistryLiveConfiguration(
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
 ): AcpRegistryLiveConfiguration {
-  const modelOption = configOptions.find(
-    (option) => option.category === "model" && option.type === "select",
-  );
+  const modelOption = findModelConfigOption(configOptions);
   const currentModelId =
     modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
   const candidates =
@@ -192,7 +185,7 @@ export function normalizeAcpRegistryLiveConfiguration(
           name: model.name,
           description: model.description ?? null,
         }))
-      : modelConfigOptions(configOptions).map((model) => ({
+      : flattenSelectChoices(modelOption.options).map((model) => ({
           id: model.value,
           name: model.name,
           description: model.description ?? null,

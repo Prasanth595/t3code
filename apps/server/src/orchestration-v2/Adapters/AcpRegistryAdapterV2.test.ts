@@ -47,6 +47,7 @@ import {
   ACP_REGISTRY_PROVIDER,
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
+  acpRegistryProbeResult,
 } from "@t3tools/provider-acp-registry/testing";
 
 const registryUrl = "https://registry.test/registry.json";
@@ -519,6 +520,100 @@ describe("AcpRegistryAdapterV2", () => {
           configurations.map((configuration) => configuration?.currentModelId),
           ["hermes", "hermes", "hermes", "other", "other", "other", "other", "other"],
         );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+    const modelOptions = [
+      { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
+      {
+        id: " ",
+        name: "Unnamed",
+        category: "model",
+        type: "select",
+        currentValue: "unaddressable",
+        options: [{ value: "unaddressable", name: "Unaddressable" }],
+      },
+      {
+        id: "provider",
+        name: "Provider",
+        category: "model",
+        type: "select",
+        currentValue: "gateway",
+        options: [
+          {
+            group: "hosted",
+            name: "Hosted",
+            options: [
+              { value: "gateway", name: "Gateway" },
+              { value: "codex", name: "Codex" },
+            ],
+          },
+        ],
+      },
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "later-model",
+        options: [{ value: "later-model", name: "Later model" }],
+      },
+    ] as const;
+
+    it.effect("opens a model from the catalog by writing the first usable model select", () =>
+      Effect.gen(function* () {
+        const setup = { sessionId: "agent-session", configOptions: modelOptions };
+        const catalog = acpRegistryProbeResult(ProviderInstanceId.make("acp-registry-mode-pick"), {
+          sessionId: setup.sessionId,
+          initializeResult: { protocolVersion: 1 },
+          sessionSetupResult: {
+            ...setup,
+            // The catalog uses the normalized groupId; ACP v1 sends group on the wire.
+            configOptions: modelOptions.map((option) =>
+              option.id === "provider"
+                ? {
+                    ...option,
+                    options: [{ ...option.options[0], groupId: option.options[0].group }],
+                  }
+                : option,
+            ),
+          },
+          modelConfigId: "provider",
+        });
+        assert.deepEqual(catalog.models, [
+          { id: "gateway", name: "Gateway", description: null },
+          { id: "codex", name: "Codex", description: null },
+        ]);
+        assert.equal(catalog.currentModelId, "gateway");
+        const model = catalog.models[1]?.id;
+        assert.isDefined(model);
+        const opened = yield* openWithStoredPicks({
+          setup,
+          pickFrames: [
+            outbound("session/set_config_option", {
+              sessionId: "agent-session",
+              configId: "provider",
+              value: "codex",
+            }),
+            answer("session/set_config_option", {
+              configOptions: modelOptions.map((option) =>
+                option.id === "provider" ? { ...option, currentValue: "codex" } : option,
+              ),
+            }),
+          ],
+          storedModel: model,
+        });
+        assert.equal(opened.configurations.at(-1)?.currentModelId, "codex");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("ignores a later-option model without writing configuration", () =>
+      Effect.gen(function* () {
+        const { configurations } = yield* openWithStoredPicks({
+          setup: { configOptions: modelOptions },
+          pickFrames: [],
+          storedModel: "later-model",
+        });
+        assert.equal(configurations[0]?.currentModelId, "gateway");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });

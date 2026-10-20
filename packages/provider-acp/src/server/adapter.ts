@@ -67,6 +67,7 @@ import {
   acpContentBlockDisplayText,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
+  findModelConfigOption,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionUpdateEvent,
@@ -127,6 +128,15 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
  * wake.
  */
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+
+/**
+ * Coalescing window for streamed text. A text segment's first chunk and its
+ * close emit at once; a later chunk schedules one full-text snapshot this long
+ * after it, and the chunks inside the window share it instead of each emitting
+ * the whole reply, which grew with the square of the reply length. The flush
+ * is scheduled, not a hard deadline, so it can land later under host load.
+ */
+const ACP_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
 
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
@@ -509,9 +519,7 @@ function negotiatedCapabilities(
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
   const canSwitchModel =
-    setup.configOptions?.some(
-      (option) => option.category === "model" && option.type === "select",
-    ) === true || setup.models != null;
+    findModelConfigOption(setup.configOptions) !== undefined || setup.models != null;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -961,6 +969,10 @@ interface ActiveTextSegment {
   readonly startedAt: DateTime.Utc;
   sourceMessageId: string | null;
   text: string;
+  // The running node and first text have been emitted.
+  emitted: boolean;
+  // Text changed since the last emission; a delayed flush is scheduled.
+  dirty: boolean;
 }
 
 interface ActiveTextStream {
@@ -1559,12 +1571,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return Option.some(yield* effect);
             }),
           );
-        const registerNativeResponseAcknowledgement = (
-          generation: number,
-          transportRequestId: string,
-          acknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>,
-        ) =>
-          Effect.gen(function* () {
+        const registerNativeResponseAcknowledgement =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (
+            generation: number,
+            transportRequestId: string,
+            acknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>,
+          ) {
             yield* Ref.update(nativeResponseAcknowledgements, (current) => {
               const updated = new Map(current);
               updated.set(transportRequestId, { acknowledgement, generation });
@@ -1804,8 +1817,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const endedBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const endedBackgroundTaskIdLimit = 128;
 
-        const setBackgroundTaskRunning = (taskId: string, running: boolean) =>
-          Effect.gen(function* () {
+        const setBackgroundTaskRunning =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (taskId: string, running: boolean) {
             if (running && (yield* Ref.get(endedBackgroundTaskIds)).has(taskId)) {
               return;
             }
@@ -1840,10 +1854,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? setBackgroundTaskRunning(mutation.taskId, true)
             : markBackgroundTaskEnded(mutation.taskId);
 
-        const trackRunningBackgroundTools = (
-          notification: EffectAcpSchema.SessionNotification,
-        ): Effect.Effect<void> =>
-          Effect.gen(function* () {
+        const trackRunningBackgroundTools =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (
+            notification: EffectAcpSchema.SessionNotification,
+          ): Effect.fn.Return<void> {
             if (flavor.extractBackgroundTaskId === undefined) return;
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
@@ -2172,14 +2187,32 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? context.assistant
               : context.reasoning;
 
+        const textEmissionPermit = yield* Semaphore.make(1);
+        /**
+         * Emits the stream's current segment. A `flushOf` call is a delayed
+         * flush: it emits only while that segment is still current and has
+         * unsent text. The permit keeps a flush from landing after the
+         * segment's completed snapshot.
+         */
         const emitTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
           completed: boolean,
+          flushOf?: ActiveTextSegment,
         ) {
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
           if (segment === null) return;
+          if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return;
+          // The node carries no text, so it changes only when the segment
+          // opens and when it completes.
+          const emitsNode = completed || !segment.emitted;
+          segment.emitted = true;
+          segment.dirty = false;
+          // Read the text in the same step that clears `dirty`. Chunks keep
+          // appending while this emission yields; each one marks the segment
+          // dirty again and reaches the next flush or the close.
+          const text = segment.text;
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = providerNodeId(segment.nativeItemId);
@@ -2189,7 +2222,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
-          if (kind !== "user") {
+          if (kind !== "user" && emitsNode) {
             yield* emitProviderEvent({
               type: "node.updated",
               driver,
@@ -2223,7 +2256,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               runId: context.input.runId,
               nodeId: messageNodeId,
               role: kind,
-              text: segment.text,
+              text,
               attachments: [],
               streaming: !completed,
               createdAt: segment.startedAt,
@@ -2255,7 +2288,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       type: "user_message",
                       messageId,
                       inputIntent: "turn_start",
-                      text: segment.text,
+                      text,
                       attachments: [],
                     },
                   }
@@ -2279,7 +2312,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       updatedAt: now,
                       type: "assistant_message",
                       messageId,
-                      text: segment.text,
+                      text,
                       streaming: !completed,
                     },
                   },
@@ -2306,10 +2339,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               completedAt: completed ? now : null,
               updatedAt: now,
               type: "reasoning",
-              text: segment.text,
+              text,
               streaming: !completed,
             },
           });
+        }, textEmissionPermit.withPermit);
+
+        /**
+         * Publishes a text change. A segment's first text emits at once so
+         * live output starts immediately; later changes coalesce into one
+         * snapshot per ACP_TEXT_FLUSH_INTERVAL. Closing the segment emits its
+         * final text and makes a pending flush a no-op.
+         */
+        const publishTextSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+        ) {
+          const segment = textStreamFor(context, kind).current;
+          if (segment === null) return;
+          if (!segment.emitted) return yield* emitTextSegment(context, kind, false);
+          if (segment.dirty) return;
+          segment.dirty = true;
+          yield* emitTextSegment(context, kind, false, segment).pipe(
+            Effect.delay(ACP_TEXT_FLUSH_INTERVAL),
+            Effect.forkIn(sessionScope),
+          );
         });
 
         const closeTextStream = Effect.fnUntraced(function* (
@@ -2358,6 +2412,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt: now,
               sourceMessageId,
               text: "",
+              emitted: false,
+              dirty: false,
             };
             stream.nextSegment += 1;
           } else if (stream.current.sourceMessageId === null && sourceMessageId !== null) {
@@ -2366,7 +2422,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             stream.current.sourceMessageId = sourceMessageId;
           }
           stream.current.text += text;
-          yield* emitTextSegment(context, kind, false);
+          yield* publishTextSegment(context, kind);
         });
 
         const replaceText = Effect.fnUntraced(function* (
@@ -2387,12 +2443,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt: now,
               sourceMessageId: messageId,
               text,
+              emitted: false,
+              dirty: false,
             };
             stream.nextSegment += 1;
           } else {
             stream.current.text = text;
           }
-          yield* emitTextSegment(context, kind, false);
+          yield* publishTextSegment(context, kind);
         });
 
         const emitSubagentAssistant = Effect.fnUntraced(function* (
@@ -2784,8 +2842,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return false;
         };
 
-        const rearmDeferredFinalize = (context: ActiveAcpTurn) =>
-          Effect.gen(function* () {
+        const rearmDeferredFinalize =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (context: ActiveAcpTurn) {
             if (!flavor.deferFinalizeForBackgroundWork) return;
             if (!context.promptSettled || context.finalized) return;
             if (hasDeferredBackgroundWork(context)) return;
@@ -2799,8 +2858,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
         ) => Effect.Effect<void> = () => Effect.void;
 
-        const markAwaitingBackgroundHydration = (context: ActiveAcpTurn, taskId: string) =>
-          Effect.gen(function* () {
+        const markAwaitingBackgroundHydration =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (context: ActiveAcpTurn, taskId: string) {
             if (context.awaitingBackgroundHydration.has(taskId)) return;
             context.awaitingBackgroundHydration.add(taskId);
             yield* Effect.gen(function* () {
@@ -2819,8 +2879,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           });
 
-        const markPendingInjectedReport = (context: ActiveAcpTurn, taskId: string) =>
-          Effect.gen(function* () {
+        const markPendingInjectedReport =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (context: ActiveAcpTurn, taskId: string) {
             if (!context.promptSettled) return;
             if (context.pendingInjectedReport.has(taskId)) return;
             context.pendingInjectedReport.add(taskId);
@@ -3369,13 +3430,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         });
 
-        const appendLoadedHistory = (
-          notification: EffectAcpSchema.SessionNotification,
-          role: "user" | "assistant" | "thought",
-          text: string,
-          replace = false,
-        ) =>
-          Effect.gen(function* () {
+        const appendLoadedHistory =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(function* (
+            notification: EffectAcpSchema.SessionNotification,
+            role: "user" | "assistant" | "thought",
+            text: string,
+            replace = false,
+          ) {
             if (text.length === 0 && !replace) return;
             const now = yield* DateTime.now;
             yield* Ref.update(snapshot, (current) => {
@@ -5036,48 +5098,48 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
-        const projectAcpRuntimeSessionUpdateEffect = (
-          rawNotification: EffectAcpSchema.SessionNotification,
-        ) =>
-          Effect.gen(function* () {
-            if (clientTerminals !== undefined) {
-              const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
-              if (embedded !== undefined) {
-                rememberEmbeddedTerminals({
-                  ...embedded,
-                  sessionId: rawNotification.sessionId,
-                });
+        const projectAcpRuntimeSessionUpdateEffect =
+          /* Provider events include streaming deltas; avoid a span for each update. */
+          Effect.fnUntraced(
+            function* (rawNotification: EffectAcpSchema.SessionNotification) {
+              if (clientTerminals !== undefined) {
+                const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
+                if (embedded !== undefined) {
+                  rememberEmbeddedTerminals({
+                    ...embedded,
+                    sessionId: rawNotification.sessionId,
+                  });
+                }
               }
-            }
-            const notification =
-              clientTerminals === undefined
-                ? rawNotification
-                : resolveEmbeddedTerminalContent(
-                    rawNotification,
-                    clientTerminals.readOutputSnapshot,
-                  );
-            if (notification.update.sessionUpdate === "available_commands_update") {
-              yield* (
-                flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                  Effect.void
+              const notification =
+                clientTerminals === undefined
+                  ? rawNotification
+                  : resolveEmbeddedTerminalContent(
+                      rawNotification,
+                      clientTerminals.readOutputSnapshot,
+                    );
+              if (notification.update.sessionUpdate === "available_commands_update") {
+                yield* (
+                  flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
+                    Effect.void
+                );
+              }
+              if (
+                notification.update.sessionUpdate === "config_option_update" ||
+                notification.update.sessionUpdate === "current_mode_update"
+              ) {
+                yield* (
+                  flavor.onSessionConfigurationUpdate?.(
+                    yield* runtime.getConfigOptions,
+                    yield* runtime.getModeState,
+                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
+                  ) ?? Effect.void
+                );
+              }
+              yield* handleSessionUpdate(
+                flavor.normalizeSessionUpdate?.(notification) ?? notification,
               );
-            }
-            if (
-              notification.update.sessionUpdate === "config_option_update" ||
-              notification.update.sessionUpdate === "current_mode_update"
-            ) {
-              yield* (
-                flavor.onSessionConfigurationUpdate?.(
-                  yield* runtime.getConfigOptions,
-                  yield* runtime.getModeState,
-                  (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-                ) ?? Effect.void
-              );
-            }
-            yield* handleSessionUpdate(
-              flavor.normalizeSessionUpdate?.(notification) ?? notification,
-            );
-          }).pipe(
+            },
             Effect.mapError(
               (cause) =>
                 new EffectAcpErrors.AcpTransportError({
@@ -5850,9 +5912,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Stored catalog choices can expire; explicitly configured custom IDs
             // are validated by the agent instead.
             const isCustomModel = flavor.customModels?.includes(requestedModel) === true;
-            const modelOption = (yield* runtime.getConfigOptions).find(
-              (option) => option.category === "model" && option.type === "select",
-            );
+            const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
             const modelState = startResult.sessionSetupResult.models;
             if (modelOption?.type === "select") {
               if (
@@ -6378,6 +6438,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   new ProviderAdapter.ProviderAdapterProtocolError({
                     driver,
                     detail: `Failed to read attachment '${attachment.id}'`,
+                    reason: "attachment_unreadable",
                     payload: cause,
                   }),
               ),
@@ -6435,6 +6496,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver,
                 detail: `ACP provider turn ${existing.providerTurnId} is still active`,
+                reason: "previous_turn_active",
               });
             }
             useProviderThreadIdentity(turnInput.providerThread);
