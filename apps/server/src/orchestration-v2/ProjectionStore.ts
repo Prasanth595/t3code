@@ -5965,7 +5965,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       );
 
     const shellThreadStateFromRow =
-      /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
+      /* Runs once per shell row; the enclosing snapshot or thread read owns the span. */
       Effect.fnUntraced(function* (input: {
         readonly row: ShellThreadRow;
         readonly runOrdinalsByThreadId: ReadonlyMap<ThreadId, Map<RunId, number>>;
@@ -6171,53 +6171,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       };
     });
 
-    const decodeShellSnapshot =
-      /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
-      Effect.fnUntraced(function* ({
-        targetThreadIds,
-        threadRows,
+    const decodeShellSnapshot = Effect.fn("ProjectionStore.decodeShellSnapshot")(function* ({
+      targetThreadIds,
+      threadRows,
+      runRows,
+      itemCountRows,
+      sequenceRows,
+      providerThreadRows,
+      pendingTurnItemRows,
+    }: Effect.Success<ReturnType<typeof readShellSnapshotRows>>) {
+      const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
         runRows,
         itemCountRows,
-        sequenceRows,
-        providerThreadRows,
-        pendingTurnItemRows,
-      }: Effect.Success<ReturnType<typeof readShellSnapshotRows>>) {
-        const { runOrdinalsByThreadId, itemCountsByThreadId } = runMapsByThreadId({
-          runRows,
-          itemCountRows,
-        });
-        const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
-          yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
-        const states = yield* Effect.forEach(threadRows, (row) =>
-          shellThreadStateFromRow({
-            row,
-            runOrdinalsByThreadId,
-            itemCountsByThreadId,
-            providerThreadsByThreadId,
-            pendingTurnItemsByThreadId,
+      });
+      const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
+        yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
+      const states = yield* Effect.forEach(threadRows, (row) =>
+        shellThreadStateFromRow({
+          row,
+          runOrdinalsByThreadId,
+          itemCountsByThreadId,
+          providerThreadsByThreadId,
+          pendingTurnItemsByThreadId,
+        }),
+      );
+      const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
+
+      const shells = states
+        .filter((state) => targetThreadIds.has(state.thread.id))
+        .map((state) =>
+          shellFromState({
+            state,
+            visibleItemCount: visibleItemCountForShell({
+              threadId: state.thread.id,
+              statesByThreadId,
+            }),
           }),
         );
-        const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
 
-        const shells = states
-          .filter((state) => targetThreadIds.has(state.thread.id))
-          .map((state) =>
-            shellFromState({
-              state,
-              visibleItemCount: visibleItemCountForShell({
-                threadId: state.thread.id,
-                statesByThreadId,
-              }),
-            }),
-          );
-
-        return {
-          schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
-          snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0,
-          threads: shells.filter((thread) => thread.archivedAt === null),
-          archivedThreads: shells.filter((thread) => thread.archivedAt !== null),
-        };
-      }, Effect.mapError(shellSnapshotReadError));
+      return {
+        schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
+        snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0,
+        threads: shells.filter((thread) => thread.archivedAt === null),
+        archivedThreads: shells.filter((thread) => thread.archivedAt !== null),
+      };
+    }, Effect.mapError(shellSnapshotReadError));
 
     const readShellSnapshot: ProjectionStoreV2Shape["readShellSnapshot"] = (options) =>
       readShellSnapshotRows(options).pipe(
