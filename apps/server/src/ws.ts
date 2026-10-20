@@ -1250,6 +1250,7 @@ export const layerWsRpc = (
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
       const repositoryIdentityResolver =
         yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
@@ -2570,7 +2571,7 @@ export const layerWsRpc = (
                   ),
                 ),
             onCloned: (project) =>
-              repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+              projectEnrichment.refresh(project.workspaceRoot).pipe(
                 Effect.andThen(
                   projectService.update({
                     commandId: CommandId.make(`project-clone-done:${project.projectId}`),

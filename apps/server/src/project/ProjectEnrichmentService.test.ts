@@ -1,13 +1,17 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import { TestClock } from "effect/testing";
 
+import * as ProcessRunner from "../processRunner.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
@@ -488,3 +492,122 @@ it.effect(
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
 );
+
+it.effect("keeps the refreshed identity when a replaced lookup finishes late", () =>
+  Effect.gen(function* () {
+    const staleStarted = yield* Deferred.make<void>();
+    const releaseStale = yield* Deferred.make<void>();
+    const workerAdvanced = yield* Deferred.make<void>();
+    const version = yield* Ref.make(1);
+    const metadataLayer = Layer.merge(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: (workspaceRoot) =>
+          Effect.gen(function* () {
+            if (workspaceRoot === "/barrier") {
+              yield* Deferred.succeed(workerAdvanced, undefined);
+              return null;
+            }
+            const capturedVersion = yield* Ref.get(version);
+            if (capturedVersion === 1) {
+              // Let the cache install its pending entry before refresh can replace it.
+              yield* Effect.yieldNow;
+              yield* Deferred.succeed(staleStarted, undefined);
+              yield* Deferred.await(releaseStale);
+            }
+            return identity(workspaceRoot, capturedVersion);
+          }),
+      }),
+      Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+        resolvePath: () => Effect.succeed(null),
+      }),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const changes = yield* service.subscribeChanges;
+      yield* service.request("/cloned");
+      yield* Deferred.await(staleStarted);
+      yield* Ref.set(version, 2);
+      yield* service.refresh("/cloned");
+      const refreshed = yield* PubSub.take(changes);
+      assert.equal(refreshed.workspaceRoot, "/cloned");
+      assert.isTrue(refreshed.repositoryIdentityResolved);
+      assert.deepEqual(refreshed.enrichment.repositoryIdentity, identity("/cloned", 2));
+
+      // One worker makes the next root a barrier after the stale lookup's publication.
+      yield* service.request("/barrier");
+      yield* Deferred.succeed(releaseStale, undefined);
+      yield* Deferred.await(workerAdvanced);
+      for (const change of yield* PubSub.takeAll(changes)) {
+        if (change.workspaceRoot === "/cloned") {
+          assert.deepEqual(change.enrichment.repositoryIdentity, identity("/cloned", 2));
+        }
+      }
+      assert.deepEqual((yield* service.peek("/cloned")).repositoryIdentity, identity("/cloned", 2));
+    }).pipe(Effect.provide(layer(metadataLayer, { concurrency: 1 })));
+  }),
+);
+
+const git = Effect.fnUntraced(function* (cwd: string, args: ReadonlyArray<string>) {
+  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const result = yield* processRunner.run({ command: "git", args: ["-C", cwd, ...args] });
+  assert.equal(result.code, 0, result.stderr);
+});
+
+it.layer(NodeServices.layer)("ProjectEnrichmentService with Git", (it) => {
+  it.effect.each([
+    { location: "inside another repository", initialKey: "github.com/example/dotfiles" },
+    { location: "outside any repository", initialKey: null },
+  ])("refreshes cached and published clone identity $location", ({ initialKey }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-project-enrichment-clone-test-",
+      });
+      if (initialKey !== null) {
+        yield* git(parent, ["init"]);
+        yield* git(parent, ["remote", "add", "origin", "git@github.com:example/dotfiles.git"]);
+      }
+      const source = path.join(parent, "source.git");
+      yield* git(parent, ["init", "--bare", source]);
+      const destination = path.join(parent, "cloned");
+      yield* fileSystem.makeDirectory(destination);
+
+      const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+      const changes = yield* service.subscribeChanges;
+      yield* service.request(destination);
+      const beforeClone = yield* PubSub.take(changes);
+      assert.isTrue(beforeClone.repositoryIdentityResolved);
+      assert.equal(beforeClone.enrichment.repositoryIdentity?.canonicalKey ?? null, initialKey);
+
+      yield* git(parent, ["clone", source, destination]);
+      yield* git(destination, ["remote", "set-url", "origin", "git@github.com:example/t3code.git"]);
+      yield* service.refresh(destination);
+
+      const published = yield* PubSub.take(changes);
+      assert.equal(published.workspaceRoot, destination);
+      assert.isTrue(published.repositoryIdentityResolved);
+      assert.equal(
+        published.enrichment.repositoryIdentity?.canonicalKey,
+        "github.com/example/t3code",
+      );
+      assert.deepEqual(yield* service.peek(destination), published.enrichment);
+      assert.deepEqual(yield* service.getAvailable(destination), published.enrichment);
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          ProcessRunner.layer,
+          layer(
+            Layer.merge(
+              RepositoryIdentityResolver.layer.pipe(Layer.provide(NodeServices.layer)),
+              Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+                resolvePath: () => Effect.succeed(null),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+});

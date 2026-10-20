@@ -53,6 +53,7 @@ export class ProjectEnrichmentService extends Context.Service<
     readonly request: (workspaceRoot: string) => Effect.Effect<void>;
     readonly getAvailable: (workspaceRoot: string) => Effect.Effect<ProjectEnrichment>;
     readonly invalidate: (workspaceRoots: Iterable<string>) => Effect.Effect<void>;
+    readonly refresh: (workspaceRoot: string) => Effect.Effect<void>;
     readonly subscribeChanges: Effect.Effect<
       PubSub.Subscription<ProjectEnrichmentChange>,
       never,
@@ -163,9 +164,11 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 
   const resolveRepositoryIdentity = Effect.fn("ProjectEnrichmentService.resolveRepositoryIdentity")(
     function* (workspaceRoot: string) {
-      const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
-      yield* logFailure(workspaceRoot, "repositoryIdentity", repositoryIdentity);
+      const resolved = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
+      yield* logFailure(workspaceRoot, "repositoryIdentity", resolved);
       const faviconPath = yield* Cache.getSuccess(faviconCache, workspaceRoot);
+      // Refresh may have replaced the entry while this lookup was running.
+      const repositoryIdentity = yield* Cache.get(repositoryIdentityCache, workspaceRoot);
       const repositoryIdentityResolved = Exit.isSuccess(repositoryIdentity);
       yield* PubSub.publish(changes, {
         workspaceRoot,
@@ -292,11 +295,20 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
     );
   });
 
+  const refresh: ProjectEnrichmentService["Service"]["refresh"] = Effect.fn(
+    "ProjectEnrichmentService.refresh",
+  )(function* (workspaceRoot) {
+    yield* repositoryIdentityResolver.resolve(workspaceRoot, { refresh: true });
+    yield* invalidate([workspaceRoot]);
+    yield* resolveRepositoryIdentity(workspaceRoot);
+  });
+
   return ProjectEnrichmentService.of({
     peek,
     request,
     getAvailable,
     invalidate,
+    refresh,
     subscribeChanges: PubSub.subscribe(changes),
   });
 });
