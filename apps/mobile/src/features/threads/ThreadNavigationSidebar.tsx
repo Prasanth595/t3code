@@ -266,6 +266,7 @@ function ThreadNavigationSidebarPane(
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
+    sortByLastMessage,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
@@ -319,7 +320,7 @@ function ThreadNavigationSidebarPane(
       });
     return new Map([
       ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+      ...(workingShelfEnabled || sortByLastMessage ? [] : sectionAvailability("active")),
     ]);
   })();
   const threadListV2Layout = (() => {
@@ -337,6 +338,7 @@ function ThreadNavigationSidebarPane(
       settledLimit: settledVisibleCount,
       now,
       workingShelfEnabled,
+      sortByLastMessage,
       workingShelfExpanded,
       inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
@@ -533,6 +535,7 @@ function ThreadNavigationSidebarPane(
     listEnvironments,
     threadSearchMatchByKey,
     workingShelfEnabled,
+    sortByLastMessage,
   };
   useThreadJumpShortcuts(listItems, handleSelectThread);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -636,7 +639,9 @@ function ThreadNavigationSidebarPane(
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+                : !workingShelfEnabled &&
+                  !sortByLastMessage &&
+                  activeReorderEnvironmentIds.has(thread.environmentId)
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}

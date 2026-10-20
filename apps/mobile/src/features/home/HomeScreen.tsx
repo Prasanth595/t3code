@@ -441,6 +441,7 @@ export function HomeScreen(props: HomeScreenProps) {
     settledShelfExpanded,
     snoozedShelfExpanded,
     workingShelfEnabled,
+    sortByLastMessage,
     workingShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
@@ -494,7 +495,7 @@ export function HomeScreen(props: HomeScreenProps) {
       });
     return new Map([
       ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+      ...(workingShelfEnabled || sortByLastMessage ? [] : sectionAvailability("active")),
     ]);
   })();
   const threadListV2Layout = (() => {
@@ -512,6 +513,7 @@ export function HomeScreen(props: HomeScreenProps) {
       settledLimit: settledVisibleCount,
       now,
       workingShelfEnabled,
+      sortByLastMessage,
       workingShelfExpanded,
       inboxReturnAt: threadListInboxReturns.returnedAt,
       snoozedShelfExpanded,
@@ -674,7 +676,9 @@ export function HomeScreen(props: HomeScreenProps) {
         reorderSupported={
           item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
-            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+            : !workingShelfEnabled &&
+              !sortByLastMessage &&
+              activeReorderEnvironmentIds.has(thread.environmentId)
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}
@@ -707,6 +711,7 @@ export function HomeScreen(props: HomeScreenProps) {
     selectedThreadKey,
     threadSearchMatchByKey,
     workingShelfEnabled,
+    sortByLastMessage,
   };
 
   const hasAnyThreads =

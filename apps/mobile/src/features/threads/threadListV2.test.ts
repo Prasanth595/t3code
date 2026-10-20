@@ -2433,3 +2433,79 @@ describe("Working section beta", () => {
     ]);
   });
 });
+
+describe("last-message active thread order", () => {
+  const rows = [
+    makeThread({
+      id: ThreadId.make("ten-hours"),
+      title: "Older message",
+      activeOrderKey: "f",
+      latestUserMessageAt: "2026-06-01T14:00:00Z",
+    }),
+    makeThread({
+      id: ThreadId.make("two-minutes"),
+      title: "Recent message",
+      activeOrderKey: "t",
+      latestUserMessageAt: "2026-06-01T23:58:00Z",
+    }),
+  ];
+  it("sorts the phone/tablet list by messages and restores saved positions", () => {
+    const input = { threads: rows, now: NOW, environmentId: null, searchQuery: "" };
+    expect(
+      buildThreadListV2Items({ ...input, sortByLastMessage: true }).items.map(
+        (row) => row.thread.id,
+      ),
+    ).toEqual(["two-minutes", "ten-hours"]);
+    expect(buildThreadListV2Items(input).items.map((row) => row.thread.id)).toEqual([
+      "ten-hours",
+      "two-minutes",
+    ]);
+    expect(
+      getThreadListV2OrderedSection({
+        threads: rows,
+        now: NOW,
+        section: "active",
+        sortByLastMessage: true,
+      }).map((row) => row.id),
+    ).toEqual(["two-minutes", "ten-hours"]);
+  });
+
+  it("lets the Working section retain return-time order over the saved sort choice", () => {
+    const layout = buildThreadListV2Items({
+      threads: rows,
+      now: NOW,
+      environmentId: null,
+      searchQuery: "",
+      sortByLastMessage: true,
+      workingShelfEnabled: true,
+      inboxReturnAt: (thread) => (thread.id === rows[0]!.id ? Date.parse(NOW) : 0),
+    });
+    expect(layout.items.map((row) => row.thread.id)).toEqual(["ten-hours", "two-minutes"]);
+  });
+
+  it("allows lifecycle drops into message-sorted Active without rewriting saved keys", () => {
+    const parked = makeThread({ id: ThreadId.make("pinned"), title: "Pinned", pinnedAt: NOW });
+    const planner = createThreadMovePlanner({
+      ordered: rows,
+      allThreads: [...rows, parked],
+      section: "active",
+      timeOrdered: true,
+      reorderableEnvironmentIds: new Set(),
+    });
+    expect(
+      planner(`${environmentId}:${parked.id}`, {
+        section: "active",
+        targetId: null,
+        placement: "before",
+      }),
+    ).toEqual([]);
+    expect(planner(`${environmentId}:${rows[0]!.id}`, "down")).toBeNull();
+    expect(
+      planner(`${environmentId}:${rows[0]!.id}`, {
+        section: "active",
+        targetId: `${environmentId}:${rows[1]!.id}`,
+        placement: "after",
+      }),
+    ).toBeNull();
+  });
+});

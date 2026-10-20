@@ -389,6 +389,7 @@ interface SidebarThreadPartitionInput {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  readonly sortByLastMessage: boolean;
   // Snooze wakes and the queued-turn grace depend on the clock, so the minute
   // tick and the precise snooze-wake tick are inputs: a new key repartitions.
   readonly clockKey: string;
@@ -412,8 +413,16 @@ function resolveDraggedOrders(input: {
   readonly settledThreads: readonly EnvironmentThreadShell[];
   readonly activeThreads: readonly EnvironmentThreadShell[];
   readonly workingShelfEnabled: boolean;
+  readonly sortByLastMessage: boolean;
 }): typeof NO_DRAGGED_ORDERS {
-  const { drag, threadByKey, settledThreads, activeThreads, workingShelfEnabled } = input;
+  const {
+    drag,
+    threadByKey,
+    settledThreads,
+    activeThreads,
+    workingShelfEnabled,
+    sortByLastMessage,
+  } = input;
   const thread = threadByKey.get(drag.activeKey);
   if (thread === undefined) return NO_DRAGGED_ORDERS;
   const others = (list: readonly EnvironmentThreadShell[]) =>
@@ -428,7 +437,12 @@ function resolveDraggedOrders(input: {
           [...others(activeThreads), applySidebarThreadDrop(thread, "active", drag.occurredAt)],
           inboxReturns.returnedAt,
         ).map(threadShellKey)
-      : undefined,
+      : sortByLastMessage
+        ? sortThreadsForSidebar(
+            [...others(activeThreads), applySidebarThreadDrop(thread, "active", drag.occurredAt)],
+            true,
+          ).map(threadShellKey)
+        : undefined,
   };
 }
 
@@ -469,6 +483,7 @@ function useSidebarThreads(input: {
           ),
         );
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const sortByLastMessage = useClientSettings((s) => s.sidebarSortByLastMessage);
   const nowMinute = useNowMinute();
   // Snooze wake times are second-precise, so classifying with the quantized
   // minute would hold a woken thread on the shelf for up to a minute.
@@ -510,6 +525,7 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    sortByLastMessage,
     clockKey: `${nowMinute}:${snoozeWakeTick}`,
   });
   const partitionNextWakeAt = partition.snoozedThreads[0]?.snoozedUntil ?? null;
@@ -559,6 +575,7 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    sortByLastMessage,
     searchableThreads: [
       ...pinnedThreads,
       ...activeThreads,
@@ -599,7 +616,14 @@ function useSidebarThreads(input: {
 }
 
 function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
-  const { threads, scopedProjectKeys, serverConfigs, optimisticDrop, workingShelfEnabled } = input;
+  const {
+    threads,
+    scopedProjectKeys,
+    serverConfigs,
+    optimisticDrop,
+    workingShelfEnabled,
+    sortByLastMessage,
+  } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
   inboxReturns.observe(workingShelfEnabled ? threads : null);
@@ -660,7 +684,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
     ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
-    : sortThreadsForSidebar(active);
+    : sortThreadsForSidebar(active, sortByLastMessage);
   return {
     pinnedThreads:
       optimisticDrop?.section !== "pinned" || optimisticDrop.order === null
@@ -673,7 +697,10 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     draggableThreadKeys: draggable,
     activeReorderableThreadKeys: activeReorderable,
     activeThreads:
-      optimisticDrop?.section !== "active" || optimisticDrop.order === null
+      workingShelfEnabled ||
+      sortByLastMessage ||
+      optimisticDrop?.section !== "active" ||
+      optimisticDrop.order === null
         ? sortedActive
         : orderItemsByPreferredIds({
             items: sortedActive,
@@ -2989,6 +3016,7 @@ export default function Sidebar() {
   const {
     threads,
     workingShelfEnabled,
+    sortByLastMessage,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -3649,6 +3677,7 @@ export default function Sidebar() {
           settledThreads,
           activeThreads,
           workingShelfEnabled,
+          sortByLastMessage,
         });
   const sidebarSortingStrategy = createSidebarSortingStrategy({
     items: sidebarListItems,
@@ -3689,7 +3718,7 @@ export default function Sidebar() {
             activeOrder: activeKeys,
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
-            activeTimeOrdered: workingShelfEnabled,
+            activeTimeOrdered: workingShelfEnabled || sortByLastMessage,
           }).kind !== "none"
         );
       },
@@ -3724,7 +3753,7 @@ export default function Sidebar() {
       activeOrder: activeKeys,
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
-      activeTimeOrdered: workingShelfEnabled,
+      activeTimeOrdered: workingShelfEnabled || sortByLastMessage,
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;

@@ -47,6 +47,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           <AutoSettleSettingsRows />
+          <ThreadSortSettingsSection />
           <BetaSettingsSection />
           <LegacySettingsSection />
         </ScrollView>
@@ -286,6 +287,31 @@ function LegacySettingsSection() {
       <Text className="px-2 text-sm text-foreground-muted">
         Opt into retired interfaces kept for compatibility. Plan Mode restores the Build/Plan
         control; otherwise every task runs in Build mode.
+      </Text>
+    </View>
+  );
+}
+
+function ThreadSortSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const loaded = AsyncResult.isSuccess(preferences);
+  const sortByLastMessage = loaded && preferences.value.threadListSortByLastMessage === true;
+  const workingShelfEnabled = loaded && preferences.value.workingShelfEnabled === true;
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Thread order">
+        <SettingsSwitchRow
+          icon="line.3.horizontal"
+          label="Sort active threads by last message"
+          value={sortByLastMessage}
+          disabled={!loaded || workingShelfEnabled}
+          onValueChange={(value) => savePreferences({ threadListSortByLastMessage: value })}
+        />
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Show your most recent conversations first. Turn off to restore your saved arrangement. The
+        Working section uses return time while enabled. This choice applies to this device.
       </Text>
     </View>
   );

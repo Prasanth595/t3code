@@ -1274,3 +1274,15 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("active thread sort preference", () => {
+  it("keeps configured order for existing clients and accepts message sorting patches", () => {
+    expect(decodeClientSettings({}).sidebarSortByLastMessage).toBe(false);
+    const settings = decodeClientSettings({ sidebarSortByLastMessage: true });
+    expect(encodeClientSettings(settings).sidebarSortByLastMessage).toBe(true);
+    expect(decodeClientSettingsPatch({ sidebarSortByLastMessage: true })).toEqual({
+      sidebarSortByLastMessage: true,
+    });
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("sidebarSortByLastMessage");
+  });
+});

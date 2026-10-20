@@ -80,6 +80,7 @@ export function createThreadMovePlanner(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
   readonly section: PendingThreadOrder["section"];
+  readonly timeOrdered?: boolean;
   readonly reorderableEnvironmentIds: ReadonlySet<EnvironmentId>;
 }) {
   const orderedIds = input.ordered.map(rowId);
@@ -95,6 +96,14 @@ export function createThreadMovePlanner(input: {
       .map(rowId),
   );
   return (movedId: string, direction: ThreadMoveDestination) => {
+    if (input.timeOrdered) {
+      return keysById.has(movedId) &&
+        typeof direction === "object" &&
+        direction.section === input.section &&
+        !orderedIds.includes(movedId)
+        ? []
+        : null;
+    }
     if (!writableIds.has(movedId)) return null;
     const nextIds = threadOrderAfterMove(orderedIds, movedId, direction);
     if (nextIds === null) return null;

@@ -99,6 +99,14 @@ position, so using **Un-settle** returns it to the top. Pinning and snoozing pre
 position until you move it again. Thread activity does not change the order. The settled shelf
 continues to use settlement time.
 
+To put recent conversations first, choose **Sort active threads > Last message** in the web or
+desktop sidebar. On mobile, enable **Settings > Thread behavior > Sort active threads by last
+message**. Active threads then follow their last user message, matching the age shown on the row;
+threads without messages use their update time. Active positions cannot be rearranged in this
+mode, but threads can still move between sections. Choose **Configured order** (or turn the mobile
+setting off) to restore your saved arrangement. Each device keeps its own choice. The Working
+section takes precedence while enabled; turning it off restores your sort choice.
+
 If dragging is unavailable for one environment, update the T3 Code server running in that
 environment. Pinned and active reordering require server support. Threads from older servers keep
 their default order until the server is updated.

@@ -9,6 +9,7 @@ import {
   planPinnedMove,
   planPinnedReorder,
   resolveSettledThreadTimestamp,
+  sortActiveThreads,
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
@@ -503,5 +504,68 @@ describe("sortActiveThreadsByOrderKey", () => {
     const keys = new Map(assignments.map((assignment) => [assignment.id, assignment.orderKey]));
     const updated = threads.map((thread) => ({ ...thread, activeOrderKey: keys.get(thread.id) }));
     expect(sortActiveThreadsByOrderKey(updated).map((thread) => thread.id)).toEqual(orderedIds);
+  });
+});
+
+describe("sortActiveThreads", () => {
+  const rows = [
+    {
+      id: "ten-hours",
+      createdAt: "2026-06-01T10:00:00Z",
+      updatedAt: "2026-06-02T11:59:00Z",
+      latestUserMessageAt: "2026-06-02T02:00:00Z",
+      activeOrderKey: "f",
+    },
+    {
+      id: "two-minutes",
+      createdAt: "2026-06-01T09:00:00Z",
+      updatedAt: "2026-06-02T11:58:00Z",
+      latestUserMessageAt: "2026-06-02T11:58:00Z",
+      activeOrderKey: "t",
+    },
+  ];
+
+  it("puts a 2m row above a 10h row using the row's last-message time", () => {
+    expect(sortActiveThreads(rows, true).map((row) => row.id)).toEqual([
+      "two-minutes",
+      "ten-hours",
+    ]);
+    expect(rows.map((row) => row.activeOrderKey)).toEqual(["f", "t"]);
+    expect(sortActiveThreads(rows).map((row) => row.id)).toEqual(["ten-hours", "two-minutes"]);
+  });
+
+  it("uses update then creation time for empty or malformed message stamps", () => {
+    expect(
+      sortActiveThreads(
+        [
+          { id: "empty", createdAt: "2026-06-02T12:00:00Z", updatedAt: "2026-06-02T12:00:00Z" },
+          {
+            id: "malformed",
+            createdAt: "2026-06-01T12:00:00Z",
+            updatedAt: "bad",
+            latestUserMessageAt: "bad",
+          },
+          ...rows,
+        ],
+        true,
+      ).map((row) => row.id),
+    ).toEqual(["empty", "two-minutes", "ten-hours", "malformed"]);
+  });
+
+  it("breaks equal timestamps by thread and environment identity", () => {
+    const equal = {
+      createdAt: "2026-06-02T12:00:00Z",
+      latestUserMessageAt: "2026-06-02T12:00:00Z",
+    };
+    const rows = [
+      { ...equal, id: "a", environmentId: "b" },
+      { ...equal, id: "b", environmentId: "a" },
+      { ...equal, id: "a", environmentId: "a" },
+    ];
+    expect(sortActiveThreads(rows, true).map((row) => `${row.id}:${row.environmentId}`)).toEqual([
+      "a:a",
+      "a:b",
+      "b:a",
+    ]);
   });
 });
