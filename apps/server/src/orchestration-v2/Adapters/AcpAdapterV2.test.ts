@@ -975,6 +975,119 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.live("drops a late prompt response that lands after the turn finalized", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-late");
+      const threadId = ThreadId.make("thread-acp-prompt-usage-late");
+      const dispatched = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          reportsPerTurnPromptUsage: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              // The response only leaves the agent after the turn has been
+              // Stopped and finalized: cancel does not interrupt this fiber.
+              prompt: () =>
+                Deferred.succeed(dispatched, undefined).pipe(
+                  Effect.andThen(Deferred.await(gate)),
+                  Effect.andThen(
+                    Effect.succeed({
+                      stopReason: "cancelled" as const,
+                      usage: { inputTokens: 60, outputTokens: 15, totalTokens: 75 },
+                    }),
+                  ),
+                ),
+            }),
+            wrapCancel: () => Effect.void,
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-usage-late"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      let stopCollector = false;
+      const events: Array<Record<string, unknown>> = [];
+      const collector = yield* Stream.runForEach(
+        runtime.events.pipe(Stream.takeUntil(() => stopCollector)),
+        (event) => Effect.sync(() => events.push(event as Record<string, unknown>)),
+      ).pipe(Effect.forkScoped);
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+            messageText: "Say hi.",
+          }),
+        )
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(dispatched);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ACP_TEST_DRIVER,
+        nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+      });
+      // The gated prompt never acknowledges the cancel, so the interrupt times
+      // out — and that timeout path is what finalizes the turn as interrupted.
+      yield* runtime.interruptTurn({ providerThread, providerTurnId }).pipe(Effect.option);
+      yield* Effect.sleep("200 millis");
+      const usageAt = () => {
+        const turns = events.filter(
+          (event) =>
+            event.type === "provider_turn.updated" &&
+            (event.providerTurn as Record<string, unknown>).turnTokenUsage !== undefined,
+        );
+        const last = turns[turns.length - 1] as
+          | { providerTurn: Record<string, unknown> }
+          | undefined;
+        return last?.providerTurn.turnTokenUsage as Record<string, unknown>;
+      };
+      assert.deepEqual(usageAt(), {
+        usageScope: "main_agent",
+        usageStatus: "unavailable",
+        hasSubagents: false,
+      });
+      // The response lands now; the finalized turn must not adopt its counters.
+      yield* Deferred.succeed(gate, undefined);
+      // Joining proves the prompt chain (and its usage tap) actually ran.
+      yield* Fiber.join(turnFiber);
+      assert.deepEqual(usageAt(), {
+        usageScope: "main_agent",
+        usageStatus: "unavailable",
+        hasSubagents: false,
+      });
+      stopCollector = true;
+      yield* Fiber.interrupt(collector);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("passes per-turn usage samples through", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
