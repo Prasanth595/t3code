@@ -104,6 +104,25 @@ mod tests {
     }
 
     #[test]
+    fn drops_metadata_when_title_whitespace_changes() {
+        for (before, after) in [
+            ("Document", " Document "),
+            ("Document", "Document "),
+            (" Document", "Document"),
+            ("⠋ Document", "⠙ Document "),
+        ] {
+            assert_eq!(
+                metadata_after(
+                    client("0xabc", before, json!({})),
+                    vec![client("0xabc", after, json!({}))],
+                ),
+                None,
+                "{before:?} -> {after:?}",
+            );
+        }
+    }
+
+    #[test]
     fn drops_metadata_when_the_window_identity_or_state_changed() {
         let before = || client("0xabc", "⠋ Document", json!({}));
         for after in [

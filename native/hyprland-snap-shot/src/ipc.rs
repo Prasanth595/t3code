@@ -77,7 +77,6 @@ impl Window {
 
 /// Match the same leading CLI spinner accepted by the Wayland AT-SPI window matcher.
 fn capture_title(title: &str) -> &str {
-    let title = title.trim();
     let mut chars = title.chars();
     if matches!(
         chars.next(),
