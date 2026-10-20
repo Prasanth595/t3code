@@ -954,6 +954,8 @@ const make = Effect.gen(function* () {
     try {
       if (await download.failure()) return;
       await NodeFSP.mkdir(downloadDir(tab), { recursive: true, mode: 0o700 });
+      // mkdir leaves the mode of a folder that already exists, such as one an older build made.
+      await NodeFSP.chmod(downloadDir(tab), 0o700);
       await download.saveAs(path);
       // saveAs copies with the process umask; a download should stay readable by its owner only.
       await NodeFSP.chmod(path, 0o600);

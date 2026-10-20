@@ -20,6 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
@@ -1684,6 +1685,20 @@ it.live.each([false, true])(
             }),
           ),
         ).toBe(true);
+        if ((yield* HostProcess.Platform) !== "win32") {
+          const folder = (yield* Path.Path).dirname(Option.getOrThrow(file).path);
+          yield* fs.chmod(folder, 0o755);
+          page.emit("download", {
+            failure: async () => null,
+            delete: async () => {},
+            saveAs: (path: string) => NodeFSP.writeFile(path, "c"),
+            suggestedFilename: () => "again.csv",
+            url: () => "https://example.test/again.csv",
+          });
+          let again = yield* Queue.take(viewer.output);
+          while (again._tag !== "download") again = yield* Queue.take(viewer.output);
+          expect((yield* fs.stat(folder)).mode & 0o777).toBe(0o700);
+        }
       }),
     ).pipe(Effect.provide(layer)),
 );
