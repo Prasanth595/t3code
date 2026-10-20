@@ -2314,8 +2314,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               ) : (
                 <span className="flex-1" />
               )}
-              {pinIndicator}
-              {/* Reserve both states' widths so revealing actions cannot move the pin or Woke label. */}
+              {/* Reserve both states' widths so revealing actions cannot move the
+                timestamp or Woke label; the pin on the title row (#21910) no longer
+                tracks this slot's width. */}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
@@ -2457,7 +2458,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               )}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className="mt-1 flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0">{pinIndicator}</span>
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">
