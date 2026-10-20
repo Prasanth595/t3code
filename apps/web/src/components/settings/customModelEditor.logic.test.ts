@@ -151,7 +151,10 @@ describe("customModelEditor.logic", () => {
     const copied = definitionFromDraft(
       draft({ descriptors: descriptorsFromCapabilities(capabilities) }),
     );
-    expect(copied.capabilities?.optionDescriptors).toEqual(capabilities.optionDescriptors);
+    expect(copied.capabilities?.optionDescriptors).toEqual([
+      { ...capabilities.optionDescriptors![0], currentValue: "1m" },
+      capabilities.optionDescriptors![1],
+    ]);
     const presets = definitionFromDraft(
       draft({
         descriptors: (DESCRIPTOR_PRESETS_BY_KIND[ProviderDriverKind.make("claudeAgent")] ?? []).map(

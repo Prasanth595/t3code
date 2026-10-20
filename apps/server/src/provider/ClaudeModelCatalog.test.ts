@@ -225,6 +225,25 @@ describe("Claude model catalog", () => {
     }
   });
 
+  it("only treats a trailing 1M marker as an explicit context window", () => {
+    const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
+      "route[1m]-revision",
+      "route[1M]",
+    ]);
+    for (const [model, expected] of [
+      ["route[1m]-revision", 200_000],
+      ["route[1M]", 1_000_000],
+    ] as const) {
+      assert.strictEqual(
+        resolveClaudeCatalogContextWindowTokens(catalog, {
+          instanceId: ProviderInstanceId.make("claudeAgent"),
+          model,
+        }),
+        expected,
+      );
+    }
+  });
+
   it("appends custom models, defaulting a bare slug and keeping declared descriptors", () => {
     const catalog = scopeClaudeModelCatalog(catalogFromManifest(manifest()), [
       "synthetic",

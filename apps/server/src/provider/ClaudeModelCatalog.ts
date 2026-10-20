@@ -337,7 +337,7 @@ export function resolveClaudeCatalogContextWindowTokens(
   if (entry.runtime.fixedContextWindowTokens) return entry.runtime.fixedContextWindowTokens;
   // Claude Code reads `[1m]` off the id itself, so a route the user marked by
   // hand runs at 1M whether or not it declares a Context Window control.
-  if (/\[1m\]/i.test(entry.model.slug)) return 1_000_000;
+  if (/\[1m\]$/i.test(entry.model.slug)) return 1_000_000;
   const contextWindow = resolveClaudeCatalogContextWindow(catalog, modelSelection);
   return contextWindow ? entry.runtime.contextWindowTokens?.[contextWindow] : undefined;
 }
