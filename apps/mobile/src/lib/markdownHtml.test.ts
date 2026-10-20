@@ -117,5 +117,21 @@ describe("HTML in native Markdown", () => {
         { type: "link", url: "https://example.com", children: [{ value: "logs [1] ]" }] },
       ]);
     }
+    const document = parseMarkdownDocument(
+      "<p><a href='https://example.com'>`array[0]` in folder\\</a></p>",
+    );
+    expect(document.children[0]).toMatchObject({
+      type: "paragraph",
+      children: [
+        {
+          type: "link",
+          url: "https://example.com",
+          children: [
+            { type: "inlineCode", value: "array[0]" },
+            { type: "text", value: " in folder\\" },
+          ],
+        },
+      ],
+    });
   });
 });
