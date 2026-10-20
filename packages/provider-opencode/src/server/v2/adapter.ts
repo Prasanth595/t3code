@@ -3052,7 +3052,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (turn !== undefined) turn.before = before;
       });
 
-    const beginTurn = Effect.fn("Opencode2Adapter.beginTurn")(function* (
+    const beginTurn = Effect.fn("OpenCode2Adapter.beginTurn")(function* (
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
       awaitingStart: boolean,
@@ -3344,7 +3344,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         selection.instanceId === instanceId
           ? windowOf(cwd === undefined ? session.cwd : cwd, selection.model)
           : undefined,
-      ensureThread: Effect.fn("Opencode2Adapter.ensureThread")(
+      ensureThread: Effect.fn("OpenCode2Adapter.ensureThread")(
         function* (threadInput) {
           if (threadInput.existingProviderThread?.nativeThreadRef != null) {
             return yield* runtime.resumeThread({
@@ -3424,7 +3424,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      resumeThread: Effect.fn("Opencode2Adapter.resumeThread")(
+      resumeThread: Effect.fn("OpenCode2Adapter.resumeThread")(
         function* (threadInput) {
           const sessionId = yield* sessionIdOf(threadInput.providerThread);
           if (threadInput.runtimePolicy !== undefined) {
@@ -3466,7 +3466,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ),
       compactThread: (turnInput) =>
         runtime.startTurn({ ...turnInput, message: { ...turnInput.message, text: "/compact" } }),
-      startTurn: Effect.fn("Opencode2Adapter.startTurn")(
+      startTurn: Effect.fn("OpenCode2Adapter.startTurn")(
         function* (turnInput) {
           // Waited out before the session's gate, so a rollback or fork is not
           // held behind a reconnect.
@@ -3626,7 +3626,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      steerTurn: Effect.fn("Opencode2Adapter.steerTurn")(
+      steerTurn: Effect.fn("OpenCode2Adapter.steerTurn")(
         function* (steerInput) {
           const sessionId = yield* sessionIdOf(steerInput.providerThread);
           const state = threads.get(sessionId);
@@ -3704,7 +3704,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      interruptTurn: Effect.fn("Opencode2Adapter.interruptTurn")(
+      interruptTurn: Effect.fn("OpenCode2Adapter.interruptTurn")(
         function* (interruptInput) {
           const sessionId = yield* sessionIdOf(interruptInput.providerThread);
           const state = threads.get(sessionId);
@@ -3765,7 +3765,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      unloadThread: Effect.fn("Opencode2Adapter.unloadThread")(function* ({ providerThread }) {
+      unloadThread: Effect.fn("OpenCode2Adapter.unloadThread")(function* ({ providerThread }) {
         const nativeId = providerThread.nativeThreadRef?.nativeId;
         const state = nativeId == null ? undefined : threads.get(nativeId);
         if (
@@ -3784,7 +3784,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
       }),
-      respondToRuntimeRequest: Effect.fn("Opencode2Adapter.respondToRuntimeRequest")(
+      respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
         function* (requestInput) {
           const entry = pending.get(requestInput.requestId);
           if (entry === undefined || entry.answering) {
@@ -3872,7 +3872,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      readThreadSnapshot: Effect.fn("Opencode2Adapter.readThreadSnapshot")(
+      readThreadSnapshot: Effect.fn("OpenCode2Adapter.readThreadSnapshot")(
         function* ({ providerThread }) {
           const sessionId = yield* sessionIdOf(providerThread);
           return yield* snapshotOf(providerThread, sessionId);
@@ -3890,7 +3890,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      rollbackThread: Effect.fn("Opencode2Adapter.rollbackThread")(
+      rollbackThread: Effect.fn("OpenCode2Adapter.rollbackThread")(
         function* (rollbackInput) {
           const { providerThread, target } = rollbackInput;
           const sessionId = yield* sessionIdOf(providerThread);
@@ -3940,7 +3940,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           ),
       ),
-      forkThread: Effect.fn("Opencode2Adapter.forkThread")(
+      forkThread: Effect.fn("OpenCode2Adapter.forkThread")(
         function* (forkInput) {
           const source = forkInput.sourceProviderThread;
           const sourceId = yield* sessionIdOf(source);
@@ -4032,7 +4032,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     planSelectionTransition: () => Effect.succeed(turnScopedSelectionTransition()),
     // The session borrows the instance's server for as long as it is open, so a
     // spawned server is not idle-stopped under a long tool call.
-    openSession: Effect.fn("Opencode2Adapter.openSession")(
+    openSession: Effect.fn("OpenCode2Adapter.borrowAndOpenSession")(
       function* (input) {
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
