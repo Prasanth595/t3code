@@ -80,7 +80,9 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
 import * as GitManager from "./GitManager.ts";
 
 const encodeCliJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -760,6 +762,7 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
+  settingsService?: ServerSettings.ServerSettingsService["Service"];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   gitCommands?: string[];
@@ -783,7 +786,9 @@ function makeManager(input?: {
     prefix: "t3-git-manager-test-",
   });
 
-  const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
+  const layerServerSettings = input?.settingsService
+    ? Layer.succeed(ServerSettings.ServerSettingsService, input.settingsService)
+    : ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
   const gitCommands = input?.gitCommands;
   const gitSpawnGate = input?.gitSpawnGate;
@@ -908,6 +913,71 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("uses hostname heuristics and warns when settings fail", () =>
+    withHostOverrideSettingsFailure((settingsService, warnings) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3-git-settings-failure-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, [
+          "remote",
+          "add",
+          "origin",
+          "https://github.example.test/team/repo.git",
+        ]);
+        const { manager } = yield* makeManager({ settingsService });
+        warnings.length = 0;
+        const status = yield* manager.localStatus({ cwd: repoDir });
+        expect(status.sourceControlProvider?.kind).toBe("github");
+      }),
+    ),
+  );
+
+  it.effect("warns and preserves nested remote PR lookup when settings fail", () =>
+    withHostOverrideSettingsFailure((settingsService, warnings) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3-git-remote-settings-failure-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/settings"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/settings"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.example.test/team/nested/repo.git",
+          remoteDir,
+        );
+        const { manager, ghCalls } = yield* makeManager({ settingsService });
+        warnings.length = 0;
+        const status = yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
+        expect(status).not.toBeNull();
+        expect(ghCalls.some((call) => call.startsWith("pr list "))).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("reports a configured host before applying hostname heuristics", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-host-mapping-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.example.test/team/repo.git",
+      ]);
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlHostOverrides: { "github.example.test": { kind: "forgejo" } },
+        },
+      });
+      expect((yield* manager.localStatus({ cwd: repoDir })).sourceControlProvider).toEqual({
+        kind: "forgejo",
+        name: "Forgejo",
+        baseUrl: "https://github.example.test",
+      });
+    }),
+  );
   it.effect("passive worktree status streams do not start remote refreshes", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-passive-vcs-");
@@ -1264,6 +1334,220 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         aheadOfDefaultCount: 0,
         pr: null,
       });
+    }),
+  );
+
+  it.effect(
+    "host mapping changes clear warm status and PR fallbacks but equivalent settings do not",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-mapping-cache-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/mapping"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/mapping"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.example.test/team/repo.git",
+          remoteDir,
+        );
+        const settings = yield* makeSettingsChanges;
+        const initial = {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: {
+            "github.example.test": {
+              kind: "github" as const,
+              baseUrl: "https://github.example.test",
+            },
+            "other.example.test": { kind: "gitlab" as const },
+          },
+        };
+        yield* settings.publish(initial);
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const { manager, ghCalls } = yield* makeManager({
+              settingsService: settings.service,
+              ghScenario: {
+                prListSequence: [
+                  encodeCliJson([
+                    {
+                      number: 113,
+                      title: "Old mapping",
+                      url: "https://github.example.test/team/repo/pull/113",
+                      baseRefName: "main",
+                      headRefName: "feature/mapping",
+                    },
+                  ]),
+                ],
+                failAfterCalls: 1,
+                failWith: "lookup failed",
+              },
+            });
+            const local = yield* manager.localStatus({ cwd: repoDir });
+            const remote = yield* manager.remoteStatus({ cwd: repoDir });
+            expect(local.sourceControlProvider?.kind).toBe("github");
+            expect(remote?.pr?.number).toBe(113);
+            yield* settings.publish({ ...initial, worktreesDirectory: "/unrelated" });
+            yield* settings.publish({
+              ...initial,
+              sourceControlHostOverrides: {
+                "OTHER.EXAMPLE.TEST": { kind: "gitlab" },
+                "GITHUB.EXAMPLE.TEST": {
+                  baseUrl: "https://GITHUB.example.test:443/",
+                  kind: "github",
+                },
+              },
+            });
+            expect(yield* manager.localStatus({ cwd: repoDir })).toBe(local);
+            expect(yield* manager.remoteStatus({ cwd: repoDir })).toBe(remote);
+            expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(1);
+            // Expire only the PR result to establish that the old badge is a usable fallback.
+            yield* TestClock.adjust("61 seconds");
+            expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr?.number).toBe(113);
+            yield* settings.publish({
+              ...initial,
+              sourceControlHostOverrides: { "github.example.test": { kind: "forgejo" } },
+            });
+            expect((yield* manager.localStatus({ cwd: repoDir })).sourceControlProvider?.kind).toBe(
+              "forgejo",
+            );
+            expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr).toBeNull();
+            expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(3);
+            expect(settings.subscribers()).toBe(1);
+          }),
+        );
+        expect(settings.subscribers()).toBe(0);
+        yield* settings.publish(DEFAULT_SERVER_SETTINGS);
+      }),
+  );
+
+  it.effect("host mapping changes expire negative PR lookups immediately", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-mapping-negative-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/mapping"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/mapping"]);
+      const settings = yield* makeSettingsChanges;
+      const { manager, ghCalls } = yield* makeManager({
+        settingsService: settings.service,
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            encodeCliJson([
+              {
+                number: 114,
+                title: "New mapping",
+                url: "https://github.com/team/repo/pull/114",
+                baseRefName: "main",
+                headRefName: "feature/mapping",
+              },
+            ]),
+          ],
+        },
+      });
+      expect((yield* manager.status({ cwd: repoDir })).pr).toBeNull();
+      yield* settings.publish({
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlHostOverrides: { "github.com": { kind: "forgejo" } },
+      });
+      expect(
+        (yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/mapping" }))?.number,
+      ).toBe(114);
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+    }),
+  );
+
+  it.effect("a PR lookup finishing after a mapping change cannot restore the old fallback", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-mapping-inflight-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/mapping"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/mapping"]);
+      const settings = yield* makeSettingsChanges;
+      const reached = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const { service } = createGitHubProviderWithFakeGh({
+        prListSequence: [
+          encodeCliJson([
+            {
+              number: 115,
+              title: "Old mapping",
+              url: "https://github.com/team/repo/pull/115",
+              baseRefName: "main",
+              headRefName: "feature/mapping",
+            },
+          ]),
+        ],
+        failAfterCalls: 1,
+        failWith: "lookup failed",
+      });
+      let calls = 0;
+      const { manager } = yield* makeManager({
+        settingsService: settings.service,
+        sourceControlProvider: {
+          ...service,
+          listChangeRequests: (input) =>
+            Effect.gen(function* () {
+              if (calls++ === 0) {
+                yield* Deferred.succeed(reached, undefined);
+                yield* Deferred.await(release);
+              }
+              return yield* service.listChangeRequests(input);
+            }),
+        },
+      });
+      const old = yield* manager
+        .remoteStatus({ cwd: repoDir })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(reached);
+      yield* settings.publish({
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlHostOverrides: { "github.com": { kind: "forgejo" } },
+      });
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(old))?.pr?.number).toBe(115);
+      expect((yield* manager.remoteStatus({ cwd: repoDir }))?.pr).toBeNull();
+      expect(calls).toBe(2);
+    }),
+  );
+
+  it.effect("host mapping changes reset PR failure backoff", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-mapping-failure-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/mapping"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/mapping"]);
+      const settings = yield* makeSettingsChanges;
+      const { manager, ghCalls } = yield* makeManager({
+        settingsService: settings.service,
+        ghScenario: { failWith: "lookup failed" },
+      });
+      const lookup = manager
+        .branchPullRequest({ cwd: repoDir, branch: "feature/mapping" })
+        .pipe(Effect.exit);
+      yield* lookup;
+      yield* TestClock.adjust("21 seconds");
+      yield* lookup;
+      yield* TestClock.adjust("41 seconds");
+      yield* lookup;
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(3);
+      yield* settings.publish({
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlHostOverrides: { "github.com": { kind: "forgejo" } },
+      });
+      yield* lookup;
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(4);
+      yield* TestClock.adjust("21 seconds");
+      yield* lookup;
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(5);
     }),
   );
 

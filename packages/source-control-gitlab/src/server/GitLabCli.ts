@@ -13,6 +13,7 @@ import {
   type VcsError,
 } from "@t3tools/contracts";
 
+import { PullRequestBaseUrl } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   decodeGitLabMergeRequestJson,
@@ -413,21 +414,37 @@ function parseRepositoryPath(repository: string): {
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
 
-  const run = (
+  const run = Effect.fn("GitLabCli.run")(function* (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
-  ) =>
-    process
+  ) {
+    const baseUrl = yield* PullRequestBaseUrl;
+    const endpoint = baseUrl === undefined ? undefined : new URL(baseUrl);
+    return yield* process
       .run({
         operation: "GitLabCli.execute",
         command: "glab",
-        args: input.args,
+        args:
+          endpoint && input.args[0] === "api"
+            ? [...input.args, "--hostname", endpoint.host]
+            : input.args,
+        ...(endpoint
+          ? {
+              env: {
+                GITLAB_HOST: endpoint.host,
+                GITLAB_API_HOST: endpoint.host,
+                GLAB_API_PROTOCOL: endpoint.protocol.slice(0, -1),
+                GITLAB_SUBFOLDER: endpoint.pathname.replace(/^\/+|\/+$/g, ""),
+              },
+            }
+          : {}),
         cwd: input.cwd,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       })
       .pipe(Effect.mapError(mapError));
+  });
 
   const execute: GitLabCli["Service"]["execute"] = (input) =>
     run(input, (error) =>

@@ -52,6 +52,31 @@ describe("fallbackTextGenerationModelSelection", () => {
 });
 
 describe("serverSettings helpers", () => {
+  it("adds, replaces, and removes individual host mappings without losing other clients' edits", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      sourceControlHostOverrides: {
+        "CODE.example.test": { kind: "forgejo", baseUrl: "https://code.example.test/forgejo" },
+      },
+    });
+    const second = applyServerSettingsPatch(first, {
+      sourceControlHostOverrides: { "other.example.test": { kind: "gitlab" } },
+    });
+    const edited = applyServerSettingsPatch(second, {
+      sourceControlHostOverrides: { "Code.Example.Test": { kind: "github" } },
+    });
+    expect(edited.sourceControlHostOverrides).toEqual({
+      "code.example.test": { kind: "github" },
+      "other.example.test": { kind: "gitlab" },
+    });
+    expect(
+      applyServerSettingsPatch(edited, {
+        sourceControlHostOverrides: { "CODE.example.test": null },
+      }).sourceControlHostOverrides,
+    ).toEqual({ "other.example.test": { kind: "gitlab" } });
+    expect(applyServerSettingsPatch(edited, {}).sourceControlHostOverrides).toEqual(
+      edited.sourceControlHostOverrides,
+    );
+  });
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

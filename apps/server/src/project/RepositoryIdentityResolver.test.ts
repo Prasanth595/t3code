@@ -13,6 +13,8 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
@@ -37,9 +39,28 @@ const layerRepositoryIdentityResolverTest = (options: {
       cacheCapacity: 16,
       ...options,
     }),
-  ).pipe(Layer.provide(ProcessRunner.layer));
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(ServerSettings.layerTest()));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+  it.effect("uses hostname heuristics and warns when settings fail", () =>
+    withHostOverrideSettingsFailure((settings, warnings) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-identity-settings-failure-" });
+        yield* git(cwd, ["init"]);
+        yield* git(cwd, ["remote", "add", "origin", "git@gitlab.example.test:team/repo.git"]);
+        const resolver = yield* RepositoryIdentityResolver.make().pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, settings),
+          Effect.provide(ProcessRunner.layer),
+        );
+        expect(warnings.length).toBe(1); // Subscription snapshot also falls back.
+        const identity = yield* resolver.resolve(cwd);
+        expect(identity?.provider).toBe("gitlab");
+        expect(warnings.length).toBe(2);
+      }),
+    ),
+  );
+
   it.effect("refreshes the Git root only when requested", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     let rootPath = "/repo";
@@ -89,7 +110,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           );
         },
       }),
-    ).pipe(Layer.provide(layerProcessRunner));
+    ).pipe(Layer.provide(layerProcessRunner), Layer.provide(ServerSettings.layerTest()));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -155,7 +176,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     const layerResolver = Layer.effect(
       RepositoryIdentityResolver.RepositoryIdentityResolver,
       RepositoryIdentityResolver.make(),
-    ).pipe(Layer.provide(layerProcessRunner));
+    ).pipe(Layer.provide(layerProcessRunner), Layer.provide(ServerSettings.layerTest()));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -171,6 +192,50 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(recovered?.canonicalKey).toBe("github.com/t3tools/t3code");
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
+
+  it.effect.each([
+    ["code.example.test", "gitlab"],
+    ["code.example.test", "github"],
+    ["code.example.test", "bitbucket"],
+    ["code.example.test", "forgejo"],
+    ["code.example.test", "azure-devops"],
+    ["code.example.test", "gitcafe"],
+    ["gitlab.example.test", "github"],
+    ["github.example.test", "forgejo"],
+    ["code.example.test", undefined],
+    ["gitlab.example.test", undefined],
+  ] as const)("detects the provider with host mapping %j", ([host, kind]) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-host-mapping-test-",
+      });
+      const remoteUrl = `git@${host}:Team/Repo.git`;
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", remoteUrl]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+      expect(identity?.provider).toBe(
+        kind ?? (host === "gitlab.example.test" ? "gitlab" : "unknown"),
+      );
+      expect(identity?.canonicalKey).toBe(`${host}/team/repo`);
+      expect(identity?.locator.remoteUrl).toBe(remoteUrl);
+      expect(identity?.displayName).toBe("Team/Repo");
+      expect(identity?.owner).toBe("Team");
+      expect(identity?.name).toBe("Repo");
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(
+          Layer.provide(
+            ServerSettings.layerTest({
+              sourceControlHostOverrides: kind === undefined ? {} : { [host]: { kind } },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
 
   it.effect.each(["times out", "cannot start"] as const)(
     "skips the bare repository probe when Git root discovery %s",
@@ -203,7 +268,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const layerResolver = Layer.effect(
         RepositoryIdentityResolver.RepositoryIdentityResolver,
         RepositoryIdentityResolver.make(),
-      ).pipe(Layer.provide(layerProcessRunner));
+      ).pipe(Layer.provide(layerProcessRunner), Layer.provide(ServerSettings.layerTest()));
 
       return Effect.gen(function* () {
         const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -240,7 +305,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.owner).toBe("T3Tools");
       expect(identity?.name).toBe("t3code");
       expect(yield* resolver.resolve(path.join(cwd, ".git"))).toBeNull();
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("resolves the fetch remote of a partial clone", () =>
@@ -264,7 +333,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
       expect(identity?.locator.remoteUrl).toBe("git@github.com:T3Tools/t3code.git");
       expect(identity?.locator.remoteName).toBe("origin");
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
@@ -291,7 +364,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(
         normalizeResolvedPath(resolvedRepoRoot),
       );
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect.each(["bare clone", "dot-bare"] as const)(
@@ -345,7 +422,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         for (const projectRoot of projectRoots) {
           expect(yield* resolver.resolve(projectRoot, { refresh: true })).toBeNull();
         }
-      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+      }).pipe(
+        Effect.provide(
+          RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+        ),
+      ),
   );
 
   it.effect("returns null for non-git folders and repos without remotes", () =>
@@ -366,7 +447,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(nonGitIdentity).toBeNull();
       expect(noRemoteIdentity).toBeNull();
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("ignores local-path remotes such as GitButler's gb-local", () =>
@@ -393,7 +478,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const mixedIdentity = yield* resolver.resolve(mixedDir);
       expect(mixedIdentity?.locator.remoteName).toBe("mirror");
       expect(mixedIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect.each(["add", "replace"] as const)(
@@ -431,7 +520,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
         expect(identity?.displayName).toBe("T3Tools/t3code");
         expect(yield* resolver.resolve(cwd)).toEqual(identity);
-      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+      }).pipe(
+        Effect.provide(
+          RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+        ),
+      ),
   );
 
   it.effect("reports a fork's own remote as origin next to the upstream identity", () =>
@@ -454,7 +547,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         canonicalKey: "github.com/julius/t3code-fork",
         displayName: "julius/t3code-fork",
       });
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("uses the last remote path segment as the repository name for nested groups", () =>
@@ -475,7 +572,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.displayName).toBe("T3Tools/platform/t3code");
       expect(identity?.owner).toBe("T3Tools");
       expect(identity?.name).toBe("t3code");
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect(

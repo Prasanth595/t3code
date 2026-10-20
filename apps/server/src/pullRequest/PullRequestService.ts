@@ -74,14 +74,20 @@ import {
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
   type SourceControlProviderInfo,
+  type SourceControlHostOverrides,
   SourceControlProviderKind,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  sourceControlHostOverrideForRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import { readHostOverrides } from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ServerSettings from "../serverSettings.ts";
+import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -91,6 +97,7 @@ import {
   type ProviderListCursor,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
+  PullRequestBaseUrl,
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
@@ -160,7 +167,11 @@ const routingCredential = Context.Reference<{
   readonly viewer: string;
 } | null>("t3/PullRequestService/routingCredential", { defaultValue: () => null });
 const credentialNamespace = Symbol("pullRequestCredentialNamespace");
-type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
+const mountedRepository = Symbol("pullRequestMountedRepository");
+type CredentialRef = PullRequestRef & {
+  readonly [credentialNamespace]?: string;
+  readonly [mountedRepository]?: string;
+};
 
 export class PullRequestService extends Context.Service<
   PullRequestService,
@@ -307,6 +318,7 @@ export interface SupportedProject {
   readonly cursorKey: string;
   readonly project: OrchestrationProjectShell;
   readonly api: PullRequestProviderApi;
+  readonly baseUrl?: string;
   readonly repository: string;
   readonly host: string;
   /**
@@ -353,6 +365,13 @@ function parseListCursor(raw: string): ListCursor | null {
 
 function listCursorKey(host: string, repository: string): string {
   return `${host} ${repository.toLowerCase()}`;
+}
+
+function repositoryWithoutMount(repository: string, baseUrl: string | undefined): string {
+  const mount = baseUrl === undefined ? "" : new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
+  return mount && repository.startsWith(`${mount}/`)
+    ? repository.slice(mount.length + 1)
+    : repository;
 }
 
 /**
@@ -428,7 +447,7 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
-  options?: { readonly viewerAllowsPause: boolean },
+  options?: { readonly viewerAllowsPause?: boolean; readonly baseUrl?: string },
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
   const protect = <A>(
@@ -451,6 +470,7 @@ function withRateLimitBackoff(
       Effect.flatMap((lease) =>
         effect.pipe(
           Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
+          Effect.provideService(PullRequestBaseUrl, options?.baseUrl),
           Effect.tap(() => limits.recordSuccess({ ...key, lease })),
           Effect.tapError((error) =>
             error.reason === "rate-limited"
@@ -597,6 +617,7 @@ export const make = Effect.gen(function* () {
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
     filter: Pick<PullRequestListInput, "projectId" | "host">,
+    overrides: SourceControlHostOverrides,
   ) => {
     type RefinementCandidate = {
       readonly project: OrchestrationProjectShell;
@@ -608,6 +629,11 @@ export const make = Effect.gen(function* () {
     for (const project of projects) {
       if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
       const identity = project.repositoryIdentity;
+      if (
+        identity &&
+        sourceControlHostOverrideForRemoteUrl(identity.locator.remoteUrl, overrides) !== undefined
+      )
+        continue;
       if (
         (identity?.provider !== "unknown" &&
           !(identity?.provider === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))) ||
@@ -702,11 +728,19 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((projects) =>
-        refineUnknownProjectKinds(projects, filter).pipe(
-          Effect.map((refinedProviders) => ({ refinedProviders, projects })),
+        readHostOverrides(serverSettings.getSettings).pipe(
+          Effect.flatMap((sourceControlHostOverrides) =>
+            refineUnknownProjectKinds(projects, filter, sourceControlHostOverrides).pipe(
+              Effect.map((refinedProviders) => ({
+                refinedProviders,
+                projects,
+                overrides: sourceControlHostOverrides,
+              })),
+            ),
+          ),
         ),
       ),
-      Effect.map(({ refinedProviders, projects }) => {
+      Effect.map(({ refinedProviders, projects, overrides }) => {
         const supported: SupportedProject[] = [];
         const unimplemented = new Map<
           string,
@@ -719,10 +753,20 @@ export const make = Effect.gen(function* () {
           if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           const identity = project.repositoryIdentity;
           let kind = identity?.provider as SourceControlProviderKind | undefined;
-          const repository = sourceControlRepositorySelector(project.repositoryIdentity);
-          if (!identity || kind === undefined || repository === null) continue;
+          if (!identity) continue;
           let refinedProvider: SourceControlProviderInfo | null | undefined;
-          if (
+          const override = sourceControlHostOverrideForRemoteUrl(
+            identity.locator.remoteUrl,
+            overrides,
+          );
+          const overridden = override !== undefined;
+          if (overridden) {
+            refinedProvider = detectSourceControlProviderFromRemoteUrl(
+              identity.locator.remoteUrl,
+              overrides,
+            );
+            kind = refinedProvider?.kind ?? kind;
+          } else if (
             kind === "unknown" ||
             (kind === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))
           ) {
@@ -730,8 +774,16 @@ export const make = Effect.gen(function* () {
             refinedProvider = provider === null ? null : refinedProviders.get(provider.baseUrl);
             kind = refinedProvider?.kind ?? kind;
           }
+          if (kind === undefined) continue;
+          let repository = sourceControlRepositorySelector({ ...identity, provider: kind });
+          if (repository === null) continue;
+          const remoteRepository = repository;
+          const baseUrl = override?.baseUrl === undefined ? undefined : refinedProvider?.baseUrl;
+          if (baseUrl && /^https?:/i.test(identity.locator.remoteUrl)) {
+            repository = repositoryWithoutMount(repository, baseUrl);
+          }
           const host =
-            refinedProvider?.kind === "forgejo"
+            refinedProvider && (overridden || refinedProvider.kind === "forgejo")
               ? new URL(refinedProvider.baseUrl).host.toLowerCase()
               : pullRequestHostOf(identity, kind);
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
@@ -757,10 +809,16 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            api: withRateLimitBackoff(api, host, rateLimits),
+            api: withRateLimitBackoff(
+              api,
+              host,
+              rateLimits,
+              baseUrl === undefined ? undefined : { baseUrl },
+            ),
+            ...(baseUrl === undefined ? {} : { baseUrl }),
             repository,
             host,
-            remote: repositoryKey ?? normalizeGitRemoteUrl(`https://${host}/${repository}`),
+            remote: repositoryKey ?? normalizeGitRemoteUrl(`https://${host}/${remoteRepository}`),
             repositoryKey:
               repositoryKey === null ? null : canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
@@ -777,9 +835,14 @@ export const make = Effect.gen(function* () {
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const own = supported[0];
-        const repository = ref.repository.trim();
+        const repository = ((ref as CredentialRef)[mountedRepository] ?? ref.repository).trim();
         const host = ref.host?.trim().toLowerCase();
-        if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
+        if (
+          own !== undefined &&
+          (own.repository.toLowerCase() === repository.toLowerCase() ||
+            own.repository.toLowerCase() ===
+              repositoryWithoutMount(repository, own.baseUrl).toLowerCase())
+        ) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
         }
         if (host === undefined) {
@@ -809,16 +872,27 @@ export const make = Effect.gen(function* () {
               onHost.find(
                 (candidate) =>
                   candidate.repositoryKey === null &&
-                  candidate.repository.toLowerCase() === repository.toLowerCase(),
+                  (candidate.repository.toLowerCase() === repository.toLowerCase() ||
+                    candidate.repository.toLowerCase() ===
+                      repositoryWithoutMount(repository, candidate.baseUrl).toLowerCase()),
               ) ??
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
               return Effect.gen(function* () {
-                const provider = ["github.com", "bitbucket.org", "codeberg.org"].includes(host)
-                  ? detectSourceControlProviderFromRemoteUrl(`https://${host}/${repository}.git`)
-                  : null;
+                const overrides = yield* readHostOverrides(serverSettings.getSettings);
+                const remoteUrl = `https://${host}/${repository}.git`;
+                const provider =
+                  ["github.com", "bitbucket.org", "codeberg.org"].includes(host) ||
+                  sourceControlHostOverrideForRemoteUrl(remoteUrl, overrides) !== undefined
+                    ? detectSourceControlProviderFromRemoteUrl(remoteUrl, overrides)
+                    : null;
+                const baseUrl =
+                  sourceControlHostOverrideForRemoteUrl(remoteUrl, overrides)?.baseUrl === undefined
+                    ? undefined
+                    : provider?.baseUrl;
+                const normalizedRepository = repositoryWithoutMount(repository, baseUrl);
                 const api = provider === null ? null : registry.get(provider.kind);
-                if (api !== null) {
+                if (api !== null && provider?.kind !== "azure-devops") {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
                     Effect.mapError(
                       (cause) =>
@@ -831,10 +905,16 @@ export const make = Effect.gen(function* () {
                   );
                   if (Option.isSome(selected)) {
                     return {
-                      cursorKey: listCursorKey(host, repository),
+                      cursorKey: listCursorKey(host, normalizedRepository),
                       project: selected.value,
-                      api: withRateLimitBackoff(api, host, rateLimits),
-                      repository,
+                      api: withRateLimitBackoff(
+                        api,
+                        host,
+                        rateLimits,
+                        baseUrl === undefined ? undefined : { baseUrl },
+                      ),
+                      ...(baseUrl === undefined ? {} : { baseUrl }),
+                      repository: normalizedRepository,
                       host,
                       remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
                       repositoryKey: null,
@@ -844,13 +924,15 @@ export const make = Effect.gen(function* () {
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }
+            const normalizedRepository = repositoryWithoutMount(repository, route.baseUrl);
             return Effect.succeed(
               route.repositoryKey !== null ||
-                route.repository.toLowerCase() === repository.toLowerCase()
+                route.repository.toLowerCase() === normalizedRepository.toLowerCase()
                 ? route
                 : {
                     ...route,
-                    repository,
+                    cursorKey: listCursorKey(host, normalizedRepository),
+                    repository: normalizedRepository,
                     remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
                   },
             );
@@ -865,6 +947,12 @@ export const make = Effect.gen(function* () {
     const project = yield* requireProject(input);
     return {
       ...input,
+      // Cache loaders resolve the project again; retain the mounted path for its remote identity.
+      ...((input as CredentialRef)[mountedRepository] !== undefined ||
+      (project.repository !== input.repository &&
+        repositoryWithoutMount(input.repository, project.baseUrl) !== input.repository)
+        ? { [mountedRepository]: (input as CredentialRef)[mountedRepository] ?? input.repository }
+        : {}),
       projectId: project.project.id,
       host: project.host,
       repository: project.repository,
@@ -919,19 +1007,31 @@ export const make = Effect.gen(function* () {
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
   };
-  const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
+  const viewerEndpointKey = (
+    host: string,
+    kind: SourceControlProviderKind,
+    baseUrl: string | undefined,
+  ) => JSON.stringify([host, kind, baseUrl ?? null]);
+  const viewersByEndpoint = new Map<
+    string,
+    { readonly at: number; readonly result: ResolvedViewer }
+  >();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots] = JSON.parse(key) as [
+      const [host, kind, roots, baseUrl] = JSON.parse(key) as [
         string,
         SourceControlProviderKind,
         ReadonlyArray<string>,
+        string | undefined,
       ];
       const registered = registry.get(kind);
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
-      const api = withRateLimitBackoff(registered, host, rateLimits, { viewerAllowsPause: true });
+      const api = withRateLimitBackoff(registered, host, rateLimits, {
+        viewerAllowsPause: true,
+        ...(baseUrl ? { baseUrl } : {}),
+      });
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
         Effect.map((viewer) => ({
           host,
@@ -940,7 +1040,9 @@ export const make = Effect.gen(function* () {
           error: null as PullRequestProviderError | null,
         })),
         Effect.tap((result) =>
-          Effect.map(Clock.currentTimeMillis, (at) => viewersByHost.set(host, { at, result })),
+          Effect.map(Clock.currentTimeMillis, (at) =>
+            viewersByEndpoint.set(viewerEndpointKey(host, kind, baseUrl), { at, result }),
+          ),
         ),
         Effect.catch((error) =>
           Effect.succeed({
@@ -970,17 +1072,24 @@ export const make = Effect.gen(function* () {
       [...new Set(projects.map(({ host }) => host))],
       (host) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
-          const held = viewersByHost.get(host);
+          const forHost = projects.filter((project) => project.host === host);
+          const api = forHost[0]!.api;
+          const held = viewersByEndpoint.get(
+            viewerEndpointKey(host, api.kind, forHost[0]!.baseUrl),
+          );
           if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
             return Effect.succeed(held.result);
           }
-          const forHost = projects.filter((project) => project.host === host);
-          const api = forHost[0]!.api;
           // Every checkout on the host, not just the ones that survived de-duplication: one
           // unreadable worktree would otherwise report the whole host as signed out.
           const roots =
             viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
+          const key = JSON.stringify([
+            host,
+            api.kind,
+            [...new Set(roots)].sort(),
+            forHost[0]!.baseUrl,
+          ]);
           if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
           // The pause is checked here rather than inside the lookup, so that it holds back the
           // callers nobody is waiting on without splitting the flight they share with a press.
@@ -2564,16 +2673,26 @@ export const make = Effect.gen(function* () {
       ref.number,
       ref.expectedAccountId ?? null,
       ref[credentialNamespace] ?? null,
+      ref[mountedRepository] ?? null,
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number, expectedAccountId, fingerprint] = JSON.parse(
-      key,
-    ) as [number, string, string | null, string, number, string | null, string | null];
+    const [, projectId, host, repository, number, expectedAccountId, fingerprint, mounted] =
+      JSON.parse(key) as [
+        number,
+        string,
+        string | null,
+        string,
+        number,
+        string | null,
+        string | null,
+        string | null,
+      ];
     return {
       projectId,
       ...(host === null ? {} : { host }),
       ...(expectedAccountId === null ? {} : { expectedAccountId }),
       ...(fingerprint === null ? {} : { [credentialNamespace]: fingerprint }),
+      ...(mounted === null ? {} : { [mountedRepository]: mounted }),
       repository,
       number,
     } as PullRequestRef;
@@ -2641,6 +2760,7 @@ export const make = Effect.gen(function* () {
     const key = [
       operation,
       project.api.kind,
+      project.baseUrl ?? "",
       project.host.toLowerCase(),
       project.repository.toLowerCase(),
       project.project.id,
@@ -3192,13 +3312,26 @@ export const make = Effect.gen(function* () {
     } else {
       listingsEpoch = ++epochCounter;
       everyFileRevisionEpoch = ++epochCounter;
-      viewersByHost.clear();
+      viewersByEndpoint.clear();
       yield* Cache.invalidateAll(viewerFlights);
     }
     if (options?.notifyReaders) {
       yield* SubscriptionRef.set(pullRequestRefreshes, ++epochCounter);
     }
   });
+
+  yield* subscribeHostOverrideChanges(
+    Effect.gen(function* () {
+      projectEpochFloor = ++epochCounter;
+      searchVisibleAt.clear();
+      detailStates.clear();
+      reportedStates.clear();
+      projectEpochs.clear();
+      refEpochs.clear();
+      mergedEpochs.clear();
+      yield* invalidate({}, { notifyReaders: true });
+    }),
+  );
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
     Effect.suspend(() => {

@@ -748,8 +748,10 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+    const overrides = yield* SourceControlHost.readHostOverrides(host.settings.get);
     for (const remote of remotes.remotes) {
-      if (detectSourceControlProviderFromRemoteUrl(remote.url)?.kind !== "bitbucket") continue;
+      if (detectSourceControlProviderFromRemoteUrl(remote.url, overrides)?.kind !== "bitbucket")
+        continue;
       const parsed = parseBitbucketRemoteUrl(remote.url);
       if (parsed) return parsed;
     }

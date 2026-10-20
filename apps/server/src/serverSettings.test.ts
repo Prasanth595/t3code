@@ -98,6 +98,42 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists individual source control host mapping edits and removals", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      yield* settings.updateSettings({
+        sourceControlHostOverrides: {
+          "CODE.example.test": {
+            kind: "forgejo",
+            baseUrl: "http://code.example.test:3000/forgejo",
+          },
+        },
+      });
+      yield* settings.updateSettings({
+        sourceControlHostOverrides: { "other.example.test": { kind: "gitlab" } },
+      });
+      const edited = yield* settings.updateSettings({
+        sourceControlHostOverrides: { "code.example.test": { kind: "github" } },
+      });
+      assert.deepStrictEqual(edited.sourceControlHostOverrides, {
+        "code.example.test": { kind: "github" },
+        "other.example.test": { kind: "gitlab" },
+      });
+      yield* settings.updateSettings({ sourceControlHostOverrides: { "CODE.example.test": null } });
+      const persisted = yield* decodeServerSettingsJson(
+        yield* fs.readFileString(config.settingsPath),
+      );
+      assert.deepStrictEqual(persisted.sourceControlHostOverrides, {
+        "other.example.test": { kind: "gitlab" },
+      });
+      assert.deepStrictEqual(
+        ServerSettingsModule.redactServerSettingsForClient(persisted).sourceControlHostOverrides,
+        persisted.sourceControlHostOverrides,
+      );
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

@@ -10,6 +10,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -24,8 +25,11 @@ import type {
   PullRequestReviewerCapabilities,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import type { ServerSettings } from "@t3tools/contracts";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettingsService from "../serverSettings.ts";
+import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
 
 import * as ProjectService from "../project/ProjectService.ts";
@@ -49,6 +53,7 @@ import * as GitHubPullRequestProvider from "@t3tools/source-control-github/serve
 import * as GitHubQuota from "@t3tools/source-control-github/server/GitHubQuota";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import {
+  PullRequestBaseUrl,
   PullRequestProviderError,
   type ProviderChangeRequest,
   type PullRequestProviderApi,
@@ -529,8 +534,343 @@ function fakeProvider(
   };
 }
 
+it.effect("host mapping changes invalidate PR listings, viewers, details and persisted reads", () =>
+  Effect.gen(function* () {
+    const settings = yield* makeSettingsChanges;
+    const saved = project({
+      id: "p1",
+      title: "custom",
+      workspaceRoot: "/w",
+      repository: "team/repo",
+      host: "github.example.test",
+    });
+    const calls: string[] = [];
+    const provider = (kind: "github" | "forgejo") =>
+      fakeProvider(SourceControlProviderKind.make(kind), {
+        getViewer: () =>
+          Effect.sync(() => {
+            calls.push(`${kind}:viewer`);
+            return kind;
+          }),
+        listChangeRequests: () =>
+          Effect.sync(() => {
+            calls.push(`${kind}:list`);
+            return {
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            };
+          }),
+        getChangeRequest: () =>
+          Effect.gen(function* () {
+            const endpoint = yield* PullRequestBaseUrl;
+            calls.push(`${kind}:detail:${endpoint}`);
+            return {
+              ...hostedChangeRequest("mapped"),
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              title: `${kind}:${endpoint}`,
+            };
+          }),
+        getChangeRequestActivity: () =>
+          Effect.succeed({
+            comments: [],
+            commentCount: 0,
+            commentsTruncated: false,
+            reviewThreads: [],
+            commits: [],
+          }),
+      });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* makeService({
+          settingsService: settings.service,
+          projects: [saved],
+          providers: [provider("github"), provider("forgejo")],
+        });
+        const ref = { projectId: saved.id, repository: "team/repo", number: 1 };
+        const read = Effect.gen(function* () {
+          yield* service.list({ state: "open" });
+          const detail = yield* service.detail(ref);
+          const summary = yield* service.summary(ref);
+          assert.strictEqual(detail.title, summary.title);
+          return summary;
+        });
+        const first = yield* read;
+        const warmCalls = calls.length;
+        yield* settings.publish({ ...DEFAULT_SERVER_SETTINGS, worktreesDirectory: "/unrelated" });
+        assert.deepStrictEqual(yield* read, first);
+        assert.strictEqual(calls.length, warmCalls);
+        for (const baseUrl of [
+          "https://github.example.test/Forge",
+          "https://github.example.test/Other",
+        ]) {
+          yield* settings.publish({
+            ...DEFAULT_SERVER_SETTINGS,
+            sourceControlHostOverrides: { "github.example.test": { kind: "forgejo", baseUrl } },
+          });
+          const next = yield* read;
+          assert.strictEqual(next.title, `forgejo:${baseUrl}`);
+          assert.strictEqual(calls.at(-1), `forgejo:detail:${baseUrl}`);
+        }
+        assert.strictEqual(calls.filter((call) => call === "forgejo:viewer").length, 2);
+        assert.strictEqual(calls.filter((call) => call === "forgejo:list").length, 2);
+        yield* settings.publish(DEFAULT_SERVER_SETTINGS);
+        // Reverting the mapping can reuse the corresponding persisted endpoint's data.
+        assert.deepStrictEqual(yield* read, first);
+        assert.strictEqual(calls.filter((call) => call === "github:list").length, 2);
+      }),
+    );
+    assert.strictEqual(settings.subscribers(), 0);
+  }),
+);
+
+it.effect.each(["forgejo", "azure-devops"] as const)(
+  "resolves mapped %s links without weakening Azure's matching-checkout requirement",
+  (kind) =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: {
+            "code.example.test": { kind, baseUrl: "https://code.example.test/forge" },
+          },
+        },
+        projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make(kind), {
+            getChangeRequestSummary: (input) =>
+              Effect.gen(function* () {
+                reads++;
+                assert.strictEqual(input.host, "code.example.test");
+                assert.strictEqual(yield* PullRequestBaseUrl, "https://code.example.test/forge");
+                return changeRequest(42, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+      });
+      const ref = {
+        projectId: "inbox" as ProjectId,
+        host: "code.example.test",
+        repository: "team/repo",
+        number: 42,
+      };
+      if (kind === "forgejo") {
+        yield* service.summary(ref, { recoverTransientFailure: false });
+        assert.strictEqual(reads, 1);
+      } else {
+        const error = yield* Effect.flip(service.summary(ref, { recoverTransientFailure: false }));
+        assert.strictEqual(error._tag, "PullRequestUnavailableError");
+        assert.strictEqual(reads, 0);
+      }
+    }),
+);
+
+it.effect.each([
+  { mount: "/forge", repository: "forge/owner/repo", expected: "owner/repo" },
+  { mount: "/forge", repository: "forge/forge/repo", expected: "forge/repo" },
+  { mount: "/forge", repository: "forgeX/owner/repo", expected: "forgeX/owner/repo" },
+  { mount: "/Forge", repository: "Forge/owner/repo", expected: "owner/repo" },
+  { mount: "/forge/nested/", repository: "forge/nested/owner/repo", expected: "owner/repo" },
+  { mount: "/", repository: "owner/repo", expected: "owner/repo" },
+  { mount: undefined, repository: "owner/repo", expected: "owner/repo" },
+])(
+  "routes linked $repository with mount '$mount' through normalized provider and cursor identities",
+  ({ mount, repository, expected }) =>
+    Effect.gen(function* () {
+      const host = "code.example.test";
+      const baseUrl = mount === undefined ? undefined : `https://${host}${mount}`;
+      const projects = [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })];
+      const seen: string[] = [];
+      const viewed = environmentViewedProvider(new Map([["same.ts", "blob"]]), []);
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: {
+            [host]: { kind: "forgejo", ...(baseUrl === undefined ? {} : { baseUrl }) },
+          },
+        },
+        projects,
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("forgejo"), {
+            capabilities: { ...viewed.capabilities, search: false },
+            getFileRevisions: viewed.getFileRevisions!,
+            getChangeRequestSummary: (input) =>
+              Effect.gen(function* () {
+                seen.push(input.repository);
+                assert.strictEqual(yield* PullRequestBaseUrl, baseUrl?.replace(/\/+$/, ""));
+                return changeRequest(input.number, "2026-07-02T00:00:00Z");
+              }),
+            listChangeRequests: (input) => {
+              seen.push(input.repository);
+              return Effect.succeed({
+                items: [changeRequest(42, "2026-07-02T00:00:00Z")],
+                truncated: true,
+                continues: true,
+              });
+            },
+          }),
+        ],
+      });
+      const link = parseChangeRequestUrl(`https://${host}/${repository}/pulls/42`)!;
+      const ref = { ...link, projectId: "inbox" as ProjectId, repository };
+      const summary = yield* service.summary(ref, { recoverTransientFailure: false });
+      assert.strictEqual(summary.repository, expected);
+      assert.deepStrictEqual(seen, [expected]);
+      // A link's viewed-file identity must survive the later arrival of its checkout.
+      yield* service.setFilesViewed({ ...ref, files: [{ path: "same.ts", viewed: true }] });
+      assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
+        { path: "same.ts", state: "viewed" },
+      ]);
+      projects.push(
+        project({
+          id: "other",
+          title: "Another repository on the host",
+          workspaceRoot: "/other",
+          host,
+          provider: "forgejo",
+          repository: "another/repo",
+        }),
+      );
+      const crossRepository = { ...ref, number: 43 };
+      assert.strictEqual(
+        (yield* service.summary(crossRepository, { recoverTransientFailure: false })).repository,
+        expected,
+      );
+      assert.deepStrictEqual(seen, [expected, expected]);
+      yield* service.setFilesViewed({
+        ...crossRepository,
+        files: [{ path: "same.ts", viewed: true }],
+      });
+      projects.push(
+        project({
+          id: "checkout",
+          title: "Mounted repository",
+          workspaceRoot: "/checkout",
+          host,
+          provider: "forgejo",
+          repository,
+        }),
+      );
+      for (const number of [42, 43]) {
+        assert.deepStrictEqual(
+          (yield* service.filesViewed({ ...ref, projectId: "checkout" as ProjectId, number }))
+            .files,
+          [{ path: "same.ts", state: "viewed" }],
+        );
+      }
+      const listed = yield* service.list({
+        projectId: "checkout" as ProjectId,
+        state: "open",
+        involvement: "all",
+        limit: 1,
+      });
+      assert.deepStrictEqual(listed.errors, []);
+      assert.strictEqual(listed.entries[0]?.repository, expected);
+      assert.deepStrictEqual(Object.keys(listed.nextCursors), [
+        `${host} ${expected.toLowerCase()}`,
+      ]);
+    }),
+);
+
+it.effect("uses the configured provider's repository selector for a mapped Azure checkout", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlHostOverrides: { "code.example.test": { kind: "azure-devops" } },
+      },
+      projects: [
+        project({
+          id: "azure",
+          title: "Azure",
+          workspaceRoot: "/azure",
+          repository: "org/project/_git/web",
+          host: "code.example.test",
+          provider: "unknown",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("azure-devops"), {
+          getChangeRequestSummary: (input) => {
+            assert.strictEqual(input.repository, "web");
+            assert.strictEqual(input.host, "code.example.test");
+            return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+          },
+        }),
+      ],
+    });
+    yield* service.summary(
+      { projectId: "azure" as ProjectId, host: "code.example.test", repository: "web", number: 42 },
+      { recoverTransientFailure: false },
+    );
+  }),
+);
+
+it.effect(
+  "uses hostname heuristics and warns for workspace and linked PRs when settings fail",
+  () =>
+    withHostOverrideSettingsFailure((settingsService, warnings) =>
+      Effect.gen(function* () {
+        const service = yield* makeService({
+          settingsService,
+          projects: [
+            project({ id: "p1", title: "web", workspaceRoot: "/repo", repository: "team/repo" }),
+          ],
+          providers: [
+            fakeProvider(SourceControlProviderKind.make("github"), {
+              getChangeRequest: ({ number }) =>
+                Effect.succeed({ ...hostedChangeRequest("PR body"), number }),
+            }),
+          ],
+        });
+        warnings.length = 0;
+        const listed = yield* service.list({ state: "open", involvement: "all" });
+        assert.isAbove(listed.providers.length, 0);
+        assert.isAbove(warnings.length, 0);
+        warnings.length = 0;
+        const summary = yield* service.summary(
+          {
+            projectId: "p1" as ProjectId,
+            host: "github.com",
+            repository: "other/repo",
+            number: 42,
+          },
+          { recoverTransientFailure: false },
+        );
+        assert.strictEqual(summary.repository, "other/repo");
+        assert.isAbove(warnings.length, 0);
+
+        // No checkout on the requested host exercises the direct-link fallback read.
+        const linked = yield* makeService({
+          settingsService,
+          projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })],
+          providers: [
+            fakeProvider(SourceControlProviderKind.make("github"), {
+              getChangeRequest: ({ number }) =>
+                Effect.succeed({ ...hostedChangeRequest("PR body"), number }),
+            }),
+          ],
+        });
+        warnings.length = 0;
+        const linkedSummary = yield* linked.summary(
+          {
+            projectId: "inbox" as ProjectId,
+            host: "github.com",
+            repository: "team/repo",
+            number: 42,
+          },
+          { recoverTransientFailure: false },
+        );
+        assert.strictEqual(linkedSummary.repository, "team/repo");
+        assert.isAtLeast(warnings.length, 2);
+      }),
+    ),
+);
+
 function makeService(input: {
   readonly settings?: ServerSettings;
+  readonly settingsService?: ServerSettingsService.ServerSettingsService["Service"];
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
@@ -543,6 +883,8 @@ function makeService(input: {
       Layer.mergeAll(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
+          subscribeChanges: Effect.succeed(Stream.empty),
+          ...input.settingsService,
         }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,
@@ -575,6 +917,250 @@ function makeService(input: {
     (context) => Effect.provideContext(PullRequestService.make, context),
   );
 }
+
+it.effect.each(["unknown", "github", "omitted"])(
+  "routes a mapped custom host with stored kind %s through the real Forgejo PR provider",
+  (storedKind) =>
+    Effect.gen(function* () {
+      const calls: Array<{ host: string | undefined; path: string }> = [];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              calls.push({ host: input.host, path: input.path });
+              return Effect.succeed({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdout: JSON.stringify({
+                  number: 42,
+                  title: "Custom Forgejo PR",
+                  body: null,
+                  html_url: "https://code.aopc.cloud/team/repo/pulls/42",
+                  user: { login: "contributor" },
+                  state: "open",
+                  merged: false,
+                  head: { ref: "feature", sha: "abc", repo: { full_name: "team/repo" } },
+                  base: { ref: "main", sha: "def", repo: { full_name: "team/repo" } },
+                  created_at: "2026-07-01T00:00:00Z",
+                  updated_at: "2026-07-02T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                }),
+              });
+            },
+          }),
+        ),
+      );
+      const savedProject = project({
+        id: "forge",
+        title: "custom forge",
+        workspaceRoot: "/forge",
+        repository: "team/repo",
+        host: "code.aopc.cloud",
+        provider: storedKind,
+      });
+      const { provider: _provider, ...identityWithoutKind } = savedProject.repositoryIdentity!;
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: { "code.aopc.cloud": { kind: "forgejo" } },
+        },
+        projects: [
+          storedKind === "omitted"
+            ? { ...savedProject, repositoryIdentity: identityWithoutKind }
+            : savedProject,
+        ],
+        providers: [provider],
+      });
+      const summary = yield* service.summary(
+        {
+          projectId: "forge" as ProjectId,
+          host: "code.aopc.cloud",
+          repository: "team/repo",
+          number: 42,
+        },
+        { recoverTransientFailure: false },
+      );
+      assert.strictEqual(summary.title, "Custom Forgejo PR");
+      assert.deepStrictEqual(calls, [
+        { host: "code.aopc.cloud", path: "repos/team/repo/pulls/42" },
+      ]);
+    }),
+);
+
+it.effect.each([
+  {
+    remoteUrl: "ssh://git@ssh.example.test:2222/team/repo.git",
+    repository: "team/repo",
+    mount: "/Forgejo",
+    loginPresent: true,
+  },
+  {
+    remoteUrl: "https://ssh.example.test:2222/Forgejo/team/repo.git",
+    repository: "Forgejo/team/repo",
+    mount: "/Forgejo",
+    loginPresent: true,
+  },
+  {
+    remoteUrl: "ssh://git@ssh.example.test:2222/team/repo.git",
+    repository: "team/repo",
+    mount: "",
+    loginPresent: true,
+  },
+  {
+    remoteUrl: "git@ssh.example.test:team/repo.git",
+    repository: "team/repo",
+    mount: "/Forgejo",
+    loginPresent: false,
+  },
+])(
+  "routes mapped $remoteUrl with mount '$mount' through the Forgejo endpoint and login",
+  ({ remoteUrl, repository, mount, loginPresent }) =>
+    Effect.gen(function* () {
+      const baseUrl = `http://web.example.test:3000${mount}`;
+      const urls: string[] = [];
+      const rawPull = {
+        number: 42,
+        title: "Mounted Forgejo PR",
+        body: null,
+        html_url: `${baseUrl}/team/repo/pulls/42`,
+        user: { login: "contributor" },
+        state: "open",
+        merged: false,
+        head: { ref: "feature", sha: "abc", repo: { full_name: "team/repo" } },
+        base: { ref: "main", sha: "def", repo: { full_name: "team/repo" } },
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-02T00:00:00Z",
+        closed_at: null,
+        merged_at: null,
+        labels: [],
+      };
+      const cli = yield* ForgejoCli.make.pipe(
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("tea handles HTTP")),
+        ),
+        Effect.provide(
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) => {
+                assert.strictEqual(input.command, "tea");
+                if (input.args[0] === "login")
+                  return Effect.succeed(
+                    TestSourceControlHost.processOutput(
+                      JSON.stringify([
+                        {
+                          name: "unrelated-default",
+                          url: "https://web.example.test:3000",
+                          user: "wrong",
+                          default: "true",
+                        },
+                        {
+                          name: "other-mount",
+                          url: "http://web.example.test:3000/other",
+                          user: "wrong",
+                          default: "false",
+                        },
+                        ...(loginPresent
+                          ? [
+                              {
+                                name: "mapped",
+                                url: `${baseUrl}/`,
+                                user: "viewer",
+                                default: "false",
+                              },
+                            ]
+                          : []),
+                      ]),
+                    ),
+                  );
+                assert.strictEqual(input.args[input.args.indexOf("--login") + 1], "mapped");
+                const url = input.args.at(-1)!;
+                assert.ok(url.startsWith(`${baseUrl}/api/v1/`));
+                urls.push(url);
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    JSON.stringify(
+                      url.endsWith("/user")
+                        ? { login: "viewer" }
+                        : url.includes("?state=")
+                          ? []
+                          : rawPull,
+                    ),
+                    { stderr: "HTTP/1.1 200 OK\n" },
+                  ),
+                );
+              },
+            },
+          }),
+        ),
+      );
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provideService(ForgejoCli.ForgejoCli, cli),
+      );
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: {
+            "ssh.example.test:2222": { kind: "forgejo", baseUrl },
+            "ssh.example.test": { kind: "forgejo", baseUrl },
+          },
+        },
+        projects: [
+          project({
+            id: "forge",
+            title: "mapped forge",
+            workspaceRoot: "/forge",
+            repository,
+            host: "ssh.example.test",
+            provider: "forgejo",
+            remoteUrl,
+          }),
+        ],
+        providers: [provider],
+      });
+      if (!loginPresent) {
+        const result = yield* service
+          .summary(
+            {
+              projectId: "forge" as ProjectId,
+              host: "web.example.test:3000",
+              repository: "team/repo",
+              number: 42,
+            },
+            { recoverTransientFailure: false },
+          )
+          .pipe(Effect.result);
+        assert.strictEqual(result._tag, "Failure");
+        assert.deepStrictEqual(urls, []);
+        return;
+      }
+      const summary = yield* service.summary(
+        {
+          projectId: "forge" as ProjectId,
+          host: "web.example.test:3000",
+          repository: "team/repo",
+          number: 42,
+        },
+        { recoverTransientFailure: false },
+      );
+      assert.strictEqual(summary.title, "Mounted Forgejo PR");
+      const listed = yield* service.list({ state: "open", involvement: "all", limit: 10 });
+      assert.deepStrictEqual(listed.errors, []);
+      assert.deepStrictEqual(urls, [
+        `${baseUrl}/api/v1/repos/team/repo/pulls/42`,
+        `${baseUrl}/api/v1/user`,
+        `${baseUrl}/api/v1/repos/team/repo/pulls?state=open&sort=recentupdate&limit=50&page=1`,
+      ]);
+    }),
+);
 
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {

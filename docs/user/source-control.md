@@ -16,6 +16,24 @@ Install Git and configure authentication on the machine running your T3 Code ser
 environment, do this on the remote machine. After signing in, open **Settings → Source Control**
 and choose **Rescan**.
 
+### Custom server names
+
+If your server's hostname does not identify its hosting provider, open **Settings → Source
+Control → Custom hosts** in that environment and map the hostname to its integration. For example,
+map `code.aopc.cloud` to **Forgejo**. Authenticate on that server using the integration's normal
+instructions below. Mappings select an existing integration; they do not add support for a host
+that integration cannot serve.
+
+Mappings match exact hostnames, ignoring case. A hostname-only entry also applies when the remote
+uses a port; an entry with a port takes precedence for that port. SSH ports are used for matching,
+but are not used as the web server's port. Set the optional **Base URL** when the web server uses
+a different address, HTTP, port, or URL subpath. Otherwise T3 Code uses the HTTP remote's origin,
+or HTTPS on the SSH hostname. The hosting CLI must also have a login for that web server.
+
+Mappings apply immediately to this environment's projects and take precedence over automatic
+hostname and account detection. Edit a mapping to change the integration, or remove it to resume
+automatic detection. They are environment settings, not shared through `t3.json`.
+
 ### GitHub
 
 T3 Code talks to GitHub's API directly and only needs a token. Any of these works, in this

@@ -21,6 +21,7 @@ import {
   VcsRepositoryDetectionError,
 } from "@t3tools/contracts";
 
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
@@ -69,22 +70,25 @@ function makeRegistry(input: {
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
   readonly forgejo?: Partial<ForgejoCli.ForgejoCli["Service"]>;
   readonly settings?: Partial<ServerSettings.ServerSettingsService["Service"]>;
+  readonly listRemotes?: VcsDriver.VcsDriver["Service"]["listRemotes"];
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
-    listRemotes: () =>
-      Effect.succeed({
-        remotes: input.remotes.map((remote) => ({
-          ...remote,
-          pushUrl: Option.none(),
-          isPrimary: remote.name === "origin",
+    listRemotes:
+      input.listRemotes ??
+      (() =>
+        Effect.succeed({
+          remotes: input.remotes.map((remote) => ({
+            ...remote,
+            pushUrl: Option.none(),
+            isPrimary: remote.name === "origin",
+          })),
+          freshness: {
+            source: "live-local" as const,
+            observedAt: TEST_EPOCH,
+            expiresAt: Option.none(),
+          },
         })),
-        freshness: {
-          source: "live-local" as const,
-          observedAt: TEST_EPOCH,
-          expiresAt: Option.none(),
-        },
-      }),
   } satisfies Partial<VcsDriver.VcsDriver["Service"]>;
 
   const layerRegistry = Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
@@ -134,7 +138,11 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         input.settings
-          ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
+          ? Layer.mock(ServerSettings.ServerSettingsService)({
+              getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+              subscribeChanges: Effect.succeed(Stream.empty),
+              ...input.settings,
+            })
           : ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         // The GitHub provider's GraphQL reads go through these; no test here makes one.
@@ -167,6 +175,19 @@ function makeRegistry(input: {
   );
 }
 
+it.effect("uses hostname heuristics and warns when settings fail", () =>
+  withHostOverrideSettingsFailure((settings) =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "git@github.com:team/repo.git" }],
+        settings,
+      });
+      const provider = yield* registry.resolve({ cwd: "/repo" });
+      assert.strictEqual(provider.kind, "github");
+    }),
+  ),
+);
+
 it.effect("routes GitHub remotes to the GitHub provider", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
@@ -176,6 +197,92 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect(
+  "uses configured hosts before heuristics and account probes, including supplied contexts",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "ssh://git@gitlab.example.test:2222/team/repo.git" }],
+        settings: {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            sourceControlHostOverrides: {
+              "GITLAB.example.test:2222": {
+                kind: "forgejo",
+                baseUrl: "http://web.example.test:3000/forgejo",
+              },
+            },
+          }),
+        },
+        process: { run: () => Effect.die("explicit mapping must not probe other providers") },
+      });
+      for (const input of [
+        { cwd: "/repo" },
+        {
+          cwd: "/repo",
+          context: {
+            provider: {
+              kind: SourceControlProviderKind.make("gitlab"),
+              name: "GitLab",
+              baseUrl: "https://gitlab.example.test",
+            },
+            remoteName: "origin",
+            remoteUrl: "ssh://git@gitlab.example.test:2222/team/repo.git",
+          },
+        },
+      ]) {
+        const handle = yield* registry.resolveHandle(input);
+        assert.strictEqual(handle.provider.kind, "forgejo");
+        assert.strictEqual(
+          handle.context?.provider.baseUrl,
+          "http://web.example.test:3000/forgejo",
+        );
+      }
+    }),
+);
+
+it.effect("invalidates detected contexts when a host mapping is added, changed, or removed", () =>
+  Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<{
+      settings: typeof DEFAULT_SERVER_SETTINGS;
+      handled: Deferred.Deferred<void>;
+    }>();
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://gitlab.example.test/team/repo.git" }],
+      settings: {
+        subscribeChanges: PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+              Stream.flatMap(({ settings, handled }) =>
+                Stream.concat(
+                  Stream.make(settings),
+                  Stream.fromEffectDrain(Deferred.succeed(handled, undefined)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      },
+    });
+    assert.strictEqual((yield* registry.resolveHandle({ cwd: "/repo" })).provider.kind, "gitlab");
+    for (const kind of ["forgejo", "github", null] as const) {
+      const handled = yield* Deferred.make<void>();
+      yield* PubSub.publish(changes, {
+        handled,
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: kind === null ? {} : { "gitlab.example.test": { kind } },
+        },
+      });
+      yield* Deferred.await(handled);
+      assert.strictEqual(
+        (yield* registry.resolveHandle({ cwd: "/repo" })).provider.kind,
+        kind ?? "gitlab",
+      );
+    }
   }),
 );
 
@@ -602,18 +709,40 @@ it.effect("asks again after a check that could not answer", () =>
   }),
 );
 
-it.effect("asks again once Settings change", () =>
+it.effect("keeps both detection caches until normalized host mappings change", () =>
   Effect.gen(function* () {
-    const changes = yield* PubSub.unbounded<typeof DEFAULT_SERVER_SETTINGS>();
-    const handled = yield* Deferred.make<void>();
-    let signedIn = false;
+    const changes = yield* PubSub.unbounded<{
+      settings: typeof DEFAULT_SERVER_SETTINGS;
+      handled: Deferred.Deferred<void>;
+    }>();
+    let listings = 0;
+    let probes = 0;
     const registry = yield* makeRegistry({
       remotes: [],
+      listRemotes: () =>
+        Effect.sync(() => {
+          listings += 1;
+          return {
+            remotes: [
+              {
+                name: "origin",
+                url: "https://code.example.test/team/repo.git",
+                pushUrl: Option.none(),
+                isPrimary: true,
+              },
+            ],
+            freshness: {
+              source: "live-local" as const,
+              observedAt: TEST_EPOCH,
+              expiresAt: Option.none(),
+            },
+          };
+        }),
       settings: {
         subscribeChanges: PubSub.subscribe(changes).pipe(
           Effect.map((subscription) =>
             Stream.fromSubscription(subscription).pipe(
-              Stream.flatMap((settings) =>
+              Stream.flatMap(({ settings, handled }) =>
                 Stream.concat(
                   Stream.make(settings),
                   Stream.fromEffectDrain(Deferred.succeed(handled, undefined)),
@@ -625,18 +754,46 @@ it.effect("asks again once Settings change", () =>
       },
       process: { run: ({ command, cwd }) => Effect.fail(notFound(command, cwd)) },
       githubApi: {
-        credential: (host) =>
-          signedIn
-            ? Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` })
-            : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+        credential: (host) => {
+          probes += 1;
+          return Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }));
+        },
       },
     });
-    assert.strictEqual((yield* resolveUnknown(registry, "a")).provider.kind, "unknown");
-    signedIn = true;
-    assert.strictEqual((yield* resolveUnknown(registry, "b")).provider.kind, "unknown");
-
-    yield* PubSub.publish(changes, DEFAULT_SERVER_SETTINGS);
-    yield* Deferred.await(handled);
-    assert.strictEqual((yield* resolveUnknown(registry, "c")).provider.kind, "github");
+    const publish = Effect.fnUntraced(function* (settings: typeof DEFAULT_SERVER_SETTINGS) {
+      const handled = yield* Deferred.make<void>();
+      yield* PubSub.publish(changes, { settings, handled });
+      yield* Deferred.await(handled);
+    });
+    const resolve = (cwd = "/repo") => registry.resolveHandle({ cwd });
+    assert.strictEqual((yield* resolve()).provider.kind, "unknown");
+    assert.deepStrictEqual([listings, probes], [1, 1]);
+    for (const worktreesDirectory of ["/worktrees/a", "/worktrees/b"]) {
+      yield* publish({ ...DEFAULT_SERVER_SETTINGS, worktreesDirectory });
+      yield* resolve();
+      assert.deepStrictEqual([listings, probes], [1, 1]);
+    }
+    // A fresh checkout misses the context cache but must reuse settled host discovery.
+    yield* resolve("/other");
+    assert.deepStrictEqual([listings, probes], [2, 1]);
+    yield* publish({
+      ...DEFAULT_SERVER_SETTINGS,
+      sourceControlHostOverrides: {
+        "code.example.test": { kind: "gitlab", baseUrl: "https://code.example.test" },
+      },
+    });
+    assert.strictEqual((yield* resolve()).provider.kind, "gitlab");
+    assert.deepStrictEqual([listings, probes], [3, 1]);
+    yield* publish({
+      ...DEFAULT_SERVER_SETTINGS,
+      sourceControlHostOverrides: {
+        "CODE.EXAMPLE.TEST": { kind: "gitlab", baseUrl: "https://code.example.test/" },
+      },
+    });
+    assert.strictEqual((yield* resolve()).provider.kind, "gitlab");
+    assert.deepStrictEqual([listings, probes], [3, 1]);
+    yield* publish(DEFAULT_SERVER_SETTINGS);
+    assert.strictEqual((yield* resolve()).provider.kind, "unknown");
+    assert.deepStrictEqual([listings, probes], [4, 2]);
   }),
 );

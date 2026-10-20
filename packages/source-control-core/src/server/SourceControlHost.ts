@@ -2,13 +2,14 @@ import type {
   GitCommandError,
   ServerSettings,
   ServerSettingsError,
+  SourceControlHostOverrides,
   VcsError,
   VcsListRemotesResult,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 export interface SourceControlProcessInput {
@@ -105,3 +106,19 @@ export class SourceControlHost extends Context.Service<
     };
   }
 >()("@t3tools/source-control-core/server/SourceControlHost") {}
+
+// A secret materialization failure must not disable hostname-based provider detection.
+export const readHostOverrides = (getSettings: SourceControlHost["Service"]["settings"]["get"]) =>
+  getSettings.pipe(
+    Effect.map((value) => value.sourceControlHostOverrides),
+    Effect.catchTags({
+      // Settings failures may quote secrets; retain only the operation in logs.
+      ServerSettingsError: (cause) =>
+        Effect.logWarning(
+          "Failed to read source-control host mappings; using hostname heuristics",
+          {
+            operation: cause.operation,
+          },
+        ).pipe(Effect.as<SourceControlHostOverrides>({})),
+    }),
+  );
