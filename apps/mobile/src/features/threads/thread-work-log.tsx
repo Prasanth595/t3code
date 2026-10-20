@@ -73,6 +73,7 @@ import {
 } from "../../lib/threadActivity";
 import {
   toolCallLines,
+  turnItemDetailRevision,
   turnItemOutputImages,
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
@@ -94,6 +95,7 @@ import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText"
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
 import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
+import { ThreadHtmlRender } from "./HtmlRenderWebView";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -984,7 +986,12 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     expanded && !isRead && shownItem.type === "command_execution"
       ? toolCallLines({ command: shownItem.input })
       : expanded && !isRead && shownItem.type === "dynamic_tool"
-        ? toolCallLines({ args: shownItem.input })
+        ? toolCallLines({
+            args: shownItem.input,
+            toolName: shownItem.toolName,
+            status: shownItem.status,
+            output: shownItem.output,
+          })
         : expanded && shownItem.type === "file_search"
           ? toolCallLines({ args: { pattern: shownItem.pattern } })
           : expanded && shownItem.type === "web_search"
@@ -1182,6 +1189,23 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           layout={WORK_LOG_LAYOUT_TRANSITION}
           className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
         >
+          {call?.html ? (
+            <ThreadHtmlRender
+              key={`${props.environmentId}:${row.projectedItem.sourceThreadId}:${row.projectedItem.sourceItemId}:${turnItemDetailRevision(shownItem)}`}
+              environmentId={props.environmentId}
+              threadId={row.projectedItem.sourceThreadId}
+              render={{
+                title: "HTML preview",
+                height: 400,
+                resource: {
+                  _tag: "tool-input-html",
+                  threadId: row.projectedItem.sourceThreadId,
+                  itemId: row.projectedItem.sourceItemId,
+                  revision: turnItemDetailRevision(shownItem),
+                },
+              }}
+            />
+          ) : null}
           {row.workEntry.questionAnswer ? (
             <QuestionAnswerHistory
               environmentId={props.environmentId}

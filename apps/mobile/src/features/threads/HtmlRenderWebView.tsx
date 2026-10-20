@@ -1,7 +1,8 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { useNavigation } from "@react-navigation/native";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
+  HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   htmlRenderThemeFragment,
@@ -180,23 +181,31 @@ export function HtmlRenderWebView(props: {
 export function ThreadHtmlRender(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
-  readonly render: HtmlRenderReference;
-  readonly frameWidth: number;
-  readonly iconColor: ColorValue;
+  readonly render: Pick<HtmlRenderReference, "title" | "height" | "heights"> &
+    (
+      | { readonly attachmentId: string }
+      | { readonly resource: Extract<AssetResource, { readonly _tag: "tool-input-html" }> }
+    );
+  readonly frameWidth?: number;
+  readonly iconColor?: ColorValue;
 }) {
   const navigation = useNavigation();
-  const { attachmentId, title } = props.render;
-  const height = htmlRenderFrameHeight(props.render, props.frameWidth);
+  const { title } = props.render;
+  const attachmentId = "attachmentId" in props.render ? props.render.attachmentId : null;
+  const height = htmlRenderFrameHeight(props.render, props.frameWidth ?? HTML_RENDER_COLUMN_WIDTH);
   const fileName = htmlRenderFileName(title);
   const resource = useMemo(
-    () => ({
-      _tag: "attachment" as const,
-      attachmentId,
-      fileName,
-      mimeType: "text/html",
-      disposition: "inline" as const,
-    }),
-    [attachmentId, fileName],
+    () =>
+      "resource" in props.render
+        ? props.render.resource
+        : {
+            _tag: "attachment" as const,
+            attachmentId: props.render.attachmentId,
+            fileName,
+            mimeType: "text/html",
+            disposition: "inline" as const,
+          },
+    [props.render, fileName],
   );
   const asset = useAssetUrlState(props.environmentId, resource);
   const refresh = useRefreshAssetUrl(props.environmentId, resource);
@@ -248,7 +257,7 @@ export function ThreadHtmlRender(props: {
             <AppActivityIndicator />
           </View>
         )}
-        {uri !== null && !failed ? (
+        {uri !== null && !failed && attachmentId !== null ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={`Open ${title}`}

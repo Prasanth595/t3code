@@ -119,6 +119,7 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   /** Reports the image viewer opening and closing, so a virtualized row can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
@@ -251,6 +252,10 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", replayKey);
     return () => window.removeEventListener("message", replayKey);
   }, []);
+  const showImage = useEffectEvent((preview: ExpandedImagePreview) => {
+    if (props.onImageExpand) props.onImageExpand(preview);
+    else setExpandedImage(preview);
+  });
   // A clicked page image opens in the same viewer as chat images, gated like a link.
   useEffect(() => {
     const openImage = (event: MessageEvent) => {
@@ -265,7 +270,7 @@ export function HtmlRenderDocument(props: {
       ) {
         return;
       }
-      setExpandedImage({ images: [{ src: request.src, name: request.name }], index: 0 });
+      showImage({ images: [{ src: request.src, name: request.name }], index: 0 });
     };
     window.addEventListener("message", openImage);
     return () => window.removeEventListener("message", openImage);

@@ -32,6 +32,7 @@ import {
 } from "@t3tools/shared/imageDimensions";
 import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
+import { HTML_RENDER_MAX_SOURCE_LENGTH, isHtmlRenderTool } from "@t3tools/shared/htmlRender";
 import {
   isProjectFaviconPath,
   PROJECT_FAVICON_FALLBACK_MARKER,
@@ -58,6 +59,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { parseAttachmentFileExtension, resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -158,6 +160,14 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("tool-input-html"),
+    threadId: ThreadId,
+    itemId: TurnItemId,
+    revision: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("github-media"),
     /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
     url: Schema.String,
@@ -249,6 +259,24 @@ const readToolOutputImage = Effect.fn("AssetAccess.readToolOutputImage")(functio
   return image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
     ? null
     : { mimeType: image.mimeType, bytes: Buffer.from(image.data, "base64") };
+});
+
+const readToolInputHtml = Effect.fn("AssetAccess.readToolInputHtml")(function* (input: {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+}) {
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const item = yield* orchestrator.getTurnItem(input);
+  if (item?.type !== "dynamic_tool" || !isHtmlRenderTool(item.toolName)) return null;
+  const args = item.input;
+  return typeof args === "object" &&
+    args !== null &&
+    "html" in args &&
+    typeof args.html === "string" &&
+    args.html.length <= HTML_RENDER_MAX_SOURCE_LENGTH &&
+    args.html.trim()
+    ? args.html
+    : null;
 });
 
 /** Serves an `.icns` favicon as its embedded PNG, since browsers cannot draw it. */
@@ -747,6 +775,25 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       }
       break;
     }
+    case "tool-input-html": {
+      const html = yield* readToolInputHtml(input.resource).pipe(
+        Effect.mapError(
+          (cause) => new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+        ),
+      );
+      if (html === null)
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      claims = {
+        version: 1,
+        kind: "tool-input-html",
+        threadId: input.resource.threadId,
+        itemId: input.resource.itemId,
+        revision: input.resource.revision,
+        expiresAt,
+      };
+      fileName = "preview.html";
+      break;
+    }
     case "tool-output-image": {
       const image = yield* readToolOutputImage(input.resource).pipe(
         Effect.mapError(
@@ -921,6 +968,35 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     return image ? ({ kind: "bytes", ...image } satisfies ResolvedAsset) : null;
+  }
+
+  if (claims.kind === "tool-input-html") {
+    const html = yield* readToolInputHtml(claims).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to read tool input HTML.", {
+          threadId: claims.threadId,
+          itemId: claims.itemId,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    const document =
+      html === null
+        ? null
+        : yield* HtmlRender.prepareDocument(html).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("Failed to prepare tool input HTML.", { cause }),
+            ),
+            Effect.orElseSucceed(() => null),
+          );
+    return document === null
+      ? null
+      : ({
+          kind: "bytes",
+          mimeType: "text/html",
+          bytes: new TextEncoder().encode(document.html),
+        } satisfies ResolvedAsset);
   }
 
   if (claims.kind === "native-app-icon") {
