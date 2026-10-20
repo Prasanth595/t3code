@@ -760,6 +760,14 @@ function contextSourcePointForRun(
   };
 }
 
+function sideChatTransferForThread(
+  projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "thread">,
+): OrchestrationV2ContextTransfer | undefined {
+  return projection.contextTransfers.find(
+    (transfer) => transfer.type === "side_chat" && transfer.targetThreadId === projection.thread.id,
+  );
+}
+
 function pendingForkTransferForThread(
   projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "thread">,
 ): OrchestrationV2ContextTransfer | undefined {
@@ -1671,8 +1679,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 },
                 runs: projection.runs,
                 strategy: handoffStrategy,
-                initialHistory: projection.contextTransfers.find((t) => t.type === "side_chat")
-                  ?.snapshotHistory,
+                initialHistory: sideChatTransferForThread(projection)?.snapshotHistory,
                 items: [
                   ...(needsFullContext && latestCompletedRun !== undefined
                     ? legacyImportItems
@@ -1750,9 +1757,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (yield* providerAdapters.get(queuedRun.providerInstanceId).pipe(
           Effect.flatMap((adapter) =>
             providerSessionIdFor({
-              isolated: projection.contextTransfers.some(
-                (transfer) => transfer.type === "side_chat",
-              ),
+              isolated: sideChatTransferForThread(projection) !== undefined,
               adapter,
               providerInstanceId: queuedRun.providerInstanceId,
               threadId,
@@ -4501,9 +4506,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         existingTargetProviderThread?.providerSessionId ??
         (yield* mapDispatchError(input.command)(
           providerSessionIdFor({
-            isolated: input.projection.contextTransfers.some(
-              (transfer) => transfer.type === "side_chat",
-            ),
+            isolated: sideChatTransferForThread(input.projection) !== undefined,
             adapter: targetAdapter,
             providerInstanceId: input.modelSelection.instanceId,
             threadId: input.command.threadId,
@@ -4557,8 +4560,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           strategy: "full_thread_summary",
           items: yield* readHandoffItems(input.command.threadId),
           runs: input.projection.runs,
-          initialHistory: input.projection.contextTransfers.find((t) => t.type === "side_chat")
-            ?.snapshotHistory,
+          initialHistory: sideChatTransferForThread(input.projection)?.snapshotHistory,
           createdAt: now,
         })
         .pipe(mapDispatchError(input.command));
@@ -5676,7 +5678,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeProviderThread?.providerSessionId ??
         (yield* mapDispatchError(command)(
           providerSessionIdFor({
-            isolated: projection.contextTransfers.some((transfer) => transfer.type === "side_chat"),
+            isolated: sideChatTransferForThread(projection) !== undefined,
             adapter,
             providerInstanceId: modelSelection.instanceId,
             threadId: command.threadId,
@@ -5688,11 +5690,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           driver: adapter.driver,
           nativeThreadId: `pending:${runId}`,
         });
-      const sideChatTransfer = projection.contextTransfers.find(
-        (transfer) => transfer.type === "side_chat" && transfer.status === "pending",
-      );
+      const sideChatTransfer = sideChatTransferForThread(projection);
       const legacyImportHandoff =
-        sideChatTransfer !== undefined
+        sideChatTransfer?.status === "pending"
           ? yield* contextHandoffService
               .prepareLegacyImport({
                 threadId: command.threadId,
@@ -5914,7 +5914,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: providerThread,
       });
-      if (sideChatTransfer !== undefined && legacyImportHandoff !== null) {
+      if (sideChatTransfer?.status === "pending" && legacyImportHandoff !== null) {
         yield* emitEvent({
           type: "context-transfer.updated",
           threadId: command.threadId,
@@ -6095,7 +6095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (canResumeAcrossInstances ? undefined : targetProviderThread?.providerSessionId) ??
       (yield* mapDispatchError(command)(
         providerSessionIdFor({
-          isolated: projection.contextTransfers.some((transfer) => transfer.type === "side_chat"),
+          isolated: sideChatTransferForThread(projection) !== undefined,
           adapter,
           providerInstanceId: modelSelection.instanceId,
           threadId: command.threadId,
@@ -6294,8 +6294,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : yield* contextHandoffService
             .prepareProviderHandoff({
               threadId: command.threadId,
-              initialHistory: projection.contextTransfers.find((t) => t.type === "side_chat")
-                ?.snapshotHistory,
+              initialHistory: sideChatTransferForThread(projection)?.snapshotHistory,
               targetRunId: runId,
               transferId: providerSwitchTransferId,
               fromProviderThreadIds: Array.from(

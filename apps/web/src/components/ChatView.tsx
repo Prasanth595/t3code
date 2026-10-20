@@ -1923,6 +1923,7 @@ export default function ChatView(props: ChatViewProps) {
       if (
         event.ctrlKey &&
         event.altKey &&
+        !event.getModifierState("AltGraph") &&
         !event.metaKey &&
         !event.shiftKey &&
         (event.code === "KeyS" || event.key.toLowerCase() === "s") &&

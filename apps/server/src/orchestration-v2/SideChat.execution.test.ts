@@ -114,6 +114,13 @@ it.effect.each(cases)(
         creationSource: "web",
       });
       const main = yield* orchestrator.getThreadProjection(source);
+      // SQL projections include outgoing transfers as well as incoming ones.
+      // Sending in the source must leave its child's snapshot available.
+      assert.equal(
+        main.contextTransfers.find((transfer) => transfer.targetThreadId === first)!.status,
+        "pending",
+      );
+      assert.lengthOf(main.contextHandoffs, 0);
       const userItem = main.turnItems.find((item) => item.type === "user_message")!;
       const now = yield* DateTime.now;
       const partial: OrchestrationV2TurnItem = {
@@ -184,6 +191,8 @@ it.effect.each(cases)(
         b.providerThreads[0]!.providerSessionId,
         currentMain.providerThreads[0]!.providerSessionId,
       );
+      assert.lengthOf(a.contextHandoffs, 1);
+      assert.include(a.contextHandoffs[0]!.summaryText, `main thread ${source}`);
       assert.isNull(b.providerThreads[0]!.forkedFrom);
       assert.include(b.contextHandoffs[0]!.summaryText, "PARTIAL_SNAPSHOT");
       assert.notInclude(b.contextHandoffs[0]!.summaryText, "LATER_OUTPUT");
