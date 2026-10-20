@@ -46,6 +46,7 @@ const emitXAiAskUserQuestionThenHang =
   process.env.T3_ACP_EMIT_XAI_ASK_USER_QUESTION_THEN_HANG === "1";
 const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
+const grokKillTaskShape = process.env.T3_ACP_GROK_KILL_TASK_SHAPE;
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
@@ -459,6 +460,71 @@ function modelState(): AcpCompat.SessionModelState {
     currentModelId: modelId,
     availableModels: grokAcpModels,
   };
+}
+
+function emitGrokKillTaskScenario(
+  sessionId: string,
+  promptId: string | undefined,
+  shape: string,
+): void {
+  const taskId = "call-fb9d0000-0000-0000-0000-000000000026-29";
+  const outcome =
+    shape === "already_exited" || shape === "known_failure" ? "already_exited" : "killed";
+  writeJsonRpcNotification("session/update", {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "kill-target-command",
+      title: "run_terminal_command",
+      kind: "execute",
+      status: "in_progress",
+      rawInput: { command: "sleep 40" },
+    },
+  });
+  writeJsonRpcNotification("session/update", {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "kill-target-command",
+      status: "completed",
+      rawOutput: {
+        type: "BackgroundTaskStarted",
+        task_id: taskId,
+        task_type: "bash",
+        command: "sleep 40",
+      },
+    },
+  });
+  if (shape === "known_failure") {
+    writeJsonRpcNotification("_x.ai/task_completed", {
+      sessionId,
+      update: {
+        sessionUpdate: "task_completed",
+        task_snapshot: { task_id: taskId, kind: "bash", exit_code: 7, output: "known failure\n" },
+      },
+    });
+  }
+  writeJsonRpcNotification("session/update", {
+    sessionId,
+    update: {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "kill-command",
+      title: `kill ${taskId} (${outcome})`,
+      kind: "other",
+      status: "completed",
+      rawInput: {
+        task_id: taskId,
+        ...(shape === "output_only" ? {} : { variant: "KillTask" }),
+      },
+      ...(shape === "variant_only" ? {} : { rawOutput: { type: "KillTask", outcome } }),
+    },
+  });
+  writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+    sessionId,
+    promptId,
+    stopReason: "end_turn",
+    agentResult: null,
+  });
 }
 
 const program = Effect.gen(function* () {
@@ -1488,6 +1554,16 @@ const program = Effect.gen(function* () {
             content: { type: "text", text: "partial before stall" },
           },
         });
+        return yield* Effect.never;
+      }
+
+      if (grokKillTaskShape !== undefined) {
+        emitGrokKillTaskScenario(
+          requestedSessionId,
+          promptIdFromRequestMeta(request),
+          grokKillTaskShape,
+        );
+        // Keep the prompt RPC and peer alive after the kill result.
         return yield* Effect.never;
       }
 

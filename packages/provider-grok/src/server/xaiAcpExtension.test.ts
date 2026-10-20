@@ -795,6 +795,101 @@ describe("XAiAcpExtension", () => {
     ]);
   });
 
+  // Oracle: #15888 reports KillTask replies with killed and already_exited outcomes.
+  it.each([
+    { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask" } },
+    { rawInput: { task_id: "call-bg-1" }, rawOutput: { type: "KillTask", outcome: "killed" } },
+    { rawInput: { variant: "KillTask", task_id: "call-bg-1" } },
+    {
+      rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+      rawOutput: { type: "KillTask", outcome: "already_exited" },
+    },
+  ])("closes a background command from structured KillTask fields: %j", (data) => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (killed)",
+        status: "completed",
+        data,
+      }),
+    ).toEqual([{ taskId: "call-bg-1", status: "completed", appendOutput: "" }]);
+    expect(
+      extractXAiAcpSubagentUpdate({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (killed)",
+        status: "completed",
+        data,
+      }),
+    ).toBeUndefined();
+  });
+
+  // Native child status still comes from its lifecycle/result path, not the kill RPC.
+  it.each(["Kill", "KillTask"])(
+    "keeps %s aimed at a native child out of child result parsing",
+    (variant) => {
+      expect(
+        extractXAiAcpSubagentUpdate({
+          toolCallId: "call-kill-child",
+          title: "kill 019f44b8-8e98-7c80-a40e-df1e26a5f9e3 (killed)",
+          status: "completed",
+          data: {
+            rawInput: { variant, task_id: "019f44b8-8e98-7c80-a40e-df1e26a5f9e3" },
+            rawOutput: { type: "KillTask", outcome: "killed" },
+          },
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  // Oracle: the base legacy-title path closes the target regardless of outcome.
+  it.each([{ outcome: "failed" }, { type: "KillTask", outcome: "failed" }])(
+    "closes a legacy-title KillTask target with a failed outcome: %j",
+    (rawOutput) => {
+      expect(
+        extractXAiKilledBackgroundTasks({
+          toolCallId: "call-kill-legacy",
+          title: "kill_command_or_subagent",
+          status: "completed",
+          data: {
+            rawInput: { variant: "Kill", task_id: "call-bg-1" },
+            rawOutput,
+          },
+        }),
+      ).toEqual([{ taskId: "call-bg-1", status: "completed", appendOutput: "" }]);
+    },
+  );
+  // A successful RPC is not proof of a successful kill when its outcome says otherwise.
+  it("ignores a failed KillTask outcome", () => {
+    expect(
+      extractXAiKilledBackgroundTasks({
+        toolCallId: "call-kill",
+        title: "kill call-bg-1 (failed)",
+        status: "completed",
+        data: {
+          rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+          rawOutput: { type: "KillTask", outcome: "failed" },
+        },
+      }),
+    ).toEqual([]);
+  });
+
+  it.each(["failed", "inProgress"] as const)(
+    "does not close the target of a %s KillTask call",
+    (status) => {
+      expect(
+        extractXAiKilledBackgroundTasks({
+          toolCallId: "call-kill",
+          title: "kill call-bg-1 (killed)",
+          status,
+          data: {
+            rawInput: { variant: "KillTask", task_id: "call-bg-1" },
+            rawOutput: { type: "KillTask", outcome: "killed" },
+          },
+        }),
+      ).toEqual([]);
+    },
+  );
+
   it("tombstones confirmed kills and ignores failed kill calls", () => {
     expect(
       extractXAiKilledBackgroundTasks({

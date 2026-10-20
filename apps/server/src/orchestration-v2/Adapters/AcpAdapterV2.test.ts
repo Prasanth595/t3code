@@ -4040,6 +4040,106 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // Oracle: #15888 KillTask reports. Command completion must release the turn even
+  // when the CLI keeps the prompt RPC and process alive. Kill calls stay visible.
+  it.live.each([
+    { shape: "output_only", expectedCommand: { type: "command_execution", status: "completed" } },
+    { shape: "variant_only", expectedCommand: { type: "command_execution", status: "completed" } },
+    { shape: "killed", expectedCommand: { type: "command_execution", status: "completed" } },
+    {
+      shape: "already_exited",
+      expectedCommand: { type: "command_execution", status: "completed" },
+    },
+    {
+      shape: "known_failure",
+      expectedCommand: { type: "command_execution", status: "failed", output: "known failure\n" },
+    },
+  ] as const)(
+    "completes a Grok KillTask command ($shape) and preserves any known result",
+    ({ shape, expectedCommand }) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("grok-kill-completion");
+        const adapter = yield* makeGrokAdapterV2({
+          instanceId,
+          settings: DEFAULT_GROK_SETTINGS,
+          environment: {},
+          hostPlatform: yield* HostProcess.Platform,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_GROK_KILL_TASK_SHAPE: shape },
+            })(input).pipe(Effect.flatMap(makeXAiPromptCompletionRuntime)),
+        });
+        const threadId = ThreadId.make("grok-kill-completion");
+        const modelSelection = { instanceId, model: "default" } as const;
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("grok-kill-completion"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        );
+        const observed = yield* Stream.fromQueue(events).pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+          Effect.timeout("15 seconds"),
+        );
+        const allEvents = [...observed];
+        let next = yield* Queue.poll(events);
+        while (Option.isSome(next)) {
+          allEvents.push(next.value);
+          next = yield* Queue.poll(events);
+        }
+        const terminals = allEvents.filter((event) => event.type === "turn.terminal");
+        assert.deepEqual(
+          terminals.map((event) => event.status),
+          ["completed"],
+        );
+        const items = allEvents.flatMap((event) =>
+          event.type === "turn_item.updated" ? [event.turnItem] : [],
+        );
+        assert.isFalse(items.some((item) => item.type === "subagent"));
+        const command = items.findLast(
+          (item) => item.nativeItemRef?.nativeId === "kill-target-command",
+        );
+        assert.deepInclude(command, expectedCommand);
+        assert.isTrue(
+          items.some((item) => item.nativeItemRef?.nativeId === "kill-command"),
+          "KillTask must retain its normal tool frame",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("Grok reapplies an explicit return to the session's setup-time model", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
