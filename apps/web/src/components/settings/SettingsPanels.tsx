@@ -55,6 +55,7 @@ import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
+import { AgentSessionImportDialog } from "./AgentSessionImportDialog";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
@@ -2084,6 +2085,7 @@ export function GeneralSettingsPanel() {
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const [agentSessionImportOpen, setAgentSessionImportOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
@@ -3053,6 +3055,25 @@ export function GeneralSettingsPanel() {
               aria-label="Add project base directory"
             />
           }
+        />
+        <SettingsRow
+          {...searchableSetting("import-agent-sessions")}
+          description="Add projects and recent conversations from Claude Code and Codex. Conversations that were already imported are skipped."
+          control={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!hasServerTargets}
+              onClick={() => setAgentSessionImportOpen(true)}
+            >
+              Import…
+            </Button>
+          }
+        />
+        <AgentSessionImportDialog
+          open={agentSessionImportOpen}
+          onOpenChange={setAgentSessionImportOpen}
+          environmentIds={connectedEnvironments.map((target) => target.environmentId)}
         />
       </SettingsSection>
 

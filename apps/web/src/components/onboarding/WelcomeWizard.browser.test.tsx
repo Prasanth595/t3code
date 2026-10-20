@@ -147,7 +147,7 @@ it("enters the workspace after a partial import and warns after navigation finis
   expect(mocks.toast).toHaveBeenCalledWith(
     expect.objectContaining({
       type: "warning",
-      description: "Imported 28 threads. 1 thread could not be imported.",
+      description: "28 threads are in T3 Code. 1 thread could not be imported.",
     }),
   );
   expect(mocks.toast.mock.invocationCallOrder[0]).toBeGreaterThan(
@@ -178,7 +178,7 @@ it.each([
     if (warning === null && importedCount > 0) {
       expect(mocks.toast).toHaveBeenCalledWith({
         type: "success",
-        title: `Imported ${importedCount} ${importedCount === 1 ? "thread" : "threads"}`,
+        title: `${importedCount} ${importedCount === 1 ? "thread is" : "threads are"} in T3 Code`,
       });
     } else if (warning === null) {
       expect(mocks.toast).not.toHaveBeenCalled();
@@ -208,7 +208,7 @@ it("keeps setup open when saving completion fails and preserves the import warni
   expect(mocks.toast).toHaveBeenLastCalledWith(
     expect.objectContaining({
       type: "warning",
-      description: "Imported 28 threads. 1 thread could not be imported.",
+      description: "28 threads are in T3 Code. 1 thread could not be imported.",
     }),
   );
 });

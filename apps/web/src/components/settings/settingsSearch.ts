@@ -493,6 +493,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["base directory folder browser path home"],
   },
   {
+    id: "import-agent-sessions",
+    title: "Import from Claude Code and Codex",
+    to: "/settings/general",
+    environmentOnly: true,
+    searchTerms: ["import projects conversations sessions history threads onboarding"],
+  },
+  {
     id: "unpin-confirmation",
     title: "Unpin confirmation",
     to: "/settings/general",
