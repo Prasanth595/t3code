@@ -420,6 +420,9 @@ export function isCloudflareRateLimited(cause: unknown): boolean {
   ) {
     return true;
   }
+  if ("status" in cause && cause.status === 429) {
+    return true;
+  }
   return "cause" in cause && isCloudflareRateLimited(cause.cause);
 }
 

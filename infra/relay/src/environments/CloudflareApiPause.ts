@@ -12,6 +12,11 @@ const CLOUDFLARE_API = "cloudflare";
  * Cloudflare's API rate limit is per account, so a 429 seen by any isolate
  * applies to all of them. Both operations fail open: a pause that cannot be
  * read or recorded must not block provisioning.
+ *
+ * Both also run outside any ambient transaction. Provisioning calls Cloudflare
+ * while holding an allocation row lock, and a 429 there rolls that transaction
+ * back, which would drop the recorded pause; a failed read inside it would
+ * abort the provision's own statements.
  */
 export class CloudflareApiPause extends Context.Service<
   CloudflareApiPause,
@@ -24,6 +29,8 @@ export class CloudflareApiPause extends Context.Service<
 
 export const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+  const outsideTransaction = <A, E>(effect: Effect.Effect<A, E>) =>
+    Effect.updateContext(effect, Context.omit(db.$client.transactionService)<never>);
 
   return CloudflareApiPause.of({
     pausedUntilMillis: db
@@ -38,6 +45,7 @@ export const make = Effect.gen(function* () {
             Effect.as(0),
           ),
         ),
+        outsideTransaction,
         Effect.withSpan("relay.cloudflare_api_pause.read"),
       ),
     pauseUntil: (untilMillis) =>
@@ -55,6 +63,7 @@ export const make = Effect.gen(function* () {
           Effect.catch((cause) =>
             Effect.logWarning("Could not record the shared Cloudflare API pause", { cause }),
           ),
+          outsideTransaction,
           Effect.withSpan("relay.cloudflare_api_pause.record"),
         ),
   });
