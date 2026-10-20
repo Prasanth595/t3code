@@ -22,7 +22,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "../state/queries";
 import { threadEnvironment } from "../state/threads";
-import { vcsActionManager, vcsEnvironment } from "../state/vcs";
+import { vcsActionManager, vcsEnvironment, vcsRefsQuery } from "../state/vcs";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
@@ -223,7 +223,7 @@ export function useSelectedThreadGitActions() {
       if (branchTarget.environmentId === null || branchTarget.cwd === null) return null;
       const result = await executeAtomQuery(
         appAtomRegistry,
-        vcsEnvironment.listRefs({
+        vcsRefsQuery({
           environmentId: branchTarget.environmentId,
           input: { cwd: branchTarget.cwd, limit: 100 },
         }),

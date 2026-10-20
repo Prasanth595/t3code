@@ -4,6 +4,7 @@ import type { VcsListRefsResult } from "@t3tools/contracts";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -18,7 +19,9 @@ const harness = vi.hoisted(() => ({
   renderCount: 0,
   onRefreshSettled: () => {},
   branchAtom: null as Atom.Atom<AsyncResult.AsyncResult<VcsListRefsResult, unknown>> | null,
+  refsQueryAtom: null as Atom.Atom<AsyncResult.AsyncResult<VcsListRefsResult, unknown>> | null,
   listRefs: vi.fn(),
+  refsQuery: vi.fn(),
   showGitActionResult: vi.fn(),
 }));
 
@@ -34,6 +37,7 @@ vi.mock("./use-atom-command", () => ({
 }));
 vi.mock("./vcs", () => ({
   vcsEnvironment: { refreshStatus: "refreshStatus", listRefs: harness.listRefs },
+  vcsRefsQuery: harness.refsQuery,
   vcsActionManager: { runStackedAction: () => "runStackedAction", track: vi.fn() },
 }));
 vi.mock("./threads", () => ({ threadEnvironment: { updateMetadata: "updateMetadata" } }));
@@ -98,6 +102,7 @@ beforeEach(() => {
   harness.renderCount = 0;
   harness.onRefreshSettled = () => rerender();
   harness.listRefs.mockReset().mockImplementation(() => harness.branchAtom);
+  harness.refsQuery.mockReset().mockImplementation(() => harness.refsQueryAtom);
   harness.showGitActionResult.mockClear();
 });
 
@@ -121,9 +126,18 @@ describe("useSelectedThreadGitActions", () => {
         totalCount: 0,
       };
       let response = cached ? Promise.resolve(empty) : request.promise;
-      harness.branchAtom = Atom.make(Effect.tryPromise(() => response)).pipe(Atom.keepAlive);
+      const fetchRefs = Effect.tryPromise(() => response);
+      harness.branchAtom = Atom.make(
+        Stream.concat(Stream.fromEffect(fetchRefs), Stream.never),
+      ).pipe(Atom.keepAlive);
+      harness.refsQueryAtom = Atom.make(fetchRefs).pipe(Atom.keepAlive);
+      appAtomRegistry.get(harness.branchAtom);
       if (cached) {
-        await executeAtomQuery(appAtomRegistry, harness.branchAtom);
+        await vi.waitFor(() =>
+          expect(appAtomRegistry.get(harness.branchAtom)._tag).toBe("Success"),
+        );
+        expect(appAtomRegistry.get(harness.branchAtom).waiting).toBe(true);
+        await executeAtomQuery(appAtomRegistry, harness.refsQueryAtom);
         response = request.promise;
       }
       root = createRoot(document.createElement("div"));
@@ -136,10 +150,6 @@ describe("useSelectedThreadGitActions", () => {
       });
       await flush();
       expect(settled).toBe(false);
-      expect(harness.listRefs).toHaveBeenCalledWith({
-        environmentId: "environment-1",
-        input: { cwd: "/repo", limit: 100 },
-      });
       const local = {
         name: "feature/update",
         isRemote: false,
@@ -157,7 +167,16 @@ describe("useSelectedThreadGitActions", () => {
         hasPrimaryRemote: true,
         totalCount: 2,
       });
+      await vi.waitFor(() => expect(settled).toBe(true));
+      expect(appAtomRegistry.get(harness.branchAtom)).toMatchObject({
+        _tag: "Success",
+        waiting: true,
+      });
       const branches = await refresh;
+      expect(harness.refsQuery).toHaveBeenCalledWith({
+        environmentId: "environment-1",
+        input: { cwd: "/repo", limit: 100 },
+      });
       expect(branches).toEqual([local]);
       expect(resolveAutoFeatureBranchName(branches!.map((branch) => branch.name))).toBe(
         "feature/update-2",
@@ -174,6 +193,7 @@ describe("useSelectedThreadGitActions", () => {
         catch: (error) => error,
       }),
     );
+    harness.refsQueryAtom = harness.branchAtom;
     root = createRoot(document.createElement("div"));
     act(() => root!.render(<Consumer />));
     const refresh = actions.refreshSelectedThreadBranches();
