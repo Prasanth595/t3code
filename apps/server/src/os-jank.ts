@@ -25,7 +25,11 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
       // mise's record of the PATH entries it added. It must travel with the
       // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
       // (`exec mise x claude -- claude`) that then re-runs itself forever.
-      shellEnvironment = readEnvironmentFromLoginShell(shell, ["PATH", "__MISE_DIFF"]);
+      shellEnvironment = readEnvironmentFromLoginShell(shell, [
+        "PATH",
+        "__MISE_DIFF",
+        "SSH_AUTH_SOCK",
+      ]);
     } catch (error) {
       logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
     }
@@ -38,6 +42,9 @@ function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): vo
   const mergedPath = mergePathEntries(shellPath ?? launchctlPath, env.PATH, platform);
   if (mergedPath) {
     env.PATH = mergedPath;
+  }
+  if (shellPath && !env.SSH_AUTH_SOCK && shellEnvironment.SSH_AUTH_SOCK) {
+    env.SSH_AUTH_SOCK = shellEnvironment.SSH_AUTH_SOCK;
   }
   if (shellPath && shellEnvironment.__MISE_DIFF) {
     env.__MISE_DIFF = shellEnvironment.__MISE_DIFF;
