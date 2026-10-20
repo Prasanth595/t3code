@@ -301,34 +301,36 @@ const runGrokCliCommand = Effect.fn("GrokProviderStatus.runGrokCliCommand")(func
   );
 });
 
-const probeGrokModels = (grokSettings: GrokSettings, environment: NodeJS.ProcessEnv) =>
-  Effect.gen(function* () {
-    const modelsResult = yield* runGrokCliCommand(grokSettings, ["models"], environment).pipe(
-      Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
-      Effect.result,
-    );
-    // Only a clean exit is parsed. Failed invocations print help or error text that
-    // must not be read as model slugs or as a login verdict.
-    const modelsOutput =
-      Result.isSuccess(modelsResult) &&
-      Option.isSome(modelsResult.success) &&
-      modelsResult.success.value.code === 0
-        ? modelsResult.success.value
-        : undefined;
-    const cliModels: GrokModelsCliOutput = modelsOutput
-      ? parseGrokModelsCliOutput(`${modelsOutput.stdout}\n${modelsOutput.stderr}`)
-      : { authenticated: null, models: [] };
-    if (!modelsOutput) {
-      yield* Effect.logWarning("Grok CLI model listing failed or timed out.", {
-        errorTag: Result.isFailure(modelsResult)
-          ? modelsResult.failure._tag
-          : Option.isNone(modelsResult.success)
-            ? "Timeout"
-            : `ExitCode${modelsResult.success.value.code}`,
-      });
-    }
-    return cliModels;
-  });
+const probeGrokModels = Effect.fn("GrokProviderStatus.probeGrokModels")(function* (
+  grokSettings: GrokSettings,
+  environment: NodeJS.ProcessEnv,
+) {
+  const modelsResult = yield* runGrokCliCommand(grokSettings, ["models"], environment).pipe(
+    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+    Effect.result,
+  );
+  // Only a clean exit is parsed. Failed invocations print help or error text that
+  // must not be read as model slugs or as a login verdict.
+  const modelsOutput =
+    Result.isSuccess(modelsResult) &&
+    Option.isSome(modelsResult.success) &&
+    modelsResult.success.value.code === 0
+      ? modelsResult.success.value
+      : undefined;
+  const cliModels: GrokModelsCliOutput = modelsOutput
+    ? parseGrokModelsCliOutput(`${modelsOutput.stdout}\n${modelsOutput.stderr}`)
+    : { authenticated: null, models: [] };
+  if (!modelsOutput) {
+    yield* Effect.logWarning("Grok CLI model listing failed or timed out.", {
+      errorTag: Result.isFailure(modelsResult)
+        ? modelsResult.failure._tag
+        : Option.isNone(modelsResult.success)
+          ? "Timeout"
+          : `ExitCode${modelsResult.success.value.code}`,
+    });
+  }
+  return cliModels;
+});
 
 const decodeAvailableCommands = Schema.decodeUnknownOption(Schema.Array(Schema.Unknown));
 const decodeAvailableCommand = Schema.decodeUnknownOption(
