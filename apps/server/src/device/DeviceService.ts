@@ -384,6 +384,11 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
     const host = hosts.get(ready.hostId);
+    // A session opened while the listing ran is on a device the listing could
+    // not have seen yet; only sessions from before it can be pruned by it.
+    const sessionKey = (session: DeviceSession) =>
+      `${session.hostId}\u0000${session.deviceId}\u0000${session.threadId}\u0000${session.openedAt}`;
+    const before = new Set((yield* SynchronizedRef.get(stateRef)).state.sessions.map(sessionKey));
     const { devices, detail, androidDiscoveryIncomplete } = yield* fetchDevices(ready);
     const hostSummaries = yield* Effect.forEach(hosts.values(), (host) => host.summary);
     return yield* lifecycleLock.withPermit(
@@ -405,6 +410,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             ? state.sessions.filter(
                 (session) =>
                   session.hostId !== ready.hostId ||
+                  !before.has(sessionKey(session)) ||
                   devices.some((device) => device.id === session.deviceId),
               )
             : state.sessions,
