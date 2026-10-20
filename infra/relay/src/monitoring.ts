@@ -218,7 +218,14 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
     timeSeries(
       "cloudflare-api",
       "Cloudflare API calls by status",
-      `${source}\n| where ${CLOUDFLARE_API}\n| summarize count() by bin_auto(_time), status = ${STATUS}`,
+      // Calls refused during a rate-limit pause never reach Cloudflare, so
+      // they are their own series or a storm would look like a quiet period.
+      `${source}\n| where ${CLOUDFLARE_API} or name == "relay.cloudflare_api_pause.rejected"\n| summarize count() by bin_auto(_time), status = case(name == "relay.cloudflare_api_pause.rejected", "paused", isnull(${STATUS}), "no response", tostring(${STATUS}))`,
+    ),
+    timeSeries(
+      "provision-paths",
+      "Tunnel provisions by path",
+      `${source}\n| where name == "relay.managed_endpoint_provider.provision"\n| summarize reused_ready_tunnel = countif(error != true and tobool(['attributes.custom']['relay.managed_endpoint.reused_ready_tunnel']) == true), full_provision = countif(error != true and isnull(['attributes.custom']['relay.managed_endpoint.reused_ready_tunnel'])), failed = countif(error == true) by bin_auto(_time)`,
     ),
     timeSeries(
       "postgres",
