@@ -203,31 +203,33 @@ export const prepareRunContext = Effect.fn("orchestrationV2.runContext.prepare")
   readonly userText: string;
   readonly cwd: string | null;
 }) {
-  const write = (items: ReadonlyArray<DynamicToolItem>, now: DateTime.Utc) =>
-    Effect.gen(function* () {
-      const events = yield* Effect.forEach(items, (item) =>
-        Effect.gen(function* () {
-          return {
-            id: yield* input.idAllocator.allocate.event({ threadId: input.threadId }),
-            type: "turn-item.updated",
-            threadId: input.threadId,
-            runId: input.runId,
-            nodeId: input.rootNodeId,
-            providerInstanceId: input.providerInstanceId,
-            occurredAt: now,
-            payload: item,
-          } satisfies OrchestrationV2DomainEvent;
-        }),
-      );
-      const result = yield* input.eventSink.writeIfRunCurrent({
-        threadId: input.threadId,
-        runId: input.runId,
-        activeAttemptId: input.attemptId,
-        expectedStatus: "starting",
-        events,
-      });
-      return result.committed;
+  const write = Effect.fn("RunContextEnrichment.write")(function* (
+    items: ReadonlyArray<DynamicToolItem>,
+    now: DateTime.Utc,
+  ) {
+    const events = yield* Effect.forEach(items, (item) =>
+      Effect.gen(function* () {
+        return {
+          id: yield* input.idAllocator.allocate.event({ threadId: input.threadId }),
+          type: "turn-item.updated",
+          threadId: input.threadId,
+          runId: input.runId,
+          nodeId: input.rootNodeId,
+          providerInstanceId: input.providerInstanceId,
+          occurredAt: now,
+          payload: item,
+        } satisfies OrchestrationV2DomainEvent;
+      }),
+    );
+    const result = yield* input.eventSink.writeIfRunCurrent({
+      threadId: input.threadId,
+      runId: input.runId,
+      activeAttemptId: input.attemptId,
+      expectedStatus: "starting",
+      events,
     });
+    return result.committed;
+  });
 
   const saved = input.turnItems.filter(
     (item): item is DynamicToolItem => item.runId === input.runId && isPluginContextTurnItem(item),
