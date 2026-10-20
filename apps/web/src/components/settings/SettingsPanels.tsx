@@ -171,6 +171,8 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { ComposerPromptActionsSetting } from "./ComposerPromptActionsSettings";
+import { composerPromptActionsAreDefault } from "../chat/composerPromptActions";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -615,6 +617,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? ["Rich text composer"]
       : []),
+    ...(!composerPromptActionsAreDefault(settings.composerPromptActions)
+      ? ["Composer actions"]
+      : []),
     ...(settings.sendShortcut !== DEFAULT_UNIFIED_SETTINGS.sendShortcut ? ["Send shortcut"] : []),
     ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
       ? ["Follow-up behavior"]
@@ -733,6 +738,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
+      composerPromptActions: DEFAULT_UNIFIED_SETTINGS.composerPromptActions,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
@@ -2714,6 +2720,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <ComposerPromptActionsSetting />
 
         <SettingsRow
           {...searchableSetting("composer-collapse")}

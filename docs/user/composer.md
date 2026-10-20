@@ -113,6 +113,16 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+## Composer actions
+
+On web and desktop, choose **Actions** in the composer controls to add saved text to the end of
+your prompt. The built-in **Cross-model review** asks the agent to delegate a review of its
+response to a different available model and to apply the fixes it agrees with. The review runs as
+a subagent and uses that model's allowance.
+
+Add, edit, or remove actions in **Settings → General → Composer actions**. Actions are saved on
+this client.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

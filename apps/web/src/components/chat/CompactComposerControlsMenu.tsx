@@ -22,6 +22,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   }>;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  promptActionsMenuContent?: ReactNode;
   size?: "sm" | "xs";
   /**
    * The resting strip keeps this menu mounted out of flow while every block
@@ -89,6 +90,13 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             </MenuRadioItem>
           ))}
         </MenuRadioGroup>
+        {props.promptActionsMenuContent ? (
+          <>
+            <MenuDivider />
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Actions</div>
+            {props.promptActionsMenuContent}
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

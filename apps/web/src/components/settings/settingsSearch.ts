@@ -422,6 +422,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
+    id: "composer-prompt-actions",
+    title: "Composer actions",
+    to: "/settings/general",
+    searchTerms: ["prompt snippet saved text append review model template quick action"],
+  },
+  {
     id: "composer-collapse",
     title: "Collapse composer on scroll",
     to: "/settings/general",

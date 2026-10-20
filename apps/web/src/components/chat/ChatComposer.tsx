@@ -27,6 +27,7 @@ import type {
   AssistantCitation,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
+  ComposerPromptAction,
   EnvironmentId,
   ModelSelection,
   ProjectId,
@@ -296,6 +297,11 @@ import {
 } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import {
+  ComposerPromptActionsMenu,
+  ComposerPromptActionsMenuItems,
+} from "./ComposerPromptActionsMenu";
+import { appendComposerPromptAction, runnableComposerPromptActions } from "./composerPromptActions";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
@@ -2890,6 +2896,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     scheduleComposerFocus();
   };
   const setPromptFromTraitsStable = useStableCallback(setPromptFromTraits);
+  const runComposerPromptAction = (action: ComposerPromptAction) => {
+    setPromptFromTraits(appendComposerPromptAction(promptRef.current, action.prompt));
+  };
+  const runComposerPromptActionStable = useStableCallback(runComposerPromptAction);
+  const composerPromptActions = runnableComposerPromptActions(settings.composerPromptActions);
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
@@ -5103,10 +5114,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const iconOnlyBlockCount = composerControlsCollapsed
     ? restingControlsIconOnlyBlockCount
     : expandedControlsIconOnlyBlockCount;
+  // Overflow hides blocks from the end of this list first.
+  const restingBlockIds = [
+    ...(providerTraitsPicker ? ["traits"] : []),
+    "mode",
+    ...(composerPromptActions.length > 0 ? ["prompt-actions"] : []),
+  ];
+  const isRestingBlockHidden = (id: string) =>
+    composerControlsHidden ||
+    restingBlockIds.indexOf(id) >= restingBlockIds.length - restingHiddenBlockCount;
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: isRestingBlockHidden("traits"),
   });
   const restingBlockDefs = [
     ...(providerTraitsPicker
@@ -5131,12 +5151,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          hidden={isRestingBlockHidden("mode")}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
     },
+    ...(composerPromptActions.length > 0
+      ? [
+          {
+            id: "prompt-actions",
+            content: (
+              <ComposerPromptActionsMenu
+                actions={composerPromptActions}
+                size={composerControlsCollapsed ? "xs" : "sm"}
+                hidden={isRestingBlockHidden("prompt-actions")}
+                onRunAction={runComposerPromptActionStable}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
   const hiddenRestingBlockIds = restingBlockDefs
     .slice(restingBlockDefs.length - restingHiddenBlockCount)
@@ -5298,6 +5333,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+            }
+            promptActionsMenuContent={
+              hiddenRestingBlockIds.includes("prompt-actions") ? (
+                <ComposerPromptActionsMenuItems
+                  actions={composerPromptActions}
+                  onRunAction={runComposerPromptActionStable}
+                />
+              ) : undefined
             }
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}

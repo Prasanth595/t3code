@@ -310,6 +310,35 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+export const COMPOSER_PROMPT_ACTION_LABEL_MAX_LENGTH = 48;
+export const COMPOSER_PROMPT_ACTION_PROMPT_MAX_LENGTH = 4000;
+export const COMPOSER_PROMPT_ACTIONS_MAX_COUNT = 24;
+
+// Label and prompt may be empty while being edited; the composer skips such actions. A stricter
+// schema would make one half-edited action fail to decode and reset every client setting.
+export const ComposerPromptAction = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  label: Schema.String.check(Schema.isMaxLength(COMPOSER_PROMPT_ACTION_LABEL_MAX_LENGTH)),
+  prompt: Schema.String.check(Schema.isMaxLength(COMPOSER_PROMPT_ACTION_PROMPT_MAX_LENGTH)),
+});
+export type ComposerPromptAction = typeof ComposerPromptAction.Type;
+export const ComposerPromptActions = Schema.Array(ComposerPromptAction).check(
+  Schema.isMaxLength(COMPOSER_PROMPT_ACTIONS_MAX_COUNT),
+);
+
+export const DEFAULT_COMPOSER_PROMPT_ACTIONS: ReadonlyArray<ComposerPromptAction> = [
+  {
+    id: "cross-model-review",
+    label: "Cross-model review",
+    prompt:
+      "Before you finish, have a different available model review your response. Use " +
+      "orchestrator_capabilities to pick a model other than yours and delegate_task to send it " +
+      "this request, your response and any changes you made, asking for concrete fixes and " +
+      "improvements. Apply the suggestions you agree with, then list what you changed and what " +
+      "you rejected, with a reason for each. If no other model is available, say so.",
+  },
+];
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -434,6 +463,9 @@ export const ClientSettingsSchema = Schema.Struct({
   contextWindowMeterEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   composerCollapseOnScroll: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   composerRichTextEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  composerPromptActions: ComposerPromptActions.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_PROMPT_ACTIONS)),
+  ),
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
   ),
@@ -1634,6 +1666,7 @@ export const ClientSettingsPatch = Schema.Struct({
   contextWindowMeterEnabled: Schema.optionalKey(Schema.Boolean),
   composerCollapseOnScroll: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
+  composerPromptActions: Schema.optionalKey(ComposerPromptActions),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
   proactivePanelsEnabled: Schema.optionalKey(Schema.Boolean),

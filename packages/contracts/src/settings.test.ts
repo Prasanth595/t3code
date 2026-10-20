@@ -7,6 +7,7 @@ import {
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
+  DEFAULT_COMPOSER_PROMPT_ACTIONS,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
   resolveProjectProviderInstanceEnabled,
@@ -146,6 +147,17 @@ describe("storage cleanup settings", () => {
     expect(() =>
       decodeServerSettingsPatch({ storageCleanup: { worktreeSettledAfterDays: days } }),
     ).toThrow();
+  });
+});
+
+describe("ClientSettings composer prompt actions", () => {
+  it("offers the cross-model review until the user changes the list, including emptying it", () => {
+    expect(decodeClientSettings({}).composerPromptActions).toEqual(DEFAULT_COMPOSER_PROMPT_ACTIONS);
+    expect(decodeClientSettings({ composerPromptActions: [] }).composerPromptActions).toEqual([]);
+    const draft = { id: "new", label: "", prompt: "" };
+    expect(
+      encodeClientSettings(decodeClientSettings({ composerPromptActions: [draft] })),
+    ).toMatchObject({ composerPromptActions: [draft] });
   });
 });
 
