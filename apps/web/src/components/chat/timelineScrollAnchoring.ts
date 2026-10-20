@@ -182,3 +182,63 @@ export function rememberTimelinePosition(
     if (oldest !== undefined) rememberedTimelinePositions.delete(oldest);
   }
 }
+
+const TIMELINE_END_PIN_TOLERANCE_PX = 2;
+const TIMELINE_END_PIN_QUIET_FRAMES = 6;
+const TIMELINE_END_PIN_MAX_FRAMES = 180;
+const TIMELINE_END_PIN_INTERRUPTS = ["wheel", "touchmove", "pointerdown"] as const;
+
+export function isTimelineScrolledAwayFromEnd(element: HTMLElement): boolean {
+  return (
+    element.scrollHeight - element.clientHeight - element.scrollTop > TIMELINE_END_PIN_TOLERANCE_PX
+  );
+}
+
+/**
+ * Keeps a followed timeline at its end while rows measure and new rows land.
+ *
+ * LegendList only keeps following once the view is already within about a viewport of
+ * the end, so rows that grow the content by more than that in one step (a reply that
+ * finished while the thread was in the background, rows measuring taller than their
+ * estimate) leave a followed thread stranded above it. This scrolls to the end each
+ * frame until the layout has been quiet for a few frames. A user gesture, or
+ * `shouldContinue` turning false, stops it. Returns the cancel function.
+ */
+export function pinTimelineToEnd(
+  list: {
+    getScrollableNode: () => HTMLElement | null;
+    scrollToEnd: (options: { animated: boolean }) => unknown;
+  },
+  shouldContinue: () => boolean,
+): () => void {
+  const element = list.getScrollableNode();
+  if (!element) return () => {};
+  let frame: number | null = null;
+  let quietFrames = 0;
+  let totalFrames = 0;
+  const stop = () => {
+    if (frame !== null) cancelAnimationFrame(frame);
+    frame = null;
+    for (const type of TIMELINE_END_PIN_INTERRUPTS) element.removeEventListener(type, stop);
+  };
+  const tick = () => {
+    frame = null;
+    if (!shouldContinue() || ++totalFrames > TIMELINE_END_PIN_MAX_FRAMES) {
+      stop();
+      return;
+    }
+    if (isTimelineScrolledAwayFromEnd(element)) {
+      quietFrames = 0;
+      void list.scrollToEnd({ animated: false });
+    } else if (++quietFrames >= TIMELINE_END_PIN_QUIET_FRAMES) {
+      stop();
+      return;
+    }
+    frame = requestAnimationFrame(tick);
+  };
+  for (const type of TIMELINE_END_PIN_INTERRUPTS) {
+    element.addEventListener(type, stop, { passive: true });
+  }
+  frame = requestAnimationFrame(tick);
+  return stop;
+}

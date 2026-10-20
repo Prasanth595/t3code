@@ -181,6 +181,8 @@ import { useFileContextMenuHandler } from "../../fileContextMenu";
 import { useProject, useThreadShell } from "../../state/entities";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
+  isTimelineScrolledAwayFromEnd,
+  pinTimelineToEnd,
   readTimelinePosition,
   type RememberedTimelinePosition,
   rememberTimelinePosition,
@@ -882,10 +884,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
       : -1;
   const restoringAlwaysRender =
     restoringThreadPosition && restoreRowIndex >= 0 ? { indices: [restoreRowIndex] } : undefined;
+  const followsEndRef = useRef(false);
+  const endPinCancelRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => endPinCancelRef.current?.(), []);
   useLayoutEffect(() => {
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
     if (!list) return;
+    endPinCancelRef.current?.();
     if (citationRequest !== null) {
       // oxlint-disable-next-line react/set-state-in-effect -- The citation scroll owns positioning once the list has mounted.
       setPositionedThreadKey(listIdentityKey);
@@ -939,6 +945,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     void Promise.resolve(scrolling).then(() => {
       if (cancelled) return;
       if (position?.atEnd !== false || index < 0) {
+        // That scroll aimed at estimated row heights; keep scrolling while the rows measure.
+        if (position?.atEnd !== false && scrolling !== undefined) {
+          endPinCancelRef.current = pinTimelineToEnd(list, () => followsEndRef.current);
+        }
         setPositionedThreadKey(listIdentityKey);
         return;
       }
@@ -1404,6 +1414,40 @@ const ConversationTimeline = memo(function ConversationTimeline({
     timelineViewportElement,
   ]);
 
+  const followsEnd = !(
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null ||
+    disclosureToggleSettling
+  );
+  const followsEndSmoothly = followsEnd && isWorking && !prefersReducedMotion;
+  useLayoutEffect(() => {
+    followsEndRef.current = followsEnd;
+  }, [followsEnd]);
+  // Rows that land on a followed thread (a reply that finished while it was in the
+  // background) can grow the content past what LegendList keeps following. Check once
+  // the rows have laid out; smooth following during a stream moves the view itself.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !followsEnd || followsEndSmoothly || restoringThreadPosition) return;
+    let second: number | null = null;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        const element = list.getScrollableNode();
+        if (!element || !isTimelineScrolledAwayFromEnd(element)) return;
+        endPinCancelRef.current?.();
+        endPinCancelRef.current = pinTimelineToEnd(list, () => followsEndRef.current);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      if (second !== null) cancelAnimationFrame(second);
+    };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Added or changed rows are the trigger.
+  }, [followsEnd, followsEndSmoothly, listRef, restoringThreadPosition, rows]);
+
   useThreadFindNavigation({
     listReady: findListReady,
     historyControls,
@@ -1500,12 +1544,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
+                !followsEnd
                   ? false
                   : isWorking && !prefersReducedMotion && settlingListIdentity === null
                     ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH

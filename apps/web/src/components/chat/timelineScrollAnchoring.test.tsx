@@ -1,9 +1,10 @@
 import { MessageId, RunId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
   observeTimelineRun,
   getAnchoredTurnMetrics,
   getRowBottom,
+  pinTimelineToEnd,
   readTimelinePosition,
   rememberTimelinePosition,
   timelineContentOverflowsViewport,
@@ -306,5 +307,99 @@ describe("remembered timeline positions", () => {
     expect(readTimelinePosition("scroll-test-a:unvisited")).toBeUndefined();
     rememberTimelinePosition("scroll-test-a:thread-1", following, true);
     expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(following);
+  });
+});
+
+describe("pinTimelineToEnd", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Runs queued animation frames one at a time; `heights[n]` is the content height on frame n.
+  function setup(heights: readonly number[]) {
+    const queue = new Map<number, () => void>();
+    let nextHandle = 1;
+    vi.stubGlobal("requestAnimationFrame", (callback: () => void) => {
+      queue.set(nextHandle, callback);
+      return nextHandle++;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (handle: number) => queue.delete(handle));
+    const listeners = new Map<string, () => void>();
+    const element = {
+      clientHeight: 700,
+      scrollHeight: heights[0] ?? 700,
+      scrollTop: 0,
+      addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+      removeEventListener: (type: string) => listeners.delete(type),
+    };
+    const scrollToEnd = vi.fn(() => {
+      element.scrollTop = element.scrollHeight - element.clientHeight;
+    });
+    const list = { getScrollableNode: () => element as unknown as HTMLElement, scrollToEnd };
+    let frameNumber = 0;
+    const runFrame = () => {
+      const [handle, callback] = [...queue.entries()][0] ?? [];
+      if (handle === undefined || !callback) return false;
+      queue.delete(handle);
+      frameNumber += 1;
+      element.scrollHeight = heights[Math.min(frameNumber, heights.length - 1)] ?? 700;
+      callback();
+      return true;
+    };
+    const runAllFrames = () => {
+      let frames = 0;
+      while (runFrame()) frames += 1;
+      return frames;
+    };
+    return { element, listeners, list, scrollToEnd, runAllFrames, runFrame, queue };
+  }
+
+  it("keeps scrolling to the end while rows measure taller, then stops once the layout is quiet", () => {
+    // The first scroll lands against 1,200px; the content ends at 5,000px.
+    const { element, list, scrollToEnd, runAllFrames, queue } = setup([
+      1200, 1200, 3000, 4200, 5000, 5000,
+    ]);
+    pinTimelineToEnd(list, () => true);
+
+    runAllFrames();
+
+    expect(element.scrollHeight - element.clientHeight - element.scrollTop).toBe(0);
+    expect(scrollToEnd).toHaveBeenCalledTimes(4);
+    expect(queue.size).toBe(0);
+  });
+
+  it("does nothing once the view is already at the end and the layout stays quiet", () => {
+    const { element, list, scrollToEnd, runAllFrames } = setup([1200]);
+    element.scrollTop = 500;
+    pinTimelineToEnd(list, () => true);
+
+    runAllFrames();
+
+    expect(scrollToEnd).not.toHaveBeenCalled();
+  });
+
+  it("stops when the user scrolls", () => {
+    const { list, listeners, scrollToEnd, runFrame, runAllFrames } = setup([1200, 3000, 5000]);
+    pinTimelineToEnd(list, () => true);
+    runFrame();
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
+
+    listeners.get("wheel")?.();
+
+    expect(runAllFrames()).toBe(0);
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
+    expect(listeners.size).toBe(0);
+  });
+
+  it("stops when the thread stops following the end", () => {
+    const { list, scrollToEnd, runFrame, runAllFrames } = setup([1200, 3000, 5000]);
+    let following = true;
+    pinTimelineToEnd(list, () => following);
+    runFrame();
+    following = false;
+
+    runAllFrames();
+
+    expect(scrollToEnd).toHaveBeenCalledTimes(1);
   });
 });
