@@ -312,7 +312,7 @@ describe("live widget activity", () => {
     expect(reconcileWidgetActivity(new Map([[REMOTE, []]]), filtered).activeCount).toBeNull();
   });
 
-  it("does not validate retained work with omission or equal-timestamp conflicting phases", () => {
+  it("retires expired terminal observations only from complete relay snapshots", () => {
     const observed = new Map([
       [ENVIRONMENT, [row(ENVIRONMENT, ThreadId.make("task"), "completed")]],
     ]);
@@ -321,7 +321,14 @@ describe("live widget activity", () => {
       observed,
     );
     expect(
-      retainUnconfirmedWidgetActivities(observed, new Map(), observed, { aggregate: null }),
+      retainUnconfirmedWidgetActivities(observed, new Map(), observed, { aggregate: null }).size,
+    ).toBe(0);
+    const active = new Map([[ENVIRONMENT, [row(ENVIRONMENT)]]]);
+    expect(
+      retainUnconfirmedWidgetActivities(active, new Map(), active, { aggregate: null }),
+    ).toEqual(active);
+    expect(
+      retainUnconfirmedWidgetActivities(observed, new Map(), observed, snapshot([], 10)),
     ).toEqual(observed);
     const matching = snapshot(observed.get(ENVIRONMENT)!);
     expect(retainUnconfirmedWidgetActivities(observed, new Map(), observed, matching).size).toBe(0);

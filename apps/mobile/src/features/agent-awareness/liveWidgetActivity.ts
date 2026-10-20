@@ -109,13 +109,17 @@ export function retainUnconfirmedWidgetActivities(
     const confirmed =
       rows.length === 0
         ? complete && environmentRows.every((row) => !isActive(row))
-        : rows.every((row) =>
-            environmentRows.some(
-              (remote) =>
-                remote.threadId === row.threadId &&
-                (remote.updatedAt > row.updatedAt ||
-                  (remote.updatedAt === row.updatedAt && remote.phase === row.phase)),
-            ),
+        : rows.every(
+            (row) =>
+              environmentRows.some(
+                (remote) =>
+                  remote.threadId === row.threadId &&
+                  (remote.updatedAt > row.updatedAt ||
+                    (remote.updatedAt === row.updatedAt && remote.phase === row.phase)),
+              ) ||
+              (complete &&
+                !isActive(row) &&
+                !environmentRows.some((remote) => remote.threadId === row.threadId)),
           );
     if (confirmed) retained.delete(environmentId);
   }

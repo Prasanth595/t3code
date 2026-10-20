@@ -17,11 +17,11 @@ enum AgentWidgetState {
     let relayRows = base["activities"] as? [[String: Any]] ?? []
     let allLocalRows = localObservation?["activities"] as? [[String: Any]] ?? []
     let localCount = localObservation?["activeCount"] as? Int
-    let countUnavailable = localObservation != nil && (localCount == nil || localCount! < 0 || localCount! > allLocalRows.filter { isUnfinished($0) }.count)
     let localRows = allLocalRows.filter {
       guard let environmentId = $0["environmentId"] as? String else { return false }
       return !covered.contains(environmentId)
     }
+    let countUnavailable = !localRows.isEmpty && localObservation != nil && (localCount == nil || localCount! < 0 || localCount! > allLocalRows.filter { isUnfinished($0) }.count)
     let localDeadline = (localObservation?["expiresAt"] as? NSNumber).map {
       Date(timeIntervalSince1970: $0.doubleValue / 1000)
     }

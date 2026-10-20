@@ -65,3 +65,8 @@ assert(props(truncatedEntries[0])["activeCount"] as? Int == -1)
 var unknown = local
 unknown.removeValue(forKey: "activeCount")
 assert(props(AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: unknown, now: now)[0])["activeCount"] as? Int == -1)
+
+// Fully relay-covered rows must not invalidate an authoritative relay count.
+let coveredUnknown: [String: Any] = ["activities": [row("relay", "running")]]
+let coveredTimeline = AgentWidgetState.timeline(aggregate: running, environmentIds: ["relay"], localObservation: coveredUnknown, now: now)
+assert(props(coveredTimeline[0])["activeCount"] as? Int == 1)
