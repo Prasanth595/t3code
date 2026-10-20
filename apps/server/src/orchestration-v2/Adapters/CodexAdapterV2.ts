@@ -5485,11 +5485,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               nativeItemId: payload.callId,
               nativeRequestId: payload.callId,
               requestKind: "file-change",
-              prompt:
-                codexFileChangeApprovalPrompt({
-                  ...payload,
-                  fileChanges: context.fileChangeKindsByItem.get(payload.itemId) ?? {},
-                }) ?? null,
+              prompt: codexFileChangeApprovalPrompt(payload) ?? null,
             });
             const decision = yield* Deferred.make<ProviderApprovalDecision, never>();
             yield* Ref.update(pendingRuntimeRequests, (current) => {
