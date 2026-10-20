@@ -310,6 +310,101 @@ it.layer(layerTest)("CodexDriver", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect.each([
+    { name: "a system install", linked: false },
+    { name: "a system install linked into /usr/local/bin", linked: true },
+  ] as const)(
+    "leaves $name manual-only because codex update cannot identify it",
+    (fixture) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = yield* fs
+          .makeTempDirectoryScoped({ prefix: "t3-codex-system-" })
+          .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+        const realBinaryPath = NodePath.join(
+          tempDir,
+          "usr",
+          "local",
+          "lib",
+          "codex",
+          "releases",
+          "rust-v0.162.1-x86_64-unknown-linux-musl-abc123",
+          "bin",
+          "codex",
+        );
+        yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
+        yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
+        yield* fs.chmod(realBinaryPath, 0o755);
+        const binaryPath = fixture.linked
+          ? NodePath.join(tempDir, "usr", "local", "bin", "codex")
+          : realBinaryPath;
+        if (fixture.linked) {
+          yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+          yield* fs.symlink(realBinaryPath, binaryPath);
+        }
+
+        const instance = yield* CodexDriver.create({
+          instanceId: ProviderInstanceId.make("codex-system"),
+          displayName: "Codex system test",
+          enabled: false,
+          environment: [],
+          config: {
+            ...CodexDriver.defaultConfig(),
+            binaryPath,
+            homePath: NodePath.join(tempDir, "codex-home"),
+          },
+        });
+
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(capabilities.update).toBeNull();
+        expect(capabilities.installPath).toBe(realBinaryPath);
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+        Effect.scoped,
+      ),
+    { skip: windowsHost },
+  );
+
+  it.effect.skipIf(windowsHost)("keeps the updater for a linked standalone release", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs
+        .makeTempDirectoryScoped({ prefix: "t3-codex-standalone-link-" })
+        .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
+      const sharedHome = NodePath.join(tempDir, "codex-home");
+      const realBinaryPath = NodePath.join(
+        sharedHome,
+        "packages",
+        "standalone",
+        "releases",
+        "0.162.1-x86_64-unknown-linux-musl",
+        "bin",
+        "codex",
+      );
+      const binaryPath = NodePath.join(tempDir, "bin", "codex");
+      yield* fs.makeDirectory(NodePath.dirname(realBinaryPath), { recursive: true });
+      yield* fs.makeDirectory(NodePath.dirname(binaryPath), { recursive: true });
+      yield* fs.writeFileString(realBinaryPath, "#!/bin/sh\n");
+      yield* fs.chmod(realBinaryPath, 0o755);
+      yield* fs.symlink(realBinaryPath, binaryPath);
+
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("codex-standalone-link"),
+        displayName: "Codex standalone link test",
+        enabled: false,
+        environment: [],
+        config: { ...CodexDriver.defaultConfig(), binaryPath, homePath: sharedHome },
+      });
+
+      expect((yield* instance.snapshot.resolveMaintenance()).update).toMatchObject({
+        executable: binaryPath,
+        args: ["update"],
+        lockKey: "codex-native",
+        env: { CODEX_HOME: sharedHome },
+      });
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawn), Effect.scoped),
+  );
+
   it.effect.skipIf(windowsHost)(
     "runs the standalone updater against the shared home, not the shadow home",
     () =>

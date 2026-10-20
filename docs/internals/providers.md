@@ -86,9 +86,11 @@ and npm are proven by the real path (symlinks followed): a versioned keg or cask
 Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite+ may match on
 either the resolved path or its real target, since those installers place real files or their own
 symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
-nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
-`pi update --self`, `grok update`) runs instead, because each one detects its installer itself;
-the runner's version check catches an updater that exits 0 without updating. Mise installs stay
+nothing is proven, the provider's own updater (`claude update`, `opencode upgrade`,
+`pi update --self`, `grok update`) runs instead, because each one detects its installer itself.
+`codex update` is the exception: it exits 1 on anything but an npm, Homebrew, or standalone install,
+so an unproven Codex install stays manual-only. The runner's version check catches an updater that
+exits 0 without updating. Mise installs stay
 manual-only because their version is pinned in mise's config. A Grok cask whose Homebrew prefix
 cannot be verified also stays manual-only: `grok update` would install a second copy. npm updates pin `--prefix` because the
 `npm` on `PATH` can belong to a different Node than the one that owns the provider. Homebrew

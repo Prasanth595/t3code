@@ -73,6 +73,8 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
+    // `codex update` exits 1 for any install other than npm, Homebrew, or standalone.
+    manualWhenUnproven: true,
     nativeUpdate: {
       args: ["update"],
       isCommandPath: isCodexStandaloneCommandPath,

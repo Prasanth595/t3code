@@ -82,6 +82,12 @@ export interface ProviderMaintenanceCapabilitiesResolver {
 export interface PackageManagedProviderMaintenanceDefinition {
   readonly provider: ProviderDriverKind;
   readonly npmPackageName: string;
+  /**
+   * Skips the native updater when no installer is proven for the path. For an
+   * updater that only acts on installs it recognizes and exits non-zero on the
+   * rest, falling back to it would offer an Update button that cannot succeed.
+   */
+  readonly manualWhenUnproven?: boolean;
   readonly nativeUpdate: {
     readonly args: ReadonlyArray<string>;
     readonly isCommandPath?: (commandPath: string) => boolean;
@@ -584,7 +590,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     );
   }
 
-  return fallback;
+  return definition.manualWhenUnproven ? manual : fallback;
 });
 
 /**

@@ -242,12 +242,32 @@ function commandOutput(result: ProviderMaintenanceCommandResult): string | null 
   return truncateText(output, UPDATE_OUTPUT_MAX_BYTES);
 }
 
-function failureMessage(result: ProviderMaintenanceCommandResult): string {
+// Updaters put their explanation last: a final error line, or npm's summary
+// just before its log-file pointer.
+const FAILURE_EXCERPT_LINES = 2;
+
+function failureExcerpt(result: ProviderMaintenanceCommandResult): string | null {
+  for (const text of [result.stderr, result.stdout]) {
+    const lines = text
+      .split(/\r\n|\r|\n/)
+      .map(toProgressLine)
+      .filter((line) => line !== null);
+    if (lines.length > 0) {
+      return lines.slice(-FAILURE_EXCERPT_LINES).join(" ");
+    }
+  }
+  return null;
+}
+
+export function failureMessage(result: ProviderMaintenanceCommandResult): string {
   if (result.timedOut) {
     return "Update timed out.";
   }
   if (result.exitCode !== null && result.exitCode !== 0) {
-    return `Update command exited with code ${result.exitCode}.`;
+    const excerpt = failureExcerpt(result);
+    return excerpt
+      ? `Update command exited with code ${result.exitCode}: ${excerpt}`
+      : `Update command exited with code ${result.exitCode}.`;
   }
   return "Update command failed.";
 }
