@@ -1,6 +1,5 @@
 import {
   AuthOrchestrationOperateScope,
-  EDITORS,
   EditorId,
   EnvironmentAuthorizationError,
   EnvironmentId,
@@ -44,13 +43,18 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
   }
 }
 
+/**
+ * The remembered editor when it is available, else the first available one.
+ * Callers order `availableEditors` by preference (the server's PATH probe
+ * follows the EDITORS catalog; the browser remote list leads with VS Code).
+ */
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
 
   const effectiveEditor =
     lastEditor && availableEditors.includes(lastEditor)
       ? lastEditor
-      : (EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null);
+      : (availableEditors[0] ?? null);
 
   return [effectiveEditor, setLastEditor] as const;
 }
@@ -59,9 +63,9 @@ function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[])
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  const editor = availableEditors[0] ?? null;
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
-  return editor ?? null;
+  return editor;
 }
 
 export function useOpenInPreferredEditor(

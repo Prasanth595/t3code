@@ -130,22 +130,32 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
   return useRemoteOpenResolution(environmentId).state;
 }
 
+// A browser cannot probe the machine it runs on, so it offers every remote-capable editor
+// and remembers the pick; VS Code leads as the default.
+export const BROWSER_REMOTE_EDITORS: ReadonlyArray<EditorId> = [
+  "vscode",
+  ...REMOTE_CAPABLE_EDITOR_IDS.filter((id) => id !== "vscode"),
+];
+
+// Older desktop shells without the probe only document VS Code support.
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
 let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
+  const bridge = window.desktopBridge;
+  const unprobedEditors = bridge === undefined ? BROWSER_REMOTE_EDITORS : REMOTE_FALLBACK_EDITORS;
   const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
-    () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,
+    () => cachedProbedEditors ?? unprobedEditors,
   );
 
   useEffect(() => {
     if (cachedProbedEditors !== null) {
       return;
     }
-    const probe = window.desktopBridge?.probeRemoteEditors;
+    const probe = bridge?.probeRemoteEditors;
     if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
+      cachedProbedEditors = unprobedEditors;
       return;
     }
     let cancelled = false;
@@ -164,7 +174,7 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bridge, unprobedEditors]);
 
   return editors;
 }
