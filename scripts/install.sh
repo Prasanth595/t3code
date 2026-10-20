@@ -154,8 +154,15 @@ if [ -z "$version" ]; then
     *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
   esac
   tmp_index="$(mktemp)"
-  fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index"
-  version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
+  # Match t3 update's ten-page limit so a long run of nightlies cannot hide a channel.
+  page=1
+  while [ "$page" -le 10 ]; do
+    fetch "https://api.github.com/repos/${repo}/releases?per_page=100&page=${page}" "$tmp_index"
+    version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
+    [ -n "$version" ] && break
+    grep -q '"tag_name"' "$tmp_index" || break
+    page=$((page + 1))
+  done
   rm -f "$tmp_index"
   [ -n "$version" ] || fail "could not find a ${channel} release; set T3CODE_VERSION"
 fi
