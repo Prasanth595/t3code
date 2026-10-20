@@ -4952,7 +4952,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     "backfills a custom model's latest streamed usage and reuses its window next turn",
     () =>
       Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: "650000" },
+        });
         const contextWindowOf = harness.runtime.getModelContextWindow;
         assert.isDefined(contextWindowOf);
         if (contextWindowOf === undefined) return;
@@ -5002,7 +5004,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "completed");
         const firstTurnUsage = usageEvents();
         assert.isNull(firstTurnUsage[0]?.maxTokens);
+        assert.equal(firstTurnUsage[0]?.autoCompactThreshold, 650_000);
         assert.equal(firstTurnUsage.at(-1)?.maxTokens, 524_288);
+        assert.isUndefined(firstTurnUsage.at(-1)?.autoCompactThreshold);
         assert.equal(firstTurnUsage.at(-1)?.usedTokens, 1_075);
         assert.equal(firstTurnUsage.at(-1)?.outputTokens, 75);
         assert.equal(contextWindowOf(CLAUDE_TEST_CUSTOM_MODEL_SELECTION), 524_288);

@@ -254,7 +254,6 @@ export function claudeProviderTurnTokenUsage(
   return {
     usedTokens: inputTokens + outputTokens,
     maxTokens,
-
     inputTokens,
     cachedInputTokens: usage.cache_read_input_tokens ?? 0,
     outputTokens,
@@ -7476,7 +7475,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: DateTime.formatIso(now),
               };
               context.lastTokenUsage = tokenUsage;
-
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
@@ -8196,8 +8194,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               lastTokenUsage.maxTokens == null &&
               reportedMaxTokens !== null
             ) {
+              const { autoCompactThreshold: _previousThreshold, ...measuredUsage } = lastTokenUsage;
               context.lastTokenUsage = {
-                ...lastTokenUsage,
+                ...measuredUsage,
                 maxTokens: reportedMaxTokens,
                 ...claudeAutoCompactThreshold(
                   adapterOptions.settings.autoCompactWindow,
