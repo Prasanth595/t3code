@@ -617,7 +617,9 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
       const customBinDir = path.join(baseDir, "custom-bin");
       yield* fs.makeDirectory(binDir);
       yield* fs.makeDirectory(customBinDir);
-      yield* fs.symlink(path.join(versionsDir, "1.2.0", "t3"), path.join(binDir, "t3"));
+      // Chained: the launcher reaches its runtime through a second link.
+      yield* fs.symlink(path.join(versionsDir, "1.2.0", "t3"), path.join(baseDir, "alias-t3"));
+      yield* fs.symlink(path.join(baseDir, "alias-t3"), path.join(binDir, "t3"));
       yield* fs.symlink(path.join(versionsDir, "1.2.5", "t3"), path.join(customBinDir, "t3"));
       yield* fs.writeFileString(
         path.join(baseDir, "runtime", "launchers"),

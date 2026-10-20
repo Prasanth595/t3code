@@ -414,6 +414,9 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
     .filter((directory) => path.isAbsolute(directory))
     .map((directory) => path.join(directory, launcherName));
   const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
+  const realVersionsDir = yield* fs
+    .realPath(versionsDir)
+    .pipe(Effect.orElseSucceed(() => versionsDir));
   const unrecorded: Array<string> = [];
   const targets: Array<string> = [];
   for (const launcher of [...recorded, ...found]) {
@@ -423,14 +426,13 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
             Effect.map(windowsShimTarget),
             Effect.orElseSucceed(() => undefined),
           )
-        : yield* fs.readLink(launcher).pipe(
-            Effect.map((link) => path.resolve(path.dirname(launcher), link)),
-            Effect.orElseSucceed(() => undefined),
-          );
+        : // Fully resolved, through chained links and a symlinked T3 home alike.
+          yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined));
     if (target === undefined) continue;
     targets.push(target);
     if (
-      launcherOwnsVersionsDir(path, versionsDir, target) &&
+      (launcherOwnsVersionsDir(path, versionsDir, target) ||
+        launcherOwnsVersionsDir(path, realVersionsDir, target)) &&
       !recorded.includes(launcher) &&
       !unrecorded.includes(launcher)
     ) {
