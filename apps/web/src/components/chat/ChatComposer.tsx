@@ -1610,6 +1610,7 @@ export interface ChatComposerProps {
   onPageScrollRelease: () => void;
 
   queuedRunsControl?: ReactNode;
+  threadNameField?: ReactNode;
   editingQueuedAttachments: ReadonlyArray<{
     readonly attachment: ContractChatAttachment;
     readonly url: string | null;
@@ -6583,6 +6584,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               />
             </ComposerBanner.Attachment>
           ) : null}
+          {props.threadNameField}
         </ComposerBanner.Column>
         {!isComposerApprovalState ? (
           <ComposerStashBadge
