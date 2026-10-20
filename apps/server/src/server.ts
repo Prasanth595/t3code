@@ -22,7 +22,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import * as Schedule from "effect/Schedule";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -150,6 +149,8 @@ import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
   MANAGED_TUNNEL_RECOVERY_COOLDOWN,
   managedTunnelStartupAction,
+  nextManagedTunnelRecoveryCooldown,
+  relayRetrySchedule,
   retryManagedTunnelRegistration,
 } from "./cloud/managedTunnelStartup.ts";
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
@@ -856,12 +857,17 @@ const layerMakeServer = Layer.unwrap(
             const localOrigin = `http://127.0.0.1:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
             const recoveryLock = yield* Semaphore.make(1);
-            let lastRecoveryAtMillis = 0;
+            let lastRecoveryAtMillis = Number.NEGATIVE_INFINITY;
+            let recoveryCooldown = MANAGED_TUNNEL_RECOVERY_COOLDOWN;
             const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
               recoveryLock.withPermits(1)(
                 Effect.gen(function* () {
                   const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
-                  const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
+                  recoveryCooldown = nextManagedTunnelRecoveryCooldown({
+                    current: recoveryCooldown,
+                    sinceLastRecovery: Duration.millis(elapsed),
+                  });
+                  const wait = Duration.toMillis(recoveryCooldown) - elapsed;
                   if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
                   lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
                 }).pipe(
@@ -874,12 +880,7 @@ const layerMakeServer = Layer.unwrap(
                     while: (error) =>
                       CloudLink.shouldRetryCloudLink(error) &&
                       error._tag !== "CloudLinkEndpointUnavailableError",
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                      ),
-                      Schedule.jittered,
-                    ),
+                    schedule: relayRetrySchedule,
                   }),
                   Effect.tap((recovered) =>
                     recovered ? Effect.logInfo("T3 Connect managed tunnel recovered") : Effect.void,
@@ -992,14 +993,11 @@ const layerMakeServer = Layer.unwrap(
               const reconciledMode = yield* cloudLink
                 .reconcileDesiredLinkIfStillDesired(localOrigin)
                 .pipe(
+                  // Retries never give up: a headless host has nobody to
+                  // restart it once the relay comes back.
                   Effect.retry({
                     while: CloudLink.shouldRetryCloudLink,
-                    schedule: Schedule.exponential("1 second").pipe(
-                      Schedule.modifyDelay(({ duration }) =>
-                        Effect.succeed(Duration.min(duration, Duration.seconds(30))),
-                      ),
-                      Schedule.upTo({ duration: "10 minutes" }),
-                    ),
+                    schedule: relayRetrySchedule,
                   }),
                   Effect.tap((mode) =>
                     mode === null

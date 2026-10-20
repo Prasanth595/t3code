@@ -1,13 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 
 import {
+  MANAGED_TUNNEL_RECOVERY_COOLDOWN,
   managedTunnelStartupAction,
+  nextManagedTunnelRecoveryCooldown,
+  relayRetrySchedule,
   retryManagedTunnelRegistration,
 } from "./managedTunnelStartup.ts";
+import { RelayRequestError } from "./relayResponse.ts";
 
 describe("managedTunnelStartupAction", () => {
   const config = {
@@ -126,6 +131,67 @@ describe("retryManagedTunnelRegistration", () => {
       expect(attempts).toBe(2);
       expect(activations).toBe(1);
       expect(reconciliations).toBe(0);
+    }),
+  );
+});
+
+describe("nextManagedTunnelRecoveryCooldown", () => {
+  const minutes = (value: number) => Duration.minutes(value);
+
+  it("backs off while recoveries keep failing to fix the tunnel, up to 30 minutes", () => {
+    let cooldown = MANAGED_TUNNEL_RECOVERY_COOLDOWN;
+    const seen: Array<number> = [];
+    for (let attempt = 0; attempt < 6; attempt++) {
+      cooldown = nextManagedTunnelRecoveryCooldown({
+        current: cooldown,
+        sinceLastRecovery: minutes(3),
+      });
+      seen.push(Duration.toMinutes(cooldown));
+    }
+    expect(seen).toEqual([4, 8, 16, 30, 30, 30]);
+  });
+
+  it("starts over once the previous recovery held", () => {
+    expect(
+      Duration.toMinutes(
+        nextManagedTunnelRecoveryCooldown({ current: minutes(16), sinceLastRecovery: minutes(26) }),
+      ),
+    ).toBe(2);
+    expect(
+      Duration.toMinutes(
+        nextManagedTunnelRecoveryCooldown({ current: minutes(16), sinceLastRecovery: minutes(20) }),
+      ),
+    ).toBe(30);
+  });
+});
+
+describe("relayRetrySchedule", () => {
+  it.effect("waits at least as long as the relay's Retry-After", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const request = Effect.suspend(() => {
+        attempts += 1;
+        return attempts === 1
+          ? Effect.fail(
+              new RelayRequestError({
+                rejection: "unavailable",
+                description: "paused",
+                retryAfterMillis: 120_000,
+              }),
+            )
+          : Effect.succeed("done");
+      });
+      const fiber = yield* Effect.forkChild(
+        Effect.retry(request, { schedule: relayRetrySchedule }),
+        {
+          startImmediately: true,
+        },
+      );
+      yield* TestClock.adjust("90 seconds");
+      expect(attempts).toBe(1);
+      yield* TestClock.adjust("31 seconds");
+      expect(yield* Fiber.join(fiber)).toBe("done");
+      expect(attempts).toBe(2);
     }),
   );
 });
