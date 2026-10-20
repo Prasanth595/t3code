@@ -1284,6 +1284,18 @@ interface AcpNativeChildSession {
   readonly pending: Array<EffectAcpSchema.SessionNotification>;
 }
 
+// Keep BackgroundTaskStarted normalization from reopening a completed command.
+function retainBackgroundCommandCompletion(
+  context: ActiveAcpTurn,
+  taskId: string,
+  status: "running" | "completed" | "failed",
+  output: string,
+): void {
+  if (status === "running" || !context.backgroundCommands.has(taskId)) return;
+  const completion = context.backgroundCommands.get(taskId) ?? { status, output };
+  context.backgroundCommands.set(taskId, completion);
+}
+
 function acpSubagentStatusIsTerminal(status: OrchestrationV2Subagent["status"]): boolean {
   return (
     status === "completed" ||
@@ -3555,6 +3567,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         backgroundCompletion.appendOutput,
                       )
                   : { ...target, status: nextStatus };
+              retainBackgroundCommandCompletion(
+                context,
+                backgroundCompletion.taskId,
+                backgroundCompletion.status,
+                toolOutputText(hydrated),
+              );
               yield* emitTool(context, hydrated);
             }
           }

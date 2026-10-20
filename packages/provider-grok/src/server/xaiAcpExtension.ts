@@ -357,8 +357,8 @@ export function extractXAiBackgroundTaskCompletion(toolCall: AcpToolCallState): 
 
 /**
  * A finished kill_command_or_subagent call is the genuine end signal for every
- * task id it names: the Grok CLI emits no `x.ai/task_completed` for a killed
- * task. A failed kill is not proof the target stopped, so leave the existing
+ * task id it names, even without a separate `x.ai/task_completed` notification.
+ * A failed kill is not proof the target stopped, so leave the existing
  * task state unchanged until a genuine terminal signal arrives.
  */
 export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): ReadonlyArray<{
@@ -368,9 +368,12 @@ export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): Rea
 }> {
   const title = titleKey(toolCall);
   const rawInput = unknownRecord(toolCall.data.rawInput);
+  const rawOutput = unknownRecord(toolCall.data.rawOutput);
   const variant = nonEmptyString(rawInput?.variant)?.toLowerCase();
-  if (!title.includes("kill_command_or_subagent") && variant !== "kill") return [];
+  const legacy = title.includes("kill_command_or_subagent") || variant === "kill";
+  if (!legacy && variant !== "killtask" && rawOutput?.type !== "KillTask") return [];
   if (toolCall.status !== "completed") return [];
+  if (!legacy && rawOutput?.outcome === "failed") return [];
   const taskIds: string[] = [];
   const push = (value: unknown) => {
     const id = nonEmptyString(value);
