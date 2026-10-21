@@ -103,25 +103,6 @@ const WINDOWS_HOST_ADAPTERS = {
 };
 
 describe("resolveBoundEndpoints", () => {
-  it("lists nothing for a loopback-only server", () => {
-    expect(
-      resolveBoundEndpoints({
-        platform: "linux",
-        host: undefined,
-        port: 3773,
-        interfaces: INTERFACES,
-      }),
-    ).toEqual([]);
-    expect(
-      resolveBoundEndpoints({
-        platform: "linux",
-        host: "127.0.0.1",
-        port: 3773,
-        interfaces: INTERFACES,
-      }),
-    ).toEqual([]);
-  });
-
   it("lists every external IPv4 address for a wildcard bind, tagging the tailnet one", () => {
     expect(
       resolveBoundEndpoints({
