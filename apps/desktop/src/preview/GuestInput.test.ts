@@ -57,18 +57,17 @@ const makeHost = () => {
 };
 
 /**
- * A guest whose page reports `focusedDocument` for the focus probe. Its page takes
- * focus for the window on a mouse press, as Chromium does.
+ * A guest whose page reports `focusedDocument` for the focus probe. Inside a
+ * `host` it holds the window's focus while the host's webview is the active
+ * element, and its page takes that focus on a mouse press, as Chromium does.
  */
 const makeGuest = ({
-  focused,
   focusedDocument = true,
   host,
 }: {
-  readonly focused: boolean;
   readonly focusedDocument?: boolean;
   readonly host?: ReturnType<typeof makeHost>;
-}) => {
+} = {}) => {
   const sendCommand = vi.fn(
     async (method: string, params?: { expression?: string; type?: string }) => {
       if (method === "Input.dispatchMouseEvent" && params?.type === "mousePressed") {
@@ -82,7 +81,9 @@ const makeGuest = ({
   const webContents = {
     id: GUEST_ID,
     hostWebContents: host?.hostWebContents,
-    focusedFrame: focused ? {} : null,
+    get focusedFrame() {
+      return host && host.activeElement() === host.webview ? {} : null;
+    },
     insertText: vi.fn(async () => {}),
     sendInputEvent: vi.fn(),
     reload: vi.fn(),
@@ -103,14 +104,14 @@ const makeGuest = ({
 
 describe("preview guest input", () => {
   it("types into an unfocused guest's own page, not the app's focused field", async () => {
-    const guest = makeGuest({ focused: false });
+    const guest = makeGuest();
     await guest.send("Input.insertText", { text: "pairing-code" });
     expect(guest.webContents.insertText).toHaveBeenCalledWith("pairing-code");
     expect(guest.sendCommand).not.toHaveBeenCalledWith("Input.insertText", expect.anything());
   });
 
   it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
-    const guest = makeGuest({ focused: false, focusedDocument: false });
+    const guest = makeGuest({ focusedDocument: false });
     await expect(guest.send("Input.insertText", { text: "secret" })).rejects.toThrow(
       /cross-site frame/,
     );
@@ -123,7 +124,7 @@ describe("preview guest input", () => {
     it("hands the app's focused field its focus back once the page has been clicked", async () => {
       const host = makeHost();
       host.composer.focus();
-      const guest = makeGuest({ focused: false, host });
+      const guest = makeGuest({ host });
       await guest.send("Input.dispatchMouseEvent", press);
       expect(guest.sendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", press);
       expect(host.activeElement()).toBe(host.composer);
@@ -131,7 +132,7 @@ describe("preview guest input", () => {
 
     it("takes focus off the preview when nothing in the app held it", async () => {
       const host = makeHost();
-      const guest = makeGuest({ focused: false, host });
+      const guest = makeGuest({ host });
       await guest.send("Input.dispatchMouseEvent", press);
       expect(host.activeElement()).toBe(host.body);
     });
@@ -139,7 +140,7 @@ describe("preview guest input", () => {
     it("leaves focus where the person moved it during the click", async () => {
       const host = makeHost();
       host.composer.focus();
-      const guest = makeGuest({ focused: false, host });
+      const guest = makeGuest({ host });
       guest.sendCommand.mockImplementationOnce(async () => {
         host.webview.focus();
         host.search.focus();
@@ -152,7 +153,7 @@ describe("preview guest input", () => {
     it("hands focus back when the click fails", async () => {
       const host = makeHost();
       host.composer.focus();
-      const guest = makeGuest({ focused: false, host });
+      const guest = makeGuest({ host });
       guest.sendCommand.mockImplementationOnce(async () => {
         host.webview.focus();
         throw new Error("Target closed");
@@ -164,31 +165,46 @@ describe("preview guest input", () => {
     it("hands focus back after a click that overlaps the one before it", async () => {
       const host = makeHost();
       host.composer.focus();
-      const guest = makeGuest({ focused: false, host });
+      const guest = makeGuest({ host });
       let finishPress = () => {};
+      let finishRelease = () => {};
       const pressStarted = Promise.withResolvers<void>();
-      guest.sendCommand.mockImplementationOnce(async () => {
-        host.webview.focus();
-        pressStarted.resolve();
-        await new Promise<void>((resolve) => {
-          finishPress = resolve;
+      const releaseStarted = Promise.withResolvers<void>();
+      guest.sendCommand
+        .mockImplementationOnce(async () => {
+          host.webview.focus();
+          pressStarted.resolve();
+          await new Promise<void>((resolve) => {
+            finishPress = resolve;
+          });
+          return { result: {} };
+        })
+        .mockImplementationOnce(async () => {
+          releaseStarted.resolve();
+          await new Promise<void>((resolve) => {
+            finishRelease = resolve;
+          });
+          // A slow page focuses itself once it handles the event, after the press is done.
+          host.webview.focus();
+          return { result: {} };
         });
-        return { result: {} };
-      });
       const pressing = guest.send("Input.dispatchMouseEvent", press);
       await pressStarted.promise;
       expect(host.activeElement()).toBe(host.webview);
       // The relay forwards the release without waiting for the press to finish.
-      await guest.send("Input.dispatchMouseEvent", { ...press, type: "mouseReleased" });
+      const releasing = guest.send("Input.dispatchMouseEvent", { ...press, type: "mouseReleased" });
+      await releaseStarted.promise;
       finishPress();
       await pressing;
+      finishRelease();
+      await releasing;
       expect(host.activeElement()).toBe(host.composer);
     });
 
     it("holds a click that arrives while the app's focus is being handed back", async () => {
       const host = makeHost();
       host.composer.focus();
-      const guest = makeGuest({ focused: false, host });
+      const guest = makeGuest({ host });
       const runScript = host.hostWebContents.executeJavaScript.getMockImplementation()!;
       let finishRestore = () => {};
       const restoreStarted = Promise.withResolvers<void>();
@@ -205,6 +221,8 @@ describe("preview guest input", () => {
       await Promise.race([restoreStarted.promise, first]);
       expect(host.hostWebContents.executeJavaScript).toHaveBeenCalledTimes(2);
       const second = guest.send("Input.dispatchMouseEvent", press);
+      // The preview still holds the window's focus here; the click must wait for the hand-back.
+      expect(guest.sendCommand).toHaveBeenCalledTimes(1);
       finishRestore();
       await Promise.all([first, second]);
       expect(host.activeElement()).toBe(host.composer);
@@ -213,7 +231,7 @@ describe("preview guest input", () => {
     it("does not touch the app's focus while the person has the preview focused", async () => {
       const host = makeHost();
       host.webview.focus();
-      const guest = makeGuest({ focused: true, host });
+      const guest = makeGuest({ host });
       await guest.send("Input.dispatchMouseEvent", press);
       expect(host.hostWebContents.executeJavaScript).not.toHaveBeenCalled();
       expect(host.activeElement()).toBe(host.webview);
