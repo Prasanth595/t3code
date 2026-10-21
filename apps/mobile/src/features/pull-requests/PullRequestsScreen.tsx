@@ -25,7 +25,6 @@ import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
 import {
@@ -44,6 +43,7 @@ import {
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
+  pullRequestProjectChoices,
   withoutScratchProjectScope,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
@@ -229,20 +229,14 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
-  const projects = pullRequestFilterProjects(
-    allProjects.filter(
-      (project) =>
-        !project.isScratch &&
-        configs.get(project.environmentId)?.environment.capabilities.pullRequests === true &&
-        (environmentId === null || project.environmentId === environmentId),
+  const projects = pullRequestProjectChoices(allProjects, {
+    environmentId,
+    controls,
+    environmentLabels: new Map(
+      environments.map((item) => [item.environmentId, item.environmentLabel]),
     ),
-    new Map(environments.map((item) => [item.environmentId, item.environmentLabel])),
-    allProjects.find(
-      (project) =>
-        project.id === controls.projectId &&
-        project.environmentId === controls.projectEnvironmentId,
-    ),
-  );
+    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+  });
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
       id: String(item.environmentId),
