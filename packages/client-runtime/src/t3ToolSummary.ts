@@ -440,6 +440,9 @@ export function summarizeT3ToolCalls(
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;
+    case "usage-read":
+      label = phrase("Checked", "check", `usage limits and spend ${times}`);
+      break;
   }
   return { label, failedCount };
 }
