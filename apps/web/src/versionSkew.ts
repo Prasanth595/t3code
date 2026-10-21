@@ -95,17 +95,61 @@ export function supportsDesktopAppUpdate(
   return serverConfig?.environment.capabilities.desktopAppUpdate === true;
 }
 
-export function manualServerUpdateCommand(
+export interface ManualServerUpdate {
+  readonly command: string;
+  readonly label: string;
+  readonly title: string;
+  readonly description: string;
+}
+
+/**
+ * A server's supervisor restarts it at the version it pins, so a relaunch typed
+ * by hand only collides with it; the command has to go through that unit.
+ */
+export function manualServerUpdate(
   targetVersion: string,
+  serverLabel: string,
   installation?: ServerInstallation,
-): string {
+): ManualServerUpdate {
+  const unit = installation?.systemdUnit;
+  const systemctl = unit?.scope === "user" ? "systemctl --user" : "sudo systemctl";
   if (installation?.kind === "npm-global") {
     const prefix = `'${installation.prefix.replaceAll("'", "'\\''")}'`;
-    return `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    const install = `npm install --global --prefix ${prefix} t3@${targetVersion}`;
+    return {
+      command: unit ? `${install} && ${systemctl} restart ${unit.name}` : install,
+      label: "Copy update command",
+      title: "Update command copied",
+      description: unit
+        ? `Run it on ${serverLabel}. It also restarts ${unit.name}, which runs this server.`
+        : `Run it on ${serverLabel}, then restart t3 there with your usual options.`,
+    };
   }
   const runner =
     installation?.kind === "pnpm-dlx" ? "pnpm dlx" : installation?.kind === "bunx" ? "bunx" : "npx";
-  return `${runner} t3@${targetVersion}`;
+  const launch = `${runner} t3@${targetVersion}`;
+  if (unit?.scope === "user") {
+    return {
+      command: `${systemctl} disable --now ${unit.name} && ${launch} service install`,
+      label: "Copy update command",
+      title: "Update command copied",
+      description: `${unit.name} on ${serverLabel} keeps restarting this server on its old version. Run the command there: it turns ${unit.name} off and installs T3 Code's own service on t3@${targetVersion}, which updates in one click next time. Running agents stop.`,
+    };
+  }
+  if (unit) {
+    return {
+      command: `${systemctl} restart ${unit.name}`,
+      label: "Copy restart command",
+      title: "Restart command copied",
+      description: `The system service ${unit.name} runs this server on ${serverLabel}. Change the t3 version in its ExecStart to t3@${targetVersion}, then run the command.`,
+    };
+  }
+  return {
+    command: installation?.subcommand ? `${launch} ${installation.subcommand}` : launch,
+    label: "Copy relaunch command",
+    title: "Relaunch command copied",
+    description: `On ${serverLabel}, stop t3 (Ctrl+C where it runs) and wait for it to exit, then run the command, adding any options you started it with. This does not update an installed t3 command.`,
+  };
 }
 
 export function buildVersionMismatchDismissalKey(
