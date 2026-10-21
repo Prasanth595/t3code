@@ -249,7 +249,7 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
-  it("gives delegated children a 5m prompt cache unless the instance sets a TTL", () => {
+  it("gives delegated children Claude's subagent prompt cache TTL", () => {
     const lineage = (relationshipToParent: "fork" | "subagent" | null) => ({
       lineage: {
         parentThreadId: null,
@@ -258,18 +258,16 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       },
     });
     const env = { PATH: "/bin" };
-    assert.equal(
-      ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("subagent")).CLAUDE_CODE_PROMPT_CACHE_TTL,
-      "5m",
-    );
-    assert.strictEqual(ClaudeAdapterV2.claudeQueryEnvironment(env, lineage(null)), env);
-    assert.strictEqual(ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("fork")), env);
-    assert.equal(
-      ClaudeAdapterV2.claudeQueryEnvironment(
-        { ...env, CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" },
-        lineage("subagent"),
-      ).CLAUDE_CODE_PROMPT_CACHE_TTL,
-      "1h",
+    const ttl = (environment: NodeJS.ProcessEnv, ...args: Parameters<typeof lineage>) =>
+      ClaudeAdapterV2.claudeQueryEnvironment(environment, lineage(...args), "5m")
+        .CLAUDE_CODE_PROMPT_CACHE_TTL;
+    assert.equal(ttl(env, "subagent"), "5m");
+    assert.isUndefined(ttl(env, null));
+    assert.isUndefined(ttl(env, "fork"));
+    assert.equal(ttl({ ...env, CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" }, "subagent"), "1h");
+    assert.strictEqual(
+      ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("subagent"), undefined),
+      env,
     );
   });
 
