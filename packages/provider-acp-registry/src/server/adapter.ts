@@ -9,6 +9,7 @@ import {
   extractDevinSubagentUpdate,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
+import { acpRegistryAgentFlavorExtras } from "./minimaxCodeAcp.ts";
 import {
   copilotClientCapabilitiesMeta,
   extractCopilotSubagentUpdate,
@@ -219,6 +220,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
+    ...acpRegistryAgentFlavorExtras(registryAgentId),
     ...(isClaude
       ? {
           followAgentWorkState: true,

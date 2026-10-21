@@ -96,6 +96,7 @@ import {
 } from "./clientTerminals.ts";
 import { ACP_EMPTY_OPTION_VALUE, ACP_SESSION_MODE_OPTION_ID } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
+import type { AcpPromptBusyRetryPolicy } from "./promptBusyRetry.ts";
 import {
   t3AcpPromptWithInstructions,
   type T3AcpInstructionState,
@@ -157,6 +158,7 @@ export interface AcpAdapterV2RuntimeInput {
     AcpSessionRuntime.AcpSessionRuntimeOptions["protocolLogging"]
   >;
   readonly onTermination: NonNullable<AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]>;
+  readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly onOutgoingResponseFailure?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: AcpSessionRuntime.AcpSessionRuntimeOptions["onOutgoingResponse"];
 }
@@ -225,6 +227,12 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
 
 export interface AcpAdapterV2Flavor {
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  /**
+   * Retry a prompt the provider rejects because its session still owns an
+   * active turn. minimax-code holds a turn lease until the previous turn has
+   * finished unwinding, and rejects any prompt that arrives in that window.
+   */
+  readonly promptBusyRetry?: AcpPromptBusyRetryPolicy;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -2025,6 +2033,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : { processEnvironment: mcpContext.processEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
+            ...(flavor.promptBusyRetry === undefined
+              ? {}
+              : { promptBusyRetry: flavor.promptBusyRetry }),
             clientCapabilities: {
               fs: {
                 readTextFile: flavor.clientFileSystem !== undefined,
