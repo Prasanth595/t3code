@@ -1,14 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
-import { Button } from "~/components/ui/button";
-
 import { factoryApi } from "./api";
 import { AttentionList, type EnvironmentAttention } from "./AttentionList";
 import { EnvironmentStatusRows } from "./EnvironmentStatusRows";
 import { FactoryFrame } from "./FactoryFrame";
-import { FactoryError, FactoryLoading } from "./FactoryNotices";
+import { FactoryError, FactoryLoading, FactoryReadFailure } from "./FactoryNotices";
 import { messageOf } from "./format";
 import { RunsTable } from "./RunsTable";
 import {
@@ -176,16 +173,13 @@ export function FactoryPage() {
           showEnvironment={showEnvironment}
         />
         {notices.map(({ environmentId, label, message, retry }) => (
-          <Alert key={environmentId} variant="error">
-            <AlertDescription>
-              Could not refresh {label}: {message}
-            </AlertDescription>
-            <AlertAction>
-              <Button aria-label={`Retry ${label}`} onClick={retry} size="sm" variant="outline">
-                Retry
-              </Button>
-            </AlertAction>
-          </Alert>
+          <FactoryReadFailure
+            key={environmentId}
+            label={label}
+            message={message}
+            onRetry={retry}
+            verb="refresh"
+          />
         ))}
         {note ? (
           <p className="break-words text-sm text-muted-foreground" role="status">

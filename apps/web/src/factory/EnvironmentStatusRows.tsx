@@ -1,9 +1,9 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
-import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 
+import { FactoryReadFailure } from "./FactoryNotices";
 import { formatAge, messageOf } from "./format";
 import type { FactoryEnvironment } from "./useFactoryData";
 
@@ -20,26 +20,17 @@ function Row({
 }) {
   const report = status.data;
   const paused = report?.paused_by_hand ?? null;
-  // A first read that failed is the same notice the page shows for a status that fails after data,
-  // so a failure looks the same whenever it happens.
+  // A first read that failed takes the row's place with the page's read-failure notice, so a
+  // failure looks the same before data and after.
   if (report === null && status.status === "error") {
     return (
       <li>
-        <Alert variant="error">
-          <AlertDescription>
-            Could not read {label}: {messageOf(status.error)}
-          </AlertDescription>
-          <AlertAction>
-            <Button
-              aria-label={`Retry ${label}`}
-              onClick={status.refresh}
-              size="sm"
-              variant="outline"
-            >
-              Retry
-            </Button>
-          </AlertAction>
-        </Alert>
+        <FactoryReadFailure
+          label={label}
+          message={messageOf(status.error)}
+          onRetry={status.refresh}
+          verb="read"
+        />
       </li>
     );
   }
