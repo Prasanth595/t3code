@@ -28,8 +28,17 @@ process.on("exit", (code) => {
   NodeFS.rmSync(runningMarker, { force: true });
 });
 // A cancelled setup must still leave a marker, or agents would wait forever.
+// During install, the signal goes on to the installer and setup exits when the
+// install output closes. Any child the shell leaves behind holds that output
+// open, so no marker appears while `vp i` can still write node_modules.
+let cancelSignal: NodeJS.Signals | undefined;
+let activeInstall: NodeChildProcess.ChildProcess | undefined;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.on(signal, () => process.exit(1));
+  process.on(signal, () => {
+    cancelSignal = signal;
+    if (activeInstall) activeInstall.kill(signal);
+    else process.exit(1);
+  });
 }
 
 const projectRoot = process.env.T3CODE_PROJECT_ROOT;
@@ -48,6 +57,7 @@ const install = NodeChildProcess.spawn("vp i --frozen-lockfile -- --yes", {
   shell: true,
   stdio: ["ignore", "pipe", "pipe"],
 });
+activeInstall = install;
 let installOutput = "";
 for (const [source, target] of [
   [install.stdout, process.stdout],
@@ -60,9 +70,12 @@ for (const [source, target] of [
   });
 }
 const installStatus = await new Promise<number | null>((resolve) => install.on("close", resolve));
-if (installStatus !== 0) {
-  failureDetail = installOutput.trimEnd().split("\n").slice(-30).join("\n");
-  process.exit(installStatus ?? 1);
+activeInstall = undefined;
+if (installStatus !== 0 || cancelSignal) {
+  failureDetail = cancelSignal
+    ? `Cancelled by ${cancelSignal}.`
+    : installOutput.trimEnd().split("\n").slice(-30).join("\n");
+  process.exit(installStatus || 1);
 }
 
 // pnpm cannot clone or hardlink across filesystems, so a store on another
@@ -82,7 +95,7 @@ if (
       `  worktree: ${worktree}`,
       "pnpm cannot hardlink or clone across filesystems, so it copied every package into node_modules.",
       "Fix: put the store on the worktree's filesystem, for example:",
-      `  pnpm config set store-dir ${NodePath.join(NodePath.dirname(worktree), ".pnpm-store")} --global`,
+      `  pnpm config set store-dir ${JSON.stringify(NodePath.join(NodePath.dirname(worktree), ".pnpm-store"))} --global`,
       "",
       "",
     ].join("\n"),
