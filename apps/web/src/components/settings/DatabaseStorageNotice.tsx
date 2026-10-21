@@ -51,14 +51,14 @@ export function DatabaseStorageNotice({
               <div className="flex flex-wrap items-center gap-1.5">
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="xs"
                   onClick={() => copyToClipboard(status.compactCommand, undefined)}
                 >
                   Copy command
                 </Button>
                 <Button
                   variant="ghost"
-                  size="sm"
+                  size="xs"
                   onClick={() => setDismissed((current) => [...current, environmentId])}
                 >
                   Dismiss
