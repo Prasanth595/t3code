@@ -1199,20 +1199,22 @@ function useProjectThreadPanel(input: {
     (settings) => settings.sidebarThreadPreviewCount,
   );
   const activeThreadKey = activeRouteThreadKey ?? undefined;
-  const pinnedCollapsedThread =
-    !activeThreadKey || projectExpanded
-      ? null
-      : (visibleProjectThreads.find(
-          (thread) =>
-            scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
-        ) ?? null);
+  const activeThread = activeThreadKey
+    ? (visibleProjectThreads.find(
+        (thread) =>
+          scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)) === activeThreadKey,
+      ) ?? null)
+    : null;
+  const pinnedCollapsedThread = projectExpanded ? null : activeThread;
   const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
   const previewThreads =
     isThreadListExpanded || !hasOverflowingThreads
       ? visibleProjectThreads
       : visibleProjectThreads.slice(0, sidebarThreadPreviewCount);
+  // The open thread stays listed past the preview cut, as it does in a
+  // collapsed project.
   const visibleThreadKeys = new Set(
-    [...previewThreads, ...(pinnedCollapsedThread ? [pinnedCollapsedThread] : [])].map((thread) =>
+    [...previewThreads, ...(activeThread ? [activeThread] : [])].map((thread) =>
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
     ),
   );
@@ -3202,10 +3204,17 @@ function useLegacySidebarThreads(input: {
       isThreadListExpanded || !hasOverflowingThreads
         ? projectThreads
         : projectThreads.slice(0, sidebarThreadPreviewCount);
-    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : previewThreads;
-    return renderedThreads.map((thread) =>
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-    );
+    if (pinnedCollapsedThread) {
+      return [
+        scopedThreadKey(
+          scopeThreadRef(pinnedCollapsedThread.environmentId, pinnedCollapsedThread.id),
+        ),
+      ];
+    }
+    return projectThreads.flatMap((thread, index) => {
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+      return index < previewThreads.length || threadKey === activeThreadKey ? [threadKey] : [];
+    });
   });
   const threadJumpCommandByKey = new Map<
     string,
@@ -3249,6 +3258,15 @@ export default function LegacySidebar() {
   );
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  // History and the command palette can open a thread scrolled out of view.
+  const scrolledRouteThreadKeyRef = useRef(routeThreadKey);
+  useEffect(() => {
+    if (scrolledRouteThreadKeyRef.current === routeThreadKey) return;
+    scrolledRouteThreadKeyRef.current = routeThreadKey;
+    document
+      .querySelector('[data-sidebar="content"] [data-thread-item] [data-active="true"]')
+      ?.scrollIntoView({ block: "nearest" });
+  }, [routeThreadKey]);
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen

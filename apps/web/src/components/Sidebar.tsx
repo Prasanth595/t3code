@@ -1060,6 +1060,36 @@ export default function Sidebar() {
     routeThreadRef,
   });
 
+  // History, the command palette, and links can open a thread the project
+  // scope hides or the list has scrolled away. Reveal it once per route
+  // change, so a scope picked while that thread stays open is left alone.
+  const revealedRouteRowKeyRef = useRef(routeRowThreadKey);
+  const pendingRouteRevealKeyRef = useRef<string | null>(null);
+  const revealRouteRow = useStableCallback(() => {
+    if (revealedRouteRowKeyRef.current !== routeRowThreadKey) {
+      revealedRouteRowKeyRef.current = routeRowThreadKey;
+      pendingRouteRevealKeyRef.current = routeRowThreadKey;
+    }
+    const pendingKey = pendingRouteRevealKeyRef.current;
+    if (pendingKey === null) return;
+    const thread = threads.find((candidate) => threadShellKey(candidate) === pendingKey);
+    if (thread === undefined) return;
+    if (
+      scopedProjectKeys !== null &&
+      filterSidebarV2VisibleThreads([thread], scopedProjectKeys).length === 0 &&
+      filterSidebarV2VisibleThreads([thread], null).length === 1
+    ) {
+      // The row renders under the widened scope; scroll on that pass.
+      setProjectScopeKey(null);
+      return;
+    }
+    pendingRouteRevealKeyRef.current = null;
+    document
+      .querySelector('[data-sidebar="content"] [aria-current="page"]')
+      ?.scrollIntoView({ block: "nearest" });
+  });
+  useEffect(revealRouteRow, [revealRouteRow, routeRowThreadKey, threads, projectScopeKey]);
+
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   const threadSearchMatchByKey = new Map(
     threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const),
