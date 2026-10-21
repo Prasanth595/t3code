@@ -20,7 +20,8 @@ const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 // request its --jq asks for), and `issue list` prints every issue in
 // $SYNC_TEST_ISSUES as the `number<TAB>title<TAB>labels` rows the script's --jq
 // asks for (labels comma-joined), so the script's own title match is what the
-// test exercises. `vp` fails with
+// test exercises. `workflow run` fails when $SYNC_TEST_DISPATCH_FAIL is set.
+// `vp` fails with
 // $SYNC_TEST_VP_FAIL as its output, the generator with $SYNC_TEST_REGENERATE_FAIL,
 // and `check.sh` with the file $SYNC_TEST_CHECK_OUTPUT, when each is set.
 // `check.sh` also pushes $SYNC_TEST_MOVE_MAIN's HEAD to origin's main when set,
@@ -43,6 +44,7 @@ case "$1 $2" in
       }
     '
     ;;
+  "workflow run") [[ -z \${SYNC_TEST_DISPATCH_FAIL:-} ]] || exit 1 ;;
 esac
 exit 0
 `;
@@ -142,6 +144,8 @@ const makeFork = (upstreamLine: string, forkChanges: Record<string, string> = {}
 };
 
 // The environment both phases share; prepare gets no token, as in the workflow.
+// GITHUB_ACTIONS is empty unless a test sets it, since the suite itself runs
+// under Factory CI, where it is set.
 const phaseEnv = (log: string, env: Record<string, string>, token: boolean) => {
   const { GH_TOKEN: _ghToken, GITHUB_TOKEN: _githubToken, ...rest } = process.env;
   return {
@@ -149,6 +153,7 @@ const phaseEnv = (log: string, env: Record<string, string>, token: boolean) => {
     PATH: `${NodePath.join(dir, "bin")}:${process.env.PATH}`,
     SYNC_UPSTREAM: upstream,
     SYNC_TEST_LOG: log,
+    GITHUB_ACTIONS: "",
     ...(token ? { GH_TOKEN: "secret" } : {}),
     ...env,
   };
@@ -292,7 +297,9 @@ describe("sync.sh", () => {
     // Upstream's code runs only in prepare, and gh only in publish.
     expect(prepareCalls).toEqual(["vp i", "check.sh"]);
     expect(publishCalls.every((call) => call.startsWith("gh "))).toBe(true);
-    expect(stdout).toContain(`sync: ${NEWEST} merged into main through https://example.test/pr/1`);
+    expect(stdout.trim().split("\n").at(-1)).toBe(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1`,
+    );
     expect(calls.slice(0, 2)).toEqual(["vp i", "check.sh"]);
     expect(tokens).toEqual(["vp unset", "check.sh unset", "gh secret"]);
     expect(repos).toEqual(["acme/fork"]);
@@ -312,6 +319,62 @@ describe("sync.sh", () => {
     expect(originFile(branch, "factory/scripts/check.sh")).toBe(checkStub.trim());
     expect(git(origin, "rev-list", "--count", `${branch}^1..${branch}`)).toBe("3");
     expect(git(origin, "log", "-1", "--format=%P", branch).split(" ")).toHaveLength(2);
+  });
+
+  it("dispatches Factory CI and desktop on the landed commit inside the workflow", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true" });
+    expect(status).toBe(0);
+    expect(stdout.trim().split("\n").at(-1)).toBe(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml`,
+    );
+    expect(calls.slice(2)).toEqual([
+      expect.stringMatching(/^gh pr create /),
+      "gh workflow run factory-ci.yml --ref main",
+      "gh workflow run factory-desktop.yml --ref main",
+    ]);
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
+  });
+
+  it.each(["apps/mobile/App.tsx", "packages/shared/index.ts"])(
+    "also dispatches Factory mobile when the merge touches %s",
+    (file) => {
+      const tag = "v0.0.11-nightly.20261016.1";
+      git(upstream, "checkout", "-q", "--detach", newestSha);
+      write(upstream, file, "changed\n");
+      git(upstream, "tag", tag, commit(upstream, `touches ${file}`));
+      git(upstream, "checkout", "-q", "main");
+      try {
+        makeFork(`${OLD} ${oldSha}`);
+        const { status, stdout, calls } = run({ GITHUB_ACTIONS: "true" });
+        expect(status).toBe(0);
+        expect(stdout.trim().split("\n").at(-1)).toBe(
+          `sync: ${tag} merged into main through https://example.test/pr/1; dispatched factory-ci.yml, factory-desktop.yml, factory-mobile.yml`,
+        );
+        expect(calls.filter((call) => call.startsWith("gh workflow "))).toEqual([
+          "gh workflow run factory-ci.yml --ref main",
+          "gh workflow run factory-desktop.yml --ref main",
+          "gh workflow run factory-mobile.yml --ref main",
+        ]);
+      } finally {
+        git(upstream, "tag", "-d", tag);
+      }
+    },
+  );
+
+  it("leaves the landing in place and files nothing when a dispatch fails", () => {
+    makeFork(`${OLD} ${oldSha}`);
+    const { status, stdout, stderr, calls } = run({
+      GITHUB_ACTIONS: "true",
+      SYNC_TEST_DISPATCH_FAIL: "1",
+    });
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      `sync: ${NEWEST} merged into main through https://example.test/pr/1; dispatch of factory-ci.yml failed`,
+    );
+    expect(stdout).not.toContain("dispatched");
+    expect(calls.some((call) => call.startsWith("gh issue "))).toBe(false);
+    expect(git(origin, "rev-parse", "main")).toBe(git(origin, "rev-parse", `sync/${NEWEST}`));
   });
 
   it("runs both phases from one checkout when given no arguments", () => {
