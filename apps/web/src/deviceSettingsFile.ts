@@ -16,76 +16,94 @@ import {
 } from "./themePalette";
 
 /**
- * Client settings that describe how someone likes the client to behave. Values tied to one
- * machine or to one environment's data stay out: onboarding state, dismissed notices, browser
- * profiles, the legacy model preferences and merge overrides, and overrides keyed by project or
- * environment id.
+ * Whether each client setting goes in the device settings file. Settings that describe how someone
+ * likes the client to behave are in. Values tied to one machine or to one environment's data stay
+ * out: onboarding state, dismissed notices, browser profiles, the legacy model preferences and merge
+ * overrides, and overrides keyed by project or environment id. A new client setting fails to
+ * compile here until it is placed on one side.
  */
-const DEVICE_SETTINGS_FILE_KEYS = [
-  "notificationMode",
-  "inAppNotificationsEnabled",
-  "diffColorScheme",
-  "chatWidth",
-  "loadBalancingEnabled",
-  "appearanceContrast",
-  "panelAnimationDurationMs",
-  "browserDefaultViewport",
-  "browserDefaultZoomFactor",
-  "browserDefaultAppearance",
-  "browserRecordingFrameRate",
-  "browserRecordingShowKeyPresses",
-  "browserRecordingShowMousePresses",
-  "browserLinkTarget",
-  "browserSearchEngine",
-  "browserCustomSearchUrl",
-  "browserAutoShowFloatingPreview",
-  "confirmQuit",
-  "confirmThreadArchive",
-  "confirmThreadDelete",
-  "confirmThreadUnpin",
-  "diffFilesCollapsed",
-  "diffIgnoreWhitespace",
-  "diffLayout",
-  "environmentIdentificationMode",
-  "glassOpacity",
-  "fontSizeInterface",
-  "fontSizePrompt",
-  "fontSizeCode",
-  "fontSizeTerminal",
-  "fontFamilyCode",
-  "fontFamilyComposer",
-  "fontFamilySans",
-  "fontFamilyTerminal",
-  "fontSmoothing",
-  "persistComposerContextStrip",
-  "pullRequestLinksOpenInApp",
-  "planModeEnabled",
-  "contextWindowMeterEnabled",
-  "composerCollapseOnScroll",
-  "composerRichTextEnabled",
-  "sendShortcut",
-  "followUpBehavior",
-  "proactivePanelsEnabled",
-  "showSkillsInSlashMenu",
-  "legacySidebarEnabled",
-  "sidebarWorkingShelfEnabled",
-  "sidebarProjectGroupingMode",
-  "sidebarProjectSortOrder",
-  "sidebarThreadSortOrder",
-  "sidebarThreadPreviewCount",
-  "timestampFormat",
-  "snapShotEnabled",
-  "snapShotIncludeAccessibility",
-  "snapShotShortcut",
-  "snapShotPlaySound",
-  "snapShotSound",
-  "snapShotFlash",
-  "snapShotAnimations",
-  "wordWrap",
-  "mathRenderingEnabled",
-] as const satisfies ReadonlyArray<keyof ClientSettings>;
+const DEVICE_SETTINGS_FILE_SCOPE = {
+  notificationMode: true,
+  inAppNotificationsEnabled: true,
+  diffColorScheme: true,
+  chatWidth: true,
+  loadBalancingEnabled: true,
+  appearanceContrast: true,
+  panelAnimationDurationMs: true,
+  browserDefaultViewport: true,
+  browserDefaultZoomFactor: true,
+  browserDefaultAppearance: true,
+  browserRecordingFrameRate: true,
+  browserRecordingShowKeyPresses: true,
+  browserRecordingShowMousePresses: true,
+  browserLinkTarget: true,
+  browserSearchEngine: true,
+  browserCustomSearchUrl: true,
+  browserAutoShowFloatingPreview: true,
+  confirmQuit: true,
+  confirmThreadArchive: true,
+  confirmThreadDelete: true,
+  confirmThreadUnpin: true,
+  diffFilesCollapsed: true,
+  diffIgnoreWhitespace: true,
+  diffLayout: true,
+  environmentIdentificationMode: true,
+  glassOpacity: true,
+  fontSizeInterface: true,
+  fontSizePrompt: true,
+  fontSizeCode: true,
+  fontSizeTerminal: true,
+  fontFamilyCode: true,
+  fontFamilyComposer: true,
+  fontFamilySans: true,
+  fontFamilyTerminal: true,
+  fontSmoothing: true,
+  persistComposerContextStrip: true,
+  pullRequestLinksOpenInApp: true,
+  planModeEnabled: true,
+  contextWindowMeterEnabled: true,
+  composerCollapseOnScroll: true,
+  composerRichTextEnabled: true,
+  sendShortcut: true,
+  followUpBehavior: true,
+  proactivePanelsEnabled: true,
+  showSkillsInSlashMenu: true,
+  legacySidebarEnabled: true,
+  sidebarWorkingShelfEnabled: true,
+  sidebarProjectGroupingMode: true,
+  sidebarProjectSortOrder: true,
+  sidebarThreadSortOrder: true,
+  sidebarThreadPreviewCount: true,
+  timestampFormat: true,
+  snapShotEnabled: true,
+  snapShotIncludeAccessibility: true,
+  snapShotShortcut: true,
+  snapShotPlaySound: true,
+  snapShotSound: true,
+  snapShotFlash: true,
+  snapShotAnimations: true,
+  wordWrap: true,
+  mathRenderingEnabled: true,
+  onboardingCompletedAt: false,
+  dismissedProviderUpdateNotificationKeys: false,
+  browserProfiles: false,
+  browserDefaultProfileId: false,
+  favorites: false,
+  providerModelPreferences: false,
+  pullRequestMergeMethodOverrides: false,
+  sidebarProjectGroupingOverrides: false,
+  loadBalancingWeights: false,
+} as const satisfies Record<keyof ClientSettings, boolean>;
 
-export type DeviceSettingKey = (typeof DEVICE_SETTINGS_FILE_KEYS)[number];
+export type DeviceSettingKey = {
+  [
+    K in keyof typeof DEVICE_SETTINGS_FILE_SCOPE
+  ]: (typeof DEVICE_SETTINGS_FILE_SCOPE)[K] extends true ? K : never;
+}[keyof typeof DEVICE_SETTINGS_FILE_SCOPE];
+
+const DEVICE_SETTINGS_FILE_KEYS = (
+  Object.keys(DEVICE_SETTINGS_FILE_SCOPE) as Array<keyof typeof DEVICE_SETTINGS_FILE_SCOPE>
+).filter((key): key is DeviceSettingKey => DEVICE_SETTINGS_FILE_SCOPE[key]);
 export type DeviceSettings = Pick<ClientSettings, DeviceSettingKey>;
 
 export interface DeviceAppearance {
@@ -127,7 +145,14 @@ const APPEARANCE_FILE_KEYS = new Set([
 ]);
 const DEVICE_SETTING_KEY_SET: ReadonlySet<string> = new Set(DEVICE_SETTINGS_FILE_KEYS);
 const encodeClientSettings = Schema.encodeSync(ClientSettingsSchema);
-const decodeClientSettings = Schema.decodeUnknownOption(ClientSettingsSchema);
+
+/** One decoder per device setting, so each value is checked against its own field schema. */
+const DEVICE_SETTING_DECODERS = Object.fromEntries(
+  DEVICE_SETTINGS_FILE_KEYS.map((key) => [
+    key,
+    Schema.decodeUnknownOption(ClientSettingsSchema.fields[key] as Schema.Codec<unknown>),
+  ]),
+) as Record<DeviceSettingKey, (rawValue: unknown) => Option.Option<unknown>>;
 
 function isDeviceSettingKey(key: string): key is DeviceSettingKey {
   return DEVICE_SETTING_KEY_SET.has(key);
@@ -214,30 +239,34 @@ export function parseDeviceSettingsFile(
   }
 
   const warnings: string[] = [];
-  const validSettings: Record<string, unknown> = {};
+  const settings: Record<string, unknown> = pickDeviceSettings(DEFAULT_CLIENT_SETTINGS);
   for (const [key, rawValue] of Object.entries(value)) {
     if (APPEARANCE_FILE_KEYS.has(key)) continue;
     if (!isDeviceSettingKey(key)) {
       warnings.push(`${key}: not a device setting, ignored`);
       continue;
     }
-    // Decoding the key alone checks it against its own schema; every other key takes its default.
-    if (Option.isNone(decodeClientSettings({ [key]: rawValue }))) {
+    const decoded = DEVICE_SETTING_DECODERS[key](rawValue);
+    if (Option.isNone(decoded)) {
       warnings.push(`${key}: invalid value, reset to its default`);
       continue;
     }
-    validSettings[key] = rawValue;
+    settings[key] = decoded.value;
   }
-  const settings = pickDeviceSettings(
-    Option.getOrElse(decodeClientSettings(validSettings), () => DEFAULT_CLIENT_SETTINGS),
-  );
 
   const customThemes: ThemeDefinition[] = [];
   if ("customThemes" in value) {
     if (Array.isArray(value.customThemes)) {
       value.customThemes.forEach((entry: unknown, index) => {
         try {
-          customThemes.push(parseThemeFile(entry));
+          const theme = parseThemeFile(entry);
+          if (customThemes.some((existing) => existing.id === theme.id)) {
+            warnings.push(
+              `customThemes[${index}]: the theme id "${theme.id}" appears earlier. Ignored.`,
+            );
+            return;
+          }
+          customThemes.push(theme);
         } catch (cause) {
           const reason = cause instanceof Error ? cause.message : "invalid theme";
           warnings.push(`customThemes[${index}]: ${reason} Ignored.`);
@@ -290,7 +319,7 @@ export function parseDeviceSettingsFile(
     ),
   };
 
-  return { settings, appearance, customThemes, warnings };
+  return { settings: settings as DeviceSettings, appearance, customThemes, warnings };
 }
 
 export function diffDeviceSettings(

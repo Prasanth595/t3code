@@ -1,7 +1,7 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { DownloadIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
-import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import {
@@ -20,12 +20,13 @@ import {
   getClientSettings,
   persistClientSettingsPatch,
 } from "../../hooks/useSettings";
-import { useTheme } from "../../hooks/useTheme";
+import { readThemeHalves, readThemePreference, useTheme } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import {
   getCustomThemes,
   installCustomTheme,
   isKnownThemePreference,
+  removeCustomThemes,
   updateCustomTheme,
   type ThemeDefinition,
 } from "../../themePalette";
@@ -41,6 +42,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
+import { downloadJsonFile } from "./ThemeSettings";
 
 const DEVICE_SETTINGS_FILE_NAME = "t3code-device-settings.json";
 
@@ -53,16 +55,6 @@ interface ImportPreview {
   readonly changes: ReadonlyArray<DeviceSettingChange>;
   readonly addedThemes: ReadonlyArray<ThemeDefinition>;
   readonly replacedThemes: ReadonlyArray<ThemeDefinition>;
-}
-
-function downloadJsonFile(filename: string, contents: string): void {
-  const url = URL.createObjectURL(new Blob([contents], { type: "application/json" }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  // Revoking synchronously can abort the download in some browsers.
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 function formatSettingValue(value: unknown): string {
@@ -147,6 +139,7 @@ export function DeviceSettingsImportDialog({
   const [error, setError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
+  const readRequestRef = useRef(0);
   const { appearance, theme, setAdvancedTypography } = useDeviceAppearance();
 
   const [renderedOpen, setRenderedOpen] = useState(open);
@@ -159,17 +152,27 @@ export function DeviceSettingsImportDialog({
       setIsReading(false);
     }
   }
+  // Opening or closing drops any read still in flight.
+  useEffect(() => {
+    if (!open) return;
+    readRequestRef.current += 1;
+    return () => {
+      readRequestRef.current += 1;
+    };
+  }, [open]);
 
   const readFile = async (file: File) => {
     if (file.size > MAX_DEVICE_SETTINGS_FILE_BYTES) {
       setError("That file is larger than 1 MB, so it is not a device settings file.");
       return;
     }
+    const requestId = ++readRequestRef.current;
     setIsReading(true);
     const [text, hydrated] = await Promise.all([
       settlePromise(() => file.text()),
       settlePromise(ensureClientSettingsHydrated),
     ]);
+    if (requestId !== readRequestRef.current) return;
     setIsReading(false);
     if (text._tag === "Failure") {
       setError("Could not read that file.");
@@ -218,11 +221,43 @@ export function DeviceSettingsImportDialog({
   };
 
   const applyImport = async (accepted: ImportPreview) => {
+    // Planned again on each attempt, so the library as it is now decides what to add or replace.
+    const localThemes = getCustomThemes();
+    const { added, replaced } = planCustomThemeImport(accepted.imported.customThemes, localThemes);
+    let previousTheme = theme.theme;
     try {
-      for (const customTheme of accepted.addedThemes) installCustomTheme(customTheme);
-      for (const customTheme of accepted.replacedThemes) updateCustomTheme(customTheme);
+      previousTheme = readThemePreference();
+    } catch {}
+    const previousAppearanceMode = theme.appearanceMode;
+    const previousHalves = readThemeHalves();
+    const installedIds: string[] = [];
+    const overwrittenThemes: ThemeDefinition[] = [];
+    // Undoes this attempt: themes first, then the base theme (which clears any mix), then the mix.
+    const rollback = () => {
+      try {
+        removeCustomThemes(installedIds);
+        for (const local of overwrittenThemes) updateCustomTheme(local);
+      } catch {}
+      theme.setTheme(previousTheme);
+      theme.setAppearanceMode(previousAppearanceMode);
+      if (previousHalves?.light) theme.setThemeHalf("light", previousHalves.light);
+      if (previousHalves?.dark) theme.setThemeHalf("dark", previousHalves.dark);
+    };
+
+    try {
+      for (const customTheme of added) {
+        installCustomTheme(customTheme);
+        installedIds.push(customTheme.id);
+      }
+      for (const customTheme of replaced) {
+        const local = localThemes.find((candidate) => candidate.id === customTheme.id);
+        updateCustomTheme(customTheme);
+        if (local) overwrittenThemes.push(local);
+      }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Could not save the custom themes.");
+      rollback();
+      const reason = cause instanceof Error ? cause.message : "Could not save the custom themes.";
+      setError(`${reason} Nothing was changed. Try again.`);
       return;
     }
 
@@ -235,14 +270,14 @@ export function DeviceSettingsImportDialog({
         ? theme.clearThemeHalves()
         : theme.setThemeHalf("light", next.themeHalves.light ?? null) &&
           theme.setThemeHalf("dark", next.themeHalves.dark ?? null));
+    if (!appearanceSaved) {
+      rollback();
+      setError("The theme could not be saved. Nothing was changed. Try again.");
+      return;
+    }
     setAdvancedTypography(next.advancedTypography);
     await persistClientSettingsPatch(accepted.imported.settings);
     onImported();
-    if (!appearanceSaved) {
-      setPreview(null);
-      setError("Settings were imported, but the theme could not be saved. Try again.");
-      return;
-    }
     onOpenChange(false);
   };
 
