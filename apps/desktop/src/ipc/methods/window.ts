@@ -318,6 +318,23 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
   }),
 });
 
+// A server-spawned Explorer stays behind T3 Code because the server is not the
+// foreground app. Electron's main process is, so reveal from here. Only Windows
+// drive-letter paths qualify: WSL paths must still go through the server.
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+
+export const showItemInFolder = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SHOW_ITEM_IN_FOLDER_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.showItemInFolder")(function* (path) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "win32" || !WINDOWS_DRIVE_PATH.test(path)) return false;
+    Electron.shell.showItemInFolder(path.replaceAll("/", "\\"));
+    return true;
+  }),
+});
+
 export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL,
   payload: Schema.Undefined,

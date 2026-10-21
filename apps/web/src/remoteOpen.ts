@@ -205,6 +205,21 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Reveals a file in Explorer through the desktop app's main process, the only
+ * place Windows lets the window come to the foreground. Only valid when the
+ * environment runs on this machine ("local-exec"). Resolves false when the
+ * bridge is missing or declines (non-Windows, WSL path), so callers fall back
+ * to the server's reveal.
+ */
+export async function revealInDesktopShell(path: string): Promise<boolean> {
+  try {
+    return (await window.desktopBridge?.showItemInFolder?.(path)) === true;
+  } catch {
+    return false;
+  }
+}
+
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
 
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {

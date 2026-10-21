@@ -15,6 +15,7 @@ import {
   useRemoteCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
+  revealInDesktopShell,
 } from "../../remoteOpen";
 import { useEnvironment } from "../../state/environments";
 import { ChevronDownIcon, FolderClosedIcon, SquareArrowOutUpRightIcon } from "lucide-react";
@@ -263,16 +264,16 @@ export const OpenInPicker = memo(function OpenInPicker({
       return;
     }
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-    const result = openInEditorMutation({
-      environmentId,
-      input: {
-        cwd: openInCwd,
-        editor,
-        ...(revealFileManager && editor === "file-manager" ? { reveal: true } : {}),
-      },
-    });
+    const reveal = revealFileManager && editor === "file-manager";
+    const openOnServer = () =>
+      openInEditorMutation({
+        environmentId,
+        input: { cwd: openInCwd, editor, ...(reveal ? { reveal: true } : {}) },
+      });
     setPreferredEditor(editor);
-    return result;
+    return reveal
+      ? revealInDesktopShell(openInCwd).then((revealed) => (revealed ? undefined : openOnServer()))
+      : openOnServer();
   };
 
   const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(

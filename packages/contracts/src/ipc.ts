@@ -1116,6 +1116,13 @@ export interface DesktopBridge {
   cancelProviderAuthCallback?: (authorizationUrl: string) => Promise<void>;
   openExternal: (url: string) => Promise<boolean>;
   openSystemSettings?: (pane: SystemSettingsPane) => Promise<boolean>;
+  /**
+   * Reveals a local Windows file in Explorer from the Electron main process,
+   * which is the foreground app and so can raise the window. Resolves false
+   * when the path is not a drive-letter path (e.g. a WSL path) or the platform
+   * is not Windows; callers then fall back to the server's reveal.
+   */
+  showItemInFolder?: (path: string) => Promise<boolean>;
   checkSystemPermission?: (pane: SystemSettingsPane) => Promise<boolean>;
   /**
    * Optional: older desktop builds lack it; callers fall back to VS Code only.

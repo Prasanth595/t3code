@@ -143,7 +143,11 @@ import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
-import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
+import {
+  resolveRemoteOpenState,
+  revealInDesktopShell,
+  useRemoteOpenResolution,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -598,10 +602,15 @@ function useChatMarkdownState({
         ),
       );
     }
-    return openInEditor({
-      environmentId,
-      input: { cwd: filePath, editor: "file-manager", reveal: true },
-    });
+    // Reveal is only offered for local-exec environments (canUseShellActions).
+    return revealInDesktopShell(filePath).then((revealed) =>
+      revealed
+        ? AsyncResult.success<void, never>(undefined)
+        : openInEditor({
+            environmentId,
+            input: { cwd: filePath, editor: "file-manager", reveal: true },
+          }),
+    );
   };
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = (() => {
