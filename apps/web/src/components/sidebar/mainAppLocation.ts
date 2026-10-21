@@ -1,15 +1,15 @@
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
+import { isFactoryPage } from "~/factory/pages";
 
 export function isSidebarUtilityPage(pathname: string) {
+  if (isFactoryPage(pathname)) return true;
   return (
     pathname === "/settings" ||
     pathname.startsWith("/settings/") ||
     pathname.startsWith("/projects/") ||
     pathname === "/usage" ||
-    pathname === "/pull-requests" ||
-    pathname === "/factory" ||
-    pathname.startsWith("/factory/")
+    pathname === "/pull-requests"
   );
 }
 
