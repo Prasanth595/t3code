@@ -11,7 +11,9 @@ const state = vi.hoisted(() => ({
   status: null as unknown,
   runs: null as unknown,
   allRuns: null as unknown,
-  environmentId: "env-2" as string | null,
+  // Environments beyond "env-2" (labelled "Mac Studio"), each with its own status and runs.
+  listed: true,
+  others: [] as Array<{ environmentId: string; label: string; status: unknown; runs: unknown }>,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -27,10 +29,27 @@ vi.mock("@tanstack/react-router", () => ({
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
 }));
 vi.mock("./useFactoryData", () => ({
-  useFactoryEnvironmentId: () => state.environmentId,
-  useFactoryStatus: () => state.status,
-  useFactoryRuns: (_environmentId: string | null, all?: boolean) =>
-    all ? state.allRuns : state.runs,
+  useFactoryEnvironments: () =>
+    state.listed
+      ? [
+          { environmentId: "env-2", label: "Mac Studio", status: state.status },
+          ...state.others.map(({ environmentId, label, status }) => ({
+            environmentId,
+            label,
+            status,
+          })),
+        ]
+      : [],
+  // Nothing listed means every candidate answered 404.
+  useFactorySupported: () => state.listed,
+  useFactoryRunsOf: (environmentIds: ReadonlyArray<string>, all: boolean) =>
+    environmentIds.map((id) =>
+      id === "env-2"
+        ? all
+          ? state.allRuns
+          : state.runs
+        : state.others.find((other) => other.environmentId === id)!.runs,
+    ),
 }));
 
 import { FactoryPage } from "./FactoryPage";
@@ -89,7 +108,8 @@ beforeEach(() => {
   state.status = resource({ data: statusData() });
   state.runs = resource({ data: { runs: [] } });
   state.allRuns = state.runs;
-  state.environmentId = "env-2";
+  state.others = [];
+  state.listed = true;
 });
 
 afterEach(() => {
@@ -124,7 +144,10 @@ describe("FactoryPage", () => {
       refresh: refreshRuns,
     });
     const page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("Missing permission orchestration:read");
+    expect(page.text()).toContain(
+      "Could not refresh Mac Studio: Missing permission orchestration:read",
+    );
+    expect(page.text()).toContain("Running");
     await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -142,7 +165,7 @@ describe("FactoryPage", () => {
     });
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("original-solutions/t3code-factory");
-    expect(page.text()).toContain("fetch failed");
+    expect(page.text()).toContain("Could not refresh Mac Studio: fetch failed");
     expect(page.text()).not.toContain("Could not load the factory");
     await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
@@ -159,7 +182,7 @@ describe("FactoryPage", () => {
     state.allRuns = resource({ data: { runs: [runRow(), old] } });
     const page = await render(createElement(FactoryPage));
     const runLinks = () =>
-      page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$runId");
+      page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId");
     expect(runLinks()).toHaveLength(1);
     await page.click(page.button("Show all runs")!);
     expect(runLinks()).toHaveLength(2);
@@ -199,7 +222,7 @@ describe("FactoryPage", () => {
       .all("a")
       .find(
         (a) =>
-          a.getAttribute("data-to") === "/factory/$runId" &&
+          a.getAttribute("data-to") === "/factory/$environmentId/$runId" &&
           a.getAttribute("data-params")!.includes(RUN_ID),
       );
     expect(link).toBeDefined();
@@ -281,8 +304,8 @@ describe("FactoryPage", () => {
       data: statusData({ state: "idle", reason: "no factory config" }),
     });
     const text = (await render(createElement(FactoryPage))).text();
-    expect(text).toContain("idle");
-    expect(text).toContain("no factory config");
+    expect(text).toContain("Mac Studio");
+    expect(text).toContain("Idle: no factory config");
   });
 
   it("pauses claims, shows the answer and refreshes", async () => {
@@ -317,7 +340,7 @@ describe("FactoryPage", () => {
     }));
     __setFactoryApiForTests(api({ resumeClaims }));
     const page = await render(createElement(FactoryPage));
-    expect(page.text()).toContain("paused since 1h");
+    expect(page.text()).toContain("Claims paused since 1h");
     expect(page.button("Pause claims")).toBeUndefined();
     await page.click(page.button("Resume claims")!);
     expect(resumeClaims).toHaveBeenCalledTimes(1);
@@ -380,6 +403,110 @@ describe("FactoryPage", () => {
     const page = await render(createElement(FactoryPage));
     await page.click(page.button("Pause claims")!);
     expect(page.text()).toContain("Missing permission orchestration:operate");
+  });
+});
+
+describe("FactoryPage environments", () => {
+  it("says no factory runs when no connected environment has one", async () => {
+    state.listed = false;
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("No factory");
+    expect(page.all('[aria-label="Loading factory"]')).toHaveLength(0);
+  });
+
+  it("shows a loading row for an environment whose status is loading, and the others' runs", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({ status: "loading" }),
+        runs: resource({ status: "loading" }),
+      },
+    ];
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("Laptop");
+    expect(page.all('[aria-label="Loading Laptop"]')).toHaveLength(1);
+    expect(page.text()).toContain("original-solutions/t3code-factory");
+    expect(page.all('[aria-label="Loading factory"]')).toHaveLength(0);
+  });
+
+  it("shows the error of a status that failed with no data, and retries only that status", async () => {
+    const refreshOther = vi.fn();
+    const refreshOwn = vi.fn();
+    state.status = resource({ data: statusData(), refresh: refreshOwn });
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({
+          status: "error",
+          error: new Error("connection refused"),
+          refresh: refreshOther,
+        }),
+        runs: resource({ status: "loading" }),
+      },
+    ];
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("connection refused");
+    await page.click(page.button("Retry")!);
+    expect(refreshOther).toHaveBeenCalledTimes(1);
+    expect(refreshOwn).not.toHaveBeenCalled();
+  });
+
+  it("keeps a status that failed after a good read, with a notice naming its environment and a Retry for that status", async () => {
+    const refreshOther = vi.fn();
+    const refreshOwn = vi.fn();
+    state.status = resource({ data: statusData(), refresh: refreshOwn });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({
+          status: "error",
+          data: statusData({ state: "idle", reason: "no repos" }),
+          error: new Error("timed out"),
+          refresh: refreshOther,
+        }),
+        runs: resource({ data: { runs: [] } }),
+      },
+    ];
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("Could not refresh Laptop: timed out");
+    expect(page.text()).toContain("Idle: no repos");
+    await page.click(page.button("Retry")!);
+    expect(refreshOther).toHaveBeenCalledTimes(1);
+    expect(refreshOwn).not.toHaveBeenCalled();
+  });
+
+  it("shows loading in place of the runs while no environment has listed its runs", async () => {
+    state.runs = resource({ status: "loading" });
+    const page = await render(createElement(FactoryPage));
+    expect(page.all('[aria-label="Loading runs"]')).not.toHaveLength(0);
+    expect(page.text()).not.toContain("No runs");
+  });
+
+  it("shows the Environment column and each run's label only with several environments", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const alone = await render(createElement(FactoryPage));
+    expect(alone.all("th").map((th) => th.textContent)).not.toContain("Environment");
+    await alone.unmount();
+    state.others = [
+      {
+        environmentId: "env-3",
+        label: "Laptop",
+        status: resource({ data: statusData() }),
+        runs: resource({ data: { runs: [runRow({ id: "acme__w__7__1" })] } }),
+      },
+    ];
+    const table = await render(createElement(FactoryPage));
+    expect(table.all("th").map((th) => th.textContent)).toContain("Environment");
+    await table.unmount();
+    const cards = await renderAt(375, createElement(FactoryPage));
+    const card = cards.all("ul").find((ul) => ul.getAttribute("data-layout") === "cards")!;
+    expect(card.textContent).toContain("Laptop");
+    expect(card.textContent).toContain("Mac Studio");
   });
 });
 
@@ -482,7 +609,7 @@ describe("FactoryPage run cards at 375 px", () => {
       .all("a")
       .find(
         (a) =>
-          a.getAttribute("data-to") === "/factory/$runId" &&
+          a.getAttribute("data-to") === "/factory/$environmentId/$runId" &&
           a.getAttribute("data-params")!.includes(RUN_ID),
       );
     expect(link).toBeDefined();
@@ -506,7 +633,9 @@ describe("FactoryPage run cards at 375 px", () => {
       "https://github.com/original-solutions/t3code-factory/issues/20",
       PR_URL,
     ]);
-    const card = page.all("a").find((a) => a.getAttribute("data-to") === "/factory/$runId")!;
+    const card = page
+      .all("a")
+      .find((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")!;
     expect(card.querySelectorAll("a")).toHaveLength(0);
     await page.unmount();
   });
@@ -669,8 +798,11 @@ describe("FactoryPage dismissing attention items", () => {
     const page = await render(createElement(FactoryPage));
     const linksIn = (message: string) => Array.from(itemOf(page, message)!.querySelectorAll("a"));
     const [run] = linksIn(ATTENTION.message);
-    expect(run!.getAttribute("data-to")).toBe("/factory/$runId");
-    expect(JSON.parse(run!.getAttribute("data-params")!)).toEqual({ runId: RUN_ID });
+    expect(run!.getAttribute("data-to")).toBe("/factory/$environmentId/$runId");
+    expect(JSON.parse(run!.getAttribute("data-params")!)).toEqual({
+      environmentId: "env-2",
+      runId: RUN_ID,
+    });
     const [settings] = linksIn(CONFIG.message);
     expect(settings!.getAttribute("data-to")).toBe("/settings/factory");
     expect(linksIn(PASS.message)).toHaveLength(0);

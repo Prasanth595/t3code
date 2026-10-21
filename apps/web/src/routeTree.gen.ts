@@ -37,6 +37,7 @@ import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$proje
 import { Route as FactoryRunIdRouteImport } from './routes/factory_.$runId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
+import { Route as FactoryEnvironmentIdRunIdRouteImport } from './routes/factory_.$environmentId.$runId'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
@@ -180,6 +181,12 @@ const ChatNewRoute = ChatNewRouteImport.update({
   path: '/new',
   getParentRoute: () => ChatRoute,
 } as any)
+const FactoryEnvironmentIdRunIdRoute =
+  FactoryEnvironmentIdRunIdRouteImport.update({
+    id: '/factory_/$environmentId/$runId',
+    path: '/factory/$environmentId/$runId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
   path: '/draft/$draftId',
@@ -222,6 +229,7 @@ export interface FileRoutesByFullPath {
   '/settings/storage': typeof SettingsStorageRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/factory/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
 }
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
@@ -253,6 +261,7 @@ export interface FileRoutesByTo {
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/factory/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -286,6 +295,7 @@ export interface FileRoutesById {
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
+  '/factory_/$environmentId/$runId': typeof FactoryEnvironmentIdRunIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -319,6 +329,7 @@ export interface FileRouteTypes {
     | '/settings/storage'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/factory/$environmentId/$runId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connect'
@@ -350,6 +361,7 @@ export interface FileRouteTypes {
     | '/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
+    | '/factory/$environmentId/$runId'
   id:
     | '__root__'
     | '/_chat'
@@ -382,6 +394,7 @@ export interface FileRouteTypes {
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
+    | '/factory_/$environmentId/$runId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -395,6 +408,7 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   FactoryRunIdRoute: typeof FactoryRunIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  FactoryEnvironmentIdRunIdRoute: typeof FactoryEnvironmentIdRunIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -595,6 +609,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatNewRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/factory_/$environmentId/$runId': {
+      id: '/factory_/$environmentId/$runId'
+      path: '/factory/$environmentId/$runId'
+      fullPath: '/factory/$environmentId/$runId'
+      preLoaderRoute: typeof FactoryEnvironmentIdRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/draft/$draftId': {
       id: '/_chat/draft/$draftId'
       path: '/draft/$draftId'
@@ -681,6 +702,7 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   FactoryRunIdRoute: FactoryRunIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  FactoryEnvironmentIdRunIdRoute: FactoryEnvironmentIdRunIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -25,7 +25,8 @@ const CLIENT_SETTINGS_KEY = "t3code:client-settings:v1";
 
 interface Shot {
   readonly name: string;
-  readonly path: string;
+  /** The page's path, given the id of the environment the throwaway server runs. */
+  readonly path: (environmentId: string) => string;
   /** Waits for what the shot is of; answers the part of the page to capture, or none for all of it. */
   readonly ready: (page: Page) => Promise<Locator | void>;
 }
@@ -33,14 +34,14 @@ interface Shot {
 const SHOTS: ReadonlyArray<Shot> = [
   {
     name: "factory-page",
-    path: "/factory",
+    path: () => "/factory",
     ready: async (page) => {
       await page.getByText("acme/storefront#57").first().waitFor();
     },
   },
   {
     name: "run-page",
-    path: `/factory/${demoRunId("pr-open")}`,
+    path: (environmentId) => `/factory/${environmentId}/${demoRunId("pr-open")}`,
     ready: async (page) => {
       await page.getByText("Last gate output").waitFor();
       await page.getByText("pr_opened").first().waitFor();
@@ -48,14 +49,14 @@ const SHOTS: ReadonlyArray<Shot> = [
   },
   {
     name: "run-needs-info",
-    path: `/factory/${demoRunId("needs-info")}`,
+    path: (environmentId) => `/factory/${environmentId}/${demoRunId("needs-info")}`,
     ready: async (page) => {
       await page.getByText("questions_posted").first().waitFor();
     },
   },
   {
     name: "needs-attention",
-    path: "/factory",
+    path: () => "/factory",
     ready: async (page) => {
       const list = page.getByRole("region", { name: "Needs attention" });
       await list.getByText("acme/storefront#52").first().waitFor();
@@ -64,7 +65,7 @@ const SHOTS: ReadonlyArray<Shot> = [
   },
   {
     name: "settings-factory",
-    path: "/settings/factory",
+    path: () => "/settings/factory",
     ready: async (page) => {
       await page.getByText("poll", { exact: false }).first().waitFor();
     },
@@ -212,7 +213,19 @@ const stopDevServer = async (child: NodeChildProcess.ChildProcess): Promise<void
   }
 };
 
+/** The id the server gives its environment; the run pages' URLs name it (/factory/<environmentId>/<runId>). */
+const fetchEnvironmentId = async (server: DevServer): Promise<string> => {
+  const response = await fetch(`${server.webOrigin}/.well-known/t3/environment`);
+  if (!response.ok) throw new Error(`the environment descriptor answered ${response.status}`);
+  const descriptor = (await response.json()) as { readonly environmentId?: unknown };
+  if (typeof descriptor.environmentId !== "string" || descriptor.environmentId === "") {
+    throw new Error("the environment descriptor has no environmentId");
+  }
+  return descriptor.environmentId;
+};
+
 const capture = async (browser: Browser, server: DevServer): Promise<void> => {
+  const environmentId = await fetchEnvironmentId(server);
   NodeFS.mkdirSync(OUT_DIR, { recursive: true });
   // One context for both themes: the pairing URL's token works once.
   const context = await browser.newContext({
@@ -236,7 +249,7 @@ const capture = async (browser: Browser, server: DevServer): Promise<void> => {
   for (const theme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme: theme });
     for (const shot of SHOTS) {
-      await page.goto(`${server.webOrigin}${shot.path}`);
+      await page.goto(`${server.webOrigin}${shot.path(environmentId)}`);
       const part = await shot.ready(page).catch(async (error: unknown) => {
         await page.screenshot({ path: FAILURE_PNG }).catch(() => undefined);
         throw new Error(`${shot.name} (${theme}) did not render; the page is in ${FAILURE_PNG}`, {

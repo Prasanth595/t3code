@@ -1,3 +1,4 @@
+import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -11,6 +12,33 @@ export function FactoryLoading({ label }: { label: string }) {
       <Skeleton className="h-9 w-full" />
       <Skeleton className="h-9 w-full" />
     </div>
+  );
+}
+
+/** One environment's read that failed while the page stays: which one, what it said, and a Retry. */
+export function FactoryReadFailure({
+  label,
+  verb,
+  message,
+  onRetry,
+}: {
+  label: string;
+  /** `read` before any data, `refresh` after. */
+  verb: "read" | "refresh";
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Alert variant="error">
+      <AlertDescription>
+        Could not {verb} {label}: {message}
+      </AlertDescription>
+      <AlertAction>
+        <Button aria-label={`Retry ${label}`} onClick={onRetry} size="sm" variant="outline">
+          Retry
+        </Button>
+      </AlertAction>
+    </Alert>
   );
 }
 

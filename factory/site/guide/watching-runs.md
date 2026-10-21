@@ -1,6 +1,6 @@
 # Watch runs
 
-The fork's web app has a Factory page, reached from the sidebar. It shows the factory of the first connected environment that reports one running, the primary environment first, so in the desktop app it shows the LaunchAgent server once you have [paired it](/guide/install#install-the-desktop-app). Reading needs a normal paired session. Pausing claims, stopping a run and dismissing an item need the `orchestration:operate` scope, which a normal pairing carries.
+The fork's web app has a Factory page, reached from the sidebar. It shows every connected environment that runs a factory, the primary environment first: the runs of all of them in one table, their attention items in one list, and a status row for each with its own Pause claims. In the desktop app the primary is the LaunchAgent server once you have [paired it](/guide/install#install-the-desktop-app). Reading needs a normal paired session. Pausing claims, stopping a run and dismissing an item need the `orchestration:operate` scope, which a normal pairing carries.
 
 The pages work in a phone's browser too, paired over your tailnet as described in [remote access](https://github.com/pingdotgg/t3code/tree/main/docs/user/remote-access.md). The T3 mobile app is upstream's build and has no Factory screen.
 
@@ -27,7 +27,7 @@ A run in `factory:building` can be stopped from here. See [Stopping a run by han
 <img class="screenshot light-only" src="/screenshots/needs-attention-light.png" alt="The Needs attention list: a needs-info item and a stuck item, each with View run and Dismiss, and Dismiss all above them" />
 <img class="screenshot dark-only" src="/screenshots/needs-attention-dark.png" alt="The Needs attention list: a needs-info item and a stuck item, each with View run and Dismiss, and Dismiss all above them" />
 
-The top of the Factory page lists what needs a person, and the sidebar's Factory item shows how many. An item is raised when:
+Below the status rows, the Factory page lists what needs a person, and the sidebar's Factory item shows how many. An item is raised when:
 
 - a run went to `factory:stuck` or `factory:needs-info`,
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,

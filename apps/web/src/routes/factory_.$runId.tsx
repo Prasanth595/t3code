@@ -1,21 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { FactoryRunPage } from "../factory/FactoryRunPage";
-
+// The run route was /factory/$runId before it carried the environment. Without this route an old
+// link matches the chat route's $environmentId/$threadId; with it, the link lands on the runs list.
 export const Route = createFileRoute("/factory_/$runId")({
-  beforeLoad: async ({ context }) => {
-    if (
-      context.authGateState.status !== "authenticated" &&
-      context.authGateState.status !== "hosted-static"
-    ) {
-      throw redirect({ to: "/pair", replace: true });
-    }
+  beforeLoad: () => {
+    throw redirect({ to: "/factory", replace: true });
   },
-  component: FactoryRunRoute,
 });
-
-function FactoryRunRoute() {
-  const { runId } = Route.useParams();
-  // Keyed so another run starts at loading instead of showing the last one.
-  return <FactoryRunPage key={runId} runId={runId} />;
-}
