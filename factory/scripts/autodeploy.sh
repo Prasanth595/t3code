@@ -185,10 +185,13 @@ build() {
 # Deletes the version directories beyond `current` and the keep_versions others to keep, so
 # versions/ does not fill the disk. `previous` is kept first, so rollback.sh still has its version
 # whenever keep_versions is at least 1; the rest go by install time, the directory's mtime, which
-# install.sh's unpack into a fresh directory sets. Prints a line per directory it deletes.
+# install.sh's unpack into a fresh directory sets. Both links are matched by the directory they
+# reach (-ef), not their text, which a hand repair can make absolute and install.sh then copies
+# into `previous`. Deletes nothing when no version directory is `current`. Prints a line per
+# directory it deletes.
 prune_versions() {
-  local keep=3 current previous name kept=0
-  local -a order=()
+  local keep=3 previous="" name kept=0 found=0
+  local -a others=() order=()
   # The server reads the file as YAML, which accepts forms this does not (a quoted or spaced key,
   # a BOM). Any uncommented mention of the key that is not one plain `keep_versions: <n>` line
   # stops the prune rather than falling back to the default. Nine digits at most keeps n inside
@@ -200,19 +203,19 @@ prune_versions() {
       return 0
     fi
   fi
-  # install.sh writes `current` as versions/<version>; anything else names no directory to spare.
-  current=$(readlink "$root/current" 2> /dev/null || true)
-  [[ $current == versions/?* ]] || return 0
-  current=${current#versions/}
-  previous=$(readlink "$root/previous" 2> /dev/null || true)
-  previous=${previous#versions/}
-  if [[ -n $previous && $previous != "$current" && -d $root/versions/$previous ]]; then
-    order+=("$previous")
-  fi
   while IFS= read -r name; do
-    [[ $name != "$current" && $name != "$previous" && -d $root/versions/$name ]] || continue
-    order+=("$name")
+    [[ -d $root/versions/$name ]] || continue
+    if [[ $root/versions/$name -ef $root/current ]]; then
+      found=1
+    elif [[ -z $previous && $root/versions/$name -ef $root/previous ]]; then
+      previous=$name
+    else
+      others+=("$name")
+    fi
   done < <(ls -t "$root/versions" 2> /dev/null)
+  ((found)) || return 0
+  [[ -z $previous ]] || order+=("$previous")
+  order+=(${others[@]+"${others[@]}"})
   for name in ${order[@]+"${order[@]}"}; do
     if ((kept < 10#$keep)); then
       kept=$((kept + 1))
