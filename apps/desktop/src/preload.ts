@@ -10,6 +10,7 @@ import type {
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
+import { createClerkOAuthCancel } from "./clerkOAuthCancel.ts";
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
 
@@ -30,30 +31,8 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
   );
 }
 
-let cancelClerkOAuth: (() => void) | null = null;
-const clerkOAuthPendingListeners = new Set<(pending: boolean) => void>();
-const setCancelClerkOAuth = (cancel: (() => void) | null) => {
-  cancelClerkOAuth = cancel;
-  for (const listener of clerkOAuthPendingListeners) listener(cancel !== null);
-};
-
-exposeClerkBridge({
-  passkeys: true,
-  wrapOAuthOpen: (open) => (url) => {
-    cancelClerkOAuth?.();
-    return new Promise((resolve, reject) => {
-      const settle = () => {
-        if (cancelClerkOAuth === cancel) setCancelClerkOAuth(null);
-      };
-      const cancel = () => {
-        settle();
-        reject(new Error("Clerk: OAuth flow was cancelled."));
-      };
-      setCancelClerkOAuth(cancel);
-      open(url).then(resolve, reject).finally(settle);
-    });
-  },
-});
+const clerkOAuthCancel = createClerkOAuthCancel();
+exposeClerkBridge({ passkeys: true, wrapOAuthOpen: clerkOAuthCancel.wrapOpen });
 
 // Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
 try {
@@ -274,14 +253,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
-  isClerkOAuthPending: () => cancelClerkOAuth !== null,
-  onClerkOAuthPendingChange: (listener) => {
-    clerkOAuthPendingListeners.add(listener);
-    return () => {
-      clerkOAuthPendingListeners.delete(listener);
-    };
-  },
-  cancelClerkOAuth: () => cancelClerkOAuth?.(),
+  isClerkOAuthPending: clerkOAuthCancel.isPending,
+  onClerkOAuthPendingChange: clerkOAuthCancel.onPendingChange,
+  cancelClerkOAuth: clerkOAuthCancel.cancel,
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   getWindowZoomFactor: () => webFrame.getZoomFactor(),
