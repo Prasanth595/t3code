@@ -1,3 +1,4 @@
+import { useAtomValue } from "@effect/atom-react";
 import { uuidv4 } from "../../lib/uuid";
 import { useNavigation } from "@react-navigation/native";
 import {
@@ -41,15 +42,22 @@ import { deriveBottomControlInsets } from "../../lib/reserved-regions";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
-import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useThreadShells,
+} from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { requestThreadMessageJump } from "../threads/threadMessageJump";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { serverEnvironment } from "../../state/server";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
+import { useStartTriage } from "../triage/useStartTriage";
 import {
   filterCommandPaletteItems,
   nextPaletteIndex,
@@ -256,6 +264,13 @@ export function CommandPalette(props: {
     query.startsWith(">") ? "" : query,
     environmentLabels === undefined ? {} : { environmentLabels },
   );
+  const serverConfigs = useServerConfigs();
+  const startTriage = useStartTriage();
+  const triageEnvironmentId = activeThread?.environmentId ?? searchEnvironmentIds[0] ?? null;
+  const canTriage =
+    useAtomValue(serverEnvironment.prepareTriage.permissionAtom(triageEnvironmentId)) &&
+    triageEnvironmentId !== null &&
+    serverConfigs.get(triageEnvironmentId)?.environment.capabilities.triage === true;
   const contentMatchByKey = useMemo(
     () =>
       new Map(
@@ -324,6 +339,15 @@ export function CommandPalette(props: {
         run: () => openSettings(navigation, "SettingsArchive"),
       },
     ];
+    if (canTriage) {
+      actions.push({
+        key: "triage",
+        kind: "action",
+        title: "Triage an issue",
+        searchTerms: ["triage", "bug", "issue", "report", "broken", "debug", "help", "support"],
+        run: () => void startTriage(triageEnvironmentId),
+      });
+    }
     const projectByKey = new Map(
       projects.map((project) => [scopedProjectKey(project.environmentId, project.id), project]),
     );
@@ -430,12 +454,15 @@ export function CommandPalette(props: {
     activeThread,
     activeThreadRef,
     environments.length,
+    canTriage,
     navigation,
     projects,
     runCommand,
     savedConnectionsById,
     selectDetail,
+    startTriage,
     threads,
+    triageEnvironmentId,
   ]);
   const rankedMessageKeys = useMemo(() => {
     const subjectByKey = new Map(
