@@ -600,7 +600,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         }).pipe(Effect.scoped),
       );
 
-      it.effect("seeds an empty worktree database from ~/.t3 once", () =>
+      it.effect("seeds a worktree database from ~/.t3 only when it has none", () =>
         Effect.gen(function* () {
           const path = yield* Path.Path;
           const root = yield* makeWorktree;
@@ -636,9 +636,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const [seedArgs] = yield* spawnedArgs(undefined);
           assert.includeMembers([...(seedArgs ?? [])], ["--base-dir", path.join(root, ".t3")]);
 
-          NodeFS.mkdirSync(path.join(root, ".t3", "userdata"), { recursive: true });
-          NodeFS.writeFileSync(path.join(root, ".t3", "userdata", "statev2.sqlite"), "");
-          assert.deepStrictEqual(yield* spawnedArgs(undefined), []);
+          // Either database means the worktree already has data.
+          for (const name of ["state.sqlite", "statev2.sqlite"]) {
+            const file = path.join(root, ".t3", "userdata", name);
+            NodeFS.mkdirSync(path.dirname(file), { recursive: true });
+            NodeFS.writeFileSync(file, "");
+            assert.deepStrictEqual(yield* spawnedArgs(undefined), []);
+            NodeFS.rmSync(file);
+          }
         }).pipe(Effect.scoped),
       );
 
