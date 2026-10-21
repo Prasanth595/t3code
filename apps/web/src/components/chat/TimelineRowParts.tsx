@@ -1,10 +1,35 @@
-import { type ReactNode } from "react";
+import { useState, type ReactNode, type TransitionEvent } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 
 export const MESSAGE_HEADING_LEVEL = 3;
+
+/**
+ * Grows content in from zero height as it mounts. Pass `animate` only for a
+ * mount the user just caused: virtualized rows remount while scrolling, and a
+ * restored expansion must not replay the reveal. Clipping lasts only as long
+ * as the transition so popovers and focus rings are not cut off afterwards.
+ */
+export function TimelineReveal({ animate, children }: { animate: boolean; children: ReactNode }) {
+  const [clipping, setClipping] = useState(animate);
+  if (!animate) return children;
+  const stopClipping = (event: TransitionEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) setClipping(false);
+  };
+  return (
+    <div
+      className="grid grid-rows-[1fr] transition-[grid-template-rows,opacity] duration-200 ease-out starting:grid-rows-[0fr] starting:opacity-0 motion-reduce:transition-none"
+      onTransitionEnd={stopClipping}
+      onTransitionCancel={stopClipping}
+    >
+      <div className={cn("min-h-0", clipping && "overflow-hidden motion-reduce:overflow-visible")}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export function MessageAuthorHeading({ children }: { children: string }) {
   return <h3 className="sr-only select-none">{children}</h3>;

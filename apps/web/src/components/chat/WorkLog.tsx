@@ -6,6 +6,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
+import { ChevronRightIcon } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 const GroupedRows = createContext(false);
@@ -30,7 +31,16 @@ export function WorkLogBlock({
             : "pb-2"
       }
     >
-      {children}
+      {layout === "group-content" ? (
+        // The rail lines up under the group header's icon so expanded entries
+        // read as children of that header, even though the two are separate
+        // virtualized rows.
+        <div className="ms-3.5 border-s border-border ps-1.5 transition-colors hover:border-foreground/30">
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }
@@ -80,15 +90,21 @@ function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
   );
 }
 
-const interactionClassName =
-  "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
+export const workLogInteractiveClassName =
+  "cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70";
 
-function useRowClassName(interactive: boolean) {
+// Expanded entries are outlined with an inset ring rather than a border so
+// expanding never shifts the row's content sideways.
+const expandedRowClassName =
+  "my-1 bg-muted/20 ring-1 ring-inset ring-border hover:bg-muted/20 hover:ring-foreground/25";
+
+function useRowClassName(interactive: boolean, expanded: boolean) {
   const grouped = use(GroupedRows);
   return cn(
-    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-colors",
+    "group/timeline-row relative w-full min-w-0 rounded-md px-0.5 text-left transition-[background-color,box-shadow]",
     grouped ? "py-0" : "py-0.5",
-    interactive && interactionClassName,
+    interactive && workLogInteractiveClassName,
+    expanded && expandedRowClassName,
   );
 }
 
@@ -99,7 +115,7 @@ export function WorkLogButton({
   wrapLabel = false,
   ...buttonProps
 }: RowContent & Omit<ComponentProps<"button">, "className" | "style" | "children">) {
-  const className = useRowClassName(true);
+  const className = useRowClassName(true, false);
   return (
     <button {...buttonProps} type="button" className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
@@ -116,12 +132,38 @@ export function WorkLogRow({
   children,
   ...rowProps
 }: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
-  const className = useRowClassName(rowProps.onClick !== undefined);
+  const className = useRowClassName(
+    rowProps.onClick !== undefined,
+    rowProps["aria-expanded"] === true,
+  );
   return (
     <div {...rowProps} className={className}>
       <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
       {children}
     </div>
+  );
+}
+
+/** Reserves its slot when hidden so chevrons stay aligned down the column. */
+export function WorkLogChevron({
+  expanded,
+  hidden = false,
+}: {
+  expanded: boolean;
+  hidden?: boolean;
+}) {
+  return (
+    <span
+      className={cn("flex size-4 shrink-0 items-center justify-center", hidden && "invisible")}
+      aria-hidden
+    >
+      <ChevronRightIcon
+        className={cn(
+          "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+          expanded && "rotate-90",
+        )}
+      />
+    </span>
   );
 }
 
@@ -157,7 +199,7 @@ export function WorkLogDetails({
         kind === "text"
           ? "ms-7 flex max-h-96 flex-col gap-3 overflow-auto px-0.5 py-1 select-text"
           : kind === "panel"
-            ? "mt-0.5 mb-1.5 pb-2"
+            ? "mt-0.5 px-1.5 pb-3.5"
             : "mt-1",
       )}
       onClick={(event) => event.stopPropagation()}

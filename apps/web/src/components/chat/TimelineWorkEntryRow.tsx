@@ -1,4 +1,4 @@
-import { WorkLogDetails, WorkLogRow } from "./WorkLog";
+import { WorkLogChevron, WorkLogDetails, WorkLogRow } from "./WorkLog";
 import {
   getQuestionAnswerPreview,
   getQuestionAnswerText,
@@ -30,7 +30,7 @@ import {
 } from "../../session-logic";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
-import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
+import { CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { useThreadShell } from "../../state/entities";
@@ -52,7 +52,7 @@ import {
   WorkGroupViewCtx,
   type TimelineWorkEntry,
 } from "./timelineRowContext";
-import { MESSAGE_HEADING_LEVEL, TimelineRowTimestamp } from "./TimelineRowParts";
+import { MESSAGE_HEADING_LEVEL, TimelineReveal, TimelineRowTimestamp } from "./TimelineRowParts";
 import {
   failedToolIconClassName,
   toolIconAcceptsTint,
@@ -133,6 +133,7 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
           headingLevelOffset={MESSAGE_HEADING_LEVEL}
           onUseArtifactTemplate={ctx.onUseArtifactTemplate}
           onImageExpand={ctx.onImageExpand}
+                  source={ctx.turnItemSource}
           lineBreaks
         />
       ))}
@@ -186,8 +187,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
+  const [revealDetails, setRevealDetails] = useState(false);
   const toggleExpanded = () => {
     const next = !expanded;
+    if (next) setRevealDetails(true);
     if (groupView) {
       groupView.onToggleEntry(!next);
       if (next) groupView.state.expandedEntries.add(workEntry.id);
@@ -482,76 +485,66 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
-          <span
-            className={cn(
-              "flex size-4 shrink-0 items-center justify-center",
-              !canExpandProjectedItem && "invisible",
-            )}
-            aria-hidden
-          >
-            <ChevronRightIcon
-              className={cn(
-                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
-                expanded && "rotate-90",
-              )}
-            />
-          </span>
+          <WorkLogChevron expanded={expanded} hidden={!canExpandProjectedItem} />
         </>
       }
     >
-      {expanded && viewedImage && threadRef ? (
-        <WorkLogDetails kind="media">
-          <ChatMarkdownAssetImage
-            environmentId={threadRef.environmentId}
-            resource={viewedImage.resource}
-            alt={viewedImage.alt}
-            srcFragment={viewedImage.srcFragment}
-            workspaceRoot={workspaceRoot}
-            maxHeightRem={16}
-            onImageExpand={onImageExpand}
-          />
-        </WorkLogDetails>
-      ) : null}
-      {expanded && workEntry.questionAnswer ? (
-        <QuestionAnswerHistory answer={workEntry.questionAnswer} />
-      ) : null}
-      {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
-      {expanded &&
-      !isReasoning &&
-      !workEntry.questionAnswer &&
-      canExpandProjectedItem &&
-      (expandedBody ||
-        plainOutputFetches ||
-        (workEntry.projectedItem && plainOutput === undefined)) ? (
-        <WorkLogDetails kind="panel">
-          {workEntry.projectedItem && plainOutput === undefined ? (
-            <V2ItemInspector
-              projectedItem={workEntry.projectedItem}
-              environmentId={ctx.activeThreadEnvironmentId}
-              cwd={ctx.markdownCwd}
-              workspaceRoot={workspaceRoot}
-              onOpenThread={ctx.onOpenThread}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
-              onRollbackCheckpoint={ctx.onRollbackCheckpoint}
-              onImageExpand={ctx.onImageExpand}
-              source={ctx.turnItemSource}
-            />
-          ) : (
-            <>
-              {expandedBody ? (
-                <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
-              ) : null}
-              {plainOutputFetches && workEntry.projectedItem ? (
-                <FetchedToolOutput
+      {expanded ? (
+        <TimelineReveal animate={revealDetails}>
+          {viewedImage && threadRef ? (
+            <WorkLogDetails kind="media">
+              <ChatMarkdownAssetImage
+                environmentId={threadRef.environmentId}
+                resource={viewedImage.resource}
+                alt={viewedImage.alt}
+                srcFragment={viewedImage.srcFragment}
+                workspaceRoot={workspaceRoot}
+                maxHeightRem={16}
+                onImageExpand={onImageExpand}
+              />
+            </WorkLogDetails>
+          ) : null}
+          {workEntry.questionAnswer ? (
+            <QuestionAnswerHistory answer={workEntry.questionAnswer} />
+          ) : null}
+          {isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}
+          {!isReasoning &&
+          !workEntry.questionAnswer &&
+          canExpandProjectedItem &&
+          (expandedBody ||
+            plainOutputFetches ||
+            (workEntry.projectedItem && plainOutput === undefined)) ? (
+            <WorkLogDetails kind="panel">
+              {workEntry.projectedItem && plainOutput === undefined ? (
+                <V2ItemInspector
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
-                  onImageExpand={onImageExpand}
+                  cwd={ctx.markdownCwd}
+                  workspaceRoot={workspaceRoot}
+                  onOpenThread={ctx.onOpenThread}
+                  onOpenTurnDiff={ctx.onOpenTurnDiff}
+                  onRollbackCheckpoint={ctx.onRollbackCheckpoint}
+                  onImageExpand={ctx.onImageExpand}
                   source={ctx.turnItemSource}
                 />
-              ) : null}
-            </>
-          )}
-        </WorkLogDetails>
+              ) : (
+                <>
+                  {expandedBody ? (
+                    <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
+                  ) : null}
+                  {plainOutputFetches && workEntry.projectedItem ? (
+                    <FetchedToolOutput
+                      projectedItem={workEntry.projectedItem}
+                      environmentId={ctx.activeThreadEnvironmentId}
+                      onImageExpand={onImageExpand}
+                      source={ctx.turnItemSource}
+                    />
+                  ) : null}
+                </>
+              )}
+            </WorkLogDetails>
+          ) : null}
+        </TimelineReveal>
       ) : null}
     </WorkLogRow>
   );

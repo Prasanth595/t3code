@@ -93,7 +93,7 @@ import {
   type WorkGroupViewState,
   type TimelineRow,
 } from "./timelineRowContext";
-import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
+import { TimelineReveal, TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
 import {
   WorkGroupSection,
   WorkingTimelineRow,
@@ -439,6 +439,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (element) element.scrollTop = element.scrollHeight;
   };
 
+  // Rows a disclosure inserts mount within its settle window; LegendList can
+  // mount some of them a frame after the toggle, so the flag spans the window.
+  const revealingDisclosureRef = useRef(false);
+  const isDisclosureRevealPending = useStableCallback(() => revealingDisclosureRef.current);
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
       cancelAnimationFrame(disclosureSettleFrameRef.current);
@@ -452,6 +456,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         pinDisclosureToEnd();
         disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
+        revealingDisclosureRef.current = false;
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
         disclosureSettleSecondFrameRef.current = null;
@@ -480,6 +485,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const onToggleTurnFold = (runId: RunId) => {
+    revealingDisclosureRef.current = !expandedRunIds.has(runId);
     suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
     setExpandedRunIds((existing) => {
       const next = new Set(existing);
@@ -492,7 +498,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey, expandedWorkGroupIds.has(groupId));
+    const collapsing = expandedWorkGroupIds.has(groupId);
+    revealingDisclosureRef.current = !collapsing;
+    suspendEndScrollMaintenanceForDisclosure(anchorKey, collapsing);
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -504,6 +512,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
+    revealingDisclosureRef.current = !expandedAttemptIds.has(attemptId);
     suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
@@ -1199,7 +1208,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
           data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent row={item} />
+            <DisclosureReveal isPending={isDisclosureRevealPending}>
+              <TimelineRowContent row={item} />
+            </DisclosureReveal>
           </AudioPreviewUnmountContext>
         </div>
       </div>
@@ -1363,6 +1374,18 @@ function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
   return `message:${item.message.role}:${lengthBucket}`;
+}
+
+/** Decides once, at mount, whether a disclosure the user just opened inserted this row. */
+function DisclosureReveal({
+  isPending,
+  children,
+}: {
+  isPending: () => boolean;
+  children: ReactNode;
+}) {
+  const [animate] = useState(isPending);
+  return <TimelineReveal animate={animate}>{children}</TimelineReveal>;
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {

@@ -1,4 +1,10 @@
-import { WorkLogButton, WorkLogList, WorkLogRow } from "./WorkLog";
+import {
+  WorkLogButton,
+  WorkLogChevron,
+  WorkLogList,
+  WorkLogRow,
+  workLogInteractiveClassName,
+} from "./WorkLog";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   getQuestionAnswerPreview,
@@ -370,7 +376,10 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className={cn(
+        "group/live-work flex min-h-6 w-full max-w-full items-center rounded-md text-left transition-colors",
+        workLogInteractiveClassName,
+      )}
       aria-expanded={row.expanded === true}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
@@ -504,7 +513,8 @@ export function LiveWorkEntryTimelineRow({
     <button
       type="button"
       className={cn(
-        "group/live-work flex w-full max-w-full cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+        "group/live-work flex w-full max-w-full rounded-md text-left transition-colors",
+        workLogInteractiveClassName,
         thoughtLine ? "flex-col items-start" : "min-h-6 items-center",
       )}
       aria-label={
@@ -634,7 +644,13 @@ function WorkGroupHeader(props: {
         </span>
       }
       trailing={
-        <TimelineRowTimestamp createdAt={props.createdAt} timestampFormat={props.timestampFormat} />
+        <>
+          <TimelineRowTimestamp
+            createdAt={props.createdAt}
+            timestampFormat={props.timestampFormat}
+          />
+          <WorkLogChevron expanded={props.expanded} />
+        </>
       }
     />
   );
