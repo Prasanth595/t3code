@@ -493,6 +493,7 @@ export const make = Effect.gen(function* () {
     }
     readFailures.delete(group.key);
     const [detail, activity] = read.value;
+    const observedAt = yield* Clock.currentTimeMillis;
     const headSha = detail.headSha ?? null;
     for (const target of group.targets) {
       const life = lifeOf(target);
@@ -547,7 +548,7 @@ export const make = Effect.gen(function* () {
           url: target.link.url,
           baseBranch: detail.baseBranch,
           headSha: report.next.headSha,
-          observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+          observedAt: DateTime.formatIso(DateTime.makeUnsafe(observedAt)),
           checks: detail.checks,
           report,
         });
