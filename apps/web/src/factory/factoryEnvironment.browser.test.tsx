@@ -408,6 +408,39 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(page.text()).not.toContain("on studio");
   });
 
+  it("brings back only the items of the environment whose Dismiss all call failed, and reads every status again", async () => {
+    worlds.get(ENV_1)!.status = statusBody("running", {
+      attention: [
+        attentionItem("a1", "first one", "2026-10-17T10:00:00.000Z"),
+        attentionItem("a2", "second one", "2026-10-17T10:20:00.000Z"),
+      ],
+    });
+    worlds.get(ENV_2)!.status = statusBody("running", {
+      attention: [attentionItem("b1", "third one", "2026-10-17T10:10:00.000Z")],
+    });
+    const statusReads: string[] = [];
+    __setFactoryApiForTests({
+      ...fakeApi,
+      status: async (env) => {
+        statusReads.push(env);
+        return fakeApi.status(env);
+      },
+      dismissAttention: async (env, ids) => {
+        if (env === ENV_1) throw new FactoryApiError(500, null, "ledger locked");
+        return fakeApi.dismissAttention(env, ids);
+      },
+    });
+    const page = await show(createElement(FactoryPage));
+    statusReads.length = 0;
+    await page.click(page.button("Dismiss all")!);
+    await settle();
+    expect(page.text()).toContain("first one");
+    expect(page.text()).toContain("second one");
+    expect(page.text()).not.toContain("third one");
+    expect(page.text()).toContain("ledger locked");
+    expect([...statusReads].sort()).toEqual([ENV_1, ENV_2]);
+  });
+
   it("shows one row per environment: the primary's idle reason, and the second's runs", async () => {
     worlds.set(ENV_1, { status: statusBody("idle", { reason: "no repos" }), runs: [] });
     const page = await show(createElement(FactoryPage));
@@ -430,7 +463,9 @@ describe("the Factory page shows every environment that runs a factory", () => {
     worlds.set(ENV_1, { status: statusBody("running"), runs: [], hang: true });
     const page = await show(createElement(FactoryPage));
     expect(page.text()).toContain("acme/widgets");
-    expect(rowOf(page, "Desktop").textContent).toContain("Loading");
+    expect(
+      rowOf(page, "Desktop").querySelector('[role="status"][aria-label="Loading Desktop"]'),
+    ).not.toBeNull();
   });
 
   it("names the environment whose runs could not be read, and keeps the rest", async () => {

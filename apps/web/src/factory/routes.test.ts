@@ -16,10 +16,18 @@ describe("factory routes", () => {
     expect(tree).not.toContain("FactoryRouteChildren");
   });
 
-  it("makes /factory/$environmentId/$runId the run route's full path, and drops /factory/$runId", () => {
+  it("makes /factory/$environmentId/$runId the run route's full path", () => {
     expect(tree).toMatch(
       /'\/factory_\/\$environmentId\/\$runId': \{[^}]*fullPath: '\/factory\/\$environmentId\/\$runId'/,
     );
-    expect(tree).not.toContain("'/factory_/$runId'");
+  });
+
+  it("keeps /factory/$runId off the root route, so an old run link does not reach the chat route", () => {
+    const update =
+      /const \w+ =\s*\w+RouteImport\.update\(\{\s*id: '\/factory_\/\$runId',[\s\S]*?as any\)/.exec(
+        tree,
+      );
+    expect(update?.[0]).toContain("getParentRoute: () => rootRouteImport");
+    expect(tree).toMatch(/'\/factory_\/\$runId': \{[^}]*fullPath: '\/factory\/\$runId'/);
   });
 });

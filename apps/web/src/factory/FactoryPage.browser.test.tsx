@@ -426,7 +426,7 @@ describe("FactoryPage environments", () => {
     ];
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Laptop");
-    expect(page.text()).toContain("Loading");
+    expect(page.all('[aria-label="Loading Laptop"]')).toHaveLength(1);
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.all('[aria-label="Loading factory"]')).toHaveLength(0);
   });

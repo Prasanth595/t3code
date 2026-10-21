@@ -34,6 +34,7 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as FactoryRunIdRouteImport } from './routes/factory_.$runId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as FactoryEnvironmentIdRunIdRouteImport } from './routes/factory_.$environmentId.$runId'
@@ -165,6 +166,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FactoryRunIdRoute = FactoryRunIdRouteImport.update({
+  id: '/factory_/$runId',
+  path: '/factory/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -204,6 +210,7 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -234,6 +241,7 @@ export interface FileRoutesByTo {
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -267,6 +275,7 @@ export interface FileRoutesById {
   '/welcome': typeof WelcomeRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/factory_/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -301,6 +310,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/new'
     | '/pull-requests'
+    | '/factory/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -331,6 +341,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/new'
     | '/pull-requests'
+    | '/factory/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -363,6 +374,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/_chat/new'
     | '/_chat/pull-requests'
+    | '/factory_/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -394,6 +406,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
+  FactoryRunIdRoute: typeof FactoryRunIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   FactoryEnvironmentIdRunIdRoute: typeof FactoryEnvironmentIdRunIdRoute
 }
@@ -575,6 +588,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/factory_/$runId': {
+      id: '/factory_/$runId'
+      path: '/factory/$runId'
+      fullPath: '/factory/$runId'
+      preLoaderRoute: typeof FactoryRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -680,6 +700,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
+  FactoryRunIdRoute: FactoryRunIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   FactoryEnvironmentIdRunIdRoute: FactoryEnvironmentIdRunIdRoute,
 }

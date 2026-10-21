@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { Button } from "~/components/ui/button";
+import { Skeleton } from "~/components/ui/skeleton";
 
 import { formatAge, messageOf } from "./format";
 import type { FactoryEnvironment } from "./useFactoryData";
@@ -36,6 +37,7 @@ function Row({
             </span>
           ) : null}
           <Button
+            aria-label={`${paused ? "Resume" : "Pause"} claims on ${label}`}
             className="ml-auto shrink-0"
             disabled={busy}
             onClick={onTogglePause}
@@ -47,15 +49,21 @@ function Row({
         </>
       ) : status.status === "error" ? (
         <>
-          <span className="min-w-0 break-words text-muted-foreground">
+          <span className="min-w-0 break-words text-destructive-foreground">
             {messageOf(status.error)}
           </span>
-          <Button className="ml-auto shrink-0" onClick={status.refresh} size="sm" variant="outline">
+          <Button
+            aria-label={`Retry ${label}`}
+            className="ml-auto shrink-0"
+            onClick={status.refresh}
+            size="sm"
+            variant="outline"
+          >
             Retry
           </Button>
         </>
       ) : (
-        <span className="text-muted-foreground">Loading…</span>
+        <Skeleton aria-label={`Loading ${label}`} className="h-5 w-24" role="status" />
       )}
     </li>
   );

@@ -38,10 +38,15 @@ export function FactoryPage() {
   const supported = useFactorySupported();
   // The recent window until the user asks for every run; the switch starts a fresh read.
   const [allRuns, setAllRuns] = useState(false);
+  // Runs are read once an environment's status has answered with data: a status still loading may
+  // yet say 404 (an upstream server, left out above), and one that failed shows its error on its
+  // row, so neither should raise a second notice for its runs.
+  const answered = environments.filter(({ status }) => status.data !== null);
   const runsOf = useFactoryRunsOf(
-    environments.map(({ environmentId }) => environmentId),
+    answered.map(({ environmentId }) => environmentId),
     allRuns,
   );
+  const runsById = new Map(answered.map(({ environmentId }, i) => [environmentId, runsOf[i]]));
   // The environments with a pause or resume in flight: one row's control never disables another's.
   const [busy, setBusy] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
   const [note, setNote] = useState<string | null>(null);
@@ -115,14 +120,14 @@ export function FactoryPage() {
     ...runsOf.map(({ readAt }) => readAt),
   );
   const showEnvironment = environments.length > 1;
-  const runs = environments.flatMap(({ environmentId, label }, i) =>
+  const runs = answered.flatMap(({ environmentId, label }, i) =>
     (runsOf[i]?.data?.runs ?? []).map((run) => ({ environmentId, label, run })),
   );
   const runsListed = runsOf.some(({ data }) => data !== null);
   const runsPending = runsOf.some(({ status }) => status === "loading");
   // A failed read is a notice naming its environment while the rest of the page stays.
-  const notices = environments.flatMap(({ environmentId, label, status }, i) => {
-    const runsRead = runsOf[i];
+  const notices = environments.flatMap(({ environmentId, label, status }) => {
+    const runsRead = runsById.get(environmentId);
     const failed =
       runsRead?.status === "error"
         ? runsRead
@@ -176,7 +181,7 @@ export function FactoryPage() {
               Could not refresh {label}: {message}
             </AlertDescription>
             <AlertAction>
-              <Button onClick={retry} size="sm" variant="outline">
+              <Button aria-label={`Retry ${label}`} onClick={retry} size="sm" variant="outline">
                 Retry
               </Button>
             </AlertAction>

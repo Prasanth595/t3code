@@ -251,8 +251,13 @@ export const useFactoryRunsOf = (
   useFactoryResources(environmentIds, all ? "runs:all" : "runs");
 
 /** An environment's name for people: the label it was saved under, else its id. */
+const labelOf = (
+  presentationById: ReturnType<typeof useEnvironments>["presentationById"],
+  environmentId: EnvironmentId,
+): string => presentationById.get(environmentId)?.entry.target.label ?? environmentId;
+
 export function useFactoryEnvironmentLabel(environmentId: EnvironmentId): string {
-  return useEnvironments().presentationById.get(environmentId)?.entry.target.label ?? environmentId;
+  return labelOf(useEnvironments().presentationById, environmentId);
 }
 
 export interface FactoryEnvironment {
@@ -290,8 +295,7 @@ export function useFactoryEnvironments(): ReadonlyArray<FactoryEnvironment> {
   return candidates.flatMap((environmentId, i) => {
     const status = statuses[i]!;
     if (isNotFound(status.error)) return [];
-    const label = presentationById.get(environmentId)?.entry.target.label ?? environmentId;
-    return [{ environmentId, label, status }];
+    return [{ environmentId, label: labelOf(presentationById, environmentId), status }];
   });
 }
 
