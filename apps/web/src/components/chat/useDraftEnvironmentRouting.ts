@@ -17,6 +17,11 @@ import {
   selectProjectGroupingSettings,
 } from "../../logicalProject";
 import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
+import {
+  createKeyedRequestGate,
+  isDraftEnvironmentRetargetApplicable,
+  planLoadBalancedDraftRetarget,
+} from "../ChatView.logic";
 import { type EnvironmentPresentation, useEnvironmentProviders } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import type { DraftSessionState } from "../../composerDraftStore";
@@ -111,25 +116,96 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
   );
+  // At most one automatic scratch-project open per `${draftId}:${environmentId}`. A
+  // settled (even failed) key stays active so it is not retried until the target
+  // changes or the user re-arms Auto; any other target cancels it.
+  const [autoScratchRequest] = useState(createKeyedRequestGate);
+  useLayoutEffect(() => () => autoScratchRequest.cancel(), [autoScratchRequest]);
+  const autoScratchTarget = logicalProjectEnvironments.find(
+    (environment) => environment.environmentId === loadBalancing.environmentId,
+  );
+  const autoScratchPlan = planLoadBalancedDraftRetarget({
+    needsLoadBalancing,
+    loadBalancingPending: loadBalancing.pending,
+    draftId,
+    sendInFlight: false,
+    target: autoScratchTarget,
+  });
+  const autoScratchRequestKey =
+    activeProjectIsScratch && draftId && autoScratchPlan?.kind === "open-scratch"
+      ? `${draftId}:${autoScratchPlan.environmentId}`
+      : null;
+  // Invalidate before passive effects, without mutating request state during render.
+  useLayoutEffect(
+    () => autoScratchRequest.sync(autoScratchRequestKey),
+    [autoScratchRequest, autoScratchRequestKey],
+  );
   useEffect(() => {
-    if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
-    const target = logicalProjectEnvironments.find(
-      (environment) => environment.environmentId === loadBalancing.environmentId,
-    );
-    if (!target?.projectId) return;
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
+    const plan = sendInFlightRef.current ? null : autoScratchPlan;
+    if (!plan || !draftId) return;
+    // A scratch draft moves its logical-project mapping with the machine: each
+    // environment's scratch project is its own logical project.
+    const retargetScratchDraft = (project: (typeof allProjects)[number]) => {
+      setLogicalProjectDraftThreadId(
+        deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings),
+        scopeProjectRef(plan.environmentId, project.id),
+        draftId,
+        { environmentSelection: "auto", loadBalancedEnvironmentId: plan.environmentId },
+      );
+    };
+    if (plan.kind === "retarget") {
+      if (!activeProjectIsScratch) {
+        setDraftThreadContext(draftId, {
+          projectRef: scopeProjectRef(plan.environmentId, plan.projectId),
+          environmentSelection: "auto",
+          loadBalancedEnvironmentId: plan.environmentId,
+        });
+        return;
+      }
+      const project = allProjects.find(
+        (candidate) =>
+          candidate.environmentId === plan.environmentId && candidate.id === plan.projectId,
+      );
+      if (project) retargetScratchDraft(project);
+      return;
+    }
+    if (!autoScratchRequestKey) return;
+    // The chosen machine has no scratch project yet: open it first and retarget
+    // only on success, so a send can never slip out on the machine the draft
+    // started on. The send path stays blocked while loadBalancedEnvironmentId is
+    // unresolved.
+    const snapshot = getDraftSession(draftId);
+    if (!snapshot || snapshot.promotedTo) return;
+    const token = autoScratchRequest.begin(autoScratchRequestKey);
+    if (token === null) return;
+    void openScratchProject(plan.environmentId, "Could not switch machine").then((project) => {
+      if (
+        !project ||
+        !autoScratchRequest.isCurrent(token) ||
+        !isDraftEnvironmentRetargetApplicable({
+          snapshot,
+          current: getDraftSession(draftId),
+          sendInFlight: sendInFlightRef.current,
+          requireUnresolvedAuto: true,
+        })
+      ) {
+        return;
+      }
+      retargetScratchDraft(project);
     });
   }, [
-    needsLoadBalancing,
-    loadBalancing.pending,
-    loadBalancing.environmentId,
+    autoScratchPlan,
+    autoScratchRequestKey,
+    autoScratchRequest,
     draftId,
-    logicalProjectEnvironments,
+    activeProjectIsScratch,
+    allProjects,
+    projectGroupingSettings,
     sendInFlightRef,
+    getDraftSession,
     setDraftThreadContext,
+    setLogicalProjectDraftThreadId,
+    openScratchProject,
   ]);
   const onAutoEnvironment = () => {
     if (envLocked || !draftId) return;
@@ -143,6 +219,8 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       });
       return;
     }
+    // Re-arming Auto retries a previously failed or superseded scratch open.
+    autoScratchRequest.cancel();
     loadBalancing.refresh(
       logicalProjectEnvironments.map((environment) => environment.environmentId),
     );
@@ -211,11 +289,11 @@ export function useDraftEnvironmentRouting(input: DraftEnvironmentRoutingInput) 
       if (
         environmentChangeRef.current !== request ||
         environmentChangeScopeRef.current !== request.scope ||
-        sendInFlightRef.current ||
-        !currentDraft ||
-        currentDraft.promotedTo ||
-        currentDraft.environmentId !== originalDraft.environmentId ||
-        currentDraft.projectId !== originalDraft.projectId
+        !isDraftEnvironmentRetargetApplicable({
+          snapshot: originalDraft,
+          current: currentDraft,
+          sendInFlight: sendInFlightRef.current,
+        })
       )
         return;
       const projectRef = scopeProjectRef(target.environmentId, project.id);
