@@ -9,10 +9,8 @@ import {
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
-import * as EnvironmentAuth from "../../../auth/EnvironmentAuth.ts";
-import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
-import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as AccessMcpService from "../../AccessMcpService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const shared = {
@@ -21,9 +19,7 @@ const shared = {
   dependencies: [
     McpInvocationContext.McpInvocationContext,
     ThreadManagement.ThreadManagementService,
-    ThreadCommandExecutor.ThreadCommandExecutor,
-    ServerEnvironment.ServerEnvironment,
-    EnvironmentAuth.EnvironmentAuth,
+    AccessMcpService.AccessMcpService,
   ],
 };
 const restriction =
