@@ -7,7 +7,9 @@ import {
 } from "../features/workspace/android-workspace-tabs";
 import {
   androidWorkspaceNavigationState,
+  parentThreadIsBelow,
   resetAndroidWorkspace,
+  returnToAndroidWorkspaceList,
   type AndroidWorkspaceDestination,
   type AndroidWorkspaceResetAction,
 } from "./android-workspace-navigation";
@@ -135,17 +137,6 @@ describe("Android workspace navigation", () => {
     expect(back.routes[back.index]?.params).toEqual(pullRequest.params);
   });
 
-  it("preserves normal nested PR Back behavior", () => {
-    const detail = select(legacyHistory(), pullRequest);
-    const nested = apply(
-      detail,
-      StackActions.push("PullRequestFile", { ...pullRequest.params, path: "file.ts" }),
-    );
-    const back = apply(nested, StackActions.pop());
-    expect(back.routes[back.index]?.key).toBe(detail.routes[detail.index]?.key);
-    expect(names(back)).toEqual(["Home", "PullRequest"]);
-  });
-
   it.each(["ThreadFiles", "ThreadTerminal", "GitOverview"])(
     "returns to chat when its sidebar row is selected from %s",
     (route) => {
@@ -174,13 +165,77 @@ describe("Android workspace navigation", () => {
     expect(state.routes[1]?.params).toEqual({ ...pullRequest.params, ...change });
   });
 
-  it("does not reuse a thread key from another environment", () => {
-    const previous = select(router.getInitialState(options), thread);
-    const state = select(previous, {
-      name: "Thread",
-      params: { ...thread.params, environmentId: "environment-b" },
+  it("returns to a distinct previous thread, otherwise to the workspace list", () => {
+    const parent = select(router.getInitialState(options), thread);
+    let state = apply(
+      parent,
+      StackActions.push("Thread", { ...thread.params, threadId: "child-a" }),
+    );
+    let listSelected = false;
+    const navigation = {
+      dispatch: (action: AndroidWorkspaceResetAction) => {
+        state = apply(state, action);
+      },
+      getParent: () => undefined,
+      getState: () => state,
+      goBack: () => {
+        state = apply(state, StackActions.pop());
+      },
+    };
+    const back = () =>
+      returnToAndroidWorkspaceList(navigation, () => {
+        listSelected = true;
+      });
+
+    back();
+    expect(state.routes).toEqual(parent.routes);
+    expect(state.index).toBe(parent.index);
+    expect(listSelected).toBe(false);
+
+    back();
+    expect(state.routes).toEqual([parent.routes[0]]);
+    expect(state.index).toBe(0);
+    expect(listSelected).toBe(true);
+
+    state = apply(
+      parent,
+      StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
+    );
+    listSelected = false;
+    back();
+    expect(state.routes).toEqual(parent.routes);
+    expect(state.index).toBe(parent.index);
+    expect(listSelected).toBe(false);
+
+    // Confirming a Git action from the inline inspector can duplicate the current thread.
+    state = apply(parent, StackActions.push("Thread", thread.params));
+    back();
+    expect({ routes: names(state), index: state.index, listSelected }).toEqual({
+      routes: ["Home"],
+      index: 0,
+      listSelected: true,
     });
-    expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
+  });
+
+  it("recognizes a parent only when its environment and thread are immediately below", () => {
+    const parent = select(router.getInitialState(options), thread);
+    const child = apply(
+      parent,
+      StackActions.push("Thread", { ...thread.params, threadId: "child-a" }),
+    );
+
+    expect(parentThreadIsBelow(child, thread.params)).toBe(true);
+    expect(parentThreadIsBelow(child, { ...thread.params, environmentId: "environment-b" })).toBe(
+      false,
+    );
+    expect(parentThreadIsBelow(child, { ...thread.params, threadId: "other" })).toBe(false);
+    expect(parentThreadIsBelow(parent, thread.params)).toBe(false);
+    expect(
+      parentThreadIsBelow(
+        apply(child, StackActions.push("Thread", { ...thread.params, threadId: "grandchild-a" })),
+        thread.params,
+      ),
+    ).toBe(false);
   });
 
   it("drops stale detail history on a tab switch while retaining Home", () => {
