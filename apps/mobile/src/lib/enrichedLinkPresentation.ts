@@ -10,6 +10,7 @@ import {
 import { resolveMarkdownLinkIcon } from "./markdownLinks";
 import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import {
@@ -47,7 +48,9 @@ export function pullRequestChipStates(links: ReadonlyArray<ThreadPullRequestLink
     if (link.snapshot === null) continue;
     const key = threadPullRequestKeyOf(link);
     const known = newest.get(key);
-    if (!known || known.syncedAt < link.snapshot.syncedAt) newest.set(key, link.snapshot);
+    if (!known || compareDateTimeStrings(known.syncedAt, link.snapshot.syncedAt) < 0) {
+      newest.set(key, link.snapshot);
+    }
   }
   return new Map<string, PullRequestChipState>(
     Array.from(newest, ([key, snapshot]) => [

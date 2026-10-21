@@ -121,5 +121,10 @@ describe("Enriched link presentation", () => {
       )?.icon,
     ).toEqual({ kind: "chip", name: "git-pull-request-arrow" });
     expect(pullRequestChipStates([unlinked]).size).toBe(0);
+    const offsetOlder = link("open", "2026-10-02T01:00:00.000+02:00");
+    const utcNewer = link("merged", "2026-10-02T00:30:00.000Z");
+    expect(pullRequestChipStates([offsetOlder, utcNewer]).values().next().value?.state).toBe(
+      "merged",
+    );
   });
 });
