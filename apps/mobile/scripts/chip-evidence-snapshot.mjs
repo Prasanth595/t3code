@@ -37,6 +37,8 @@ const overlay = NodeChildProcess.execFileSync(
     "apps/mobile/src/features/chip-evidence",
     "apps/mobile/index.ts",
     "apps/mobile/eas.json",
+    "apps/mobile/package.json",
+    "apps/mobile/scripts/chip-evidence-native-build.mjs",
     "apps/mobile/scripts/chip-evidence-snapshot.mjs",
   ],
   { cwd: root, maxBuffer: 32 * 1024 * 1024 },

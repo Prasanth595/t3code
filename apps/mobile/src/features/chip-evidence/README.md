@@ -41,3 +41,8 @@ In particular, iOS has no native Material You palette implementation; standalone
 favicon grids are supplemental component controls, not evidence for every
 favicon caller. Screenshots must separately record source/build ids, device,
 viewport, scale, actual visible pages, and uncovered interactions/states.
+
+The evidence-only EAS post-install hook restricts generated app and Pods projects
+to arm64, matching the vendored GhosttyKit simulator slice and local showcase
+recipe. It requires the fixture flag, chip-evidence profile and iOS platform;
+normal builds do not change. It edits generated native projects with xcodeproj.
