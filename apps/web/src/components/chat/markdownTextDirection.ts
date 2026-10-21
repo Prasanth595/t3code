@@ -8,10 +8,36 @@ type HastNode = {
   children?: HastNode[];
 };
 
+// Raw HTML such as `<li>a</li><li>b</li>` has no whitespace between its
+// blocks, so they add their own to keep the words apart.
+const BLOCK_TAGS = new Set([
+  "blockquote",
+  "br",
+  "details",
+  "div",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "li",
+  "ol",
+  "p",
+  "summary",
+  "table",
+  "td",
+  "th",
+  "tr",
+  "ul",
+]);
+
 function proseText(node: HastNode): string {
   if (node.type === "text") return node.value ?? "";
   if (node.tagName === "code") return " ";
-  return (node.children ?? []).map(proseText).join("");
+  const text = (node.children ?? []).map(proseText).join("");
+  return node.tagName && BLOCK_TAGS.has(node.tagName) ? ` ${text} ` : text;
 }
 
 function isolateInlineCode(node: HastNode): void {
