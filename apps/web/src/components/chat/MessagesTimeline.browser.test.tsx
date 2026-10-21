@@ -1,4 +1,5 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, ThreadId, TurnItemId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, type ComponentProps, type ReactElement } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -9,6 +10,7 @@ import { act, render } from "../../../test/render";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { remarkThoughtPreview } from "./TimelineWorkEntryRow.logic";
 import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { deriveTimelineEntriesFromVisibleTurnItems } from "../../session-logic";
 
 const pullRequestQuery = vi.hoisted(() => ({ error: "Pull request not found" }));
 vi.mock(import("~/state/query"), async (original) => ({
@@ -118,6 +120,57 @@ async function click(element: HTMLElement) {
 }
 
 describe("MessagesTimeline messages", () => {
+  it.each([
+    { failureClass: "model_capacity", label: "Model at capacity.", showMessage: true },
+    { failureClass: "usage_limit", label: "Usage limit reached.", showMessage: false },
+    { failureClass: "provider_error", label: "Provider error", showMessage: true },
+  ] as const)(
+    "preserves the $failureClass failure's label and message visibility",
+    async ({ failureClass, label, showMessage }) => {
+      const now = DateTime.makeUnsafe(CREATED_AT);
+      const failureMessage = "Selected model is at capacity. Please try a different model.";
+      const item = {
+        id: TurnItemId.make(`failure:${failureClass}`),
+        threadId: ThreadId.make(`thread:${failureClass}`),
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "failed" as const,
+        title: "Provider error",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "error" as const,
+        failure: { class: failureClass, message: failureMessage, code: null, retryable: true },
+      };
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [
+          {
+            item,
+            position: 0,
+            visibility: "local",
+            sourceThreadId: item.threadId,
+            sourceItemId: item.id,
+          },
+        ],
+        optimisticMessages: [],
+      });
+      await using screen = await renderTimeline(entries);
+      await expect.element(screen.getByText(label, { exact: true })).toBeVisible();
+      if (showMessage) {
+        await expect.element(screen.getByText(failureMessage, { exact: true })).toBeVisible();
+      } else {
+        await expect
+          .element(screen.getByText(failureMessage, { exact: true }))
+          .not.toBeInTheDocument();
+      }
+    },
+  );
+
   it("preserves XML-like tags and comparisons in user messages as text", async () => {
     const source = [
       'Without reading a file, do you have <global-agent-instructions scope="workspace">',

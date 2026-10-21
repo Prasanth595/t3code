@@ -901,6 +901,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   if (failureItem.type === "error" && failureItem.status === "failed") {
     const warning =
       failureItem.failure.class === "usage_limit" || failureItem.failure.class === "model_capacity";
+    const showFailureMessage = failureItem.failure.class !== "usage_limit";
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt
@@ -920,7 +921,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
       : row.summary;
     return (
       <WorkLogPressable
-        accessibilityLabel={warning ? label : `${row.summary}: ${failureItem.failure.message}`}
+        accessibilityLabel={showFailureMessage ? `${label} ${failureItem.failure.message}` : label}
         accessibilityHint="Long press to copy."
         onLongPress={() => props.onCopyRow(row.id, row.getCopyText())}
       >
@@ -959,7 +960,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               })}
             </Text>
           </View>
-          {!warning ? (
+          {showFailureMessage ? (
             <Text selectable className="ml-7 text-sm text-foreground">
               {failureItem.failure.message}
             </Text>

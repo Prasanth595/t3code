@@ -201,6 +201,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning =
       failureItem.failure.class === "usage_limit" || failureItem.failure.class === "model_capacity";
+    const showFailureMessage = failureItem.failure.class !== "usage_limit";
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
     const failureLabel =
@@ -241,7 +242,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           />
         }
       >
-        {!warning ? (
+        {showFailureMessage ? (
           <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
             {failureItem.failure.message}
           </p>
