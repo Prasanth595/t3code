@@ -1056,10 +1056,17 @@ export function ThreadSearchPullRequestNumber({
     ? resolveThreadCurrentPullRequestLink(thread.pullRequests)
     : null;
   const pr = linked?.pr ?? null;
+  // Stored references already carry a number, so the badge shows before PR details load.
+  const stored =
+    current ??
+    [thread.linkedPullRequest, thread.branchPullRequest].find(
+      (reference) =>
+        reference != null && pullRequestMatchesSearchQuery({ linkedPullRequest: reference }, query),
+    );
   const presentation = resolveThreadPullRequestBadgePresentation({
     badge,
-    number: pr?.number ?? current?.number,
-    url: pr?.url ?? current?.url,
+    number: pr?.number ?? stored?.number,
+    url: pr?.url ?? stored?.url,
     status: prStatusIndicator(pr, linked?.sourceControlProvider),
   });
   if (presentation === null) return null;
