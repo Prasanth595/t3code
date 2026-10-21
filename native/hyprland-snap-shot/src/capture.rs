@@ -148,6 +148,8 @@ pub(super) fn capture_on(connection: Connection, address: u64, directory: &Path)
     let mut encoder = png::Encoder::new(BufWriter::new(file), pixels.width, pixels.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // The default level 6 dominated capture time. Level 2 is lossless and much faster.
+    encoder.set_deflate_compression(png::DeflateCompression::Level(2));
     encoder.write_header()?.write_image_data(&rgba)?;
     Ok(())
 }

@@ -306,6 +306,8 @@ fn capture(connection: &Connection, directory: &Path) -> Result<Option<Window>> 
     let mut encoder = png::Encoder::new(image, width as u32, height as u32);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // The default level 6 dominated capture time. Level 2 is lossless and much faster.
+    encoder.set_deflate_compression(png::DeflateCompression::Level(2));
     let mut image = encoder.write_header()?;
     image.write_image_data(&pixels)?;
     image.finish()?;
