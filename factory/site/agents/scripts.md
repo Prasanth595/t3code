@@ -128,15 +128,15 @@ Rewrites `apps/web/src/routeTree.gen.ts` with the TanStack generator, for a sync
 
 Merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. Run daily by `.github/workflows/factory-sync.yml`.
 
-|           |                                                                                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Usage     | `factory/scripts/sync.sh [prepare <dir> \| publish <dir>]`; no argument runs both                                                    |
-| Env       | `SYNC_UPSTREAM` (default `https://github.com/pingdotgg/t3code`)                                                                      |
-| `prepare` | Merges the tag on `sync/<tag>`, runs `vp i` and `check.sh`, writes the outcome and a bundle to `<dir>`. No write token.              |
-| `publish` | Verifies the bundle, then pushes, lands, or files an issue.                                                                          |
-| 0         | Up to date; waiting on an open sync PR; merged into `main`; or `prepare` recorded an outcome.                                        |
-| 1         | Anything that files an issue (conflicts, failing checks, cannot push, cannot land, route-tree review, stuck) or a bad tag or remote. |
-| 2         | Wrong arguments.                                                                                                                     |
+|           |                                                                                                                                                                                                 |
+| --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Usage     | `factory/scripts/sync.sh [prepare <dir> \| publish <dir>]`; no argument runs both                                                                                                               |
+| Env       | `SYNC_UPSTREAM` (default `https://github.com/pingdotgg/t3code`)                                                                                                                                 |
+| `prepare` | Merges the tag on `sync/<tag>`, runs `vp i` and `check.sh`, writes the outcome and a bundle to `<dir>`. No write token.                                                                         |
+| `publish` | Verifies the bundle, then pushes, lands, or files an issue. Inside the workflow, a landing then dispatches Factory CI, desktop and, when the merge touched `apps/mobile` or `packages`, mobile. |
+| 0         | Up to date; waiting on an open sync PR; merged into `main`; or `prepare` recorded an outcome.                                                                                                   |
+| 1         | Anything that files an issue (conflicts, failing checks, cannot push, cannot land, route-tree review, stuck), a failed dispatch, or a bad tag or remote.                                        |
+| 2         | Wrong arguments.                                                                                                                                                                                |
 
 ## Desktop release scripts
 
