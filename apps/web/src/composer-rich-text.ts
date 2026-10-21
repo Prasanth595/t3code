@@ -12,6 +12,10 @@ export const RICH_TEXT_DELIMITERS: Record<RichTextMark, string> = {
   code: "`",
 };
 
+// An underscore inside a word is part of the name in any script, as in
+// `ملف_الاعدادات` or `файл_один`, so it neither opens nor closes emphasis.
+const WORD_CHARACTER = /[\p{L}\p{M}\p{N}_]/u;
+
 function pushSpan(spans: RichTextSpan[], text: string, marks: RichTextMark[]): void {
   if (!text) return;
   const last = spans[spans.length - 1];
@@ -64,8 +68,10 @@ export function parseInlineMarkdown(text: string): RichTextSpan[] {
     while (text[end] === char) end += 1;
     const before = text[index - 1] ?? "";
     const after = text[end] ?? "";
-    const canClose = before !== "" && !/\s/.test(before) && (char !== "_" || !/\w/.test(after));
-    const canOpen = after !== "" && !/\s/.test(after) && (char !== "_" || !/\w/.test(before));
+    const canClose =
+      before !== "" && !/\s/.test(before) && (char !== "_" || !WORD_CHARACTER.test(after));
+    const canOpen =
+      after !== "" && !/\s/.test(after) && (char !== "_" || !WORD_CHARACTER.test(before));
     while (index < end) {
       const top = stack.at(-1);
       const opensNestedBold =
