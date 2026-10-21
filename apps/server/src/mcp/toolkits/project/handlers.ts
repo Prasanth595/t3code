@@ -1,4 +1,10 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+  type SecretRequestError,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -9,6 +15,7 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as ThreadWatchReactor from "../../../orchestration-v2/ThreadWatchReactor.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
@@ -45,6 +52,21 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
         "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
     });
 });
+
+const watchRefused = (
+  error:
+    | ThreadWatchReactor.ThreadWatchInvalidError
+    | ThreadWatchReactor.ThreadWatchStoreError
+    | SecretRequestError,
+) =>
+  Effect.fail(
+    error._tag === "ThreadWatchStoreError"
+      ? unavailable()
+      : new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `${error.message} No thread was created.`,
+        }),
+  );
 
 const access = Effect.gen(function* () {
   yield* readCaller();
@@ -133,6 +155,19 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
+        // Watched before the thread exists, so its first run cannot be missed.
+        const watchDelivery = input.watch;
+        if (watchDelivery !== undefined)
+          yield* ThreadWatchReactor.ThreadWatchReactor.pipe(
+            Effect.flatMap((watches) =>
+              watches.watch({ threadId, projectId, delivery: watchDelivery }),
+            ),
+            Effect.catchTags({
+              ThreadWatchInvalidError: watchRefused,
+              ThreadWatchStoreError: watchRefused,
+              SecretRequestError: watchRefused,
+            }),
+          );
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -170,6 +205,15 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             }
             return unavailable();
           }),
+          // A launch that failed may still have created the thread, so the watch
+          // looks at it: one that never came to be ends its watch.
+          Effect.onError(() =>
+            watchDelivery === undefined
+              ? Effect.void
+              : ThreadWatchReactor.ThreadWatchReactor.pipe(
+                  Effect.flatMap((watches) => watches.checkThread(threadId)),
+                ),
+          ),
         );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
