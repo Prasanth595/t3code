@@ -200,17 +200,19 @@ fails_checks() {
 
 # Dispatches the workflows a push to main would have started, on the landed
 # main, and sets $dispatched to their files. <before> is main before the landing.
+# Every one is tried; each that fails gets its own line, then publish exits 1.
 dispatch() {
-  local before=$1 workflow workflows=(factory-ci.yml factory-desktop.yml)
+  local before=$1 workflow failed=0 workflows=(factory-ci.yml factory-desktop.yml)
   if [[ -n $(git diff --name-only "$before..$candidate" -- apps/mobile packages) ]]; then
     workflows+=(factory-mobile.yml)
   fi
   for workflow in "${workflows[@]}"; do
     if ! gh workflow run "$workflow" --ref "$base"; then
       echo "sync: $tag merged into $base through $pr_url; dispatch of $workflow failed" >&2
-      exit 1
+      failed=1
     fi
   done
+  ((failed == 0)) || exit 1
   printf -v dispatched '%s, ' "${workflows[@]}"
   dispatched=${dispatched%, }
 }
