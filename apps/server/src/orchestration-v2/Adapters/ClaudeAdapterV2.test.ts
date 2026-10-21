@@ -1741,10 +1741,13 @@ describe("ClaudeAdapterV2 native fork", () => {
   );
 });
 
+// With `answerSetServers` off, the CLI holds its mcp_set_servers answer until
+// `answerHeldSetServers`, as Claude Code does while SessionStart hooks run.
 function makeFakeClaudeCli(answerSetServers = true) {
   const spawns: Array<SpawnOptions> = [];
   const controlRequests: Array<object> = [];
   const stdins: Array<NodeStream.PassThrough> = [];
+  const held = Promise.withResolvers<() => void>();
   const spawn = (options: SpawnOptions): SpawnedProcess => {
     spawns.push(options);
     const stdin = new NodeStream.PassThrough();
@@ -1770,13 +1773,15 @@ function makeFakeClaudeCli(answerSetServers = true) {
         if (frame.type !== "control_request") continue;
         controlRequests.push(frame.request);
         const setServers = frame.request.subtype === "mcp_set_servers";
-        if (setServers && !answerSetServers) continue;
         const response = {
           subtype: "success",
           request_id: frame.request_id,
           response: setServers ? { added: [], removed: [], errors: {} } : {},
         };
-        stdout.write(`${JSON.stringify({ type: "control_response", response })}\n`);
+        const answer = () =>
+          stdout.write(`${JSON.stringify({ type: "control_response", response })}\n`);
+        if (setServers && !answerSetServers) held.resolve(answer);
+        else answer();
       }
     });
     stdin.on("end", () => {
@@ -1787,7 +1792,7 @@ function makeFakeClaudeCli(answerSetServers = true) {
   };
   // The SDK closes the CLI by ending its stdin.
   const closed = () => stdins.length > 0 && stdins.every((stdin) => stdin.writableEnded);
-  return { spawn, spawns, controlRequests, closed };
+  return { spawn, spawns, controlRequests, closed, answerHeldSetServers: held.promise };
 }
 
 describe("ClaudeAdapterV2 MCP credential channel", () => {
@@ -1837,6 +1842,19 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
       const spawned = JSON.stringify(cli.spawns);
       assert.notInclude(spawned, "--mcp-config");
       assert.notInclude(spawned, "dummy-mcp-credential");
+    }),
+  );
+
+  it.effect("waits for a CLI whose startup hooks outlast 90 seconds", () =>
+    Effect.gen(function* () {
+      const cli = makeFakeClaudeCli(false);
+      const opening = yield* openWith(cli).pipe(Effect.forkChild);
+      const answer = yield* Effect.promise(() => cli.answerHeldSetServers);
+      yield* TestClock.adjust("10 minutes");
+      answer();
+      const session = yield* Fiber.join(opening);
+      assert.isFalse(cli.closed());
+      yield* session.close;
     }),
   );
 });
