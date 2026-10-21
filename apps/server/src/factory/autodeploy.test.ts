@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - the script is run for real, against a temp clone, a stub status API and version directories whose real mtimes it compares.
+// @effect-diagnostics nodeBuiltinImport:off - the script is run for real, against a temp clone, a stub status API and version directories whose real mtimes it compares.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
@@ -546,11 +546,13 @@ describe("autodeploy.sh pruning old versions", () => {
   const versions = () => NodeFS.readdirSync(versionsDir()).toSorted();
   const installedName = () => current().slice("versions/".length);
 
-  // A version directory installed `minutesAgo` minutes ago: its mtime is its install time.
+  // A version directory installed `minutesAgo` minutes ago: its mtime is its install time. The
+  // offset is taken from the mtime mkdir just stamped, so it lines up with the directories the
+  // deploy itself creates.
   const addVersion = (name: string, minutesAgo: number) => {
     const dir = NodePath.join(versionsDir(), name);
     NodeFS.mkdirSync(dir, { recursive: true });
-    const time = (Date.now() - minutesAgo * 60_000) / 1000;
+    const time = (NodeFS.statSync(dir).mtimeMs - minutesAgo * 60_000) / 1000;
     NodeFS.utimesSync(dir, time, time);
   };
 
