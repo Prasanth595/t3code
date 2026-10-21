@@ -1,6 +1,7 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { fakeTimers } from "../../../test/render";
 import { observeHtmlRenderCitationSource } from "./htmlRenderCitationSource";
 import type { AssistantCitationTarget } from "./AssistantCitationSource";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
@@ -25,7 +26,6 @@ function environment() {
       document.body.replaceChildren();
       vi.restoreAllMocks();
       vi.unstubAllGlobals();
-      vi.useRealTimers();
     },
   };
 }
@@ -102,7 +102,7 @@ describe("HTML citation source navigation", () => {
   it.each([true, false])(
     "finishes with a recovery message when readiness is %s and the frame does not reply",
     (ready) => {
-      vi.useFakeTimers();
+      using _timers = fakeTimers();
       using fixture = environment();
       const disposers = fixture.disposers;
       const p = setup(disposers, ready);

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { fakeTimers } from "../../test/render";
 import {
   htmlSelectionCommand,
   htmlSelectionParams,
@@ -27,8 +28,10 @@ async function page(
   await loaded;
   await new Promise<void>((resolve) => view.requestAnimationFrame(() => resolve()));
   // The bridge runs in another realm; use the test clock for its timers too.
-  view.setTimeout = window.setTimeout.bind(window);
-  view.clearTimeout = window.clearTimeout.bind(window);
+  Object.defineProperties(view, {
+    setTimeout: { configurable: true, get: () => window.setTimeout.bind(window) },
+    clearTimeout: { configurable: true, get: () => window.clearTimeout.bind(window) },
+  });
   const post = vi.spyOn(view.parent, "postMessage");
   const rect = { left: 10, top: 20, width: 80, height: 15 };
   Object.assign(view.Range.prototype, {
@@ -81,7 +84,6 @@ async function page(
     async [Symbol.asyncDispose]() {
       frame.remove();
       vi.restoreAllMocks();
-      vi.useRealTimers();
     },
   };
 }
@@ -430,8 +432,8 @@ describe("HTML render selection bridge", () => {
   });
 
   it("does not shorten the multi-click delay when selectionchange arrives late", async () => {
-    vi.useFakeTimers();
     await using p = await page();
+    using _timers = fakeTimers();
     const strong = p.view.document.querySelector("strong")!;
     p.pointer("pointerdown", strong);
     p.select(strong.firstChild!, 0);
@@ -494,8 +496,8 @@ describe("HTML render selection bridge", () => {
   ])(
     "captures Select All after Escape with $key (ctrl=$ctrlKey, meta=$metaKey)",
     async (shortcut) => {
-      vi.useFakeTimers();
       await using p = await page("<p>Before <strong>quoted text</strong> after.</p>");
+      using _timers = fakeTimers();
       const paragraph = p.view.document.querySelector("p")!;
       const strong = p.view.document.querySelector("strong")!;
       p.pointer("pointerdown", strong);
