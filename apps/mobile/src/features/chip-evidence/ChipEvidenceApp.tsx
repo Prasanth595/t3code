@@ -25,6 +25,7 @@ import { PendingUserInputCard } from "../threads/PendingUserInputCard";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentProjects } from "../../state/projects";
 import { environmentThreadShells, environmentThreadDetails } from "../../state/threads";
+import { serverEnvironment } from "../../state/server";
 import { projectFaviconUrlAtom } from "../../state/assets";
 import {
   AppearancePreferencesProvider,
@@ -48,6 +49,7 @@ import { MOBILE_THEME_IDS } from "../../lib/mobileTheme";
 import { setComposerDraftText, setComposerDraftContext } from "../../state/use-composer-drafts";
 import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
 import { VoiceInputProvider } from "../voice-input/VoiceInputProvider";
+import { FaviconLifecycleFixture } from "./FaviconLifecycleFixture";
 import { ArchiveFixture, HomeFixture, NewTaskFixture } from "./CallerFixtures";
 import { Rasterizer, seedGlyphFailures } from "./rasterizer";
 import {
@@ -63,6 +65,7 @@ import {
   PR_REVIEWS,
   REVIEW,
   SCENES,
+  SERVER_CONFIG,
   SIZES,
   SKILLS,
   THREAD_ID,
@@ -116,8 +119,11 @@ const projects: EnvironmentProject[] = ProjectIconColor.literals.map((color, ind
   defaultModelSelection: null,
   scripts: [],
 }));
+preload(serverEnvironment.configValueAtom(ENVIRONMENT_ID), SERVER_CONFIG);
 preload(environmentProjects.projectsAtom, projects);
 preload(environmentThreadShells.threadShellsAtom, [shell]);
+const linkedProjects: EnvironmentProject[] = [];
+const linkedShells = [shell];
 const projectKinds: ReadonlyArray<{ id: string; title: string; icon?: ProjectIconOverride }> = [
   { id: "favicon", title: "Loaded favicon" },
   { id: "emoji", title: "Emoji project", icon: { kind: "emoji", emoji: "👩🏽‍💻" } },
@@ -128,7 +134,10 @@ const projectKinds: ReadonlyArray<{ id: string; title: string; icon?: ProjectIco
     title: "Lucide project",
     icon: { kind: "lucide", name: "folder", color: "purple" },
   },
-  { id: "normal", title: "Mobile app" },
+  {
+    id: "normal",
+    title: "Mobile application with a very long project title and a suffix that should truncate",
+  },
   { id: "punctuation", title: "!!!" },
   { id: "digit", title: "t3code" },
   { id: "blank", title: "   " },
@@ -144,6 +153,15 @@ for (const kind of projectKinds) {
     workspaceRoot: `/fixture/${kind.id}`,
     projectIcon: kind.icon ?? null,
   };
+  linkedProjects.push(project);
+  linkedShells.push(
+    makeThreadShellFixture({
+      environmentId: ENVIRONMENT_ID,
+      id: ThreadId.make(`linked-${kind.id}`),
+      projectId: project.id,
+      title: kind.title,
+    }),
+  );
   preload(
     environmentProjects.projectAtom({ environmentId: ENVIRONMENT_ID, projectId: project.id }),
     project,
@@ -176,6 +194,8 @@ preload(
   shell,
 );
 
+preload(environmentProjects.projectsAtom, [...linkedProjects, ...projects]);
+preload(environmentThreadShells.threadShellsAtom, linkedShells);
 const remoteEnvironment = EnvironmentId.make("chip-evidence-remote");
 const remoteThreadId = ThreadId.make("remote:linked");
 const remoteProject = {
@@ -326,7 +346,7 @@ function FixtureScreen() {
   if (scene.startsWith("P3")) text = EXTERNAL;
   if (scene.startsWith("A1"))
     text += "\n\nTry $check.mobile and `src/app.tsx` or [app.tsx](file:///fixture/src/app.tsx).";
-  if (scene.startsWith("F2")) text += "\n\n[No size record](t3-context://v1/file/no-size)";
+  if (scene.startsWith("F2")) text += "\n\n[Missing record; no size](t3-context://v1/file/no-size)";
   if (scene.startsWith("N1"))
     text +=
       "\n\n[Missing image](t3-context://v1/image/missing) [Missing terminal](t3-context://v1/terminal/missing)\n\nPlain control.";
@@ -377,7 +397,9 @@ function FixtureScreen() {
       <HomeFixture projects={projects} thread={shell} />
     ) : scene === "G3-archive" ? (
       <ArchiveFixture projects={projects} thread={shell} />
-    ) : scene === "G3-new-task" || scene.startsWith("C2") ? (
+    ) : scene === "G2" ? (
+      <FaviconLifecycleFixture setUrl={preload} />
+    ) : scene === "G3-new-task" || (scene.startsWith("C2") && scene !== "C2-thread-composer") ? (
       <NewTaskFixture
         picker={scene === "G3-new-task"}
         project={projects[0]!}
@@ -641,7 +663,7 @@ function FixtureScreen() {
           environmentLabel="Offline fixture"
           selectedThread={shell}
           hasCompactableConversation={false}
-          serverConfig={null}
+          serverConfig={SERVER_CONFIG}
           queueCount={0}
           activeThreadBusy={false}
           canStopThread={false}

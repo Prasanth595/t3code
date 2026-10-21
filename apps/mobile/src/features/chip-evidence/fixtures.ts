@@ -1,4 +1,5 @@
 import {
+  ServerConfig,
   ComposerContextId,
   EnvironmentId,
   MessageId,
@@ -23,6 +24,49 @@ export const SKILLS = [
     description: "Offline fixture skill",
   },
 ];
+export const SERVER_CONFIG = Schema.decodeUnknownSync(ServerConfig)({
+  environment: {
+    environmentId: ENVIRONMENT_ID,
+    label: "Offline fixture",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "fixture",
+    capabilities: {},
+  },
+  auth: {
+    policy: "remote-reachable",
+    bootstrapMethods: [],
+    sessionMethods: [],
+    sessionCookieName: "fixture-unused",
+  },
+  cwd: "/fixture",
+  keybindingsConfigPath: "/fixture/keybindings.json",
+  keybindings: [],
+  issues: [],
+  providers: [
+    {
+      instanceId: "codex",
+      driver: "codex",
+      enabled: false,
+      installed: false,
+      version: null,
+      status: "disabled",
+      auth: { status: "unknown" },
+      checkedAt: FIXED_TIME,
+      models: [],
+      skills: SKILLS,
+    },
+  ],
+  availableEditors: [],
+  observability: {
+    logsDirectoryPath: "/fixture/logs",
+    localTracingEnabled: false,
+    otlpTracesEnabled: false,
+    otlpMetricsEnabled: false,
+    otlpLogsEnabled: false,
+  },
+  settings: {},
+  scratchWorkspaceRoot: "/fixture/scratch",
+});
 const base = (id: string, label: string) => ({
   version: 1 as const,
   contextId: ComposerContextId.make(id),
@@ -251,6 +295,8 @@ export const SCENES = [
   "T5-before",
   "T5-renamed",
   "G1",
+  "G2",
+  "C2-thread-composer",
   "K1",
   "K2",
   "G3-sizes",
