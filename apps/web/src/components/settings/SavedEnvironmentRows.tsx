@@ -709,5 +709,3 @@ export function CloudRemoteEnvironmentRows({
     <EmptyRemoteEnvironments cloudEnabled={false} />
   ) : null;
 }
-
-// Subscribes on its own so desktop download progress does not re-render the page.

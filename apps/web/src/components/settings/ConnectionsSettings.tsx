@@ -190,6 +190,7 @@ const EMPTY_DISCOVERED_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 const BACKEND_VALUE_DEFAULT_WSL = "backend:default-wsl";
 const BACKEND_VALUE_WSL_OFF = "backend:wsl-off";
 
+// Subscribes on its own so desktop download progress does not re-render the page.
 function LocalVersionStatusLabel() {
   const updateState = useDesktopUpdateState();
   return (
