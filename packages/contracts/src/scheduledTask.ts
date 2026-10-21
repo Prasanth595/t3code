@@ -231,6 +231,113 @@ export const ScheduledTaskWebhookEndpoint = Schema.Struct({
 });
 export type ScheduledTaskWebhookEndpoint = typeof ScheduledTaskWebhookEndpoint.Type;
 
+const ScheduledTaskWatchAuth = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("bearer"), hasSecret: Schema.Boolean }),
+  Schema.Struct({
+    type: Schema.Literal("basic"),
+    username: TrimmedNonEmptyString,
+    hasSecret: Schema.Boolean,
+  }),
+]);
+
+const ScheduledTaskWatchAuthInput = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("bearer"), secretRef: Schema.optional(SecretRef) }),
+  Schema.Struct({
+    type: Schema.Literal("basic"),
+    username: TrimmedNonEmptyString,
+    secretRef: Schema.optional(SecretRef),
+  }),
+]).annotate({
+  description:
+    "Use only a secretRef from request_secret. Omit it to retain stored credentials only when the endpoint origin and auth identity are unchanged. Never put credentials in URLs.",
+});
+
+const ScheduledTaskWatchJiraFields = {
+  type: Schema.Literal("jira"),
+  baseUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)).annotate({
+    description: "Jira Cloud HTTPS site origin, such as https://example.atlassian.net.",
+  }),
+  jql: TrimmedNonEmptyString.check(Schema.isMaxLength(10_000)).annotate({
+    description: "JQL selecting the complete set of issues to watch.",
+  }),
+};
+
+const ScheduledTaskWatchHttpFields = {
+  type: Schema.Literal("http_json"),
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)).annotate({
+    description:
+      "HTTP GET endpoint returning a complete bounded JSON snapshot, without credentials.",
+  }),
+  itemsPath: Schema.String.check(Schema.isMaxLength(256)).annotate({
+    description: "Dot path to the items array. Use an empty string for a root array.",
+  }),
+  keyPath: TrimmedNonEmptyString.check(Schema.isMaxLength(256)).annotate({
+    description: "Dot path within each item to its stable unique scalar key.",
+  }),
+};
+
+export const ScheduledTaskWatchSource = Schema.Union([
+  Schema.Struct({ ...ScheduledTaskWatchJiraFields, auth: Schema.optional(ScheduledTaskWatchAuth) }),
+  Schema.Struct({ ...ScheduledTaskWatchHttpFields, auth: Schema.optional(ScheduledTaskWatchAuth) }),
+]);
+export type ScheduledTaskWatchSource = typeof ScheduledTaskWatchSource.Type;
+
+const ScheduledTaskWatchSourceInput = Schema.Union([
+  Schema.Struct({
+    ...ScheduledTaskWatchJiraFields,
+    auth: Schema.optional(ScheduledTaskWatchAuthInput),
+  }),
+  Schema.Struct({
+    ...ScheduledTaskWatchHttpFields,
+    auth: Schema.optional(ScheduledTaskWatchAuthInput),
+  }),
+]);
+
+const ScheduledTaskWatchFilterPath = TrimmedNonEmptyString.check(Schema.isMaxLength(256));
+
+export const ScheduledTaskWatchFilter = Schema.Union([
+  Schema.Struct({
+    path: ScheduledTaskWatchFilterPath,
+    op: Schema.Literals(["equals", "notEquals", "startsWith"]),
+    value: Schema.String,
+  }),
+  Schema.Struct({
+    path: ScheduledTaskWatchFilterPath,
+    op: Schema.Literal("in"),
+    value: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
+  }),
+  Schema.Struct({ path: ScheduledTaskWatchFilterPath, op: Schema.Literal("exists") }),
+]).annotate({
+  description:
+    "Dot path within each item, without a body prefix. Scalars compare as strings; objects and arrays only satisfy exists. Missing paths fail every other op.",
+});
+export type ScheduledTaskWatchFilter = typeof ScheduledTaskWatchFilter.Type;
+
+const ScheduledTaskWatchConfigFields = {
+  filters: Schema.Array(ScheduledTaskWatchFilter).check(Schema.isMaxLength(MAX_WEBHOOK_FILTERS)),
+  maxConcurrentRuns: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 })),
+};
+
+export const ScheduledTaskWatchInput = Schema.Struct({
+  source: ScheduledTaskWatchSourceInput,
+  ...ScheduledTaskWatchConfigFields,
+}).annotate({
+  description:
+    "Watch an interval's source without running an agent on each check. All filters must match. The first successful check sets the baseline without firing; later new matches and nonmatching-to-matching transitions fire once. Use filters:[] for all items and maxConcurrentRuns:1 unless more parallel work is needed.",
+});
+export type ScheduledTaskWatchInput = typeof ScheduledTaskWatchInput.Type;
+
+export const ScheduledTaskWatch = Schema.Struct({
+  source: ScheduledTaskWatchSource,
+  ...ScheduledTaskWatchConfigFields,
+  initializedAt: Schema.NullOr(IsoDateTime),
+  lastFiredAt: Schema.NullOr(IsoDateTime),
+  fireCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  pendingCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  activeRunCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ScheduledTaskWatch = typeof ScheduledTaskWatch.Type;
+
 export const ScheduledTask = Schema.Struct({
   id: ScheduledTaskId,
   title: TrimmedNonEmptyString,
@@ -253,6 +360,7 @@ export const ScheduledTask = Schema.Struct({
   lastRunError: Schema.NullOr(Schema.String),
   runCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
+  watch: Schema.optional(ScheduledTaskWatch),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -260,6 +368,7 @@ export const ScheduledTaskListInput = Schema.Struct({});
 export type ScheduledTaskListInput = typeof ScheduledTaskListInput.Type;
 
 export const ScheduledTaskListResult = Schema.Struct({
+  supportsWatchers: Schema.optional(Schema.Boolean),
   // Trigger types grow over time; a client must not lose the whole list over
   // one task it cannot decode.
   tasks: ForwardCompatibleArray(ScheduledTask),
@@ -276,6 +385,13 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   prompt: TrimmedNonEmptyString,
   enabled: Schema.Boolean,
   schedule: ScheduledTaskUpsertSchedule,
+  watch: Schema.optional(Schema.NullOr(ScheduledTaskWatchInput)).annotate({
+    description: "Requires an interval schedule. Omit to keep the stored watch; null removes it.",
+  }),
+  watchSecret: Schema.optional(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description:
+      "Write-only watcher credential entered in a client form. Omit to keep stored credentials. Cannot be combined with a secretRef.",
+  }),
   projectId: ProjectId,
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,

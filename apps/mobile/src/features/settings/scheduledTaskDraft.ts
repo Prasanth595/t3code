@@ -5,8 +5,10 @@ import type {
   ProjectId,
   RuntimeMode,
   ScheduledTask,
+  ScheduledTaskUpsertInput,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -17,6 +19,12 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  emptyWatchDraft,
+  parseWatchDraft,
+  watchDraft,
+  type WatchDraft,
+} from "@t3tools/client-runtime/scheduled-task-watch";
 import {
   resolveProjectSettings,
   type LegacyProjectSettingsFields,
@@ -51,7 +59,7 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval" | "webhook";
+  readonly mode: "fixed_time" | "interval" | "webhook" | "watch";
   readonly timeOfDay: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
@@ -63,6 +71,7 @@ export type ScheduleDraft = {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  readonly watch: WatchDraft;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -77,9 +86,20 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  watch: emptyWatchDraft(),
 };
 
-export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
+export function scheduleDraftForTask(
+  task: Pick<ScheduledTask, "schedule" | "watch">,
+): ScheduleDraft {
+  if (task.watch && task.schedule.type === "interval") {
+    return {
+      ...DEFAULT_SCHEDULE,
+      mode: "watch",
+      intervalMinutes: String(Math.max(1, task.schedule.everyMs / 60_000)),
+      watch: watchDraft(task.watch),
+    };
+  }
   switch (task.schedule.type) {
     case "fixed_time":
       return {
@@ -162,7 +182,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
         : {}),
     };
   }
-  if (draft.mode === "interval") {
+  if (draft.mode === "interval" || draft.mode === "watch") {
     const minutes = Number(draft.intervalMinutes);
     const everyMs = Math.round(minutes * 60_000);
     return minutes >= 1 && Number.isSafeInteger(everyMs) ? { type: "interval", everyMs } : null;
@@ -185,6 +205,7 @@ export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSche
 type Workspace = "worktree" | "root" | "existing_worktree";
 export type ScheduledTaskDraft = {
   readonly task: ScheduledTask | null;
+  readonly threadId: ThreadId | null;
   readonly title: string;
   readonly prompt: string;
   readonly projectId: ProjectId | null;
@@ -218,6 +239,10 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.schedule.coalesceKey,
     draft.schedule.coalesceWindowSeconds,
     draft.schedule.filters.map(({ path, op, value }) => [path, op, value]),
+    {
+      ...draft.schedule.watch,
+      filters: draft.schedule.watch.filters.map(({ path, op, value }) => [path, op, value]),
+    },
     draft.workspace,
     draft.baseRef,
     draft.checkoutPath,
@@ -240,6 +265,7 @@ export function createDraft(
 ): ScheduledTaskDraft {
   return {
     task: null,
+    threadId: null,
     title: "",
     prompt: "",
     projectId,
@@ -258,6 +284,7 @@ export function createDraft(
 export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
   return {
     task,
+    threadId: task.threadId,
     title: task.title,
     prompt: task.prompt,
     projectId: task.projectId,
@@ -277,4 +304,26 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
         : true,
     runtimeMode: task.runtimeMode,
   };
+}
+
+export function withDraftProject(
+  draft: ScheduledTaskDraft,
+  projectId: ProjectId,
+  modelSelection: ModelSelection | null,
+  modelSelectionIsExplicit: boolean,
+): ScheduledTaskDraft {
+  return {
+    ...draft,
+    projectId,
+    modelSelection,
+    modelSelectionIsExplicit,
+    threadId: projectId === draft.projectId ? draft.threadId : null,
+  };
+}
+
+export function watchFieldsFromDraft(
+  draft: ScheduledTaskDraft,
+): Pick<ScheduledTaskUpsertInput, "watch" | "watchSecret"> | { readonly error: string } {
+  if (draft.schedule.mode !== "watch") return draft.task?.watch ? { watch: null } : {};
+  return parseWatchDraft(draft.schedule.watch);
 }

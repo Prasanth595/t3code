@@ -5,6 +5,7 @@ import {
   type ServerConfig,
   ProviderInstanceId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -21,6 +22,11 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
+  validateScheduledTasksSearch,
+  watcherDraft,
+  watchFieldsFromDraft,
+  watchSecretKept,
+  withDraftProject,
 } from "./scheduledTasksSettings.logic";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -255,6 +261,120 @@ describe("webhook scheduled tasks", () => {
         filters: [{ id: "f1", path: "body.action", op: "in", value: " , " }],
       }),
     ).toBeNull();
+  });
+});
+
+describe("watcher scheduled tasks", () => {
+  const watch = {
+    source: {
+      type: "http_json",
+      url: "https://feed.example.com/items",
+      itemsPath: "data.items",
+      keyPath: "id",
+      auth: { type: "basic", username: "bot", hasSecret: true },
+    },
+    filters: [{ path: "status", op: "in", value: ["Done", "Closed"] }],
+    maxConcurrentRuns: 2,
+    initializedAt: "2026-10-21T10:00:00.000Z",
+    lastFiredAt: null,
+    fireCount: 3,
+    pendingCount: 0,
+    activeRunCount: 0,
+  } as const;
+  const watcherTask: ScheduledTask = {
+    ...legacyTask,
+    schedule: { type: "interval", everyMs: 300_000 },
+    watch,
+  };
+
+  it("round-trips a stored watcher and keeps its credential when the secret is blank", () => {
+    const draft = taskToDraft(watcherTask);
+    expect(draft.scheduleMode).toBe("watch");
+    expect(draft.watch.secret).toBe("");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 300_000 });
+    expect(watchFieldsFromDraft(draft)).toEqual({
+      watch: {
+        source: {
+          type: "http_json",
+          url: "https://feed.example.com/items",
+          itemsPath: "data.items",
+          keyPath: "id",
+          auth: { type: "basic", username: "bot" },
+        },
+        filters: watch.filters,
+        maxConcurrentRuns: 2,
+      },
+    });
+    expect(
+      watchFieldsFromDraft({ ...draft, watch: { ...draft.watch, secret: " pa ss " } }),
+    ).toMatchObject({ watchSecret: " pa ss " });
+  });
+
+  it("rejects an invalid watcher instead of saving it", () => {
+    const draft = taskToDraft(watcherTask);
+    for (const patch of [{ url: "not a url" }, { maxConcurrentRuns: "5" }, { keyPath: " " }]) {
+      expect(
+        watchFieldsFromDraft({ ...draft, watch: { ...draft.watch, ...patch } }),
+      ).toHaveProperty("error");
+    }
+  });
+
+  it("asks for a new credential only when the stored one would be dropped", () => {
+    const draft = taskToDraft(watcherTask);
+    expect(watchSecretKept(watcherTask, draft)).toBe(true);
+    const keepsWith = (patch: object) =>
+      watchSecretKept(watcherTask, { ...draft, watch: { ...draft.watch, ...patch } });
+    expect(keepsWith({ url: "https://feed.example.com/other" })).toBe(true);
+    expect(keepsWith({ url: "https://other.example.com/items" })).toBe(false);
+    expect(keepsWith({ username: "someone-else" })).toBe(false);
+    expect(keepsWith({ authType: "bearer" })).toBe(false);
+    expect(watchSecretKept(watcherTask, { ...draft, projectId: "elsewhere" })).toBe(false);
+    expect(watchSecretKept(null, draft)).toBe(false);
+  });
+
+  it("reads a create-watcher link", () => {
+    expect(
+      validateScheduledTasksSearch({
+        environmentId: "laptop",
+        createWatcher: "true",
+        projectId: "project",
+        threadId: "thread",
+      }),
+    ).toEqual({
+      environmentId: "laptop",
+      createWatcher: true,
+      projectId: "project",
+      threadId: "thread",
+    });
+    expect(validateScheduledTasksSearch({ createWatcher: "false", projectId: " " })).toEqual({});
+  });
+
+  it("keeps the linked project and thread before the project list has loaded", () => {
+    const draft = watcherDraft(taskToDraft(legacyTask), {
+      projectId: "linked-project",
+      threadId: "linked-thread",
+    });
+    expect(draft).toMatchObject({
+      scheduleMode: "watch",
+      projectId: "linked-project",
+      threadId: "linked-thread",
+    });
+  });
+
+  it("drops the thread binding when the project changes", () => {
+    const draft = taskToDraft({ ...watcherTask, threadId: ThreadId.make("thread") });
+    expect(withDraftProject(draft, draft.projectId)).toBe(draft);
+    expect(withDraftProject(draft, "other")).toMatchObject({ projectId: "other", threadId: "" });
+  });
+
+  it("removes the watch only when a watcher switches to another trigger", () => {
+    const draft = taskToDraft(watcherTask);
+    expect(watchFieldsFromDraft({ ...draft, scheduleMode: "interval" })).toEqual({ watch: null });
+    expect(watchFieldsFromDraft({ ...draft, scheduleMode: "fixed" })).toEqual({ watch: null });
+    const timer = taskToDraft(legacyTask);
+    expect(timer.scheduleMode).toBe("interval");
+    expect(watchFieldsFromDraft(timer)).toEqual({});
+    expect(scheduleFromDraft(timer)).toEqual(legacyTask.schedule);
   });
 });
 

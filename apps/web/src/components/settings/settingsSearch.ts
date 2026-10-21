@@ -995,6 +995,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
   {
+    id: "scheduled-tasks",
+    title: "Scheduled tasks",
+    to: "/settings/scheduled-tasks",
+    searchTerms: [
+      "automations watchers watch jira json feed poll check now pause stop timer webhook",
+    ],
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",

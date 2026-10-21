@@ -17,6 +17,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -322,6 +324,8 @@ it.effect.each(deliveries)(
             }).pipe(
               Effect.provide(
                 ScheduledTaskService.layer.pipe(
+                  Layer.provide(FetchHttpClient.layer),
+                  Layer.provide(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
                   Layer.provide(ThreadManagementService.layer),
                   Layer.provide(ServerSettings.layerTest()),
                   Layer.provide(

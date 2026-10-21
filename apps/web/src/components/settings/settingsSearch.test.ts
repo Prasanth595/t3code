@@ -135,6 +135,13 @@ describe("searchSettings", () => {
     expect(searchSettings("sidebar.toggle")[0]?.targetId).toBeUndefined();
   });
 
+  it("finds scheduled task watchers", () => {
+    expect(searchSettings("jira watcher")[0]).toMatchObject({
+      id: "scheduled-tasks",
+      to: "/settings/scheduled-tasks",
+    });
+  });
+
   it("keeps catalog result ids unique", () => {
     const ids = SETTINGS_SEARCH_ITEMS.map((item) => item.id);
     expect(new Set(ids).size).toBe(ids.length);

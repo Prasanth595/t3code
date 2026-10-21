@@ -1,4 +1,6 @@
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -39,6 +41,8 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -170,6 +174,8 @@ function makeHarness(options: HarnessOptions = {}) {
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
   const layerExternalServices = Layer.mergeAll(
+    FetchHttpClient.layer,
+    Layer.mock(ServerSecretStore.ServerSecretStore)({}),
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
@@ -371,6 +377,125 @@ it.effect.each(
       assert.equal(turnItem?.text, task.prompt);
       assert.equal(turnItem?.scheduledTaskId, task.id);
     }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerScheduledTasks)));
+  },
+);
+
+it.effect.each(["fresh", "bound"] as const)(
+  "recovers a rejected %s watcher dispatch after the adapter recovers",
+  (target) => {
+    let failCapabilities = false;
+    let items: unknown[] = [];
+    const unstableAdapter = {
+      ...adapter,
+      getCapabilities: () =>
+        failCapabilities
+          ? Effect.fail({
+              _tag: "TemporaryCapabilitiesFailure",
+              message: "temporary adapter failure",
+            })
+          : Effect.succeed(CodexProviderCapabilitiesV2),
+    } as ProviderAdapter.ProviderAdapterV2["Service"];
+    const harness = makeHarness({ adapters: [unstableAdapter] });
+    const ticks = new Map<string, Effect.Effect<void>>();
+    const encodeItems = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+    const deps = Layer.mergeAll(
+      harness.layer,
+      NodeCrypto.layer,
+      Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(encodeItems(items)))),
+        ),
+      ),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(Scheduler.Scheduler)({
+        register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
+          Effect.gen(function* () {
+            const context = yield* Effect.context<R>();
+            ticks.set(name, work.pipe(Effect.provideContext(context), Effect.orDie));
+          }),
+      }),
+    );
+    const tasksLayer = ScheduledTasks.layer.pipe(Layer.provide(deps));
+    return Effect.gen(function* () {
+      const tasks = yield* ScheduledTasks.ScheduledTaskService;
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const sql = yield* SqlClient.SqlClient;
+      const bound =
+        target === "bound"
+          ? (yield* launches.launch(
+              launchInput({ command: "watch-bound-create", thread: "watch-bound" }),
+            )).threadId
+          : null;
+      const { task } = yield* tasks.upsert({
+        id: ScheduledTaskId.make("watch:reject-recovery"),
+        title: "Watch",
+        prompt: "Handle match",
+        enabled: true,
+        schedule: { type: "interval", everyMs: 60_000 },
+        projectId,
+        threadId: bound,
+        workspaceStrategy: { type: "root" },
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        watch: {
+          source: {
+            type: "http_json",
+            url: "https://example.com/items",
+            itemsPath: "",
+            keyPath: "id",
+          },
+          filters: [],
+          maxConcurrentRuns: 1,
+        },
+      });
+      yield* tasks.runNow({ id: task.id });
+      failCapabilities = true;
+      items = [{ id: "one" }];
+      yield* tasks.runNow({ id: task.id });
+      const rejected = yield* sql<{
+        command_id: string;
+      }>`SELECT command_id FROM orchestration_command_receipts WHERE status = 'rejected'`;
+      assert.equal(rejected.length, 1);
+      const [pending] = yield* sql<{
+        event_id: string;
+        dispatch_command_id: string;
+      }>`SELECT event_id, dispatch_command_id FROM scheduled_task_watch_events`;
+      const original = `scheduled-watch:${pending!.event_id}`;
+      assert.equal(
+        rejected[0]!.command_id,
+        target === "fresh" ? `${original}:initial-message` : original,
+      );
+      assert.notEqual(pending!.dispatch_command_id, original);
+      assert.equal(
+        (yield* sql`SELECT message_id FROM orchestration_v2_projection_messages`).length,
+        0,
+      );
+      failCapabilities = false;
+      yield* ticks.get("watcher-dispatch")!;
+      yield* ticks.get("watcher-dispatch")!;
+      const [event] = yield* sql<{
+        event_id: string;
+        state: string;
+        dispatch_command_id: string;
+      }>`SELECT event_id, state, dispatch_command_id FROM scheduled_task_watch_events`;
+      const messages = yield* sql<{
+        message_id: string;
+      }>`SELECT message_id FROM orchestration_v2_projection_messages`;
+      assert.equal(event!.event_id, pending!.event_id);
+      assert.equal(event!.dispatch_command_id, pending!.dispatch_command_id);
+      assert.equal(event!.state, "running");
+      assert.deepEqual(
+        messages.map((message) => message.message_id),
+        [`scheduled-watch-message:${pending!.event_id}`],
+      );
+      assert.equal((yield* tasks.list()).tasks[0]!.watch!.fireCount, 1);
+      assert.equal(
+        (yield* sql`SELECT thread_id FROM orchestration_v2_projection_threads`).length,
+        1,
+      );
+    }).pipe(Effect.provide(Layer.mergeAll(deps, tasksLayer)));
   },
 );
 

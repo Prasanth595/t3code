@@ -28,6 +28,8 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { renderWebhookPrompt } from "./webhookTemplate.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -235,6 +237,8 @@ const withService = <A, E>(
         isScratchProject: () => Effect.succeed(false),
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+      FetchHttpClient.layer,
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);

@@ -49,6 +49,7 @@ import {
   useLinkedPullRequestLines,
 } from "../LinkedPullRequestList";
 import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
+import { ThreadWatchersSection } from "../ThreadWatchersSection";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -325,6 +326,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
           ))}
         </ListSection>
       ) : null}
+
+      <ThreadWatchersSection environmentId={environmentId} threadId={threadId} />
 
       {currentWorktreePath ? (
         <ListSection title="Worktree">

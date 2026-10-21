@@ -4,12 +4,47 @@ import * as Schema from "effect/Schema";
 import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
+  OrchestratorMcpScheduleTaskInput,
+  OrchestratorMcpUpdateScheduledTaskInput,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
+const decodeScheduleTaskInput = Schema.decodeUnknownSync(OrchestratorMcpScheduleTaskInput);
+const decodeUpdateScheduledTaskInput = Schema.decodeUnknownSync(
+  OrchestratorMcpUpdateScheduledTaskInput,
+);
 
 describe("orchestrator MCP contracts", () => {
+  it("accepts watcher setup and preserves omitted versus cleared watcher updates", () => {
+    const watch = {
+      source: {
+        type: "jira",
+        baseUrl: "https://example.atlassian.net",
+        jql: "project = APP",
+        auth: { type: "basic", username: "user@example.com", secretRef: "secret:request" },
+      },
+      filters: [{ path: "fields.status.name", op: "equals", value: "To Do" }],
+      maxConcurrentRuns: 1,
+    };
+    expect(
+      decodeScheduleTaskInput({
+        prompt: "Handle the matching issue",
+        schedule: { type: "interval", everyMs: 60_000 },
+        watch,
+      }).watch,
+    ).toEqual(watch);
+    expect(
+      decodeUpdateScheduledTaskInput({ scheduledTaskId: "watch:1", enabled: false }),
+    ).not.toHaveProperty("watch");
+    expect(
+      decodeUpdateScheduledTaskInput({ scheduledTaskId: "watch:1", watch: null }).watch,
+    ).toBeNull();
+    expect(decodeUpdateScheduledTaskInput({ scheduledTaskId: "watch:1", watch }).watch).toEqual(
+      watch,
+    );
+  });
+
   it("decodes cross-provider delegated task requests and durable results", () => {
     const request = decodeDelegateTaskInput({
       task: "Inspect the workspace and report the result.",

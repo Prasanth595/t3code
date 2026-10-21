@@ -26,6 +26,28 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect("adds watcher retry state without changing queued event identity or payload", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 68 });
+      yield* sql`INSERT INTO scheduled_task_watch_events(event_id, task_id, revision, created_at, prompt, state)
+      VALUES ('event:existing', 'task:existing', 'revision', '2026-10-21T00:00:00.000Z', 'Existing match', 'dispatching')`;
+      assert.deepEqual(yield* runMigrations(), [[69, "ScheduledTaskWatchRetries"]]);
+      assert.deepEqual(
+        yield* sql`SELECT event_id, prompt, state, dispatch_command_id, dispatch_order FROM scheduled_task_watch_events`,
+        [
+          {
+            event_id: "event:existing",
+            prompt: "Existing match",
+            state: "dispatching",
+            dispatch_command_id: null,
+            dispatch_order: 0,
+          },
+        ],
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

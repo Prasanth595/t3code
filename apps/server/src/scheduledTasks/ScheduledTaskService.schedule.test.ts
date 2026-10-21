@@ -14,6 +14,8 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
@@ -29,6 +31,8 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+      FetchHttpClient.layer,
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
@@ -76,6 +80,8 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       }),
       Layer.mock(ThreadManagementService.ThreadManagementService)({}),
       Layer.mock(SecretRequests.SecretRequests)({}),
+      Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+      FetchHttpClient.layer,
     );
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;

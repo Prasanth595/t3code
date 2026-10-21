@@ -51,6 +51,13 @@ import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScroll
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
+import {
+  isWatchTask,
+  watchActivityLabel,
+  watchRuleLabel,
+  watchSourceLabel,
+  watchStatus,
+} from "@t3tools/client-runtime/scheduled-task-watch";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { usePreparedConnection } from "../../state/session";
 import { buildModelOptions } from "../../lib/modelOptions";
@@ -74,6 +81,8 @@ import {
   editDraft,
   scheduledTaskDefaultModel,
   scheduleFromDraft,
+  watchFieldsFromDraft,
+  withDraftProject,
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
@@ -84,6 +93,7 @@ import {
   formatNextScheduledTaskRun,
   formatScheduledTaskInterval,
 } from "./scheduledTaskPresentation";
+import { relativeTime } from "../../lib/time";
 
 type ScheduledTaskRoutes = {
   SettingsScheduledTaskNew: undefined;
@@ -91,6 +101,8 @@ type ScheduledTaskRoutes = {
   SettingsScheduledTaskModel: undefined;
   SettingsScheduledTaskBranch: undefined;
 };
+
+const WATCH_AUTH_LABELS = { none: "None", basic: "Basic", bearer: "Bearer token" } as const;
 
 const DAYS = [
   { index: 1, label: "Mon" },
@@ -148,6 +160,8 @@ function FormField(props: {
   readonly disabled?: boolean;
   readonly placeholder?: string;
   readonly borderTop?: boolean;
+  readonly autoCapitalize?: "none";
+  readonly secureTextEntry?: boolean;
 }) {
   return (
     <View
@@ -163,6 +177,9 @@ function FormField(props: {
         onChangeText={props.onChange}
         textAlignVertical="center"
         keyboardType={props.keyboardType}
+        autoCapitalize={props.autoCapitalize}
+        autoCorrect={props.autoCapitalize === undefined}
+        secureTextEntry={props.secureTextEntry}
         placeholder={props.placeholder}
         placeholderTextColorClassName="accent-foreground-muted"
         className="min-h-8 font-sans text-base text-foreground"
@@ -231,6 +248,7 @@ function SelectRow(props: {
 function WebhookFilterRows(props: {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   readonly disabled: boolean;
+  readonly watch?: boolean;
   readonly onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
 }) {
   const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
@@ -257,7 +275,8 @@ function WebhookFilterRows(props: {
           <FormField
             label="Path"
             value={filter.path}
-            placeholder="body.action"
+            placeholder={props.watch ? "fields.status.name" : "body.action"}
+            autoCapitalize="none"
             disabled={props.disabled}
             onChange={(path) => update(index, { path })}
           />
@@ -298,8 +317,9 @@ function WebhookFilterRows(props: {
       ) : null}
       {props.filters.length > 0 ? (
         <Text className="px-4 pb-3 text-sm text-foreground-muted">
-          Runs only when every filter matches. Other requests are logged as filtered. Separate “is
-          one of” values with commas; a value can't contain a comma.
+          {props.watch
+            ? "Runs when an item newly matches every filter. Separate “is one of” values with commas."
+            : "Runs only when every filter matches. Other requests are logged as filtered. Separate “is one of” values with commas; a value can't contain a comma."}
         </Text>
       ) : null}
     </>
@@ -462,7 +482,12 @@ export function SettingsScheduledTaskNewRouteScreen() {
 }
 
 export function SettingsScheduledTaskEditRouteScreen() {
-  return <SettingsScheduledTaskEditorScreen title="Edit scheduled task" />;
+  const { editor } = useScheduledTaskEditor();
+  return (
+    <SettingsScheduledTaskEditorScreen
+      title={editor && !editor.draft.task ? "New scheduled task" : "Edit scheduled task"}
+    />
+  );
 }
 
 function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }) {
@@ -600,7 +625,22 @@ function SettingsScheduledTaskEditorScreen({ title }: { readonly title: string }
             setDraft={(draft) => {
               if (!saving) setEditor({ ...editor, draft });
             }}
-            onSaved={() => setSaved(true)}
+            onSaved={() => {
+              setEditor(
+                (current) =>
+                  current && {
+                    ...current,
+                    draft: {
+                      ...current.draft,
+                      schedule: {
+                        ...current.draft.schedule,
+                        watch: { ...current.draft.schedule.watch, secret: "" },
+                      },
+                    },
+                  },
+              );
+              setSaved(true);
+            }}
             onChangeEnvironment={(target) => {
               if (target.environmentId === editor.environmentId) return;
               setEditor({
@@ -676,6 +716,11 @@ function TaskForm({
   const environmentUnavailable = !availableTargets.some(
     (target) => target.environmentId === environmentId,
   );
+  const supportsWatchers = tasks.data?.supportsWatchers === true;
+  const watchBlocked = draft.schedule.mode === "watch" && !supportsWatchers;
+  const watch = draft.schedule.watch;
+  const setWatch = (patch: Partial<typeof watch>) =>
+    setDraft({ ...draft, schedule: { ...draft.schedule, watch: { ...watch, ...patch } } });
 
   const failure = (title: string, result: AtomCommandResult<unknown, unknown>) => {
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -690,7 +735,8 @@ function TaskForm({
       saving ||
       dictationPending ||
       taskMissing ||
-      environmentUnavailable
+      environmentUnavailable ||
+      watchBlocked
     )
       return;
     // Signatures are edited on desktop and web; send the task's current one,
@@ -723,6 +769,11 @@ function TaskForm({
       );
       return;
     }
+    const watchFields = watchFieldsFromDraft(draft);
+    if ("error" in watchFields) {
+      Dialog.alert("Invalid watcher", watchFields.error);
+      return;
+    }
     if (
       !draft.title.trim() ||
       !draft.prompt.trim() ||
@@ -748,8 +799,9 @@ function TaskForm({
       projectId: draft.projectId,
       modelSelection: draft.modelSelection,
       schedule,
+      ...watchFields,
       enabled: draft.enabled,
-      threadId: draft.task?.threadId ?? null,
+      threadId: draft.threadId,
       workspaceStrategy:
         draft.workspace === "root"
           ? { type: "root" }
@@ -858,14 +910,16 @@ function TaskForm({
                     project.id,
                     draft.modelSelection.instanceId,
                   ));
-              setDraft({
-                ...draft,
-                projectId: project.id,
-                modelSelection: keepsExplicitModel
-                  ? draft.modelSelection
-                  : scheduledTaskDefaultModel(config, project),
-                modelSelectionIsExplicit: keepsExplicitModel,
-              });
+              setDraft(
+                withDraftProject(
+                  draft,
+                  project.id,
+                  keepsExplicitModel
+                    ? draft.modelSelection
+                    : scheduledTaskDefaultModel(config, project),
+                  keepsExplicitModel,
+                ),
+              );
             }}
           />
           <PickerRow
@@ -948,9 +1002,14 @@ function TaskForm({
                 { value: "fixed_time", label: "At a time" },
                 { value: "interval", label: "Interval" },
                 { value: "webhook", label: "On webhook" },
+                { value: "watch", label: "Watcher" },
               ]}
               selected={draft.schedule.mode}
               onSelect={(mode) => {
+                if (mode === "watch" && tasks.data && !supportsWatchers) {
+                  Dialog.alert("Watchers unavailable", "Update this server to create watchers.");
+                  return;
+                }
                 setTimePickerOpen(false);
                 setDraft({
                   ...draft,
@@ -1103,6 +1162,154 @@ function TaskForm({
                 window from the first delivery closes. Empty keys run normally.
               </Text>
             </>
+          ) : draft.schedule.mode === "watch" ? (
+            tasks.data && !supportsWatchers ? (
+              <Text className="border-t border-border-subtle px-4 py-3 text-sm text-danger-foreground">
+                Update this server to create watchers.
+              </Text>
+            ) : (
+              <>
+                <SelectRow
+                  label="Source"
+                  value={watch.sourceType === "jira" ? "Jira Cloud" : "JSON feed"}
+                  borderTop
+                  actions={[
+                    {
+                      id: "jira",
+                      title: "Jira Cloud",
+                      state: watch.sourceType === "jira" ? "on" : undefined,
+                    },
+                    {
+                      id: "http_json",
+                      title: "JSON feed",
+                      state: watch.sourceType === "http_json" ? "on" : undefined,
+                    },
+                  ]}
+                  onSelect={(sourceType) => {
+                    if (sourceType === "jira" || sourceType === "http_json")
+                      setWatch({ sourceType });
+                  }}
+                />
+                <FormField
+                  label={watch.sourceType === "jira" ? "Jira site" : "URL"}
+                  value={watch.url}
+                  placeholder={
+                    watch.sourceType === "jira"
+                      ? "https://example.atlassian.net"
+                      : "https://example.com/items.json"
+                  }
+                  autoCapitalize="none"
+                  disabled={saving}
+                  borderTop
+                  onChange={(url) => setWatch({ url })}
+                />
+                {watch.sourceType === "jira" ? (
+                  <FormField
+                    label="JQL"
+                    value={watch.jql}
+                    placeholder="project = APP AND status = Done"
+                    autoCapitalize="none"
+                    disabled={saving}
+                    borderTop
+                    onChange={(jql) => setWatch({ jql })}
+                  />
+                ) : (
+                  <>
+                    <FormField
+                      label="Items path"
+                      value={watch.itemsPath}
+                      placeholder="Root array"
+                      autoCapitalize="none"
+                      disabled={saving}
+                      borderTop
+                      onChange={(itemsPath) => setWatch({ itemsPath })}
+                    />
+                    <FormField
+                      label="Key path"
+                      value={watch.keyPath}
+                      placeholder="id"
+                      autoCapitalize="none"
+                      disabled={saving}
+                      borderTop
+                      onChange={(keyPath) => setWatch({ keyPath })}
+                    />
+                  </>
+                )}
+                <SelectRow
+                  label="Authentication"
+                  value={WATCH_AUTH_LABELS[watch.authType]}
+                  borderTop
+                  actions={(["none", "basic", "bearer"] as const).map((authType) => ({
+                    id: authType,
+                    title: WATCH_AUTH_LABELS[authType],
+                    state: watch.authType === authType ? ("on" as const) : undefined,
+                  }))}
+                  onSelect={(authType) => {
+                    if (authType === "none" || authType === "basic" || authType === "bearer")
+                      setWatch({ authType, secret: "" });
+                  }}
+                />
+                {watch.authType === "basic" ? (
+                  <FormField
+                    label="Username"
+                    value={watch.username}
+                    autoCapitalize="none"
+                    disabled={saving}
+                    borderTop
+                    onChange={(username) => setWatch({ username })}
+                  />
+                ) : null}
+                {watch.authType === "none" ? null : (
+                  <FormField
+                    label={watch.authType === "basic" ? "Password or API token" : "Token"}
+                    value={watch.secret}
+                    placeholder={
+                      draft.task?.watch?.source.auth?.hasSecret
+                        ? "Leave blank to keep the saved one"
+                        : "Required"
+                    }
+                    autoCapitalize="none"
+                    secureTextEntry
+                    disabled={saving}
+                    borderTop
+                    onChange={(secret) => setWatch({ secret })}
+                  />
+                )}
+                <WebhookFilterRows
+                  filters={watch.filters}
+                  disabled={saving}
+                  watch
+                  onChange={(filters) => setWatch({ filters })}
+                />
+                <FormField
+                  label="Minutes between checks"
+                  value={draft.schedule.intervalMinutes}
+                  keyboardType="decimal-pad"
+                  disabled={saving}
+                  borderTop
+                  onChange={(intervalMinutes) =>
+                    setDraft({ ...draft, schedule: { ...draft.schedule, intervalMinutes } })
+                  }
+                />
+                {Number(draft.schedule.intervalMinutes) < 1 ? (
+                  <Text className="px-4 pb-3 text-sm text-danger-foreground">
+                    Checks must be at least 1 minute apart.
+                  </Text>
+                ) : null}
+                <FormField
+                  label="Max active runs (1–4)"
+                  value={watch.maxConcurrentRuns}
+                  keyboardType="number-pad"
+                  disabled={saving}
+                  borderTop
+                  onChange={(maxConcurrentRuns) => setWatch({ maxConcurrentRuns })}
+                />
+                <Text className="px-4 pb-3 text-sm text-foreground-muted">
+                  The first check sets a baseline. Later, each new or newly matching item starts one
+                  run with the item added to the prompt.
+                </Text>
+              </>
+            )
           ) : (
             <>
               <FormField
@@ -1147,7 +1354,9 @@ function TaskForm({
         tone="primary"
         fullWidth
         loading={saving}
-        disabled={!canOperate || dictationPending || taskMissing || environmentUnavailable}
+        disabled={
+          !canOperate || dictationPending || taskMissing || environmentUnavailable || watchBlocked
+        }
         onPress={() => void save()}
         label={saving ? "Saving…" : draft.task ? "Save changes" : "Create task"}
       />
@@ -1332,20 +1541,53 @@ function EnvironmentTasks({
               }}
               className="min-w-0 flex-1 gap-1 active:opacity-70"
             >
-              <Text className="text-lg font-t3-medium text-foreground" numberOfLines={1}>
-                {task.title}
-              </Text>
-              <Text className="text-sm text-foreground-muted" numberOfLines={2}>
-                {describeSchedule(task)}
-                {!task.enabled
-                  ? " · Paused"
-                  : task.nextRunAt
-                    ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
-                    : ""}
-              </Text>
+              <View className="flex-row items-center gap-2">
+                {task.watch ? (
+                  <SymbolView
+                    name="eye"
+                    size={15}
+                    tintColorClassName="accent-foreground-muted"
+                    type="monochrome"
+                  />
+                ) : null}
+                <Text
+                  className="min-w-0 shrink text-lg font-t3-medium text-foreground"
+                  numberOfLines={1}
+                >
+                  {task.title}
+                </Text>
+              </View>
+              {isWatchTask(task) ? (
+                <>
+                  <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                    {watchSourceLabel(task.watch.source)} · {watchRuleLabel(task.watch.filters)}
+                  </Text>
+                  <Text
+                    className={
+                      watchStatus(task).tone === "error"
+                        ? "text-sm text-danger-foreground"
+                        : "text-sm text-foreground-muted"
+                    }
+                    numberOfLines={2}
+                  >
+                    {watchStatus(task).label}
+                    {task.lastRunAt ? ` · checked ${relativeTime(task.lastRunAt)} ago` : ""}
+                    {` · ${watchActivityLabel(task.watch)}`}
+                  </Text>
+                </>
+              ) : (
+                <Text className="text-sm text-foreground-muted" numberOfLines={2}>
+                  {describeSchedule(task)}
+                  {!task.enabled
+                    ? " · Paused"
+                    : task.nextRunAt
+                      ? ` · ${formatNextScheduledTaskRun(task.nextRunAt, now)}`
+                      : ""}
+                </Text>
+              )}
               {task.lastRunError ? (
                 <Text className="text-sm text-danger-foreground" numberOfLines={2}>
-                  Last run failed: {task.lastRunError}
+                  {task.watch ? "Last check failed" : "Last run failed"}: {task.lastRunError}
                 </Text>
               ) : null}
             </Pressable>
@@ -1359,10 +1601,16 @@ function EnvironmentTasks({
                 },
                 ...(task.schedule.type === "webhook"
                   ? []
-                  : [{ id: "run", title: "Run now", attributes: { disabled: !canOperate } }]),
+                  : [
+                      {
+                        id: "run",
+                        title: task.watch ? "Check now" : "Run now",
+                        attributes: { disabled: !canOperate || (task.watch && !task.enabled) },
+                      },
+                    ]),
                 {
                   id: "delete",
-                  title: "Delete",
+                  title: task.watch ? "Stop watching" : "Delete",
                   attributes: { destructive: true, disabled: !canOperate },
                 },
               ]}
@@ -1371,10 +1619,10 @@ function EnvironmentTasks({
                 if (action === "edit") {
                   onEdit(task);
                 } else if (action === "delete") {
-                  Dialog.alert("Delete task?", task.title, [
+                  Dialog.alert(task.watch ? "Stop watching?" : "Delete task?", task.title, [
                     { text: "Cancel", style: "cancel" },
                     {
-                      text: "Delete",
+                      text: task.watch ? "Stop watching" : "Delete",
                       style: "destructive",
                       onPress: () => void act(task, "delete"),
                     },

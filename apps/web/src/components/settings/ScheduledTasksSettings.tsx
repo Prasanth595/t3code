@@ -5,11 +5,13 @@ import { AsyncResult } from "effect/reactivity";
 import {
   Clock3Icon,
   CopyIcon,
+  EyeOffIcon,
   InboxIcon,
   MoreHorizontalIcon,
   PencilIcon,
   PlayIcon,
   PlusIcon,
+  RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -25,6 +27,7 @@ import type {
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_WEBHOOK_PROMPT,
   emptyWebhookFilterDraft,
@@ -55,8 +58,20 @@ import {
 } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/primaryCloudLinkState";
 import { requestConfirmDialog } from "../../confirmDialog";
+import { searchableSetting } from "./settingsSearch";
+import { RelativeTime } from "../RelativeTime";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
-import { Link } from "@tanstack/react-router";
+import {
+  emptyWatchDraft,
+  isWatchTask,
+  type WatchDraft,
+  watchActivityLabel,
+  watchRuleLabel,
+  watchSourceLabel,
+  watchStatus,
+  type WatchStatusTone,
+} from "@t3tools/client-runtime/scheduled-task-watch";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
@@ -64,7 +79,7 @@ import {
   useEnvironmentHttpBaseUrl,
   type EnvironmentPresentation,
 } from "../../state/environments";
-import { useProjects } from "../../state/entities";
+import { useProjects, useThreadShell } from "../../state/entities";
 import { environmentAtomList, environmentIdsKey } from "../../state/environmentAtomList";
 import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
@@ -86,6 +101,10 @@ import {
   scheduleFromDraft,
   scheduledTaskDefaultModel,
   taskToDraft,
+  watcherDraft,
+  watchFieldsFromDraft,
+  withDraftProject,
+  watchSecretKept,
   type DraftState,
   type ScheduleMode,
   type WorkspaceMode,
@@ -158,14 +177,30 @@ const EMPTY_DRAFT: DraftState = {
   coalesceWindowSeconds: "",
   filters: [],
   savedFilters: [],
+  watch: emptyWatchDraft(),
+  hadWatch: false,
+};
+
+const WATCH_AUTH_LABELS: Record<WatchDraft["authType"], string> = {
+  none: "None",
+  basic: "Basic",
+  bearer: "Bearer token",
 };
 
 function WebhookFiltersField({
   filters,
   onChange,
+  label = "Filters",
+  itemLabel = "filter",
+  description = "Run only when every filter matches. Other requests are logged as filtered. Separate “is one of” values with commas; a value can't contain a comma.",
+  pathPlaceholder = "body.action",
 }: {
   filters: ReadonlyArray<WebhookFilterDraft>;
   onChange: (filters: ReadonlyArray<WebhookFilterDraft>) => void;
+  label?: string;
+  itemLabel?: string;
+  description?: string;
+  pathPlaceholder?: string;
 }) {
   const update = (index: number, patch: Partial<WebhookFilterDraft>) =>
     onChange(filters.map((filter, at) => (at === index ? { ...filter, ...patch } : filter)));
@@ -173,11 +208,8 @@ function WebhookFiltersField({
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0 space-y-1">
-          <Label>Filters</Label>
-          <p className="text-sm text-muted-foreground">
-            Run only when every filter matches. Other requests are logged as filtered. Separate “is
-            one of” values with commas; a value can't contain a comma.
-          </p>
+          <Label>{label}</Label>
+          <p className="text-sm text-muted-foreground">{description}</p>
         </div>
         <Button
           className="shrink-0"
@@ -187,7 +219,7 @@ function WebhookFiltersField({
           onClick={() => onChange([...filters, emptyWebhookFilterDraft()])}
         >
           <PlusIcon />
-          Add filter
+          Add {itemLabel}
         </Button>
       </div>
       {filters.map((filter, index) => (
@@ -199,7 +231,7 @@ function WebhookFiltersField({
             <div className="grid min-w-0 flex-1 grid-cols-1">
               <Input
                 aria-label={`Filter ${index + 1} path`}
-                placeholder="body.action"
+                placeholder={pathPlaceholder}
                 value={filter.path}
                 onChange={(event) => update(index, { path: event.target.value })}
               />
@@ -347,6 +379,13 @@ function deliveryOutcomeVariant(outcome: string) {
   return "outline";
 }
 
+const WATCH_STATUS_VARIANT = {
+  muted: "outline",
+  error: "error",
+  info: "info",
+  success: "success",
+} as const satisfies Record<WatchStatusTone, string>;
+
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   if (status === "failed") return "error";
   if (status === "succeeded") return "success";
@@ -354,26 +393,60 @@ function statusVariant(status: ScheduledTask["lastRunStatus"]) {
   return "outline";
 }
 
+type WatcherPreset = { projectId?: ProjectId | undefined; threadId?: ThreadId | undefined };
+
 export function ScheduledTasksSettings(target: {
   readonly environmentId?: EnvironmentId;
   readonly taskId?: ScheduledTaskId | undefined;
+  readonly createWatcher?: true | undefined;
+  readonly projectId?: ProjectId | undefined;
+  readonly threadId?: ThreadId | undefined;
 }) {
   const { scope, environments, connectedEnvironments, environment } = useSettingsScope();
   const [editor, setEditor] = useState<{
     environmentId: EnvironmentId;
     task: ScheduledTask | null;
+    watcher?: WatcherPreset;
   } | null>(null);
   const openForEdit = (environmentId: EnvironmentId, task: ScheduledTask) => {
     setEditor({ environmentId, task });
   };
   const defaultEnvironment = environment ?? connectedEnvironments[0];
+  const watcherEnvironment = target.createWatcher
+    ? connectedEnvironments.find(
+        (entry) =>
+          entry.environmentId === (target.environmentId ?? defaultEnvironment?.environmentId),
+      )
+    : undefined;
+  const [openedWatcherLink, setOpenedWatcherLink] = useState(false);
+  if (!target.createWatcher && openedWatcherLink) setOpenedWatcherLink(false);
+  if (watcherEnvironment && !openedWatcherLink) {
+    setOpenedWatcherLink(true);
+    setEditor({
+      environmentId: watcherEnvironment.environmentId,
+      task: null,
+      watcher: { projectId: target.projectId, threadId: target.threadId },
+    });
+  }
+  const navigate = useNavigate();
+  const closeEditor = () => {
+    setEditor(null);
+    if (target.createWatcher)
+      void navigate({
+        to: "/settings/scheduled-tasks",
+        search: ({ createWatcher: _create, projectId: _project, threadId: _thread, ...rest }) =>
+          rest,
+        replace: true,
+      });
+  };
   const canCreate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(defaultEnvironment?.environmentId ?? null),
   );
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Scheduled tasks"
+        id={searchableSetting("scheduled-tasks").id}
+        title={searchableSetting("scheduled-tasks").title}
         variant="plain"
         headerAction={
           <Button
@@ -435,7 +508,8 @@ export function ScheduledTasksSettings(target: {
           key={`${editor.environmentId}:${editor.task?.id ?? "new"}`}
           initialEnvironmentId={editor.environmentId}
           task={editor.task}
-          onClose={() => setEditor(null)}
+          watcher={editor.watcher}
+          onClose={closeEditor}
         />
       ) : null}
     </SettingsPageContainer>
@@ -691,6 +765,16 @@ function ScheduledTaskRow({
   });
   const act = async (action: "toggle" | "run" | "delete") => {
     if (busy || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (
+      action === "delete" &&
+      isWatchTask(task) &&
+      !(
+        (await requestConfirmDialog(`Stop watching?\n${task.title} will be deleted.`, {
+          variant: "destructive",
+        })) ?? window.confirm(`Stop watching? ${task.title} will be deleted.`)
+      )
+    )
+      return;
     setBusy(true);
     const result =
       action === "toggle"
@@ -709,27 +793,53 @@ function ScheduledTaskRow({
       );
     }
   };
+  const watch = isWatchTask(task) ? task.watch : null;
+  const watchState = isWatchTask(task) ? watchStatus(task) : null;
   return (
     <SettingsRow
       title={task.title}
-      description={<span className="line-clamp-2">{task.prompt}</span>}
+      description={
+        watch ? (
+          <span className="line-clamp-2">
+            {watchSourceLabel(watch.source)} · {watchRuleLabel(watch.filters)}
+          </span>
+        ) : (
+          <span className="line-clamp-2">{task.prompt}</span>
+        )
+      }
       status={
         <div className="flex flex-wrap items-center gap-2">
-          <span>
-            {scheduleLabel(task.schedule)} ·{" "}
-            {!task.enabled ? (
-              "Paused"
-            ) : isWebhook ? (
-              "Listening"
-            ) : task.nextRunAt ? (
-              <>
-                Next run <ScheduledRelativeLabel value={task.nextRunAt} />
-              </>
-            ) : (
-              "Not scheduled"
-            )}
-          </span>
-          {task.lastRunStatus !== "never" ? (
+          {watchState ? (
+            <Badge variant={WATCH_STATUS_VARIANT[watchState.tone]}>{watchState.label}</Badge>
+          ) : null}
+          {watch ? (
+            <span>
+              {scheduleLabel(task.schedule).replace("Every", "Checks every")}
+              {task.lastRunAt ? (
+                <>
+                  {" · checked "}
+                  <RelativeTime timestamp={task.lastRunAt} />
+                </>
+              ) : null}
+            </span>
+          ) : (
+            <span>
+              {scheduleLabel(task.schedule)} ·{" "}
+              {!task.enabled ? (
+                "Paused"
+              ) : isWebhook ? (
+                "Listening"
+              ) : task.nextRunAt ? (
+                <>
+                  Next run <ScheduledRelativeLabel value={task.nextRunAt} />
+                </>
+              ) : (
+                "Not scheduled"
+              )}
+            </span>
+          )}
+          {watch ? <span>{watchActivityLabel(watch)}</span> : null}
+          {!watch && task.lastRunStatus !== "never" ? (
             <Badge variant={statusVariant(task.lastRunStatus)}>{task.lastRunStatus}</Badge>
           ) : null}
           {task.lastRunError ? <span className="text-destructive">{task.lastRunError}</span> : null}
@@ -767,15 +877,18 @@ function ScheduledTaskRow({
                   Deliveries
                 </MenuItem>
               ) : (
-                <MenuItem onClick={() => void act("run")}>
-                  <PlayIcon />
-                  Run now
+                <MenuItem
+                  disabled={watch !== null && !task.enabled}
+                  onClick={() => void act("run")}
+                >
+                  {watch ? <RefreshCwIcon /> : <PlayIcon />}
+                  {watch ? "Check now" : "Run now"}
                 </MenuItem>
               )}
               <MenuSeparator />
               <MenuItem onClick={() => void act("delete")}>
-                <Trash2Icon />
-                Delete
+                {watch ? <EyeOffIcon /> : <Trash2Icon />}
+                {watch ? "Stop watching" : "Delete"}
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -1060,10 +1173,12 @@ function WebhookDeliveryMode({ environmentId }: { readonly environmentId: Enviro
 function ScheduledTaskEditorDialog({
   initialEnvironmentId,
   task,
+  watcher,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly watcher: WatcherPreset | undefined;
   readonly onClose: () => void;
 }) {
   const [saving, setSaving] = useState(false);
@@ -1079,6 +1194,7 @@ function ScheduledTaskEditorDialog({
         <ScheduledTaskEditorForm
           initialEnvironmentId={initialEnvironmentId}
           task={task}
+          watcher={watcher}
           saving={saving}
           onSavingChange={setSaving}
           onClose={onClose}
@@ -1091,12 +1207,14 @@ function ScheduledTaskEditorDialog({
 function ScheduledTaskEditorForm({
   initialEnvironmentId,
   task,
+  watcher,
   saving,
   onSavingChange: setSaving,
   onClose,
 }: {
   readonly initialEnvironmentId: EnvironmentId;
   readonly task: ScheduledTask | null;
+  readonly watcher: WatcherPreset | undefined;
   readonly saving: boolean;
   readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
@@ -1125,8 +1243,19 @@ function ScheduledTaskEditorForm({
     label: "scheduled task upsert",
   });
   const [draft, setDraft] = useState<DraftState>(() =>
-    task ? taskToDraft(task) : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
+    task
+      ? taskToDraft(task)
+      : watcher
+        ? watcherDraft(EMPTY_DRAFT, watcher)
+        : { ...EMPTY_DRAFT, projectId: projects[0]?.id ?? "" },
   );
+  const [initialThreadId] = useState(() => task?.threadId ?? watcher?.threadId ?? "");
+  const boundThread = useThreadShell(
+    initialThreadId ? scopeThreadRef(environmentId, initialThreadId as ThreadId) : null,
+  );
+  const supportsWatchers = tasksQuery.data?.supportsWatchers === true;
+  const setWatch = (patch: Partial<WatchDraft>) =>
+    setDraft((current) => ({ ...current, watch: { ...current.watch, ...patch } }));
   const submissionPending = useRef(false);
   const editingTaskMissing =
     draft.editingId !== null &&
@@ -1137,6 +1266,7 @@ function ScheduledTaskEditorForm({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const threadProjectId = boundThread?.projectId ?? task?.projectId;
   const instanceEntries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(providers),
@@ -1219,6 +1349,28 @@ function ScheduledTaskEditorForm({
       reportFailure("Invalid interval", "Enter an interval of at least one minute.");
       return;
     }
+    if (draft.threadId && threadProjectId !== selectedProjectId) {
+      reportFailure("Thread unavailable", "Choose the thread's project or run in new threads.");
+      return;
+    }
+    if (draft.scheduleMode === "watch" && !supportsWatchers) {
+      reportFailure("Watchers unavailable", "Update this server to create watchers.");
+      return;
+    }
+    const watchFields = watchFieldsFromDraft(draft);
+    if ("error" in watchFields) {
+      reportFailure("Invalid watcher", watchFields.error);
+      return;
+    }
+    if (
+      draft.scheduleMode === "watch" &&
+      draft.watch.authType !== "none" &&
+      draft.watch.secret === "" &&
+      !watchSecretKept(liveTask, { ...draft, projectId: selectedProjectId })
+    ) {
+      reportFailure("Credential required", "Enter the password or token for this source.");
+      return;
+    }
     if (draft.workspaceMode === "existing_worktree" && !draft.existingWorktreePath.trim()) {
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
@@ -1245,6 +1397,7 @@ function ScheduledTaskEditorForm({
       prompt: draft.prompt.trim(),
       enabled: draft.enabled,
       schedule,
+      ...watchFields,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
@@ -1273,7 +1426,8 @@ function ScheduledTaskEditorForm({
       <DialogHeader>
         <DialogTitle>{draft.editingId ? "Edit task" : "New task"}</DialogTitle>
         <DialogDescription>
-          Run a prompt automatically — on an interval, at a fixed time, or when a webhook is called.
+          Run a prompt automatically — on an interval, at a fixed time, when a webhook is called, or
+          when a watched source changes.
         </DialogDescription>
       </DialogHeader>
 
@@ -1294,6 +1448,7 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...current,
                   projectId: "",
+                  threadId: "",
                   modelKey: "",
                   baseModelSelection: null,
                   baseRef: "main",
@@ -1371,7 +1526,7 @@ function ScheduledTaskEditorForm({
               <Select
                 value={selectedProjectId}
                 onValueChange={(projectId) =>
-                  setDraft((current) => ({ ...current, projectId: projectId ?? "" }))
+                  setDraft((current) => withDraftProject(current, projectId ?? ""))
                 }
               >
                 <SelectTrigger size="sm" id="scheduled-task-project">
@@ -1415,6 +1570,36 @@ function ScheduledTaskEditorForm({
               </Select>
             </Field>
           </div>
+
+          {initialThreadId &&
+          environmentId === initialEnvironmentId &&
+          threadProjectId === selectedProjectId ? (
+            <Field label="Runs in" htmlFor="scheduled-task-thread">
+              <Select
+                value={draft.threadId || "new"}
+                onValueChange={(threadId) =>
+                  setDraft((current) => ({
+                    ...current,
+                    threadId: threadId && threadId !== "new" ? threadId : "",
+                  }))
+                }
+              >
+                <SelectTrigger size="sm" id="scheduled-task-thread">
+                  <SelectValue>
+                    {draft.threadId
+                      ? (boundThread?.title ?? "This thread")
+                      : "A new thread each run"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value={initialThreadId}>
+                    {boundThread?.title ?? "This thread"}
+                  </SelectItem>
+                  <SelectItem value="new">A new thread each run</SelectItem>
+                </SelectPopup>
+              </Select>
+            </Field>
+          ) : null}
 
           {draft.workspaceMode === "worktree" ? (
             <Field label="Base branch" htmlFor="scheduled-task-base-ref">
@@ -1496,7 +1681,12 @@ function ScheduledTaskEditorForm({
                 value={[draft.scheduleMode]}
                 onValueChange={(values) => {
                   const mode = values[0] as ScheduleMode | undefined;
-                  if (mode === "fixed" || mode === "interval" || mode === "webhook")
+                  if (
+                    mode === "fixed" ||
+                    mode === "interval" ||
+                    mode === "webhook" ||
+                    mode === "watch"
+                  )
                     setDraft((current) => ({
                       ...current,
                       scheduleMode: mode,
@@ -1510,10 +1700,179 @@ function ScheduledTaskEditorForm({
                 <Toggle value="fixed">At a time</Toggle>
                 <Toggle value="interval">Every interval</Toggle>
                 <Toggle value="webhook">On webhook</Toggle>
+                <Toggle
+                  value="watch"
+                  disabled={!supportsWatchers && draft.scheduleMode !== "watch"}
+                >
+                  Watcher
+                </Toggle>
               </ToggleGroup>
             </div>
 
-            {draft.scheduleMode === "webhook" ? (
+            {draft.scheduleMode === "watch" ? (
+              <div className="space-y-4">
+                {tasksQuery.data && !supportsWatchers ? (
+                  <p className="text-sm text-destructive" role="status">
+                    Update this server to create watchers.
+                  </p>
+                ) : null}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Source" htmlFor="scheduled-task-watch-source">
+                    <Select
+                      value={draft.watch.sourceType}
+                      onValueChange={(value) =>
+                        setWatch({ sourceType: value === "http_json" ? "http_json" : "jira" })
+                      }
+                    >
+                      <SelectTrigger size="sm" id="scheduled-task-watch-source">
+                        <SelectValue>
+                          {draft.watch.sourceType === "jira" ? "Jira Cloud" : "JSON endpoint"}
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="jira">Jira Cloud</SelectItem>
+                        <SelectItem value="http_json">JSON endpoint</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </Field>
+                  <Field label="Check every" hint="minutes" htmlFor="scheduled-task-interval">
+                    <Input
+                      type="number"
+                      id="scheduled-task-interval"
+                      nativeInput
+                      min={1}
+                      step="any"
+                      value={draft.intervalMinutes}
+                      onChange={(event) =>
+                        setDraft((current) => ({ ...current, intervalMinutes: event.target.value }))
+                      }
+                    />
+                  </Field>
+                </div>
+                <Field
+                  label={draft.watch.sourceType === "jira" ? "Jira site" : "Endpoint URL"}
+                  htmlFor="scheduled-task-watch-url"
+                >
+                  <Input
+                    id="scheduled-task-watch-url"
+                    type="url"
+                    placeholder={
+                      draft.watch.sourceType === "jira"
+                        ? "https://example.atlassian.net"
+                        : "https://example.com/api/items"
+                    }
+                    value={draft.watch.url}
+                    onChange={(event) => setWatch({ url: event.target.value })}
+                  />
+                </Field>
+                {draft.watch.sourceType === "jira" ? (
+                  <Field label="JQL" htmlFor="scheduled-task-watch-jql">
+                    <Textarea
+                      id="scheduled-task-watch-jql"
+                      placeholder="project = OPS AND status = Done"
+                      value={draft.watch.jql}
+                      onChange={(event) => setWatch({ jql: event.target.value })}
+                    />
+                  </Field>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field
+                      label="Items path"
+                      hint="blank for a root array"
+                      htmlFor="scheduled-task-watch-items"
+                    >
+                      <Input
+                        id="scheduled-task-watch-items"
+                        placeholder="data.items"
+                        value={draft.watch.itemsPath}
+                        onChange={(event) => setWatch({ itemsPath: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="Key path" htmlFor="scheduled-task-watch-key">
+                      <Input
+                        id="scheduled-task-watch-key"
+                        placeholder="id"
+                        value={draft.watch.keyPath}
+                        onChange={(event) => setWatch({ keyPath: event.target.value })}
+                      />
+                    </Field>
+                  </div>
+                )}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Authentication" htmlFor="scheduled-task-watch-auth">
+                    <Select
+                      value={draft.watch.authType}
+                      onValueChange={(value) =>
+                        setWatch({
+                          authType: value === "basic" || value === "bearer" ? value : "none",
+                        })
+                      }
+                    >
+                      <SelectTrigger size="sm" id="scheduled-task-watch-auth">
+                        <SelectValue>{WATCH_AUTH_LABELS[draft.watch.authType]}</SelectValue>
+                      </SelectTrigger>
+                      <SelectPopup>
+                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="basic">Basic</SelectItem>
+                        <SelectItem value="bearer">Bearer token</SelectItem>
+                      </SelectPopup>
+                    </Select>
+                  </Field>
+                  {draft.watch.authType === "basic" ? (
+                    <Field label="Username" htmlFor="scheduled-task-watch-username">
+                      <Input
+                        id="scheduled-task-watch-username"
+                        autoComplete="off"
+                        placeholder="you@example.com"
+                        value={draft.watch.username}
+                        onChange={(event) => setWatch({ username: event.target.value })}
+                      />
+                    </Field>
+                  ) : null}
+                  {draft.watch.authType === "none" ? null : (
+                    <Field
+                      label={draft.watch.authType === "basic" ? "Password or API token" : "Token"}
+                      htmlFor="scheduled-task-watch-secret"
+                    >
+                      <Input
+                        id="scheduled-task-watch-secret"
+                        type="password"
+                        autoComplete="off"
+                        placeholder={
+                          watchSecretKept(liveTask, { ...draft, projectId: selectedProjectId })
+                            ? "Unchanged"
+                            : "Required"
+                        }
+                        value={draft.watch.secret}
+                        onChange={(event) => setWatch({ secret: event.target.value })}
+                      />
+                    </Field>
+                  )}
+                </div>
+                <WebhookFiltersField
+                  label="Conditions"
+                  itemLabel="condition"
+                  description="Run when an item newly matches every condition; with none, every new item runs. Separate “is one of” values with commas, or use a JSON list."
+                  pathPlaceholder={
+                    draft.watch.sourceType === "jira" ? "fields.status.name" : "status"
+                  }
+                  filters={draft.watch.filters}
+                  onChange={(filters) => setWatch({ filters })}
+                />
+                <Field label="Max active runs" hint="1–4" htmlFor="scheduled-task-watch-max">
+                  <Input
+                    id="scheduled-task-watch-max"
+                    type="number"
+                    nativeInput
+                    min={1}
+                    max={4}
+                    className="w-24"
+                    value={draft.watch.maxConcurrentRuns}
+                    onChange={(event) => setWatch({ maxConcurrentRuns: event.target.value })}
+                  />
+                </Field>
+              </div>
+            ) : draft.scheduleMode === "webhook" ? (
               <div className="space-y-4">
                 <WebhookEndpointField environmentId={environmentId} task={liveTask} />
                 <p className="text-xs text-muted-foreground">
@@ -1763,7 +2122,14 @@ function ScheduledTaskEditorForm({
         </DialogClose>
         <Button
           size="sm"
-          disabled={!canOperate || saving || editingTaskMissing || !connected || !tasksQuery.data}
+          disabled={
+            !canOperate ||
+            saving ||
+            editingTaskMissing ||
+            !connected ||
+            !tasksQuery.data ||
+            (draft.scheduleMode === "watch" && !supportsWatchers)
+          }
           onClick={() => void submit()}
         >
           {draft.editingId ? "Save task" : "Create task"}

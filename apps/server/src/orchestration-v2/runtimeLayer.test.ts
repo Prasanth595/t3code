@@ -42,6 +42,8 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -304,6 +306,8 @@ const layerLegacyImportTest = RuntimeLayer.layer.pipe(
 );
 
 const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
+  Layer.provide(FetchHttpClient.layer),
+  Layer.provide(Layer.mock(ServerSecretStore.ServerSecretStore)({})),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),

@@ -22,6 +22,8 @@ import {
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
+  ScheduledTaskWatch,
+  ScheduledTaskWatchInput,
 } from "./scheduledTask.ts";
 import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
@@ -588,6 +590,7 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
     description: "Prompt executed on every scheduled run.",
   }),
   schedule: OrchestratorMcpSchedule,
+  watch: Schema.optional(ScheduledTaskWatchInput),
   title: Schema.optional(OrchestratorMcpTitle),
   enabled: Schema.optional(
     Schema.Boolean.annotate({ description: "Whether the schedule starts enabled; defaults true." }),
@@ -612,6 +615,10 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
+  lastRunAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  lastRunError: Schema.optional(Schema.NullOr(Schema.String)),
+  runCount: Schema.optional(NonNegativeInt),
+  watch: Schema.optional(ScheduledTaskWatch),
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
       "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; the user must enable T3 Connect remote access first.",
@@ -647,6 +654,10 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
   schedule: Schema.optional(OrchestratorMcpSchedule),
+  watch: Schema.optional(Schema.NullOr(ScheduledTaskWatchInput)).annotate({
+    description:
+      "Omit to preserve the watcher, or null to remove it. Watchers require an interval.",
+  }),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
 });

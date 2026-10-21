@@ -9,6 +9,9 @@ import {
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
+  type ScheduledTaskWatch,
+  ScheduledTaskWatchInput,
   ScheduledTaskId,
   ProjectId,
   ProviderDriverKind,
@@ -23,6 +26,7 @@ import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
@@ -56,6 +60,7 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
+const decodeWatchInput = Schema.decodeUnknownSync(ScheduledTaskWatchInput);
 
 const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
@@ -2073,6 +2078,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       tasks: ReadonlyArray<ScheduledTask>,
       boundThread: OrchestrationV2ThreadShell | null,
       upserted: Ref.Ref<number>,
+      inputs?: Ref.Ref<ReadonlyArray<ScheduledTaskUpsertInput>>,
     ) =>
       layerOrchestratorService.pipe(
         Layer.provide(
@@ -2081,22 +2087,190 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ThreadManagementService.ThreadManagementService)({
               getThreadShell: (threadId) =>
                 Effect.succeed(threadId === boundThreadId ? boundThread : null),
+              getThreadRecords: () =>
+                Effect.succeed(idleThreadProjection(boundThread ?? liveThreadShell(boundThreadId))),
             }),
             ServerSettings.layerTest(),
             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
             }),
-            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: () =>
+                Effect.succeed(
+                  Option.some({
+                    id: projectId,
+                    title: "Watch project",
+                    workspaceRoot: "/tmp/watch-project",
+                    defaultModelSelection: task({}).modelSelection,
+                    scripts: [],
+                    createdAt: "2026-10-05T00:00:00.000Z",
+                    updatedAt: "2026-10-05T00:00:00.000Z",
+                    deletedAt: null,
+                  }),
+                ),
+            }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
-              upsert: () =>
-                Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: tasks[0]! })),
+              upsert: (input) =>
+                Effect.gen(function* () {
+                  yield* Ref.update(upserted, (count) => count + 1);
+                  if (inputs !== undefined) {
+                    yield* Ref.update(inputs, (saved) => [...saved, input]);
+                  }
+                  return { task: tasks[0]! };
+                }),
             }),
           ),
         ),
       );
+
+    const watch: ScheduledTaskWatch = {
+      source: {
+        type: "jira",
+        baseUrl: "https://example.atlassian.net",
+        jql: "project = APP",
+        auth: { type: "basic", username: "user@example.com", hasSecret: true },
+      },
+      filters: [{ path: "fields.status.name", op: "equals", value: "To Do" }],
+      maxConcurrentRuns: 1,
+      initializedAt: "2026-10-05T00:00:00.000Z",
+      lastFiredAt: null,
+      fireCount: 0,
+      pendingCount: 2,
+      activeRunCount: 1,
+    };
+
+    it.effect("passes watcher setup through and reports its safe check summary", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const stored = task({
+          schedule: { type: "interval", everyMs: 60_000 },
+          watch,
+          lastRunAt: "2026-10-05T01:00:00.000Z",
+          lastRunStatus: "failed",
+          lastRunError: "Source unavailable",
+          runCount: 3,
+        });
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service([stored], null, upserted, inputs)),
+        );
+        const inputWatch = {
+          source: {
+            type: "jira",
+            baseUrl: "https://example.atlassian.net",
+            jql: "project = APP",
+            auth: {
+              type: "basic",
+              username: "user@example.com",
+              secretRef: "secret:private",
+            },
+          },
+          filters: watch.filters,
+          maxConcurrentRuns: 1,
+        } as const;
+        const decodedWatch = decodeWatchInput(inputWatch);
+        const created = yield* mcp.scheduleTask(supervisedClient, {
+          projectId,
+          prompt: "Handle the matching issue",
+          schedule: { type: "interval", everyMs: 60_000 },
+          watch: decodedWatch,
+        });
+        assert.deepEqual((yield* Ref.get(inputs))[0]?.watch, decodedWatch);
+        assert.equal((yield* Ref.get(inputs))[0]?.runtimeMode, "approval-required");
+        assert.equal((yield* Ref.get(inputs))[0]?.interactionMode, "default");
+        assert.deepEqual(created.watch, watch);
+        assert.equal(created.lastRunAt, stored.lastRunAt);
+        assert.equal(created.lastRunError, "Source unavailable");
+        assert.equal(created.runCount, 3);
+        assert.equal(JSON.stringify(created).includes("secret:private"), false);
+      }),
+    );
+
+    it.effect("keeps watch omitted for old edits and passes explicit replacement or removal", () =>
+      Effect.gen(function* () {
+        const upserted = yield* Ref.make(0);
+        const inputs = yield* Ref.make<ReadonlyArray<ScheduledTaskUpsertInput>>([]);
+        const stored = task({ schedule: { type: "interval", everyMs: 60_000 }, watch });
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service([stored], null, upserted, inputs)),
+        );
+        yield* mcp.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: stored.id,
+          enabled: false,
+        });
+        yield* mcp.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: stored.id,
+          watch: {
+            source: {
+              type: "jira",
+              baseUrl: "https://example.atlassian.net",
+              jql: "project = APP",
+            },
+            filters: [],
+            maxConcurrentRuns: 2,
+          },
+        });
+        yield* mcp.updateScheduledTask(supervisedClient, {
+          scheduledTaskId: stored.id,
+          watch: null,
+        });
+        const saved = yield* Ref.get(inputs);
+        assert.equal(Object.hasOwn(saved[0]!, "watch"), false);
+        assert.equal(saved[1]?.watch?.maxConcurrentRuns, 2);
+        assert.equal(saved[2]?.watch, null);
+      }),
+    );
+
+    it.effect("rejects watcher changes above runtime and interaction permission ceilings", () =>
+      Effect.gen(function* () {
+        for (const testCase of [
+          {
+            runtimeMode: "full-access",
+            callerInteractionMode: "default",
+            code: "runtime_mode_escalation_denied",
+          },
+          {
+            runtimeMode: "approval-required",
+            callerInteractionMode: "plan",
+            code: "interaction_mode_escalation_denied",
+          },
+        ] as const) {
+          const upserted = yield* Ref.make(0);
+          const stored = task({
+            runtimeMode: testCase.runtimeMode,
+            schedule: { type: "interval", everyMs: 60_000 },
+            watch,
+          });
+          const caller = liveThreadShell(boundThreadId, {
+            runtimeMode: "approval-required",
+            interactionMode: testCase.callerInteractionMode,
+          });
+          const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+            Effect.provide(service([stored], caller, upserted)),
+          );
+          const scope = {
+            ...supervisedClient,
+            client: undefined,
+            thread: {
+              threadId: boundThreadId,
+              providerSessionId: "provider:watch",
+              providerInstanceId: caller.providerInstanceId,
+            },
+          };
+          const error = yield* mcp
+            .updateScheduledTask(scope, {
+              scheduledTaskId: stored.id,
+              watch: null,
+            })
+            .pipe(Effect.flip);
+          assert.equal(error.code, testCase.code);
+          assert.equal(yield* Ref.get(upserted), 0);
+        }
+      }),
+    );
 
     it.effect("hides a webhook URL from a caller below the task's modes", () =>
       Effect.gen(function* () {

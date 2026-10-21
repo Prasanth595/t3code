@@ -48,6 +48,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as WatchRuntime from "./watchRuntime.ts";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
   redactHeaders,
@@ -181,6 +182,7 @@ const encodeHeadersJson = Schema.encodeSync(HeadersJson);
 const encodeMissingFieldsJson = Schema.encodeSync(MissingFieldsJson);
 
 interface ScheduledTaskRow {
+  readonly watch_json: string | null;
   readonly task_id: string;
   readonly title: string;
   readonly prompt: string;
@@ -346,6 +348,7 @@ const decodeRow = Effect.fnUntraced(
       lastRunStatus: row.last_run_status,
       lastRunError: row.last_run_error,
       runCount: row.run_count,
+      ...(row.watch_json == null ? {} : { watch: yield* WatchRuntime.loadWatch(row.task_id) }),
       ...(webhook === undefined ? {} : { webhook }),
     });
   },
@@ -454,7 +457,8 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        watch_json
       FROM scheduled_tasks
       ORDER BY updated_at DESC, task_id ASC
     `;
@@ -462,7 +466,9 @@ export const layer = Layer.effect(
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
       const rows = yield* selectAllRows();
       const origin = yield* readWebhookOrigin;
-      return yield* Effect.forEach(rows, (row) => decodeRow(row, origin), { concurrency: 1 });
+      return yield* Effect.forEach(rows, (row) => decodeRow(row, origin), { concurrency: 1 }).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     });
 
     const getRows = (id: ScheduledTaskId) => sql<ScheduledTaskRow>`
@@ -488,7 +494,8 @@ export const layer = Layer.effect(
         last_run_error,
         run_count,
         webhook_token,
-        webhook_secret
+        webhook_secret,
+        watch_json
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `;
@@ -501,7 +508,9 @@ export const layer = Layer.effect(
       );
       const row = rows[0];
       if (row === undefined) return null;
-      return yield* decodeRow(row, yield* readWebhookOrigin);
+      return yield* decodeRow(row, yield* readWebhookOrigin).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
     });
 
     const findWebhookCredentials = (id: ScheduledTaskId) =>
@@ -528,6 +537,8 @@ export const layer = Layer.effect(
       }
       return task;
     });
+
+    const watchRuntime = yield* WatchRuntime.make({ loadTask: findTask, notifyChanged, nextRunAt });
 
     // Run-state columns (last_run_*, run_count) are intentionally absent from
     // the conflict clause: they are owned by the run transitions below, and a
@@ -630,10 +641,18 @@ export const layer = Layer.effect(
         ),
       );
 
-    const deleteRow = (id: ScheduledTaskId) =>
-      sql
+    const deleteRow = Effect.fn("ScheduledTaskService.deleteRow")(function* (id: ScheduledTaskId) {
+      const [credential] = yield* sql<{
+        watch_secret_name: string | null;
+      }>`SELECT watch_secret_name FROM scheduled_tasks WHERE task_id = ${id}`.pipe(
+        Effect.mapError(() => taskError("Could not delete schedule task.")),
+      );
+      yield* sql
         .withTransaction(
           sql`DELETE FROM scheduled_task_webhook_deliveries WHERE task_id = ${id}`.pipe(
+            Effect.andThen(
+              sql`DELETE FROM scheduled_task_watch_events WHERE task_id = ${id} AND state = 'pending'`,
+            ),
             Effect.andThen(sql`DELETE FROM scheduled_tasks WHERE task_id = ${id}`),
           ),
         )
@@ -642,6 +661,8 @@ export const layer = Layer.effect(
             taskError("Could not delete schedule task.", { taskId: id, cause }),
           ),
         );
+      yield* watchRuntime.removeSecret(credential?.watch_secret_name ?? null);
+    });
 
     const markRunning = (id: ScheduledTaskId, startedAtIso: string, webhookDeliveryId?: string) =>
       sql<{ task_id: string }>`
@@ -651,7 +672,7 @@ export const layer = Layer.effect(
             last_run_webhook_delivery_id = ${webhookDeliveryId ?? null},
             last_run_status = 'running',
             last_run_error = NULL
-        WHERE task_id = ${id}
+        WHERE task_id = ${id} AND watch_json IS NULL
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
@@ -764,6 +785,7 @@ export const layer = Layer.effect(
           }
           return { task, threadId: null };
         }
+        if (active.watch !== undefined) return { task: active, threadId: null };
         if (
           webhook !== undefined &&
           (yield* sql`SELECT 1 FROM scheduled_task_webhook_pending WHERE delivery_id = ${webhook.deliveryId} AND state = 'completed'`)
@@ -961,7 +983,9 @@ export const layer = Layer.effect(
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
       const due = tasks.flatMap((task) =>
-        task.nextRunAt === null ? [] : [{ task, dueAt: DateTime.makeUnsafe(task.nextRunAt) }],
+        task.watch !== undefined || task.nextRunAt === null
+          ? []
+          : [{ task, dueAt: DateTime.makeUnsafe(task.nextRunAt) }],
       );
       yield* Effect.forEach(
         due,
@@ -990,7 +1014,9 @@ export const layer = Layer.effect(
         stuck,
         (row) =>
           Effect.gen(function* () {
-            const decoded = yield* Effect.result(decodeRow(row));
+            const decoded = yield* Effect.result(
+              decodeRow(row).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+            );
             if (Result.isSuccess(decoded)) {
               yield* sql`
                 UPDATE scheduled_tasks
@@ -1034,10 +1060,21 @@ export const layer = Layer.effect(
     );
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
+    yield* scheduler.register(
+      "watcher-checks",
+      Effect.gen(function* () {
+        const tasks = yield* listDueTasks(yield* localNow);
+        yield* Effect.forEach(
+          tasks.filter((task) => task.watch !== undefined),
+          (task) => watchRuntime.check(task),
+          { concurrency: 4, discard: true },
+        );
+      }),
+    );
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
       listRows().pipe(
-        Effect.map((tasks) => ({ tasks })),
+        Effect.map((tasks) => ({ tasks, supportsWatchers: true })),
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );
 
@@ -1150,6 +1187,7 @@ export const layer = Layer.effect(
         (yield* managedFolders.isScratchProject(input.projectId))
           ? { type: "root" }
           : input.workspaceStrategy;
+      const preparedWatch = yield* watchRuntime.prepare(input, existingTask);
       const scheduleUnchanged =
         existingTask !== null &&
         existingTask.enabled === input.enabled &&
@@ -1178,40 +1216,71 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(task, input.requireExisting === true, webhook);
+      yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* saveTask(task, input.requireExisting === true, webhook);
+            yield* watchRuntime.save(id, preparedWatch);
+          }),
+        )
+        .pipe(
+          Effect.onError(() => watchRuntime.cleanup(preparedWatch, false)),
+          Effect.mapError((cause) =>
+            isScheduledTaskError(cause)
+              ? cause
+              : taskError("Could not save schedule task.", { taskId: id, cause }),
+          ),
+        );
+      yield* watchRuntime.cleanup(preparedWatch, true);
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
-    });
+    }, watchRuntime.withLock);
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(
       "ScheduledTaskService.setEnabled",
-    )(function* (input) {
-      const existing = yield* loadTask(input.id);
-      if (existing.enabled === input.enabled) return { task: existing };
-      const now = yield* localNow;
-      const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
-      // RETURNING so a task deleted between the load and this UPDATE is a
-      // visible not-found error, not a false success.
-      const updated = yield* sql<{ task_id: string }>`
+    )(
+      function* (input) {
+        const existing = yield* loadTask(input.id);
+        if (existing.enabled === input.enabled) return { task: existing };
+        const now = yield* localNow;
+        const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
+        // RETURNING so a task deleted between the load and this UPDATE is a
+        // visible not-found error, not a false success.
+        const updated = yield* sql<{ task_id: string }>`
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
-              updated_at = ${iso(now)}
+              updated_at = ${iso(now)},
+              watch_revision = CASE WHEN watch_json IS NULL THEN watch_revision ELSE ${yield* crypto.randomUUIDv4().pipe(Effect.mapError(() => taskError("Could not update watcher.")))} END
           WHERE task_id = ${input.id}
           RETURNING task_id
         `.pipe(
-        Effect.mapError((cause) =>
-          taskError("Could not update schedule task.", { taskId: input.id, cause }),
-        ),
-      );
-      if (updated.length === 0) {
-        return yield* taskError("Schedule task not found.", { taskId: input.id });
-      }
-      yield* notifyChanged;
-      return {
-        task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
-      };
-    });
+          Effect.mapError((cause) =>
+            taskError("Could not update schedule task.", { taskId: input.id, cause }),
+          ),
+        );
+        if (updated.length === 0) {
+          return yield* taskError("Schedule task not found.", { taskId: input.id });
+        }
+        yield* sql`UPDATE scheduled_task_watch_events SET revision = (SELECT watch_revision FROM scheduled_tasks WHERE task_id = ${input.id}) WHERE task_id = ${input.id} AND state IN ('pending', 'dispatching')`.pipe(
+          Effect.mapError(() => taskError("Could not update watcher.")),
+        );
+        yield* notifyChanged;
+        return {
+          task: { ...existing, enabled: input.enabled, nextRunAt: next, updatedAt: iso(now) },
+        };
+      },
+      (effect) =>
+        watchRuntime
+          .withLock(sql.withTransaction(effect))
+          .pipe(
+            Effect.mapError((cause) =>
+              isScheduledTaskError(cause)
+                ? cause
+                : taskError("Could not update schedule task.", { cause }),
+            ),
+          ),
+    );
 
     const forgetWebhookTask = (id: ScheduledTaskId) =>
       Effect.all(
@@ -1250,6 +1319,7 @@ export const layer = Layer.effect(
         Effect.andThen(forgetWebhookTask(input.id)),
         Effect.andThen(notifyChanged),
         Effect.as({ id: input.id }),
+        watchRuntime.withLock,
       );
 
     const deleteForThread = Effect.fn("ScheduledTaskService.deleteForThread")(function* (
@@ -1264,8 +1334,9 @@ export const layer = Layer.effect(
             DELETE FROM scheduled_task_webhook_deliveries
             WHERE task_id IN (SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId})
           `;
-            return yield* sql<{ task_id: ScheduledTaskId }>`
-            DELETE FROM scheduled_tasks WHERE thread_id = ${threadId} RETURNING task_id
+            yield* sql`DELETE FROM scheduled_task_watch_events WHERE state = 'pending' AND task_id IN (SELECT task_id FROM scheduled_tasks WHERE thread_id = ${threadId})`;
+            return yield* sql<{ task_id: ScheduledTaskId; watch_secret_name: string | null }>`
+            DELETE FROM scheduled_tasks WHERE thread_id = ${threadId} RETURNING task_id, watch_secret_name
           `;
           }),
         )
@@ -1274,16 +1345,27 @@ export const layer = Layer.effect(
             taskError("Could not delete thread's schedule tasks.", { cause }),
           ),
         );
-      yield* Effect.forEach(removed, ({ task_id }) => forgetWebhookTask(task_id), {
-        discard: true,
-      });
+      yield* Effect.forEach(
+        removed,
+        ({ task_id, watch_secret_name }) =>
+          forgetWebhookTask(task_id).pipe(
+            Effect.andThen(watchRuntime.removeSecret(watch_secret_name)),
+          ),
+        {
+          discard: true,
+        },
+      );
       if (removed.length > 0) yield* notifyChanged;
-    });
+    }, watchRuntime.withLock);
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = Effect.fn(
       "ScheduledTaskService.runNow",
     )(function* (input: ScheduledTaskRunNowInput) {
       const task = yield* loadTask(input.id);
+      if (task.watch !== undefined) {
+        yield* watchRuntime.check(task);
+        return { task: yield* loadTask(input.id), threadId: null };
+      }
       if (task.schedule.type === "webhook") {
         return yield* taskError("Webhook tasks run when their URL receives a request.", {
           taskId: input.id,
@@ -1699,7 +1781,7 @@ export const layer = Layer.effect(
       ) {
         return yield* notFound;
       }
-      const task = yield* decodeRow(row);
+      const task = yield* decodeRow(row).pipe(Effect.provideService(SqlClient.SqlClient, sql));
       yield* Effect.annotateCurrentSpan({ "scheduled_task.id": task.id });
       const schedule = task.schedule;
       if (schedule.type !== "webhook") return yield* notFound;
@@ -2147,6 +2229,7 @@ export const layer = Layer.effect(
       );
     });
     yield* scheduler.register("webhook-coalescing", dispatchPending());
+    yield* scheduler.register("watcher-dispatch", watchRuntime.dispatch());
 
     return ScheduledTaskService.of({
       list,

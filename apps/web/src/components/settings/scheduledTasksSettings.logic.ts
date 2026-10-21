@@ -2,9 +2,11 @@ import { isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
-  type ProjectId,
+  ProjectId,
   ScheduledTaskId,
+  ThreadId,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
   type ScheduledTaskUpsertSchedule,
   type ModelSelection,
   type RuntimeMode,
@@ -18,6 +20,12 @@ import {
   webhookFilterDraftsChanged,
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
+import {
+  emptyWatchDraft,
+  parseWatchDraft,
+  watchDraft,
+  type WatchDraft,
+} from "@t3tools/client-runtime/scheduled-task-watch";
 
 import {
   resolveProjectSettings,
@@ -49,10 +57,19 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
     ...(typeof raw.taskId === "string" && raw.taskId.trim()
       ? { taskId: ScheduledTaskId.make(raw.taskId) }
       : {}),
+    ...(raw.createWatcher === true || raw.createWatcher === "true"
+      ? { createWatcher: true as const }
+      : {}),
+    ...(typeof raw.projectId === "string" && raw.projectId.trim()
+      ? { projectId: ProjectId.make(raw.projectId) }
+      : {}),
+    ...(typeof raw.threadId === "string" && raw.threadId.trim()
+      ? { threadId: ThreadId.make(raw.threadId) }
+      : {}),
   };
 }
 
-export type ScheduleMode = "fixed" | "interval" | "webhook";
+export type ScheduleMode = "fixed" | "interval" | "webhook" | "watch";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -91,6 +108,8 @@ export interface DraftState {
   readonly filters: ReadonlyArray<WebhookFilterDraft>;
   /** The filter rows the form opened with. */
   readonly savedFilters: ReadonlyArray<WebhookFilterDraft>;
+  readonly watch: WatchDraft;
+  readonly hadWatch: boolean;
 }
 
 export const WEBHOOK_SIGNATURE_DEFAULTS = {
@@ -185,7 +204,7 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         : {}),
     };
   }
-  if (draft.scheduleMode === "interval") {
+  if (draft.scheduleMode === "interval" || draft.scheduleMode === "watch") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
   }
@@ -194,6 +213,45 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     type: "fixed_time",
     timeOfDay: draft.timeOfDay || "09:00",
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
+  };
+}
+
+export function watchFieldsFromDraft(
+  draft: DraftState,
+): Pick<ScheduledTaskUpsertInput, "watch" | "watchSecret"> | { readonly error: string } {
+  if (draft.scheduleMode === "watch") return parseWatchDraft(draft.watch);
+  return draft.hadWatch ? { watch: null } : {};
+}
+
+export function watchSecretKept(task: ScheduledTask | null, draft: DraftState): boolean {
+  const auth = task?.watch?.source.auth;
+  if (!task?.watch || !auth?.hasSecret || task.projectId !== draft.projectId) return false;
+  if (auth.type !== draft.watch.authType) return false;
+  if (auth.type === "basic" && auth.username !== draft.watch.username.trim()) return false;
+  const source = task.watch.source;
+  try {
+    return (
+      new URL(source.type === "jira" ? source.baseUrl : source.url).origin ===
+      new URL(draft.watch.url.trim()).origin
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function withDraftProject(draft: DraftState, projectId: string): DraftState {
+  return projectId === draft.projectId ? draft : { ...draft, projectId, threadId: "" };
+}
+
+export function watcherDraft(
+  base: DraftState,
+  preset: { readonly projectId?: string | undefined; readonly threadId?: string | undefined },
+): DraftState {
+  return {
+    ...base,
+    scheduleMode: "watch",
+    projectId: preset.projectId ?? "",
+    threadId: preset.threadId ?? "",
   };
 }
 
@@ -209,8 +267,13 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
-    scheduleMode:
-      schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
+    scheduleMode: task.watch
+      ? "watch"
+      : schedule.type === "interval"
+        ? "interval"
+        : schedule.type === "webhook"
+          ? "webhook"
+          : "fixed",
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
@@ -252,6 +315,8 @@ export function taskToDraft(task: ScheduledTask): DraftState {
         : "",
     filters,
     savedFilters: filters,
+    watch: task.watch ? watchDraft(task.watch) : emptyWatchDraft(),
+    hadWatch: task.watch !== undefined,
   };
 }
 

@@ -29,6 +29,8 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
 
@@ -210,6 +212,8 @@ it.effect(
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+                FetchHttpClient.layer,
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -308,6 +312,8 @@ it.effect(
                 }),
                 Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                 Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+                FetchHttpClient.layer,
                 NodeCrypto.layer,
                 Scheduler.layer,
               ),
@@ -358,6 +364,8 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
               ),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+          FetchHttpClient.layer,
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
             namedProjectsRoot: "/projects",
             isScratchProject: () => Effect.succeed(false),

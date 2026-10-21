@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ScheduledTask,
   type ServerConfig,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -11,6 +12,11 @@ import {
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
+  createDraft,
+  editDraft,
+  hasScheduledTaskDraftChanges,
+  watchFieldsFromDraft,
+  withDraftProject,
 } from "./scheduledTaskDraft";
 
 describe("scheduleDraftForTask", () => {
@@ -195,4 +201,89 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+describe("watcher drafts", () => {
+  const watch = {
+    source: {
+      type: "jira",
+      baseUrl: "https://example.atlassian.net",
+      jql: "project = T3",
+      auth: { type: "basic", username: "bot@example.com", hasSecret: true },
+    },
+    filters: [{ path: "fields.status.name", op: "equals", value: "Done" }],
+    maxConcurrentRuns: 2,
+    initializedAt: null,
+    lastFiredAt: null,
+    fireCount: 0,
+    pendingCount: 0,
+    activeRunCount: 0,
+  } as const;
+  const task = {
+    id: "task",
+    threadId: "thread",
+    title: "Watch Jira",
+    prompt: "Fix it",
+    projectId: ProjectId.make("project"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt" },
+    enabled: true,
+    schedule: { type: "interval", everyMs: 120_000 },
+    workspaceStrategy: { type: "root" },
+    runtimeMode: "full-access",
+    watch,
+  } as unknown as ScheduledTask;
+
+  it("reopens a watcher with its source and rule and saves it unchanged without a secret", () => {
+    const draft = editDraft(task);
+    expect(draft.schedule.mode).toBe("watch");
+    expect(draft.threadId).toBe("thread");
+    expect(scheduleFromDraft(draft.schedule)).toEqual({ type: "interval", everyMs: 120_000 });
+    expect(watchFieldsFromDraft(draft)).toEqual({
+      watch: {
+        source: {
+          type: "jira",
+          baseUrl: watch.source.baseUrl,
+          jql: watch.source.jql,
+          auth: { type: "basic", username: "bot@example.com" },
+        },
+        filters: watch.filters,
+        maxConcurrentRuns: 2,
+      },
+    });
+  });
+
+  it("sends a typed secret only for the watcher", () => {
+    const draft = editDraft(task);
+    const typed = {
+      ...draft,
+      schedule: { ...draft.schedule, watch: { ...draft.schedule.watch, secret: " token " } },
+    };
+    expect(hasScheduledTaskDraftChanges(draft, typed)).toBe(true);
+    expect(watchFieldsFromDraft(typed)).toMatchObject({ watchSecret: " token " });
+  });
+
+  it("removes the watcher when switched to a timer and leaves ordinary tasks alone", () => {
+    const draft = editDraft(task);
+    expect(
+      watchFieldsFromDraft({ ...draft, schedule: { ...draft.schedule, mode: "interval" } }),
+    ).toEqual({
+      watch: null,
+    });
+    expect(watchFieldsFromDraft(createDraft(null, null))).toEqual({});
+    expect(
+      watchFieldsFromDraft(editDraft({ ...task, watch: undefined } as unknown as ScheduledTask)),
+    ).toEqual({});
+  });
+
+  it("drops the thread binding when the project changes", () => {
+    const draft = editDraft(task);
+    expect(withDraftProject(draft, draft.projectId!, null, false).threadId).toBe("thread");
+    expect(withDraftProject(draft, ProjectId.make("other"), null, false).threadId).toBeNull();
+  });
+
+  it("rejects a watcher with a sub-minute check interval", () => {
+    expect(
+      scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "watch", intervalMinutes: "0.5" }),
+    ).toBeNull();
+  });
 });
