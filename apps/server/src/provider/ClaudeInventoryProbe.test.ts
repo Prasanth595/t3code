@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
+import { TestClock } from "effect/testing";
 import { vi } from "vite-plus/test";
 
 import { probeClaudeInventory } from "./ClaudeProvider.ts";
@@ -61,6 +62,102 @@ it.effect("closes a Claude inventory probe if initialization fails", () =>
     const result = yield* probeClaudeInventory(settings, {}, "/inventory-test").pipe(Effect.exit);
 
     assert.isTrue(Exit.isFailure(result));
+    assert.isTrue(controller?.signal.aborted);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each(["servers", "plugins", "skills"] as const)(
+  "preserves other Claude inventory sections when %s fail",
+  (failedPart) =>
+    Effect.gen(function* () {
+      let controller: AbortController | undefined;
+      using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation((input) => {
+        controller = input.options!.abortController!;
+        const read = <A>(part: typeof failedPart, value: A) =>
+          part === failedPart
+            ? Promise.reject(new Error("Private provider diagnostic"))
+            : Promise.resolve(value);
+        return {
+          initializationResult: async () => ({}),
+          mcpServerStatus: () =>
+            read("servers", [
+              { name: "claude.ai Gmail", source: "claudeai", status: "connected" },
+              { name: "github", source: "user", status: "connected" },
+            ]),
+          reloadPlugins: () =>
+            read("plugins", { plugins: [{ name: "design", source: "design@synced" }] }),
+          reloadSkills: () =>
+            read("skills", { skills: [{ name: "pdf", description: "Read PDFs" }] }),
+        } as unknown as ReturnType<typeof ClaudeSdk.query>;
+      });
+      const inventory = yield* probeClaudeInventory(settings, {}, "/inventory-test");
+      if (failedPart === "servers") {
+        assert.deepEqual(inventory.connectors, {
+          _tag: "Failed",
+          message: "Claude could not list its MCP servers.",
+        });
+        assert.deepEqual(inventory.mcpServers, inventory.connectors);
+      } else {
+        assert.equal(inventory.connectors._tag, "Listed");
+        if (inventory.connectors._tag === "Listed") {
+          assert.deepEqual(
+            inventory.connectors.items.map((item) => item.id),
+            ["claude.ai Gmail"],
+          );
+        }
+        assert.equal(inventory.mcpServers._tag, "Listed");
+      }
+      assert.equal(inventory.plugins._tag, failedPart === "plugins" ? "Failed" : "Listed");
+      if (inventory.plugins._tag === "Listed") {
+        assert.deepEqual(
+          inventory.plugins.items.map((item) => item.id),
+          ["design@synced"],
+        );
+      }
+      assert.equal(inventory.skills._tag, failedPart === "skills" ? "Failed" : "Listed");
+      if (inventory.skills._tag === "Listed") {
+        assert.deepEqual(
+          inventory.skills.items.map((item) => item.id),
+          ["pdf"],
+        );
+        assert.equal(inventory.skills.canDisable, failedPart !== "plugins");
+      }
+      assert.isFalse(JSON.stringify(inventory).includes("Private provider diagnostic"));
+      assert.isTrue(controller?.signal.aborted);
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("preserves loaded Claude inventory when a plugin lookup never responds", () =>
+  Effect.gen(function* () {
+    const pluginsStarted = yield* Deferred.make<void>();
+    let controller: AbortController | undefined;
+    using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation((input) => {
+      controller = input.options!.abortController!;
+      return {
+        initializationResult: async () => ({}),
+        mcpServerStatus: async () => [
+          { name: "claude.ai Gmail", source: "claudeai", status: "connected" },
+        ],
+        reloadPlugins: () => {
+          Deferred.doneUnsafe(pluginsStarted, Effect.void);
+          return new Promise(() => {});
+        },
+        reloadSkills: async () => ({ skills: [{ name: "pdf", description: "Read PDFs" }] }),
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+    const fiber = yield* probeClaudeInventory(settings, {}, "/inventory-test").pipe(
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(pluginsStarted);
+    yield* TestClock.adjust("4 seconds");
+    assert.isDefined(fiber.pollUnsafe());
+    const inventory = yield* Fiber.join(fiber);
+    assert.equal(inventory.connectors._tag, "Listed");
+    assert.deepEqual(inventory.plugins, {
+      _tag: "Failed",
+      message: "Claude could not list its plugins.",
+    });
+    assert.equal(inventory.skills._tag, "Listed");
     assert.isTrue(controller?.signal.aborted);
   }).pipe(Effect.provide(NodeServices.layer)),
 );

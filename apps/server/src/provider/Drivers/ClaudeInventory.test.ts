@@ -18,10 +18,12 @@ const listed = (section: ReturnType<typeof claudeInventoryFromProbe>["connectors
   return section._tag === "Listed" ? section.items : [];
 };
 
+const success = <A>(value: A) => ({ _tag: "Success" as const, value });
+
 describe("claudeInventoryFromProbe", () => {
   it("splits account connectors from configured and plugin MCP servers", () => {
     const inventory = claudeInventoryFromProbe({
-      servers: [
+      servers: success([
         server({
           name: "claude.ai Gmail",
           source: "claudeai",
@@ -31,9 +33,9 @@ describe("claudeInventoryFromProbe", () => {
         server({ name: "plugin:design:linear", source: "plugin", status: "failed", error: "boom" }),
         server({ name: "github", scope: "user" }),
         server({ name: "t3-code", source: "sdk" }),
-      ],
-      plugins: [],
-      skills: [],
+      ]),
+      plugins: success([]),
+      skills: success([]),
     });
 
     NodeAssert.deepEqual(listed(inventory.connectors), [
@@ -54,18 +56,18 @@ describe("claudeInventoryFromProbe", () => {
 
   it("files plugin skills under their plugin and hides built-in plugins", () => {
     const inventory = claudeInventoryFromProbe({
-      servers: [server({ name: "plugin:design:linear", source: "plugin" })],
-      plugins: [
+      servers: success([server({ name: "plugin:design:linear", source: "plugin" })]),
+      plugins: success([
         { name: "design", source: "design@synced", version: "1.2.0" },
         { name: "cc-plugin-telemetry", source: "cc-plugin-telemetry@builtin" },
-      ],
-      skills: [
+      ]),
+      skills: success([
         { name: "design:design-critique", description: "Critique" },
         { name: "design:ux-copy", description: "" },
         { name: "pdf", description: "Read PDFs" },
         // A namespace that is not one of the listed plugins stays a skill.
         { name: "anthropic-skills:deep-research", description: "" },
-      ],
+      ]),
     });
 
     NodeAssert.deepEqual(listed(inventory.plugins), [

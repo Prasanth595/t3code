@@ -56,6 +56,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
+const RECONFIGURATION_PROBE_TIMEOUT_MS = 5 * 1000;
 
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
@@ -1200,13 +1201,33 @@ export const layerWithOptions = (
         function* (entry: LiveSessionEntry, providerSessionId: ProviderSessionId) {
           if (registry.instanceBuild === undefined) return false;
           const current = yield* registry.instanceBuild(entry.runtime.instanceId);
-          if (current === undefined || current === entry.instanceBuild) return false;
+          if (current === undefined) {
+            return yield* new ProviderSessionOpenError({
+              instanceId: entry.runtime.instanceId,
+              providerSessionId,
+              cause: new ProviderAdapterRegistry.ProviderAdapterRegistryLookupError({
+                instanceId: entry.runtime.instanceId,
+              }),
+            });
+          }
+          if (current === entry.instanceBuild) return false;
           if (entry.busyTurns.size > 0) return false;
           const hasPendingWork =
             entry.runtime.hasPendingBackgroundWork === undefined
               ? false
               : yield* entry.runtime.hasPendingBackgroundWork.pipe(
-                  Effect.catchCause(() => Effect.succeed(false)),
+                  // An unknown activity state must neither block the open lock
+                  // indefinitely nor admit another turn with stale exclusions.
+                  Effect.timeout(RECONFIGURATION_PROBE_TIMEOUT_MS),
+                  Effect.catchCause((cause) =>
+                    Effect.fail(
+                      new ProviderSessionOpenError({
+                        instanceId: entry.runtime.instanceId,
+                        providerSessionId,
+                        cause,
+                      }),
+                    ),
+                  ),
                 );
           if (hasPendingWork) return false;
           yield* releaseEntry({

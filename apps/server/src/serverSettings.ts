@@ -277,8 +277,8 @@ const makeTest = Effect.fn("serverSettings.makeTest")(function* (
     updateProviderInstance: (mutation, patch = {}) =>
       updateTestSettings((currentSettings) =>
         Effect.gen(function* () {
-          yield* ensureProviderInstanceMutationAllowed(currentSettings, mutation, "test settings");
           const patched = applyServerSettingsPatch(currentSettings, patch);
+          yield* ensureProviderInstanceMutationAllowed(patched, mutation, "test settings");
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),
@@ -1191,8 +1191,8 @@ const make = Effect.gen(function* () {
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>
         Effect.gen(function* () {
-          yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
           const patched = applyServerSettingsPatch(current, patch);
+          yield* ensureProviderInstanceMutationAllowed(patched, mutation, settingsPath);
           return applyProviderInstanceMutation(patched, mutation);
         }),
       ),

@@ -17,14 +17,20 @@ const CLAUDE_AI_CONNECTOR_PREFIX = "claude.ai ";
 const PLUGIN_SERVER_PATTERN = /^plugin:([^:]+):(.+)$/;
 const MAX_ERROR_CHARS = 300;
 
+type ClaudeInventoryPart<A> =
+  | { readonly _tag: "Success"; readonly value: A }
+  | { readonly _tag: "Failure"; readonly message: string };
+
 export interface ClaudeInventoryProbe {
-  readonly servers: ReadonlyArray<McpServerStatus>;
-  readonly plugins: ReadonlyArray<{
-    readonly name: string;
-    readonly source?: string | undefined;
-    readonly version?: string | undefined;
-  }>;
-  readonly skills: ReadonlyArray<Pick<SlashCommand, "name" | "description">>;
+  readonly servers: ClaudeInventoryPart<ReadonlyArray<McpServerStatus>>;
+  readonly plugins: ClaudeInventoryPart<
+    ReadonlyArray<{
+      readonly name: string;
+      readonly source?: string | undefined;
+      readonly version?: string | undefined;
+    }>
+  >;
+  readonly skills: ClaudeInventoryPart<ReadonlyArray<Pick<SlashCommand, "name" | "description">>>;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
@@ -62,7 +68,7 @@ const byName = (left: ProviderInventoryItem, right: ProviderInventoryItem) =>
 export function claudeInventoryFromProbe(probe: ClaudeInventoryProbe): ProviderInventoryDraft {
   const connectors: Array<ProviderInventoryItem> = [];
   const mcpServers: Array<ProviderInventoryItem> = [];
-  for (const server of probe.servers) {
+  for (const server of probe.servers._tag === "Success" ? probe.servers.value : []) {
     // `source` names where the definition came from; older CLIs only report `scope`.
     const source = server.source ?? server.scope;
     if (source === "sdk") continue;
@@ -82,11 +88,13 @@ export function claudeInventoryFromProbe(probe: ClaudeInventoryProbe): ProviderI
   }
 
   // Built-in plugins ship inside Claude Code and are not something the user connected.
-  const plugins = probe.plugins.filter((plugin) => !plugin.source?.endsWith("@builtin"));
+  const plugins = (probe.plugins._tag === "Success" ? probe.plugins.value : []).filter(
+    (plugin) => !plugin.source?.endsWith("@builtin"),
+  );
   const pluginNames = new Set(plugins.map((plugin) => plugin.name));
   const skills: Array<ProviderInventoryItem> = [];
   const skillCounts = new Map<string, number>();
-  for (const skill of probe.skills) {
+  for (const skill of probe.skills._tag === "Success" ? probe.skills.value : []) {
     const separator = skill.name.indexOf(":");
     const plugin = separator > 0 ? skill.name.slice(0, separator) : undefined;
     if (plugin !== undefined && pluginNames.has(plugin)) {
@@ -104,29 +112,49 @@ export function claudeInventoryFromProbe(probe: ClaudeInventoryProbe): ProviderI
 
   return {
     manageUrl: CLAUDE_CONNECTORS_URL,
-    connectors: { _tag: "Listed", items: connectors.toSorted(byName), canDisable: true },
-    mcpServers: { _tag: "Listed", items: mcpServers.toSorted(byName), canDisable: true },
-    plugins: {
-      _tag: "Listed",
-      items: plugins
-        .map((plugin): ProviderInventoryItem => {
-          const contents = [
-            pluralize(skillCounts.get(plugin.name) ?? 0, "skill"),
-            pluralize(serverCounts.get(plugin.name) ?? 0, "MCP server"),
-          ].filter((part) => part !== undefined);
-          const version = nonEmpty(plugin.version);
-          return {
-            id: nonEmpty(plugin.source) ?? plugin.name,
-            name: plugin.name,
-            ...(contents.length > 0 || version
-              ? { description: [...contents, ...(version ? [`v${version}`] : [])].join(" · ") }
-              : {}),
-          };
-        })
-        .toSorted(byName),
-      canDisable: true,
-    },
-    skills: { _tag: "Listed", items: skills.toSorted(byName), canDisable: true },
+    connectors:
+      probe.servers._tag === "Failure"
+        ? { _tag: "Failed", message: probe.servers.message }
+        : { _tag: "Listed", items: connectors.toSorted(byName), canDisable: true },
+    mcpServers:
+      probe.servers._tag === "Failure"
+        ? { _tag: "Failed", message: probe.servers.message }
+        : { _tag: "Listed", items: mcpServers.toSorted(byName), canDisable: true },
+    plugins:
+      probe.plugins._tag === "Failure"
+        ? { _tag: "Failed", message: probe.plugins.message }
+        : {
+            _tag: "Listed",
+            items: plugins
+              .map((plugin): ProviderInventoryItem => {
+                const contents = [
+                  pluralize(skillCounts.get(plugin.name) ?? 0, "skill"),
+                  pluralize(serverCounts.get(plugin.name) ?? 0, "MCP server"),
+                ].filter((part) => part !== undefined);
+                const version = nonEmpty(plugin.version);
+                return {
+                  id: nonEmpty(plugin.source) ?? plugin.name,
+                  name: plugin.name,
+                  ...(contents.length > 0 || version
+                    ? {
+                        description: [...contents, ...(version ? [`v${version}`] : [])].join(" · "),
+                      }
+                    : {}),
+                };
+              })
+              .toSorted(byName),
+            canDisable: true,
+          },
+    skills:
+      probe.skills._tag === "Failure"
+        ? { _tag: "Failed", message: probe.skills.message }
+        : {
+            _tag: "Listed",
+            items: skills.toSorted(byName),
+            // Without the plugin list, namespaced skills cannot be distinguished
+            // from plugin skills, which ignore individual skill overrides.
+            canDisable: probe.plugins._tag === "Success",
+          },
   };
 }
 

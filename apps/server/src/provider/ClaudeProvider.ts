@@ -439,6 +439,15 @@ const CLAUDE_INVENTORY_POLL_MS = 250;
 // Servers connect after initialization. One still connecting after this is listed as pending.
 const CLAUDE_INVENTORY_MAX_POLLS = 60;
 
+const readClaudeInventoryPart = Effect.fn("ClaudeProvider.readInventoryPart")(
+  <A, E>(effect: Effect.Effect<A, E>, message: string) =>
+    effect.pipe(
+      Effect.timeout(DEFAULT_TIMEOUT_MS),
+      Effect.map((value) => ({ _tag: "Success" as const, value })),
+      Effect.catch(() => Effect.succeed({ _tag: "Failure" as const, message })),
+    ),
+);
+
 /**
  * Unlike the health probe, this keeps the user's MCP configuration and
  * claude.ai connectors so it can report them, which starts every configured
@@ -479,20 +488,31 @@ export const probeClaudeInventory = Effect.fn("probeClaudeInventory")(
       },
     });
     yield* Effect.tryPromise(() => q.initializationResult());
-    const readServers = Effect.tryPromise(() => q.mcpServerStatus());
+    const readServers = readClaudeInventoryPart(
+      Effect.tryPromise(() => q.mcpServerStatus()),
+      "Claude could not list its MCP servers.",
+    );
     let servers = yield* readServers;
     for (
       let poll = 0;
-      poll < CLAUDE_INVENTORY_MAX_POLLS && servers.some((server) => server.status === "pending");
+      poll < CLAUDE_INVENTORY_MAX_POLLS &&
+      servers._tag === "Success" &&
+      servers.value.some((server) => server.status === "pending");
       poll++
     ) {
       yield* Effect.sleep(CLAUDE_INVENTORY_POLL_MS);
       servers = yield* readServers;
     }
-    const { plugins } = yield* Effect.tryPromise(() =>
-      q.reloadPlugins({ holdOnCacheImpact: true }),
+    const plugins = yield* readClaudeInventoryPart(
+      Effect.tryPromise(() => q.reloadPlugins({ holdOnCacheImpact: true })).pipe(
+        Effect.map((result) => result.plugins),
+      ),
+      "Claude could not list its plugins.",
     );
-    const { skills } = yield* Effect.tryPromise(() => q.reloadSkills());
+    const skills = yield* readClaudeInventoryPart(
+      Effect.tryPromise(() => q.reloadSkills()).pipe(Effect.map((result) => result.skills)),
+      "Claude could not list its skills.",
+    );
     const probe: ClaudeInventoryProbe = { servers, plugins, skills };
     return claudeInventoryFromProbe(probe);
   },

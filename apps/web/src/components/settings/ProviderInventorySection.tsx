@@ -117,7 +117,7 @@ export function ProviderInventoryList(props: {
         <p className="min-w-0 text-xs text-muted-foreground">
           {listedGroups.length === 0
             ? "T3 can't list connectors for this provider yet."
-            : "Switching something off only changes T3. It takes effect from your next message."}
+            : "Switching something off only changes T3. Changes apply when the provider is idle; running work keeps its current tools."}
         </p>
         <div className="flex shrink-0 items-center gap-1">
           {host && inventory.manageUrl ? (

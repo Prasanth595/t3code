@@ -226,6 +226,60 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect("validates inventory edits against the provider map in the same request", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_combined");
+      const driver = ProviderDriverKind.make("codex");
+      const instance = { driver, displayName: "Work", config: { homePath: "/work/codex" } };
+      yield* service.updateProviderInstance({ operation: "create", instanceId, instance });
+      for (const providerInstances of [
+        {},
+        { [instanceId]: { driver: ProviderDriverKind.make("claudeAgent") } },
+      ]) {
+        const error = yield* service
+          .updateProviderInstance(
+            {
+              operation: "set-inventory-item",
+              instanceId,
+              driver,
+              kind: "connectors",
+              itemId: "connector_gmail",
+              enabledInT3: false,
+            },
+            { providerInstances },
+          )
+          .pipe(Effect.flip);
+        assert.equal(error.operation, "update-provider-inventory");
+        assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], instance);
+      }
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect("applies an inventory edit to a provider introduced by the same settings patch", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_combined");
+      const driver = ProviderDriverKind.make("codex");
+      const instance = { driver, displayName: "Work", config: { homePath: "/work/codex" } };
+      yield* service.updateProviderInstance(
+        {
+          operation: "set-inventory-item",
+          instanceId,
+          driver,
+          kind: "connectors",
+          itemId: "connector_gmail",
+          enabledInT3: false,
+        },
+        { providerInstances: { [instanceId]: instance } },
+      );
+      assert.deepEqual((yield* service.getSettings).providerInstances[instanceId], {
+        ...instance,
+        disabledInventory: { connectors: ["connector_gmail"] },
+      });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

@@ -458,7 +458,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
 function layerRebuildingRegistry(
   adapter: ProviderAdapter.ProviderAdapterV2["Service"],
-  instanceBuild: Ref.Ref<number>,
+  instanceBuild: Ref.Ref<number | undefined>,
 ) {
   return Layer.succeed(
     ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -502,7 +502,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   /** Bumping it is a settings change rebuilding the instance. */
-  readonly instanceBuild?: Ref.Ref<number>;
+  readonly instanceBuild?: Ref.Ref<number | undefined>;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -1042,7 +1042,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
-      const instanceBuild = yield* Ref.make(0);
+      const instanceBuild = yield* Ref.make<number | undefined>(0);
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1099,7 +1099,7 @@ it.effect(
 it.effect("ProviderSessionManagerV2 keeps a busy session after its provider is rebuilt", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
-    const instanceBuild = yield* Ref.make(0);
+    const instanceBuild = yield* Ref.make<number | undefined>(0);
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -1167,6 +1167,136 @@ it.effect("ProviderSessionManagerV2 keeps a busy session after its provider is r
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, instanceBuild })));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 rejects stale session reuse until a failed rebuild recovers",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const instanceBuild = yield* Ref.make<number | undefined>(0);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const firstThreadId = ThreadId.make("thread-rebuild-failure-first");
+        const secondThreadId = ThreadId.make("thread-rebuild-failure-second");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+          ],
+        });
+        const before = yield* manager.open({
+          threadId: firstThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(instanceBuild, undefined);
+        const error = yield* manager
+          .open({
+            threadId: secondThreadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.flip);
+        assert.equal(error._tag, "ProviderSessionOpenError");
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(instanceBuild, 1);
+        const after = yield* manager.open({
+          threadId: secondThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(after, before);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+      yield* effect.pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, instanceBuild })),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 releases the open lock when a reconfiguration probe hangs",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const instanceBuild = yield* Ref.make<number | undefined>(0);
+      const probeEntered = yield* Deferred.make<void>();
+      const probe = yield* Ref.make<Effect.Effect<boolean>>(
+        Deferred.succeed(probeEntered, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const firstThreadId = ThreadId.make("thread-rebuild-hung-probe-first");
+        const secondThreadId = ThreadId.make("thread-rebuild-hung-probe-second");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: firstThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: secondThreadId, now }),
+          ],
+        });
+        const before = yield* manager.open({
+          threadId: firstThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(instanceBuild, 1);
+        const open = yield* manager
+          .open({
+            threadId: secondThreadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(probeEntered);
+        yield* TestClock.adjust("5 seconds");
+        assert.isDefined(open.pollUnsafe());
+        assert.isTrue(Exit.isFailure(yield* Fiber.await(open)));
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* Ref.set(probe, Effect.succeed(false));
+        const after = yield* manager.open({
+          threadId: secondThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.notStrictEqual(after, before);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            instanceBuild,
+            hasPendingBackgroundWork: Ref.get(probe).pipe(Effect.flatMap((check) => check)),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
