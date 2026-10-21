@@ -153,6 +153,7 @@ it.effect("refreshes the reasons of a host that has no platform it can run", () 
     let iosReason = "xcrun cannot find simctl";
     const host: DeviceHost.DeviceHost["Service"] = {
       id: "local",
+      label: "local",
       summary: Effect.sync(() => ({
         id: "local",
         label: "local",

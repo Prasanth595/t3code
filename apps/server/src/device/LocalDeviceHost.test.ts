@@ -696,7 +696,13 @@ it.effect("keeps local Android and iOS available without ffmpeg", () =>
         HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
       ),
       Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () => Effect.die("Platform availability must not probe emulator video"),
+        // Only the Xcode preflight may run; anything else would be an emulator video probe.
+        run: (input) =>
+          input.command === "xcode-select"
+            ? Effect.succeed(processOutput(0, `${baseDir}\n`))
+            : input.command === "xcrun"
+              ? Effect.succeed(processOutput(0))
+              : Effect.die("Platform availability must not probe emulator video"),
       }),
     );
     expect((yield* onTestHost(host.summary)).platforms).toEqual([
