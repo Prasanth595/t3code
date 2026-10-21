@@ -58,14 +58,20 @@ it.live(
               message: SIMPLE_PROMPT,
               model: { instanceId: "claudeAgent", model: "claude-sonnet-4-6" },
             });
-          // Every id the stream emits, with when it arrived. The consumer
-          // starts before anything is launched, so this half is live.
+          // Every id the stream emits, with when it arrived. `toPull` opens the
+          // stream's subscription before anything is launched, so this half is
+          // live; a forked consumer can subscribe after A's first status.
           const arrivals = yield* Queue.unbounded<{ readonly id: string; readonly at: number }>();
-          yield* events.runStatusChanges.pipe(
-            Stream.mapEffect((id) =>
-              Clock.currentTimeMillis.pipe(Effect.map((at) => ({ id, at }))),
+          const pull = yield* Stream.toPull(
+            events.runStatusChanges.pipe(
+              Stream.mapEffect((id) =>
+                Clock.currentTimeMillis.pipe(Effect.map((at) => ({ id, at }))),
+              ),
             ),
-            Stream.runForEach((arrival) => Queue.offer(arrivals, arrival)),
+          );
+          yield* pull.pipe(
+            Effect.flatMap((chunk) => Queue.offerAll(arrivals, chunk)),
+            Effect.forever,
             Effect.forkScoped,
           );
 
