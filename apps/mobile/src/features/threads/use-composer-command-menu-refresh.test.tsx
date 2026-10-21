@@ -113,9 +113,13 @@ it.each(["already expired", "expired during discovery"] as const)(
   async (expiry) => {
     using now = vi.spyOn(Date, "now").mockReturnValue(NOW);
     using picker = await mount();
-    const completedAt = expiry === "already expired" ? NOW : NOW + PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS;
+    const checkedAt =
+      expiry === "already expired"
+        ? NOW - PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS
+        : NOW - PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS + 1;
+    const completedAt = expiry === "already expired" ? NOW : NOW + 1;
     now.mockReturnValue(completedAt);
-    await picker.respond(catalog(expiry === "already expired" ? NOW - PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS : NOW));
+    await picker.respond(catalog(checkedAt));
     now.mockReturnValue(completedAt + 9_999);
     await picker.type("$r");
     expect(picker.container.textContent).not.toContain("recovered");
