@@ -3259,7 +3259,8 @@ export default function LegacySidebar() {
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   // History and the command palette can open a thread scrolled out of view.
-  const scrolledRouteThreadKeyRef = useRef(routeThreadKey);
+  // Mounting counts as a route change: leaving Settings unmounts the sidebar.
+  const scrolledRouteThreadKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (scrolledRouteThreadKeyRef.current === routeThreadKey) return;
     scrolledRouteThreadKeyRef.current = routeThreadKey;

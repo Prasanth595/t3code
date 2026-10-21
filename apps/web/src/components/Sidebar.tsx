@@ -1063,7 +1063,8 @@ export default function Sidebar() {
   // History, the command palette, and links can open a thread the project
   // scope hides or the list has scrolled away. Reveal it once per route
   // change, so a scope picked while that thread stays open is left alone.
-  const revealedRouteRowKeyRef = useRef(routeRowThreadKey);
+  // Mounting counts as a route change: leaving Settings unmounts the sidebar.
+  const revealedRouteRowKeyRef = useRef<string | null>(null);
   const pendingRouteRevealKeyRef = useRef<string | null>(null);
   const revealRouteRow = useStableCallback(() => {
     if (revealedRouteRowKeyRef.current !== routeRowThreadKey) {
