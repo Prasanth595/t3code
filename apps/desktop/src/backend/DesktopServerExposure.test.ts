@@ -346,6 +346,8 @@ describe("DesktopServerExposure", () => {
       readonly hostnameOutput: string | null;
       /** `tailscale ip -4` output; null makes it fail (not installed). */
       readonly tailscaleOutput: string | null;
+      /** When set, only `wsl.exe -d <distro>` answers; other distros fail. */
+      readonly distro?: string;
     }
 
     // Answers `wsl.exe` by inspecting the shell script it runs, and everything
@@ -356,11 +358,15 @@ describe("DesktopServerExposure", () => {
         ChildProcessSpawner.make((command) => {
           const isWsl = command._tag === "StandardCommand" && command.command === "wsl.exe";
           const script = isWsl ? (command.args.at(-1) ?? "") : "";
+          const wrongDistro =
+            isWsl && probe.distro !== undefined && command.args[1] !== probe.distro;
           const output = !isWsl
             ? tailscaleStatus
-            : script === "hostname -I"
-              ? probe.hostnameOutput
-              : probe.tailscaleOutput;
+            : wrongDistro
+              ? null
+              : script === "hostname -I"
+                ? probe.hostnameOutput
+                : probe.tailscaleOutput;
           return Effect.succeed(
             ChildProcessSpawner.makeHandle({
               pid: ChildProcessSpawner.ProcessId(1),
@@ -379,7 +385,10 @@ describe("DesktopServerExposure", () => {
         }),
       );
 
-    const advertisedUrls = (probe: DistroProbe, wslPrimary = true) =>
+    const advertisedUrls = (
+      probe: DistroProbe,
+      wslPrimary: { readonly distro: string | null } | null = { distro: null },
+    ) =>
       withHarness(
         hostInterfaces,
         Effect.gen(function* () {
@@ -458,9 +467,29 @@ describe("DesktopServerExposure", () => {
         assert.deepEqual(
           yield* advertisedUrls(
             { hostnameOutput: "172.20.1.5 100.64.0.9\n", tailscaleOutput: "100.64.0.9\n" },
-            false,
+            null,
           ),
           windowsUrls,
+        );
+      }),
+    );
+
+    it.effect("probes the distro the backend runs in, not the current default", () =>
+      Effect.gen(function* () {
+        assert.deepEqual(
+          yield* advertisedUrls(
+            {
+              hostnameOutput: "172.20.1.5 100.64.0.9\n",
+              tailscaleOutput: "100.64.0.9\n",
+              distro: "Pinned",
+            },
+            { distro: "Pinned" },
+          ),
+          [
+            "http://127.0.0.1:4173/",
+            "https://win-host.tail1234.ts.net/",
+            "http://100.64.0.9:4173/",
+          ],
         );
       }),
     );

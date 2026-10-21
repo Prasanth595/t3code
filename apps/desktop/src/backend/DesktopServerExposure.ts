@@ -331,11 +331,13 @@ export class DesktopServerExposure extends Context.Service<
     }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
     /**
-     * Records which primary backend is running. Called each time the primary
-     * config is resolved, so a persisted wsl-only setting that fell back to
-     * the Windows primary doesn't filter Windows addresses.
+     * Records which primary backend is running: the WSL distro it was launched
+     * in (null: the default distro), or null for the Windows primary. Called
+     * each time the primary config is resolved, so a persisted wsl-only setting
+     * that fell back to Windows doesn't filter Windows addresses, and a changed
+     * default distro doesn't redirect the probe away from the running backend.
      */
-    readonly setWslPrimary: (isWsl: boolean) => Effect.Effect<void>;
+    readonly setWslPrimary: (wsl: { readonly distro: string | null } | null) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
 
@@ -491,7 +493,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const stateRef = yield* Ref.make(initialRuntimeState());
-  const wslPrimaryRef = yield* Ref.make(false);
+  const wslPrimaryRef = yield* Ref.make<{ readonly distro: string | null } | null>(null);
   // Each change reads the runtime state, persists settings, then writes the
   // state back. Run them one at a time so a change never writes over another
   // with values it read before that change persisted.
@@ -628,7 +630,6 @@ export const make = Effect.gen(function* () {
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
-    const settings = yield* desktopSettings.get;
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
@@ -660,10 +661,11 @@ export const make = Effect.gen(function* () {
     // A WSL primary listens inside the distro, which under NAT networking has
     // its own addresses. If the distro can't be probed (or WSL is unavailable
     // and the Windows primary is running instead), keep the Windows addresses.
-    if (!(yield* Ref.get(wslPrimaryRef))) {
+    const wslPrimary = yield* Ref.get(wslPrimaryRef);
+    if (wslPrimary === null) {
       return windowsEndpoints;
     }
-    const distroAddresses = yield* Cache.get(wslAddressesCache, settings.wslDistro ?? "");
+    const distroAddresses = yield* Cache.get(wslAddressesCache, wslPrimary.distro ?? "");
     if (Option.isNone(distroAddresses)) {
       yield* Effect.logDebug("could not read the WSL distro's addresses; advertising Windows ones");
       return windowsEndpoints;
@@ -683,7 +685,7 @@ export const make = Effect.gen(function* () {
     setMode,
     setTailscaleServeEnabled,
     getAdvertisedEndpoints,
-    setWslPrimary: (isWsl) => Ref.set(wslPrimaryRef, isWsl),
+    setWslPrimary: (wsl) => Ref.set(wslPrimaryRef, wsl),
   });
 });
 
