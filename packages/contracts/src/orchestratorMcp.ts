@@ -582,6 +582,62 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
+export const OrchestratorMcpUsageLimitsInput = Schema.Struct({
+  refresh: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Re-read every provider and usage source before answering. Slower; use when checkedAt is too old to trust.",
+    }),
+  ),
+});
+export type OrchestratorMcpUsageLimitsInput = typeof OrchestratorMcpUsageLimitsInput.Type;
+
+export const OrchestratorMcpUsageWindow = Schema.Struct({
+  id: Schema.String,
+  kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
+  label: Schema.String,
+  usedPercent: Schema.Number,
+  remainingPercent: Schema.Number,
+  resetsAt: Schema.NullOr(IsoDateTime),
+  windowDurationMins: Schema.NullOr(NonNegativeInt),
+});
+export type OrchestratorMcpUsageWindow = typeof OrchestratorMcpUsageWindow.Type;
+
+const OrchestratorMcpUsageReading = {
+  email: Schema.NullOr(Schema.String),
+  plan: Schema.NullOr(Schema.String),
+  checkedAt: Schema.NullOr(IsoDateTime),
+  windows: Schema.Array(OrchestratorMcpUsageWindow),
+  unavailable: Schema.NullOr(
+    Schema.Struct({
+      reason: Schema.Literals(["unsupported", "probeFailed", "notReported", "providerUnavailable"]),
+      message: Schema.String,
+    }),
+  ),
+};
+
+export const OrchestratorMcpUsageLimitsResult = Schema.Struct({
+  createdAt: IsoDateTime,
+  providers: Schema.Array(
+    Schema.Struct({
+      providerInstanceId: ProviderInstanceId,
+      driverKind: ProviderDriverKind,
+      displayName: Schema.NullOr(Schema.String),
+      ...OrchestratorMcpUsageReading,
+    }),
+  ),
+  pooledAccounts: Schema.Array(
+    Schema.Struct({
+      sourceLabel: Schema.String,
+      accountId: Schema.String,
+      driverKind: ProviderDriverKind,
+      ...OrchestratorMcpUsageReading,
+    }),
+  ),
+  notices: Schema.Array(Schema.String),
+});
+export type OrchestratorMcpUsageLimitsResult = typeof OrchestratorMcpUsageLimitsResult.Type;
+
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,
   prompt: OrchestratorMcpPrompt.annotate({

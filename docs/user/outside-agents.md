@@ -114,6 +114,11 @@ the message to read it from stdin.
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.
 
+`t3 usage` prints each provider's remaining subscription limits and when they
+reset, so a script can pick the provider with the most headroom. `--refresh`
+reads them again first, and `--json` prints the same result agents get from the
+`provider_usage_limits` tool.
+
 ## Remove an agent
 
 Approved agents appear under **Settings → Connections** like other clients.

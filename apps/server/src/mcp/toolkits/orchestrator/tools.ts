@@ -18,6 +18,8 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpUpdateScheduledTaskInput,
+  OrchestratorMcpUsageLimitsInput,
+  OrchestratorMcpUsageLimitsResult,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -36,6 +38,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as UsageLimitsReport from "../../../usage/UsageLimitsReport.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -61,6 +64,20 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   dependencies,
 })
   .annotate(Tool.Title, "Get orchestration capabilities")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const ProviderUsageLimitsTool = Tool.make("provider_usage_limits", {
+  description:
+    "Read subscription usage limits for each enabled provider instance, such as Codex and Claude, to compare headroom before choosing where to start or delegate work. Each window gives usedPercent, remainingPercent, and resetsAt. When unavailable is set, the provider's windows do not show its headroom: an API key or Bedrock account has no subscription limits (unsupported), the last read failed (probeFailed), the provider has not reported limits (notReported), or it is not installed, signed in, or available (providerUnavailable). Readings can be old while no T3 client is open; checkedAt says when each was read, and refresh re-reads them first. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub.",
+  parameters: OrchestratorMcpUsageLimitsInput,
+  success: OrchestratorMcpUsageLimitsResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [UsageLimitsReport.UsageLimitsReport],
+})
+  .annotate(Tool.Title, "Get provider usage limits")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -275,6 +292,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
+  ProviderUsageLimitsTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,

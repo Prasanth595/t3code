@@ -215,6 +215,16 @@ user's model order for other providers. `omittedModels` counts the rest, and the
 `search` input finds them, legacy models included. `delegate_task` still accepts
 any catalog model.
 
+### `provider_usage_limits`
+
+Reads the subscription usage windows the provider registry already holds, so
+an agent can compare Codex and Claude headroom before choosing a target. The
+readings come from each driver's own probe (Codex app-server
+`account/rateLimits/read`, the Claude Agent SDK's `get_usage`) and turn-time rate-limit
+events, plus any configured usage limit sources. Snapshots only re-probe while
+a client is in the foreground, so `refresh: true` re-reads every provider
+before answering. `t3 usage` prints the same result.
+
 ### `delegate_task`
 
 Creates a T3-owned child thread and immediately dispatches the supplied task
