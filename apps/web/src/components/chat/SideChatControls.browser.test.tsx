@@ -127,7 +127,9 @@ it("hides frozen-context help with its panel without reopening it on return", as
   await click("Side chat context");
   expect(document.body.textContent).toContain("Each side chat uses the main conversation");
   await screen.rerender(<Fixture active={false} />);
-  expect(document.body.textContent).not.toContain("Each side chat uses the main conversation");
+  await vi.waitFor(() =>
+    expect(document.body.textContent).not.toContain("Each side chat uses the main conversation"),
+  );
   await screen.rerender(<Fixture />);
   expect(document.body.textContent).not.toContain("Each side chat uses the main conversation");
 });
