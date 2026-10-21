@@ -232,7 +232,12 @@ thread's terminals or its Claude agent started, with their ports. A server the
 agent started stays listed after the agent finishes or the thread settles.
 Select a server to open it in the browser panel. **Stop** ends the server's job
 and keeps the agent, the terminal, and T3 Code running. Stop needs terminal
-access to the environment and is not available on Windows.
+access to the environment. On Windows, the card lists only servers started in a
+terminal, and Stop is not available.
+
+A server the agent starts through a tool that passes on only some environment
+variables, such as Turborepo in its default strict mode, is not listed. To list
+it, add `T3CODE_THREAD_ID` to `globalPassThroughEnv` in `turbo.json`.
 
 ## Snooze until later
 
