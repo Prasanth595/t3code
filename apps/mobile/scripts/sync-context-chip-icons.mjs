@@ -39,6 +39,7 @@ const lucideIcons = [
   "git-pull-request-arrow",
   "git-pull-request-closed",
   "git-pull-request-draft",
+  "globe",
   "image",
   "message-circle",
   "messages-square",

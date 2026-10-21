@@ -1,16 +1,24 @@
 import * as Dialog from "../../components/ui/Dialog";
 import type {
+  BrowserTabContextRecord,
   EnvironmentId,
+  PreviewSessionSnapshot,
   ProjectId,
   ProviderInteractionMode,
   ServerProvider,
+  ThreadContextRecord,
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import {
+  browserTabContextRecord,
+  matchComposerBrowserTabItems,
+} from "@t3tools/client-runtime/composerBrowserTabItems";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
+const EMPTY_BROWSER_TABS: ReadonlyArray<PreviewSessionSnapshot> = [];
 import { COMPOSER_CONTEXT_MAX_RECORDS } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
@@ -180,6 +188,7 @@ export function useComposerCommandMenu({
   ownerKey,
   environmentId,
   threadShells = EMPTY_THREAD_SHELLS,
+  browserTabs = EMPTY_BROWSER_TABS,
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
@@ -198,6 +207,7 @@ export function useComposerCommandMenu({
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
   readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
+  readonly browserTabs?: ReadonlyArray<PreviewSessionSnapshot>;
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
@@ -445,6 +455,9 @@ export function useComposerCommandMenu({
           })
         : [];
       return [
+        ...(environmentId && currentThreadId
+          ? matchComposerBrowserTabItems({ sessions: browserTabs, query: trigger.query })
+          : []),
         ...threadItems,
         ...pathSearch.entries.map((entry) => {
           const parts = entry.path.split("/");
@@ -463,6 +476,34 @@ export function useComposerCommandMenu({
     return [];
   })();
 
+  const insertLinkedContext = (
+    trigger: ComposerTrigger,
+    ownerKey: string,
+    record: ThreadContextRecord | BrowserTabContextRecord,
+  ) => {
+    const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+    const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+    if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+      Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+      return;
+    }
+    const result = replaceTextRange(
+      draftMessage,
+      trigger.rangeStart,
+      trigger.rangeEnd,
+      `${formatComposerContextReference(record)} `,
+    );
+    onChangeDraftMessage(result.text);
+    if (!alreadyAttached) {
+      const draft = getComposerDraftSnapshot(ownerKey);
+      setComposerDraftContext(ownerKey, {
+        version: 1,
+        records: [...(draft.context?.records ?? []), record],
+      });
+    }
+    setSelection({ start: result.cursor, end: result.cursor });
+  };
+
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "thread") {
@@ -473,28 +514,16 @@ export function useComposerCommandMenu({
           candidate.id === item.thread.threadId,
       );
       if (!shell) return;
-      const record = threadComposerContext(item.thread, shell.title);
-      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
-      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
-      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
-        return;
-      }
-      const result = replaceTextRange(
-        draftMessage,
-        trigger.rangeStart,
-        trigger.rangeEnd,
-        `${formatComposerContextReference(record)} `,
+      insertLinkedContext(trigger, ownerKey, threadComposerContext(item.thread, shell.title));
+      return;
+    }
+    if (item.type === "browser-tab") {
+      if (!ownerKey || trigger.kind !== "path" || !environmentId || !currentThreadId) return;
+      insertLinkedContext(
+        trigger,
+        ownerKey,
+        browserTabContextRecord({ environmentId, threadId: currentThreadId }, item.tab),
       );
-      onChangeDraftMessage(result.text);
-      if (!alreadyAttached) {
-        const draft = getComposerDraftSnapshot(ownerKey);
-        setComposerDraftContext(ownerKey, {
-          version: 1,
-          records: [...(draft.context?.records ?? []), record],
-        });
-      }
-      setSelection({ start: result.cursor, end: result.cursor });
       return;
     }
     if (item.type === "pull-request") {

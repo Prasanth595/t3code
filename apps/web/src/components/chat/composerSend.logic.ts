@@ -1,14 +1,18 @@
 import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type { LinkedContextRecord } from "../../lib/composerContextRecords";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
 export function referencedThreadContexts(draft: {
   readonly prompt: string;
-  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly linkedContexts: ReadonlyArray<LinkedContextRecord>;
 }): ReadonlyArray<ThreadContextRecord> {
-  if (draft.threadContexts.length === 0) return [];
+  if (draft.linkedContexts.length === 0) return [];
   const referenced = new Set(collectInlineContextIds(draft.prompt));
-  return draft.threadContexts.filter((record) => referenced.has(record.contextId));
+  return draft.linkedContexts.filter(
+    (record): record is ThreadContextRecord =>
+      record.kind === "thread" && referenced.has(record.contextId),
+  );
 }
 
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */

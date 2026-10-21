@@ -7,6 +7,7 @@ export const CONTEXT_CHIP_ICON_SOURCES = {
   "git-pull-request-arrow": require("../../assets/context-chip-icons/git-pull-request-arrow.png"),
   "git-pull-request-closed": require("../../assets/context-chip-icons/git-pull-request-closed.png"),
   "git-pull-request-draft": require("../../assets/context-chip-icons/git-pull-request-draft.png"),
+  globe: require("../../assets/context-chip-icons/globe.png"),
   image: require("../../assets/context-chip-icons/image.png"),
   "message-circle": require("../../assets/context-chip-icons/message-circle.png"),
   "messages-square": require("../../assets/context-chip-icons/messages-square.png"),

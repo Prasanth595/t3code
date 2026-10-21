@@ -103,7 +103,7 @@ export function useComposerContextImport(input: {
   const addComposerDraftPreviewAnnotation = useComposerDraftStore(
     (store) => store.addPreviewAnnotation,
   );
-  const addComposerDraftThreadContexts = useComposerDraftStore((store) => store.addThreadContexts);
+  const addComposerDraftLinkedContexts = useComposerDraftStore((store) => store.addLinkedContexts);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const loadThreadTranscript = useAtomCommand(orchestrationEnvironment.threadTranscript, {
     reportFailure: false,
@@ -299,7 +299,7 @@ export function useComposerContextImport(input: {
                     ? existing.record.id
                     : undefined,
                 })
-              : existing?.kind === "thread"
+              : existing?.kind === "thread" || existing?.kind === "browser-tab"
                 ? existing.record
                 : existing
                   ? (uploadedContextRecordFromDraft(existing) ?? undefined)
@@ -307,7 +307,8 @@ export function useComposerContextImport(input: {
       if (
         existingRecord &&
         isSameComposerContextPayload(existingRecord, record) &&
-        (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
+        ((record.kind !== "thread" && record.kind !== "browser-tab") ||
+          threadDraftTarget === attachmentDraftTarget)
       ) {
         if (record.kind === "preview-annotation" && record.screenshotContextId) {
           skippedDependentAttachmentIds.add(record.screenshotContextId);
@@ -352,10 +353,11 @@ export function useComposerContextImport(input: {
           rewritten.set(record.contextId, previewAnnotationContextId(annotation.id));
           break;
         }
-        case "thread": {
-          // The agent can only read threads on its own server; a pasted foreign one is dropped.
+        case "thread":
+        case "browser-tab": {
+          // The agent can only reach threads and tabs on its own server; foreign ones are dropped.
           if (record.environmentId !== environmentId) break;
-          addComposerDraftThreadContexts(threadDraftTarget, [record], {
+          addComposerDraftLinkedContexts(threadDraftTarget, [record], {
             appendReference: false,
           });
           rewritten.set(record.contextId, record.contextId);

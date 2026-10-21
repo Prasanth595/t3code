@@ -1895,6 +1895,14 @@ function UserMessageContent(props: UserMessageContentProps) {
       });
       return;
     }
+    if (record?.kind === "browser-tab" && "tabId" in record) {
+      navigation.navigate("ThreadBrowserPreview", {
+        environmentId: String(record.environmentId),
+        threadId: String(record.threadId),
+        tabId: record.tabId,
+      });
+      return;
+    }
     const document = composerDocumentAttachmentRecord(record);
     if (document) {
       navigation.navigate("ThreadAttachment", {

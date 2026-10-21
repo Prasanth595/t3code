@@ -112,6 +112,16 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
     threadId: "thread-1",
     title: "Fix login flow",
   },
+  "browser-tab": {
+    ...base,
+    kind: "browser-tab",
+    label: "Stable Dashboard",
+    environmentId: "environment-1",
+    threadId: "thread-1",
+    tabId: "tab_a_epoch",
+    title: "Stable Dashboard",
+    url: "https://dashboard.usestable.com/",
+  },
 };
 
 describe("ComposerContextRecord", () => {

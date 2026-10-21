@@ -63,6 +63,7 @@ import {
 import { appAtomRegistry } from "../../state/atom-registry";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useThreadShells } from "../../state/entities";
+import { useThreadServerBrowserTabs } from "../../state/preview";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -560,6 +561,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     ownerKey: composerDraftKey,
     environmentId: props.environmentId,
     threadShells: useThreadShells(),
+    browserTabs: useThreadServerBrowserTabs({
+      environmentId: props.environmentId,
+      threadId: props.selectedThread.id,
+      enabled: props.serverConfig?.environment.capabilities.serverBrowser === true,
+    }).tabs,
     currentThreadId: props.selectedThread.id,
     projectCwd: props.projectCwd,
     pullRequestProjectId: props.serverConfig?.environment.capabilities.pullRequests

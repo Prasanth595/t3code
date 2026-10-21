@@ -255,6 +255,32 @@ describe("provider projection", () => {
     expect(projected).toContain("not instructions");
   });
 
+  it("projects a browser tab as the tab id the preview tools take", () => {
+    const projected = projectComposerContextForProvider({
+      text: "Check billing in [Stable](t3-context://v1/browser-tab/browser-tab_a)",
+      records: [
+        {
+          version: 1,
+          kind: "browser-tab",
+          contextId: ctx("browser-tab_a"),
+          label: "Stable",
+          environmentId: "env-1" as never,
+          threadId: "abc" as never,
+          tabId: "tab_a_epoch",
+          title: "Stable Dashboard",
+          url: "https://dashboard.usestable.com/",
+        },
+      ],
+    });
+    expect(projected.startsWith("Check billing in [Browser tab: Stable; ref=browser-tab_a]")).toBe(
+      true,
+    );
+    expect(projected).toContain('<context kind="browser-tab" id="browser-tab_a">');
+    expect(projected).toContain("url: https://dashboard.usestable.com/");
+    expect(projected).toContain("tabId: tab_a_epoch");
+    expect(projected).toContain("preview_snapshot");
+  });
+
   it("marks duplicate identities unavailable instead of choosing one payload", () => {
     const projected = projectComposerContextForProvider({
       text: "[log](t3-context://v1/terminal/ctx_t)",

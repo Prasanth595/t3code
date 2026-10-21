@@ -1,3 +1,4 @@
+import { browserTabContextRecord } from "@t3tools/client-runtime/composerBrowserTabItems";
 import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
 import {
@@ -724,11 +725,11 @@ describe("composerDraftStore thread contexts", () => {
   it("attaches once per thread, appends one chip, and survives persistence", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(threadRef, "Compare with");
-    store.addThreadContexts(threadRef, [attached]);
-    store.addThreadContexts(threadRef, [attached, { ...attached, title: "renamed" }]);
+    store.addLinkedContexts(threadRef, [attached]);
+    store.addLinkedContexts(threadRef, [attached, { ...attached, title: "renamed" }]);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.threadContexts).toEqual([attached]);
+    expect(draft?.linkedContexts).toEqual([attached]);
     expect(attached.label).toBe("Fix login flow");
     expect(draft?.prompt).toBe(
       `Compare with [${attached.label}](t3-context://v1/thread/${attached.contextId}) `,
@@ -741,10 +742,34 @@ describe("composerDraftStore thread contexts", () => {
       ),
       useComposerDraftStore.getInitialState(),
     );
-    expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.threadContexts).toEqual([
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.linkedContexts).toEqual([
       attached,
     ]);
     expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.prompt).toBe(draft?.prompt);
+  });
+
+  it("keeps browser tabs beside threads and still loads drafts saved as threadContexts", () => {
+    const tab = browserTabContextRecord(threadRef, {
+      tabId: "tab_a_epoch",
+      title: "Stable Dashboard",
+      url: "https://dashboard.usestable.com/",
+    });
+    const store = useComposerDraftStore.getState();
+    store.setPrompt(threadRef, "Check billing in");
+    store.addLinkedContexts(threadRef, [tab, attached]);
+
+    const persisted = JSON.parse(
+      JSON.stringify(partializeComposerDraftStoreState(useComposerDraftStore.getState())),
+    );
+    const persistedDraft = persisted.draftsByThreadKey[scopedThreadKey(threadRef)];
+    persistedDraft.threadContexts = persistedDraft.linkedContexts;
+    delete persistedDraft.linkedContexts;
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrated = merge(persisted, useComposerDraftStore.getInitialState());
+    expect(hydrated.draftsByThreadKey[scopedThreadKey(threadRef)]?.linkedContexts).toEqual([
+      tab,
+      attached,
+    ]);
   });
 });
 

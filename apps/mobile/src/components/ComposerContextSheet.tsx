@@ -324,6 +324,12 @@ export function ComposerContextSheet(props: {
                 ) : null}
               </View>
             ) : null}
+            {record.kind === "browser-tab" ? (
+              <View className="gap-3">
+                <ContextField label="Browser tab" value={record.title} />
+                {record.url ? <ContextField label="URL" value={record.url} code /> : null}
+              </View>
+            ) : null}
             {record.kind === "skill" ? (
               <View className="gap-3">
                 <ContextField label="Skill" value={record.name} />

@@ -1,3 +1,4 @@
+import { matchComposerBrowserTabItems } from "@t3tools/client-runtime/composerBrowserTabItems";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import { useState } from "react";
 import type {
@@ -21,6 +22,7 @@ import {
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
+import { useThreadPreviewState } from "../../previewStateStore";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useThreadShells } from "~/state/entities";
 import {
@@ -94,6 +96,10 @@ export function useComposerMenuItems({
   const environmentThreadShells = useThreadShells(isPathTrigger);
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  // Subscribed only while @ is open, so tab navigation doesn't re-render the composer.
+  const previewState = useThreadPreviewState(
+    isPathTrigger && activeThreadId !== null ? { environmentId, threadId: activeThreadId } : null,
+  );
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -162,6 +168,12 @@ export function useComposerMenuItems({
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
+        ...matchComposerBrowserTabItems({
+          sessions: Object.values(previewState.sessions).filter(
+            (session) => !previewState.suppressedTabIds.has(session.tabId),
+          ),
+          query: composerTrigger.query,
+        }),
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
           environmentId,

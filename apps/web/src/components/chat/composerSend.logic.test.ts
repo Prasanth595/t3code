@@ -2,7 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextRecord, threadContextReference } from "../../lib/composerContextRecords";
+import { linkedContextReference, threadContextRecord } from "../../lib/composerContextRecords";
 import {
   approvalRedirectNotice,
   loadBalancingSendWarning,
@@ -17,9 +17,9 @@ const remoteThread = threadContextRecord(scopeThreadRef(remote, ThreadId.make("b
 
 describe("referencedThreadContexts", () => {
   it("keeps only the attached threads the prompt still links", () => {
-    const prompt = `see ${formatInlineContextReference(threadContextReference(remoteThread))}`;
+    const prompt = `see ${formatInlineContextReference(linkedContextReference(remoteThread))}`;
     expect(
-      referencedThreadContexts({ prompt, threadContexts: [localThread, remoteThread] }),
+      referencedThreadContexts({ prompt, linkedContexts: [localThread, remoteThread] }),
     ).toEqual([remoteThread]);
   });
 });

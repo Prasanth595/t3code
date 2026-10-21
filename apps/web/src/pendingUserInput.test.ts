@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
-import { threadContextRecord, threadContextReference } from "./lib/composerContextRecords";
+import { threadContextRecord, linkedContextReference } from "./lib/composerContextRecords";
 
 import {
   buildPendingUserInputAnswers,
@@ -25,7 +25,7 @@ describe("projectPendingUserInputAnswer", () => {
   );
 
   it("sends thread chips as readable links with the actual thread ID", () => {
-    const answer = `Compare ${formatInlineContextReference(threadContextReference(record))}`;
+    const answer = `Compare ${formatInlineContextReference(linkedContextReference(record))}`;
     expect(projectPendingUserInputAnswer(answer, [record])).toBe(
       "Compare [Reference work](t3-thread://v1/reference-thread)",
     );
@@ -50,7 +50,7 @@ describe("threadContextsReferencedByAnswer", () => {
   );
 
   it("preserves remaining chips without restoring deleted thread records", () => {
-    const answer = `Compare ${formatInlineContextReference(threadContextReference(kept))}`;
+    const answer = `Compare ${formatInlineContextReference(linkedContextReference(kept))}`;
     expect(threadContextsReferencedByAnswer(answer, [deleted, kept])).toEqual([kept]);
   });
 });

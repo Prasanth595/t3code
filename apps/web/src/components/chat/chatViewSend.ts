@@ -268,7 +268,7 @@ export function restoreComposerDraft(
   store.setTerminalContexts(draftTarget, snapshot.terminalContexts);
   store.setPreviewAnnotations(draftTarget, snapshot.previewAnnotations);
   store.setReviewComments(draftTarget, snapshot.reviewComments);
-  store.setThreadContexts(draftTarget, snapshot.threadContexts);
+  store.setLinkedContexts(draftTarget, snapshot.linkedContexts);
   return images;
 }
 

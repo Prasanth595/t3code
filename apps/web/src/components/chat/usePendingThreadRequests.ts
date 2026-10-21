@@ -351,7 +351,7 @@ export function usePendingThreadRequests(input: {
       const draft = useComposerDraftStore.getState().getComposerDraft(target);
       providerAnswers[question.id] = projectPendingUserInputAnswer(
         answers[question.id],
-        draft?.threadContexts ?? [],
+        draft?.linkedContexts ?? [],
       );
       const attachments = draft ? [...draft.images, ...draft.files] : [];
       if (attachments.length === 0) continue;
@@ -445,11 +445,11 @@ export function usePendingThreadRequests(input: {
           activePendingUserInput.requestId,
           questionId,
         );
-        store.addThreadContexts(
+        store.addLinkedContexts(
           composerDraftTarget,
           threadContextsReferencedByAnswer(
             displacedAnswer ?? "",
-            store.getComposerDraft(questionTarget)?.threadContexts ?? [],
+            store.getComposerDraft(questionTarget)?.linkedContexts ?? [],
           ),
           { appendReference: false },
         );

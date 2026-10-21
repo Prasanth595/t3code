@@ -11,6 +11,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { GUEST_MESSAGE_MAX_LENGTH, GUEST_NAME_MAX_LENGTH } from "./guestShare.ts";
+import { PreviewTabId } from "./preview.ts";
 
 /** Image and file records reference `ChatAttachment` ids, never bytes. */
 
@@ -24,6 +25,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "mention",
   "skill",
   "thread",
+  "browser-tab",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -211,6 +213,17 @@ export const ThreadContextRecord = Schema.Struct({
 });
 export type ThreadContextRecord = typeof ThreadContextRecord.Type;
 
+export const BrowserTabContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("browser-tab"),
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  tabId: PreviewTabId,
+  title: ContextLabel,
+  url: NullableShortString,
+});
+export type BrowserTabContextRecord = typeof BrowserTabContextRecord.Type;
+
 const isJson = Schema.is(Schema.Json);
 
 /** Excludes known discriminators so malformed known records fail their own schema. */
@@ -241,6 +254,7 @@ export const KnownComposerContextRecord = Schema.Union([
   MentionContextRecord,
   SkillContextRecord,
   ThreadContextRecord,
+  BrowserTabContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 

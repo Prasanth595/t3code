@@ -1,7 +1,11 @@
 import ChatMarkdown from "./ChatMarkdown";
 import { isSvgAttachment } from "@t3tools/shared/image";
 import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
-import type { PreviewAnnotationPayload, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  BrowserTabContextRecord,
+  PreviewAnnotationPayload,
+  ThreadContextRecord,
+} from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
 import { MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
@@ -28,10 +32,12 @@ import {
   reviewCommentContextLabel,
   terminalContextReference,
   uploadedAttachmentContextRecord,
+  type LinkedContextRecord,
 } from "~/lib/composerContextRecords";
 import type { TerminalContextDraft } from "~/lib/terminalContext";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
+import { BrowserTabContextChip } from "./BrowserTabContextChip";
 import { ThreadContextChip } from "./ThreadContextChip";
 import {
   createContextPresentationRegistry,
@@ -59,7 +65,8 @@ export type ComposerDraftContextRecord =
     }
   | { kind: "image"; record: ComposerImageAttachment; upload?: AttachmentUploadState | undefined }
   | { kind: "file"; record: ComposerFileAttachment; upload?: AttachmentUploadState | undefined }
-  | { kind: "thread"; record: ThreadContextRecord };
+  | { kind: "thread"; record: ThreadContextRecord }
+  | { kind: "browser-tab"; record: BrowserTabContextRecord };
 
 export interface ComposerContextActions {
   environmentId: EnvironmentId | null;
@@ -97,7 +104,7 @@ export function composerContextRecordsFromDraft(input: {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations?: ReadonlyArray<PreviewAnnotationPayload>;
-  threadContexts?: ReadonlyArray<ThreadContextRecord>;
+  linkedContexts?: ReadonlyArray<LinkedContextRecord>;
   images?: ReadonlyArray<ComposerImageAttachment>;
   files?: ReadonlyArray<ComposerFileAttachment>;
   uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
@@ -131,8 +138,11 @@ export function composerContextRecordsFromDraft(input: {
       screenshot: imagesById.get(record.id),
     });
   }
-  for (const record of input.threadContexts ?? []) {
-    records.set(record.contextId, { kind: "thread", record });
+  for (const record of input.linkedContexts ?? []) {
+    records.set(
+      record.contextId,
+      record.kind === "thread" ? { kind: "thread", record } : { kind: "browser-tab", record },
+    );
   }
   return records;
 }
@@ -361,7 +371,15 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   ComposerContextRenderContext,
   ReactElement
 >({
-  requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation", "thread"],
+  requiredKinds: [
+    "image",
+    "file",
+    "terminal",
+    "review-comment",
+    "preview-annotation",
+    "thread",
+    "browser-tab",
+  ],
   handlers: [
     {
       kind: "terminal",
@@ -453,6 +471,16 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
       render: (entry, context) =>
         entry.kind === "thread" ? (
           <ComposerThreadContextChip record={entry.record} />
+        ) : (
+          <UnresolvedContextChip label={context.label} />
+        ),
+    },
+    {
+      kind: "browser-tab",
+      canRender: (entry) => entry.kind === "browser-tab",
+      render: (entry, context) =>
+        entry.kind === "browser-tab" ? (
+          <BrowserTabContextChip record={entry.record} />
         ) : (
           <UnresolvedContextChip label={context.label} />
         ),

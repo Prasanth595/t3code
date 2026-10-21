@@ -71,6 +71,7 @@ import {
   ProviderInteractionMode,
   resolveIdleCompaction,
   RuntimeMode,
+  type ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
   deriveProviderSubagentStatus,
@@ -591,10 +592,13 @@ export default function ChatView(props: ChatViewProps) {
   const referencedThreadContexts = useComposerDraftStore(
     useShallow((store) => {
       const draft = store.getComposerDraft(composerDraftTarget);
-      if (!draft?.threadContexts.length) return [];
+      if (!draft?.linkedContexts.length) return [];
       // Linked prompts can replace text without pruning stored context records.
       const referenced = new Set(collectInlineContextIds(draft.prompt));
-      return draft.threadContexts.filter((record) => referenced.has(record.contextId));
+      return draft.linkedContexts.filter(
+        (record): record is ThreadContextRecord =>
+          record.kind === "thread" && referenced.has(record.contextId),
+      );
     }),
   );
   const composerHasNonPromptContent = useComposerDraftStore((store) => {

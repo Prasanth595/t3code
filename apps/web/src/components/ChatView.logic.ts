@@ -38,7 +38,6 @@ import {
   type ServerProvider,
   type ScopedProjectRef,
   type ScopedThreadRef,
-  type ThreadContextRecord,
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
@@ -89,6 +88,7 @@ import {
   previewAnnotationContextLabel,
   reviewCommentContextLabel,
   terminalContextReference,
+  type LinkedContextRecord,
 } from "../lib/composerContextRecords";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -1269,7 +1269,7 @@ export interface PlanFollowUpComposerSnapshot {
   readonly terminalContexts: ReadonlyArray<TerminalContextDraft>;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
-  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly linkedContexts: ReadonlyArray<LinkedContextRecord>;
 }
 
 export function restorePlanFollowUpComposer(input: {
@@ -1278,7 +1278,7 @@ export function restorePlanFollowUpComposer(input: {
   readonly writeTerminalContexts: (contexts: ReadonlyArray<TerminalContextDraft>) => void;
   readonly writeReviewComments: (comments: ReadonlyArray<ReviewCommentContext>) => void;
   readonly writePreviewAnnotations: (annotations: ReadonlyArray<PreviewAnnotationPayload>) => void;
-  readonly writeThreadContexts: (records: ReadonlyArray<ThreadContextRecord>) => void;
+  readonly writeLinkedContexts: (records: ReadonlyArray<LinkedContextRecord>) => void;
   readonly resetCursor: (options: {
     cursor: number;
     prompt: string;
@@ -1289,7 +1289,7 @@ export function restorePlanFollowUpComposer(input: {
   input.writeTerminalContexts(input.snapshot.terminalContexts);
   input.writeReviewComments(input.snapshot.reviewComments);
   input.writePreviewAnnotations(input.snapshot.previewAnnotations);
-  input.writeThreadContexts(input.snapshot.threadContexts);
+  input.writeLinkedContexts(input.snapshot.linkedContexts);
   input.resetCursor({
     cursor: collapseExpandedComposerCursor(input.snapshot.prompt, input.snapshot.prompt.length),
     prompt: input.snapshot.prompt,
@@ -1448,7 +1448,7 @@ export interface ComposerSendContents {
   readonly sendableTerminalContexts: ReadonlyArray<TerminalContextDraft>;
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
-  readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly linkedContexts: ReadonlyArray<LinkedContextRecord>;
 }
 
 /**
@@ -1467,7 +1467,7 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     terminalContexts,
     previewAnnotations: [...contents.previewAnnotations],
     reviewComments: [...contents.reviewComments],
-    threadContexts: [...contents.threadContexts],
+    linkedContexts: [...contents.linkedContexts],
     messageText: contents.terminalContexts
       .filter((context) => !terminalContexts.includes(context))
       .reduce(

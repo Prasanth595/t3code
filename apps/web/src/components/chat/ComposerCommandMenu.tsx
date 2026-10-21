@@ -1,4 +1,5 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import type { ComposerBrowserTabItem } from "@t3tools/client-runtime/composerBrowserTabItems";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 import {
   resolveProviderSkillSourceKind,
@@ -15,6 +16,7 @@ import {
 import {
   BlocksIcon,
   FolderIcon,
+  GlobeIcon,
   MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
@@ -77,7 +79,8 @@ export type ComposerCommandItem =
       thread: ScopedThreadRef;
       label: string;
       description: string;
-    };
+    }
+  | ComposerBrowserTabItem;
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   listId: string;
@@ -201,6 +204,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       ) : null}
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
+      ) : null}
+      {props.item.type === "browser-tab" ? (
+        <GlobeIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon

@@ -7,6 +7,7 @@ import {
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
 } from "@t3tools/contracts";
 import type {
+  BrowserTabContextRecord,
   ComposerContextId,
   ComposerContextRecord,
   EnvironmentId,
@@ -157,8 +158,11 @@ function threadContextId(threadId: ThreadId): ComposerContextId {
   return toKindScopedComposerContextId("thread", threadId);
 }
 
-export function threadContextReference(record: ThreadContextRecord): ComposerContextReference {
-  return { kind: "thread", contextId: record.contextId, label: record.label };
+/** Pointers the agent follows itself, kept together in a draft's linked contexts. */
+export type LinkedContextRecord = ThreadContextRecord | BrowserTabContextRecord;
+
+export function linkedContextReference(record: LinkedContextRecord): ComposerContextReference {
+  return { kind: record.kind, contextId: record.contextId, label: record.label };
 }
 
 export function threadContextRecord(ref: ScopedThreadRef, title: string): ThreadContextRecord {
@@ -313,7 +317,7 @@ export function buildMessageContext(input: {
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
-  threadContexts?: ReadonlyArray<ThreadContextRecord>;
+  linkedContexts?: ReadonlyArray<LinkedContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -324,7 +328,7 @@ export function buildMessageContext(input: {
   const records: ComposerContextRecord[] = [
     ...input.terminalContexts.map(terminalContextRecord),
     ...input.reviewComments.map(reviewCommentContextRecord),
-    ...(input.threadContexts ?? []),
+    ...(input.linkedContexts ?? []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,

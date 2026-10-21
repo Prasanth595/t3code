@@ -285,6 +285,11 @@ opens it when selected. Your prompt only carries a reference: the agent reads th
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
+A browser tab can be context the same way. Type `@` to list the thread's open browser tabs, or keep
+typing to filter them by title or address. The chip tells the agent to work in that tab, so a page
+you already signed in to stays signed in instead of the agent opening a fresh one. Select the chip
+to show the tab in the browser. If the tab has been closed, the agent opens its address again.
+
 Dropping a thread from another environment attaches a saved transcript file. The source
 environment must be connected and up to date. The transcript includes the visible history and
 saved text context at the time of the drop; later messages and the contents of attached files

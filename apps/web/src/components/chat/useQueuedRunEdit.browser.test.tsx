@@ -133,7 +133,7 @@ const savedContent = (prompt: string) => ({
   terminalContexts: [],
   reviewComments: [],
   previewAnnotations: [],
-  threadContexts: [],
+  linkedContexts: [],
 });
 
 const promptOf = (ref: ScopedThreadRef) =>

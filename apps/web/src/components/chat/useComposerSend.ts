@@ -338,7 +338,7 @@ export function useComposerSend(input: ComposerSendInput) {
     (store) => store.setPreviewAnnotations,
   );
   const setComposerDraftReviewComments = useComposerDraftStore((store) => store.setReviewComments);
-  const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
+  const setComposerDraftLinkedContexts = useComposerDraftStore((store) => store.setLinkedContexts);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const sendToMultipleModels = useMultipleModelSend({
     environmentId,
@@ -515,7 +515,7 @@ export function useComposerSend(input: ComposerSendInput) {
       terminalContexts: composerTerminalContexts,
       previewAnnotations: sendContextPreviewAnnotations,
       reviewComments: composerReviewComments,
-      threadContexts: composerThreadContexts,
+      linkedContexts: composerLinkedContexts,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
       selectedProviderModels: ctxSelectedProviderModels,
@@ -540,7 +540,7 @@ export function useComposerSend(input: ComposerSendInput) {
       : promptRef.current;
     const strandedThread = threadContextsOutsideEnvironment({
       text: promptForSend,
-      records: composerThreadContexts,
+      records: composerLinkedContexts,
       environmentId,
     })[0];
     if (strandedThread) {
@@ -567,7 +567,7 @@ export function useComposerSend(input: ComposerSendInput) {
           terminalContexts: composerTerminalContexts,
           reviewComments: composerReviewComments,
           previewAnnotations: composerPreviewAnnotations,
-          threadContexts: composerThreadContexts,
+          linkedContexts: composerLinkedContexts,
         },
         setThreadError,
       );
@@ -585,7 +585,7 @@ export function useComposerSend(input: ComposerSendInput) {
       elementContextCount:
         composerPreviewAnnotations.length +
         composerReviewComments.length +
-        composerThreadContexts.length,
+        composerLinkedContexts.length,
     });
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
@@ -594,7 +594,7 @@ export function useComposerSend(input: ComposerSendInput) {
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0
+      composerLinkedContexts.length === 0
         ? parseCodexFeedbackCommand(trimmed)
         : null;
     if (feedbackCommand && multipleModelSelections === null) {
@@ -669,7 +669,7 @@ export function useComposerSend(input: ComposerSendInput) {
       const followUpTerminalContexts = [...sendableComposerTerminalContexts];
       const followUpReviewComments = [...composerReviewComments];
       const followUpPreviewAnnotations = [...composerPreviewAnnotations];
-      const followUpThreadContexts = [...composerThreadContexts];
+      const followUpLinkedContexts = [...composerLinkedContexts];
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
@@ -679,7 +679,7 @@ export function useComposerSend(input: ComposerSendInput) {
           terminalContexts: sendableComposerTerminalContexts,
           reviewComments: composerReviewComments,
           previewAnnotations: composerPreviewAnnotations,
-          threadContexts: composerThreadContexts,
+          linkedContexts: composerLinkedContexts,
         }),
         interactionMode: followUp.interactionMode,
       });
@@ -692,7 +692,7 @@ export function useComposerSend(input: ComposerSendInput) {
             terminalContexts: followUpTerminalContexts,
             reviewComments: followUpReviewComments,
             previewAnnotations: followUpPreviewAnnotations,
-            threadContexts: followUpThreadContexts,
+            linkedContexts: followUpLinkedContexts,
           },
           writePrompt: (prompt) => setComposerDraftPrompt(composerDraftTarget, prompt),
           writeTerminalContexts: (contexts) =>
@@ -701,8 +701,8 @@ export function useComposerSend(input: ComposerSendInput) {
             setComposerDraftReviewComments(composerDraftTarget, [...comments]),
           writePreviewAnnotations: (annotations) =>
             setComposerDraftPreviewAnnotations(composerDraftTarget, [...annotations]),
-          writeThreadContexts: (records) =>
-            setComposerDraftThreadContexts(composerDraftTarget, [...records]),
+          writeLinkedContexts: (records) =>
+            setComposerDraftLinkedContexts(composerDraftTarget, [...records]),
           resetCursor: (options) => composerRef.current?.resetCursorState(options),
         });
       } else if (
@@ -720,7 +720,7 @@ export function useComposerSend(input: ComposerSendInput) {
       sendableComposerTerminalContexts.length === 0 &&
       composerPreviewAnnotations.length === 0 &&
       composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0
+      composerLinkedContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
@@ -765,7 +765,7 @@ export function useComposerSend(input: ComposerSendInput) {
       sendableTerminalContexts: sendableComposerTerminalContexts,
       previewAnnotations: composerPreviewAnnotations,
       reviewComments: composerReviewComments,
-      threadContexts: composerThreadContexts,
+      linkedContexts: composerLinkedContexts,
     });
     const {
       files: composerFilesSnapshot,
@@ -773,7 +773,7 @@ export function useComposerSend(input: ComposerSendInput) {
       terminalContexts: composerTerminalContextsSnapshot,
       previewAnnotations: composerPreviewAnnotationsSnapshot,
       reviewComments: composerReviewCommentsSnapshot,
-      threadContexts: composerThreadContextsSnapshot,
+      linkedContexts: composerLinkedContextsSnapshot,
       messageText: messageTextForSend,
     } = sendSnapshot;
     const {
@@ -807,7 +807,7 @@ export function useComposerSend(input: ComposerSendInput) {
         terminalContexts: composerTerminalContextsSnapshot,
         reviewComments: composerReviewCommentsSnapshot,
         previewAnnotations: composerPreviewAnnotationsSnapshot,
-        threadContexts: composerThreadContextsSnapshot,
+        linkedContexts: composerLinkedContextsSnapshot,
         attachments: composerAttachmentsSnapshot.map((attachment, index) => ({
           attachment,
           attachmentId: attachmentIds[index] ?? attachment.id,

@@ -4,7 +4,6 @@ import {
   type EnvironmentId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type PreviewAnnotationPayload,
-  type ThreadContextRecord,
 } from "@t3tools/contracts";
 import {
   type ComposerFileAttachment,
@@ -36,6 +35,7 @@ import {
   previewAnnotationContextRecord,
   reviewCommentContextRecord,
   terminalContextRecord,
+  type LinkedContextRecord,
 } from "~/lib/composerContextRecords";
 import { randomUUID } from "~/lib/utils";
 import {
@@ -82,7 +82,7 @@ export function useComposerStash(input: {
   readonly isComposerCollapsedMobile: boolean;
   readonly composerPreviewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly composerReviewComments: ReadonlyArray<ReviewCommentContext>;
-  readonly composerThreadContexts: ReadonlyArray<ThreadContextRecord>;
+  readonly composerLinkedContexts: ReadonlyArray<LinkedContextRecord>;
   readonly attachmentTargetKey: string;
   readonly isComposerDraftTargetOpen: (targetKey: string) => boolean;
   readonly composerEditorRef: RefObject<ComposerPromptEditorHandle | null>;
@@ -112,7 +112,7 @@ export function useComposerStash(input: {
     isComposerCollapsedMobile,
     composerPreviewAnnotations,
     composerReviewComments,
-    composerThreadContexts,
+    composerLinkedContexts,
     attachmentTargetKey,
     isComposerDraftTargetOpen,
     composerEditorRef,
@@ -139,7 +139,7 @@ export function useComposerStash(input: {
   const clearComposerDraftPromptAndImages = useComposerDraftStore(
     (store) => store.clearComposerPromptAndImages,
   );
-  const setComposerDraftThreadContexts = useComposerDraftStore((store) => store.setThreadContexts);
+  const setComposerDraftLinkedContexts = useComposerDraftStore((store) => store.setLinkedContexts);
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   // Each stash bumps the key; the badge replays its one-shot pulse animation per key.
   const [stashPulseKey, setStashPulseKey] = useState(0);
@@ -459,7 +459,7 @@ export function useComposerStash(input: {
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
     const stashedRecords: ComposerContextRecord[] = [
-      ...composerThreadContexts,
+      ...composerLinkedContexts,
       ...readTerminalContexts().map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
       ...composerPreviewAnnotations.map((annotation) =>
@@ -562,7 +562,7 @@ export function useComposerStash(input: {
       promptRef.current = "";
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
-      setComposerDraftThreadContexts(stashTarget, []);
+      setComposerDraftLinkedContexts(stashTarget, []);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
       }

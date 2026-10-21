@@ -1,3 +1,4 @@
+import type { ComposerBrowserTabItem } from "@t3tools/client-runtime/composerBrowserTabItems";
 import {
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
@@ -40,6 +41,7 @@ export type ComposerCommandItem =
       readonly label: string;
       readonly description: string;
     }
+  | ComposerBrowserTabItem
   | {
       readonly id: string;
       readonly type: "slash-command";
@@ -110,6 +112,8 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return null;
     case "thread":
       return "text.bubble";
+    case "browser-tab":
+      return "globe";
   }
 }
 
