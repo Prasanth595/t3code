@@ -20,6 +20,7 @@ import {
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
   isProviderSettingsUpdateCandidate,
+  localEnvironmentUpdateNotificationKey,
   providerUpdateNotificationKey,
   resolveEnvironmentUpdateRowStatus,
   type LocalEnvironmentProvidersInput,
@@ -444,6 +445,27 @@ describe("provider update launch notification logic", () => {
         result.groups.find((group) => group.environmentId === ("env-wsl" as EnvironmentId))
           ?.isSettling,
       ).toBe(true);
+    });
+
+    it("waits for a connection before offering cached provider updates", () => {
+      const cachedProvider = provider({ driver: driver("codex") });
+      const primary = environment({
+        environmentId: "env-cached",
+        isPrimary: true,
+        connectionState: "connecting",
+        providers: [cachedProvider],
+      });
+      const waiting = buildLocalEnvironmentUpdateGroups([primary]);
+      expect(waiting.groups[0]?.candidates).toEqual([]);
+      expect(localEnvironmentUpdateNotificationKey(waiting.groups)).toBeNull();
+
+      const connected = buildLocalEnvironmentUpdateGroups([
+        { ...primary, connectionState: "ready" },
+      ]);
+      expect(connected.groups[0]?.candidates).toEqual([cachedProvider]);
+      expect(localEnvironmentUpdateNotificationKey(connected.groups)).toBe(
+        "env-cached=codex:1.1.0",
+      );
     });
   });
 

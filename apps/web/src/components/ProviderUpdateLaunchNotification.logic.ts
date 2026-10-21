@@ -749,9 +749,12 @@ export function buildLocalEnvironmentUpdateGroups(
     label: environment.label,
     isPrimary: environment.isPrimary,
     isSettling: environment.connectionState === "connecting",
-    candidates: collectProviderUpdateCandidates(environment.providers).filter((candidate) =>
-      canOneClickUpdateProviderCandidate(candidate, environment.providers),
-    ),
+    candidates:
+      environment.connectionState === "ready"
+        ? collectProviderUpdateCandidates(environment.providers).filter((candidate) =>
+            canOneClickUpdateProviderCandidate(candidate, environment.providers),
+          )
+        : [],
     providers: environment.providers,
   }));
   const isAnySettling = environments.some(
