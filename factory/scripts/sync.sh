@@ -38,7 +38,11 @@
 # gh targets origin's GitHub repository, never the fork's parent.
 #
 # Pull requests opened with GITHUB_TOKEN trigger no workflows, which is why the
-# checks run here and the landing happens only when they pass.
+# checks run here and the landing happens only when they pass. The landing push
+# triggers none either, so inside the workflow (GITHUB_ACTIONS set) publish
+# dispatches Factory CI, Factory desktop and, when the merge touched apps/mobile
+# or packages, Factory mobile on the landed main. A failed dispatch leaves the
+# landing in place and exits 1. Run locally, the person's own push starts them.
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -192,6 +196,25 @@ fails_checks() {
   } > "$scratch/fails.md"
   file_issue "fails checks" "$scratch/fails.md" --label factory:proposed
   exit 1
+}
+
+# Dispatches the workflows a push to main would have started, on the landed
+# main, and sets $dispatched to their files. <before> is main before the landing.
+# Every one is tried; each that fails gets its own line, then publish exits 1.
+dispatch() {
+  local before=$1 workflow failed=0 workflows=(factory-ci.yml factory-desktop.yml)
+  if [[ -n $(git diff --name-only "$before..$candidate" -- apps/mobile packages) ]]; then
+    workflows+=(factory-mobile.yml)
+  fi
+  for workflow in "${workflows[@]}"; do
+    if ! gh workflow run "$workflow" --ref "$base"; then
+      echo "sync: $tag merged into $base through $pr_url; dispatch of $workflow failed" >&2
+      failed=1
+    fi
+  done
+  ((failed == 0)) || exit 1
+  printf -v dispatched '%s, ' "${workflows[@]}"
+  dispatched=${dispatched%, }
 }
 
 # Fails publish when the bundled branch is anything but what prepare should
@@ -365,8 +388,15 @@ publish() {
     # Fast-forwarding main to the checked merge commit lands exactly what the
     # checks ran on, and GitHub marks the pull request merged. When main moved
     # meanwhile, the push is refused and the pull request waits for a person.
+    local before
+    before=$(git rev-parse "origin/$base")
     if git push --quiet origin "$candidate:refs/heads/$base" 2> "$scratch/land.log"; then
-      echo "sync: $tag merged into $base through $pr_url"
+      if [[ -n ${GITHUB_ACTIONS:-} ]]; then
+        dispatch "$before"
+        echo "sync: $tag merged into $base through $pr_url; dispatched $dispatched"
+      else
+        echo "sync: $tag merged into $base through $pr_url"
+      fi
       exit 0
     fi
     cat "$scratch/land.log" >&2
