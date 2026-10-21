@@ -1,5 +1,4 @@
-// @vitest-environment jsdom
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import {
   EnvironmentId,
@@ -74,7 +73,7 @@ it("recovers a newly installed skill after discovery returns an expired complete
       return AsyncResult.success({ providers: [recovered] });
     });
   function Consumer({ draft }: { draft: string }) {
-    menu = useComposerCommandMenu({
+    const currentMenu = useComposerCommandMenu({
       draftMessage: draft,
       ownerKey: null,
       environmentId: EnvironmentId.make("local"),
@@ -83,6 +82,9 @@ it("recovers a newly installed skill after discovery returns an expired complete
       hasThread: true,
       hasCompactableConversation: false,
       onChangeDraftMessage: () => {},
+    });
+    useEffect(() => {
+      menu = currentMenu;
     });
     return null;
   }
