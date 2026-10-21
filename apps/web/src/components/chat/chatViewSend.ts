@@ -27,7 +27,12 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
-import { prepareRevertedMessageAttachments, waitForRevertedMessage } from "../ChatView.logic";
+import {
+  cloneComposerImageForRetry,
+  type ComposerSendSnapshot,
+  prepareRevertedMessageAttachments,
+  waitForRevertedMessage,
+} from "../ChatView.logic";
 import { readPreparedConnection } from "../../state/session";
 import { recallableComposerPrompt } from "./composerPromptHistory";
 
@@ -234,4 +239,25 @@ export async function rewindToMessage(input: {
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Failed to revert thread state." };
   }
+}
+
+/**
+ * Writes a failed send's composer contents back into its draft. Returns the
+ * restored images, which are fresh copies so their preview URLs outlive the
+ * optimistic row that held the originals.
+ */
+export function restoreComposerDraft(
+  draftTarget: ScopedThreadRef | DraftId,
+  snapshot: ComposerSendSnapshot,
+): ComposerImageAttachment[] {
+  const store = useComposerDraftStore.getState();
+  const images = snapshot.images.map(cloneComposerImageForRetry);
+  store.setPrompt(draftTarget, snapshot.messageText);
+  store.addImages(draftTarget, images);
+  store.addFiles(draftTarget, snapshot.files);
+  store.setTerminalContexts(draftTarget, snapshot.terminalContexts);
+  store.setPreviewAnnotations(draftTarget, snapshot.previewAnnotations);
+  store.setReviewComments(draftTarget, snapshot.reviewComments);
+  store.setThreadContexts(draftTarget, snapshot.threadContexts);
+  return images;
 }
