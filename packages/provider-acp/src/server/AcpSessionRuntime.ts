@@ -1273,6 +1273,15 @@ interface AcpActivePrompt {
    * cancel has to interrupt it instead of asking the agent to stop it.
    */
   readonly attemptInFlight: Ref.Ref<boolean>;
+  /**
+   * Whether the prompt is being re-sent after the agent rejected it as busy.
+   *
+   * The re-send is a second dispatch of the same prompt, so a cancel has to
+   * interrupt it even while the request is in flight: the request and the
+   * cancel notification share one queue, and a cancel that is written first
+   * would let the agent start the turn after the user stopped it.
+   */
+  readonly reSendPending: Ref.Ref<boolean>;
 }
 
 export const make = Effect.fn("AcpSessionRuntime.make")(function* (
@@ -2371,9 +2380,17 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
         // agent, so `session/cancel` has nothing to stop. Interrupt the wait
         // instead, so the prompt is not re-sent after the user stopped the
         // turn.
+        //
+        // A re-send is interrupted even while its request is in flight. The
+        // request and the cancel notification share one queue, so a cancel
+        // that is written before the re-send would let the agent start the
+        // turn after the user stopped it. Interrupting the prompt either
+        // drops the request before it is written, or happens after it was
+        // written, which keeps the order on the wire.
         if (promptBusyRetry !== undefined && Option.isSome(activePrompt)) {
           const inFlight = yield* Ref.get(activePrompt.value.attemptInFlight);
-          if (!inFlight) {
+          const reSendPending = yield* Ref.get(activePrompt.value.reSendPending);
+          if (!inFlight || reSendPending) {
             yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
           }
         }
@@ -2625,7 +2642,15 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
               const completed = yield* Deferred.make<void>();
               yield* promptBusyRetryGate.issue;
               const attemptInFlight = yield* Ref.make(false);
+              const reSendPending = yield* Ref.make(false);
+              let sendAttempts = 0;
               const sendPrompt = Effect.gen(function* () {
+                sendAttempts += 1;
+                // The first send is the original prompt. Every send after it
+                // is a re-send of a prompt the agent rejected as busy.
+                if (sendAttempts > 1) {
+                  yield* Ref.set(reSendPending, true);
+                }
                 yield* Ref.set(attemptInFlight, true);
                 return yield* acp.agent
                   .prompt(requestPayload)
@@ -2647,7 +2672,12 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
                   cancelled: promptBusyRetryGate.cancelled,
                 }),
               ).pipe(Effect.forkIn(runtimeScope));
-              const active = { fiber, completed, attemptInFlight } satisfies AcpActivePrompt;
+              const active = {
+                fiber,
+                completed,
+                attemptInFlight,
+                reSendPending,
+              } satisfies AcpActivePrompt;
               yield* Ref.set(activePromptRef, Option.some(active));
               if (promptOptions?.dispatched) {
                 yield* Deferred.succeed(promptOptions.dispatched, undefined);

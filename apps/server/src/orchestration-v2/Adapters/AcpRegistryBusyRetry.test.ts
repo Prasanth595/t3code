@@ -74,6 +74,14 @@ const minimaxCodeFrames = {
       error: { code: -32603, message: MINIMAX_CODE_BUSY_MESSAGE },
     },
   },
+  busyPromptImmediate: {
+    type: "emit_inbound",
+    frame: {
+      kind: "response",
+      method: "session/prompt",
+      error: { code: -32603, message: MINIMAX_CODE_BUSY_MESSAGE },
+    },
+  },
   acceptedPrompt: {
     type: "emit_inbound",
     frame: { kind: "response", method: "session/prompt", result: { stopReason: "end_turn" } },
@@ -95,6 +103,22 @@ const minimaxCodeFrames = {
       params: {
         sessionId: MINIMAX_SESSION,
         update: { sessionUpdate: "session_info_update", title: "cancel consumed" },
+      },
+    },
+  },
+  /**
+   * The agent only sends this once it received the re-sent prompt, so a test
+   * that waits for it knows the re-send is with the agent.
+   */
+  reSendMarker: {
+    type: "emit_inbound",
+    label: "re-sent",
+    frame: {
+      kind: "notification",
+      method: "session/update",
+      params: {
+        sessionId: MINIMAX_SESSION,
+        update: { sessionUpdate: "session_info_update", title: "prompt re-sent" },
       },
     },
   },
@@ -221,6 +245,38 @@ describe("minimax-code busy turn lease", () => {
       const status = yield* readStatus();
       assert.isUndefined(status.failure);
       assert.equal(status.cursor, status.total);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("cancels a re-sent prompt the agent already accepted", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["re-sent", "accepted"]);
+      const { runtime } = yield* openMinimaxCodeRuntime(
+        [
+          ...minimaxCodeFrames.open,
+          minimaxCodeFrames.promptRequest,
+          minimaxCodeFrames.busyPromptImmediate,
+          minimaxCodeFrames.promptRequest,
+          minimaxCodeFrames.reSendMarker,
+          minimaxCodeFrames.cancelNotification,
+          { ...minimaxCodeFrames.acceptedPrompt, label: "accepted" },
+        ],
+        gate,
+      );
+
+      const prompt = yield* Effect.forkChild(
+        runtime.prompt({ prompt: [{ type: "text", text: "hello" }] }),
+      );
+      // The agent received the re-sent prompt and is holding its response.
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("re-sent")));
+
+      yield* runtime.cancel;
+
+      // The agent's response never arrives, so the turn can only settle if
+      // the cancel stopped the re-sent prompt on its own. Otherwise the
+      // prompt would wait for a response that is never delivered.
+      const response = yield* Fiber.join(prompt);
+      assert.equal(response.stopReason, "cancelled");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });
