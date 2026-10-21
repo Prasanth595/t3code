@@ -10,6 +10,7 @@ import {
   RuntimeRequestId,
   NodeId,
   type ProjectId,
+  ProviderRequestKind,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -275,8 +276,9 @@ const layerBase: Layer.Layer<
           );
       });
 
-    // A user can answer after terminal normalization reads the pending request.
+    // A user can answer a question or approval after terminal normalization reads it pending.
     // Recheck inside the write transaction so stale cleanup cannot erase answers.
+    const isApprovalRequestKind = Schema.is(ProviderRequestKind);
     const guardUserInputCancellations =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(function* (events: ReadonlyArray<OrchestrationV2DomainEvent>) {
@@ -285,7 +287,7 @@ const layerBase: Layer.Layer<
         for (const event of events) {
           if (
             event.type !== "runtime-request.updated" ||
-            event.payload.kind !== "user_input" ||
+            (event.payload.kind !== "user_input" && !isApprovalRequestKind(event.payload.kind)) ||
             event.payload.status !== "cancelled"
           )
             continue;
@@ -295,7 +297,7 @@ const layerBase: Layer.Layer<
           );
           if (
             current?.status !== "pending" ||
-            current.kind !== "user_input" ||
+            current.kind !== event.payload.kind ||
             current.providerTurnId !== event.payload.providerTurnId ||
             current.responseCapability.type === "message"
           ) {
@@ -311,7 +313,8 @@ const layerBase: Layer.Layer<
               return event.payload.status !== "cancelled" || !staleNodes.has(event.payload.id);
             case "turn-item.updated":
               return (
-                event.payload.type !== "user_input_request" ||
+                (event.payload.type !== "user_input_request" &&
+                  event.payload.type !== "approval_request") ||
                 event.payload.status !== "cancelled" ||
                 !staleRequests.has(event.payload.requestId)
               );
