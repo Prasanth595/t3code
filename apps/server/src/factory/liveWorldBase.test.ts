@@ -49,6 +49,7 @@ const machine: MachineConfig = {
   maxConcurrentRuns: 1,
   maxConcurrentGates: 1,
   notify: true,
+  minFreeGib: 0,
 };
 
 const repo: Repo = {

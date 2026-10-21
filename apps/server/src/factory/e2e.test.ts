@@ -467,6 +467,8 @@ const scenario = (spec: Spec) =>
           "poll_seconds: 10",
           "max_concurrent_runs: 1",
           "notify: false",
+          // Off, so the claim does not depend on the disk of the machine running the test.
+          "min_free_gib: 0",
           "",
         ].join("\n"),
       );

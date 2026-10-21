@@ -56,6 +56,7 @@ const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
+export const DEFAULT_MIN_FREE_GIB = 10;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -141,6 +142,11 @@ export interface MachineConfig {
   readonly maxConcurrentGates: number;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
+  /**
+   * The free GiB the volume of the worktrees must have for a pass to claim an issue or start a
+   * gate. 0 turns the check off.
+   */
+  readonly minFreeGib: number;
 }
 
 type Mapping = Record<string, unknown>;
@@ -416,6 +422,7 @@ const MACHINE_KEYS = [
   "max_concurrent_runs",
   "max_concurrent_gates",
   "notify",
+  "min_free_gib",
 ] as const;
 
 /**
@@ -461,6 +468,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const notify = c.optionalBoolean(root, "", "notify", true);
+  const minFreeGib = c.optionalUint(root, "", "min_free_gib", DEFAULT_MIN_FREE_GIB, 0);
   checkUnknownKeys(c, root);
 
   if (
@@ -468,7 +476,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
-    notify === undefined
+    notify === undefined ||
+    minFreeGib === undefined
   ) {
     return undefined;
   }
@@ -478,6 +487,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentRuns,
     maxConcurrentGates,
     notify,
+    minFreeGib,
   };
 };
 

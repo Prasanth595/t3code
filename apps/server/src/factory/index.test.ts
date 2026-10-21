@@ -158,8 +158,10 @@ const seedReportedRun = (dataDir: string, repo: string): RunId => {
   return run;
 };
 
+// The free-space check is off, so a pass does not depend on the disk of the machine running it.
 const VALID = `gh_config_dir: /gh
 max_concurrent_runs: 1
+min_free_gib: 0
 `;
 
 /** `VALID` with the one required key a file cannot do without taken out. */
@@ -732,6 +734,7 @@ describe("liveWorld", () => {
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
     notify: true,
+    minFreeGib: 0,
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -1627,6 +1630,7 @@ describe("the gate in the background", () => {
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
     notify: true,
+    minFreeGib: 0,
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -1755,6 +1759,7 @@ describe("the gate in the background", () => {
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
     notify: true,
+    minFreeGib: 0,
   };
   const gateRepo: Repo = {
     watched: { repo: REPO, path: "/p" },
@@ -2087,6 +2092,7 @@ describe("the gate in the background", () => {
         maxConcurrentRuns: 1,
         maxConcurrentGates: 1,
         notify: true,
+        minFreeGib: 0,
       };
       const world = liveWorld(
         machine,
@@ -2141,6 +2147,7 @@ describe("the gate in the background", () => {
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
             notify: true,
+            minFreeGib: 0,
           },
           dataDir,
           { run: () => Effect.die("no gh") },
