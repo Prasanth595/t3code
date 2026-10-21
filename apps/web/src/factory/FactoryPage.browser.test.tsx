@@ -868,9 +868,10 @@ describe("FactoryPage filters", () => {
       },
     ];
   };
+  // The runs table's links only; an attention item's View run links to the same route.
   const runLinks = (page: Awaited<ReturnType<typeof render>>) =>
     page
-      .all("a")
+      .all("table a")
       .filter((a) => a.getAttribute("data-to") === "/factory/$environmentId/$runId")
       .map((a) => JSON.parse(a.getAttribute("data-params")!).runId as string);
   const statusRows = (page: Awaited<ReturnType<typeof render>>) =>
