@@ -80,6 +80,12 @@ function migrateLegacyClerkTokenFile(stateDir: string, directory: string): void 
 
   assertRegularFile(tokenPath, destination);
   NodeFS.chmodSync(tokenPath, CLERK_TOKEN_FILE_MODE);
+  if (legacy === undefined) return;
+  try {
+    NodeFS.unlinkSync(legacyPath);
+  } catch (error) {
+    if (!isErrno(error, "ENOENT")) throw error;
+  }
 }
 
 function restrictAfter<T>(run: () => Awaitable<T>, tighten: () => void): Awaitable<T> {

@@ -83,9 +83,26 @@ describePosix("ClerkTokenStore", () => {
       openClerkTokenStorage(stateDir, () => idleStorage());
       assert.equal(modeOf(directory), 0o700);
       assert.equal(modeOf(tokenPath), 0o600);
-      assert.equal(modeOf(legacyPath), 0o600);
+      assert.equal(NodeFS.existsSync(legacyPath), false);
       assert.equal(NodeFS.readFileSync(tokenPath, "utf8"), "kept");
-      assert.equal(NodeFS.readFileSync(legacyPath, "utf8"), "stale");
+    });
+  });
+
+  it("removes the legacy token file when the private copy already exists", async () => {
+    await withStateDir((stateDir) => {
+      const directory = NodePath.join(stateDir, "clerk");
+      const legacyPath = NodePath.join(stateDir, "clerk-tokens.json");
+      const tokenPath = NodePath.join(directory, "clerk-tokens.json");
+      NodeFS.mkdirSync(directory, { mode: 0o755 });
+      writeLoose(legacyPath, "stale-credential");
+      writeLoose(tokenPath, "kept-credential");
+
+      openClerkTokenStorage(stateDir, () => idleStorage());
+
+      assert.equal(NodeFS.existsSync(legacyPath), false);
+      assert.equal(modeOf(directory), 0o700);
+      assert.equal(modeOf(tokenPath), 0o600);
+      assert.equal(NodeFS.readFileSync(tokenPath, "utf8"), "kept-credential");
     });
   });
 
