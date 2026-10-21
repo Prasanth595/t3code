@@ -1,5 +1,5 @@
 import { SpaceProjectsOverview } from "./SpaceProjectsOverview";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -24,7 +24,7 @@ import {
 } from "@t3tools/client-runtime/state/spaces";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useThreadShells } from "../../state/entities";

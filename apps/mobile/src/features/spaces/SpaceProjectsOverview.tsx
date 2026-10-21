@@ -15,8 +15,8 @@ import { Gesture, GestureDetector, GestureHandlerRootView } from "react-native-g
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { assignProjectSpace, resolveProjectSpace } from "@t3tools/client-runtime/state/spaces";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useProjects } from "../../state/entities";
 import { useMobileSpaces } from "../../state/spaces";

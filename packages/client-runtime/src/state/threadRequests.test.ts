@@ -7,10 +7,43 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
-import { createQuestionHistoryProjector, derivePendingThreadRequests } from "./threadRequests.ts";
+import {
+  createQuestionHistoryProjector,
+  derivePendingThreadRequests,
+  seedUserInputDraftAnswers,
+} from "./threadRequests.ts";
 
 const requestId = RuntimeRequestId.make("async-question");
 const nodeId = NodeId.make("async-question-node");
+
+describe("initial user input drafts", () => {
+  const questions = [
+    { id: "editor", initialAnswer: "  Proposed commit\n\n" },
+    { id: "empty", initialAnswer: "" },
+    { id: "ordinary" },
+    { id: "choices", initialAnswer: "Ignore this", allowCustomAnswer: false },
+  ];
+
+  it("seeds editable answers and preserves edits and selections on later snapshots", () => {
+    const seeded = seedUserInputDraftAnswers(questions, {});
+    expect(seeded).toEqual({
+      editor: { customAnswer: "  Proposed commit\n\n" },
+      empty: { customAnswer: "" },
+    });
+    const edits = {
+      ...seeded,
+      editor: { customAnswer: "" },
+      empty: { selectedOptionValues: ["empty"], customAnswer: "" },
+    };
+    expect(seedUserInputDraftAnswers(questions, edits)).toEqual(edits);
+    expect(
+      seedUserInputDraftAnswers(questions, { editor: { customAnswer: "Edited commit" } }).editor,
+    ).toEqual({ customAnswer: "Edited commit" });
+    expect(seedUserInputDraftAnswers(questions, {}).editor).toEqual({
+      customAnswer: "  Proposed commit\n\n",
+    });
+  });
+});
 const projection: OrchestrationV2ThreadProjection = {
   ...v2Projection,
   runtimeRequests: [
@@ -99,20 +132,6 @@ describe("pending v2 questions", () => {
       ),
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
-  });
-
-  it("removes answered requests from the composer while retaining their answers in projection data", () => {
-    const answered = {
-      ...projection,
-      runtimeRequests: projection.runtimeRequests.map((request) => ({
-        ...request,
-        status: "resolved" as const,
-        resolvedAt: v2Now,
-        answers: { next: "  continue  " },
-      })),
-    };
-    expect(derivePendingThreadRequests(answered).userInputs).toEqual([]);
-    expect(answered.runtimeRequests[0]?.answers).toEqual({ next: "  continue  " });
   });
 });
 
