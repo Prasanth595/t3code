@@ -8,21 +8,26 @@ import {
   PREVIEW_URL_MAX_LENGTH,
   type DiscoveredLocalServer,
 } from "@t3tools/contracts";
+import * as ProcessGroup from "@t3tools/provider-core/server/processGroup";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
-import { expect } from "vite-plus/test";
+import { expect, vi } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
+
+vi.mock("@t3tools/provider-core/server/processGroup", { spy: true });
+
 const processProbeFailure: ProcessRunner.ProcessRunner["Service"]["run"] = (input) =>
   Effect.fail(
     new ProcessRunner.ProcessSpawnError({
@@ -729,6 +734,77 @@ effectIt.effect("stops only a job's own process group", () =>
     }
   }),
 );
+
+effectIt.effect.each([
+  // The server exits on SIGTERM, and a child that ignores it stays in the job's group.
+  {
+    name: "sends SIGKILL after the grace period to a child that ignores SIGTERM",
+    afterTerm: "4301 1 4300\n",
+    killed: true,
+  },
+  // Only the job's original members count, so a group id reused since is never killed.
+  {
+    name: "never sends SIGKILL to an unrelated process that reused the group",
+    afterTerm: "5000 1 4300\n",
+    killed: false,
+  },
+])("$name", ({ afterTerm, killed }) => {
+  const port = 43_128;
+  let table = "4300 1 4300\n4242 4300 4300\n4301 4242 4300\n";
+  const signals: Array<readonly [number, NodeJS.Signals | 0]> = [];
+  const missing = FileSystem.makeNoop({});
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        FileSystem.layerNoop({
+          readFileString: (path) =>
+            path === "/proc/4242/environ"
+              ? Effect.succeed(`${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`)
+              : missing.readFileString(path),
+        }),
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) =>
+            Effect.succeed(
+              processOutput(
+                input.command === "lsof" ? `p4242\ncnode\nn127.0.0.1:${port}\n` : table,
+              ),
+            ),
+        }),
+        Layer.succeed(HostProcess.Platform, "linux"),
+        FetchHttpClient.layer.pipe(
+          Layer.provide(
+            Layer.succeed(FetchHttpClient.Fetch, () =>
+              Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } })),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const signal = vi
+      .spyOn(ProcessGroup, "signalProcessGroup")
+      .mockImplementation((group, name) => {
+        signals.push([group, name]);
+        if (name === "SIGTERM") table = afterTerm;
+      });
+    yield* Effect.addFinalizer(() => Effect.sync(() => signal.mockRestore()));
+    const scanner = yield* PortScanner.PortDiscovery;
+    const stop = yield* Effect.forkChild(scanner.stopServer({ pid: 4242, port }));
+    yield* TestClock.adjust(Duration.seconds(2));
+    expect(signals).toEqual([[4300, "SIGTERM"]]);
+    yield* TestClock.adjust(Duration.seconds(2));
+    yield* Fiber.join(stop);
+    expect(signals).toEqual(
+      killed
+        ? [
+            [4300, "SIGTERM"],
+            [4300, "SIGKILL"],
+          ]
+        : [[4300, "SIGTERM"]],
+    );
+  }).pipe(Effect.provide(layer));
+});
 
 const AGENT_SERVER_SCRIPT = `
 const server = require("node:http").createServer((_, response) => {
