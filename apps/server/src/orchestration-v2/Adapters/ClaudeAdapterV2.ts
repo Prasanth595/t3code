@@ -298,6 +298,7 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK puts no deadline on control requests. The CLI answers
 // mcp_set_servers once each server connected or hit its own 30 s timeout.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+const CLAUDE_COMPACTION_UNCONFIRMED = "Claude did not confirm the compaction.";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
@@ -3326,6 +3327,18 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
+interface ClaudeCompactionOperation {
+  readonly nativeItemId: string;
+  readonly startedAt: DateTime.Utc;
+  readonly ordinal: number;
+  outcome: "success" | "failed" | null;
+  outcomeReported: boolean;
+  boundaryReported: boolean;
+  error: string | undefined;
+  beforeTokenCount: number | undefined;
+  afterTokenCount: number | undefined;
+}
+
 interface ActiveClaudeTurnContext {
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -3371,8 +3384,6 @@ interface ActiveClaudeTurnContext {
     usage: ClaudeMessageUsage | null;
   } | null;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
-  // A successful status can precede the boundary that supplies its token counts.
-  compaction: Extract<OrchestrationV2TurnItem, { type: "compaction" }> | null;
   readonly ignoredTaskIds: Set<string>;
   readonly announcedUsageLimits: Set<string>;
   authenticationFailureMessage: string | undefined;
@@ -3382,9 +3393,12 @@ interface ActiveClaudeTurnContext {
     readonly type: string | null;
     readonly resetAt: string | null;
   } | null;
-  // Set while this turn's latest compaction status reports a failure, with
-  // Claude's error text when it sent one.
-  compactionFailure: { readonly message: string | undefined } | null;
+  compactionSequence: number;
+  // The compaction Claude reported starting and has not settled yet.
+  activeCompaction: ClaudeCompactionOperation | null;
+  // The latest settled compaction. Claude reports a compaction's outcome and
+  // its boundary in separate frames, so the later frame updates this item.
+  lastCompaction: ClaudeCompactionOperation | null;
   // Usage of the results that steers ended, oldest first. The final result's
   // usage covers only its own segment, so the turn bills these as well.
   readonly steeredSegmentUsage: Array<SDKResultMessage["usage"]>;
@@ -6558,23 +6572,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly result?: SDKResultMessage;
         }) {
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
-          if (input.context.compaction?.status === "running") {
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                ...input.context.compaction,
-                status: input.status === "completed" ? "failed" : input.status,
-                title:
-                  input.status === "completed" || input.status === "failed"
-                    ? "Context compaction failed"
-                    : "Context compaction stopped",
-                completedAt: input.completedAt,
-                updatedAt: input.completedAt,
-              },
-            });
+          if (input.context.activeCompaction !== null) {
+            yield* settleClaudeCompaction(
+              input.context,
+              input.context.activeCompaction,
+              input.completedAt,
+              input.status === "completed" ? undefined : input.status,
+            );
           }
-          input.context.compaction = null;
           if (input.status !== "completed") {
             const liveQuery = yield* Ref.get(queryContext);
             for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
@@ -7659,89 +7664,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
 
-          if (
-            message.type === "system" &&
-            message.subtype === "status" &&
-            (message.compact_result !== undefined ||
-              (message.status === null && message.permissionMode === undefined))
-          ) {
-            if (message.compact_result !== undefined) {
-              context.compactionFailure =
-                message.compact_result === "failed" ? { message: message.compact_error } : null;
+          if (message.type === "system" && message.subtype === "status") {
+            if (message.status === "compacting" && context.activeCompaction === null) {
+              const operation = yield* startClaudeCompaction(context);
+              yield* emitClaudeCompaction(context, operation, "running", operation.startedAt);
             }
-            if (context.compaction?.status === "running") {
-              const now = yield* DateTime.now;
-              context.compaction = {
-                ...context.compaction,
-                status:
-                  message.compact_result === "success"
-                    ? "completed"
-                    : message.compact_result === "failed"
-                      ? "failed"
-                      : "interrupted",
-                title:
-                  message.compact_result === "success"
-                    ? "Context compacted"
-                    : message.compact_result === "failed"
-                      ? "Context compaction failed"
-                      : "Context compaction stopped",
-                completedAt: now,
-                updatedAt: now,
-              };
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CLAUDE_PROVIDER,
-                turnItem: context.compaction,
-              });
-              if (message.compact_result !== "success") context.compaction = null;
+            if (message.compact_result !== undefined) {
+              const last = context.lastCompaction;
+              const operation =
+                context.activeCompaction ??
+                (last !== null && !last.outcomeReported ? last : null) ??
+                (yield* startClaudeCompaction(context, message.uuid));
+              operation.outcomeReported = true;
+              operation.outcome = message.compact_result;
+              operation.error = message.compact_error;
+              yield* settleClaudeCompaction(context, operation, yield* DateTime.now);
+            } else if (
+              message.status === null &&
+              message.permissionMode === undefined &&
+              context.activeCompaction !== null
+            ) {
+              // A PreCompact hook can skip the compaction, which clears the
+              // status without an outcome. Frames that still arrive for it
+              // update the same item. A permission mode change also sends a
+              // cleared status, so it leaves the compaction running.
+              yield* settleClaudeCompaction(context, context.activeCompaction, yield* DateTime.now);
             }
           }
 
-          if (
-            message.type === "system" &&
-            (message.subtype === "compact_boundary" ||
-              (message.subtype === "status" && message.status === "compacting"))
-          ) {
-            if (message.subtype === "status" && context.compaction?.status === "running") return;
-            const now = yield* DateTime.now;
-            const nativeItemId = message.uuid;
-            const compaction =
-              (message.subtype === "compact_boundary" ? context.compaction : null) ??
-              ({
-                id: idAllocator.derive.turnItemFromProviderItem({
-                  driver: CLAUDE_PROVIDER,
-                  nativeItemId,
-                }),
-                threadId: context.input.threadId,
-                runId: context.input.runId,
-                nodeId: context.input.rootNodeId,
-                providerThreadId: context.input.providerThread.id,
-                providerTurnId: context.providerTurnId,
-                nativeItemRef: {
-                  driver: CLAUDE_PROVIDER,
-                  nativeId: nativeItemId,
-                  strength: "strong",
-                },
-                parentItemId: null,
-                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
-                type: "compaction",
-                driver: CLAUDE_PROVIDER,
-                status: "running",
-                title: "Compacting context",
-                startedAt: now,
-                completedAt: null,
-                updatedAt: now,
-              } satisfies OrchestrationV2TurnItem);
-            if (message.subtype === "status") {
-              context.compaction = compaction;
-              yield* emitProviderEvent({
-                type: "turn_item.updated",
-                driver: CLAUDE_PROVIDER,
-                turnItem: compaction,
-              });
-              return;
-            }
+          if (message.type === "system" && message.subtype === "compact_boundary") {
             if (context.streamUsage !== null) context.streamUsage.usage = null;
+            const now = yield* DateTime.now;
+            const last = context.lastCompaction;
+            const operation =
+              context.activeCompaction ??
+              (last !== null && !last.boundaryReported && last.outcome !== "failed"
+                ? last
+                : null) ??
+              (yield* startClaudeCompaction(context, message.uuid));
             const postTokens = message.compact_metadata.post_tokens;
             const afterTokenCount =
               typeof postTokens === "number" && Number.isFinite(postTokens) && postTokens > 0
@@ -7779,22 +7739,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 },
               });
             }
-            yield* emitProviderEvent({
-              type: "turn_item.updated",
-              driver: CLAUDE_PROVIDER,
-              turnItem: {
-                ...compaction,
-                status: "completed",
-                title: "Context compacted",
-                completedAt: compaction.completedAt ?? now,
-                updatedAt: now,
-                ...(message.compact_metadata.pre_tokens === undefined
-                  ? {}
-                  : { beforeTokenCount: message.compact_metadata.pre_tokens }),
-                ...(afterTokenCount === undefined ? {} : { afterTokenCount }),
-              },
-            });
-            context.compaction = null;
+            operation.boundaryReported = true;
+            operation.outcome = "success";
+            operation.beforeTokenCount = message.compact_metadata.pre_tokens;
+            operation.afterTokenCount = afterTokenCount;
+            yield* settleClaudeCompaction(context, operation, now);
             return;
           }
 
@@ -8496,13 +8445,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 (usageLimited
                   ? "Claude usage limit reached. Send the message again once the limit resets."
                   : undefined));
-            // A /compact the usage limit stopped still ends in a success
-            // result. Failing the turn lets the usage-limit guard hold queued
-            // messages instead of sending them into the same limit (#19327).
-            const limitedCompaction =
-              usageLimited && message.subtype === "success" && message.local_command === "compact"
-                ? context.compactionFailure
+            // Claude ends a failed or unconfirmed /compact with a success
+            // result too. Failing the run lets the queue guard hold the
+            // messages queued behind it.
+            const compaction = context.activeCompaction ?? context.lastCompaction;
+            const explicitCompactionFailure =
+              !interrupted &&
+              message.subtype === "success" &&
+              message.local_command === "compact" &&
+              compaction?.outcome !== "success"
+                ? compaction?.outcome === "failed"
+                  ? { message: compaction.error, code: "compaction_failed" }
+                  : { message: CLAUDE_COMPACTION_UNCONFIRMED, code: "compaction_unconfirmed" }
                 : null;
+            if (
+              explicitCompactionFailure !== null &&
+              (compaction === null || compaction === context.activeCompaction)
+            ) {
+              yield* settleClaudeCompaction(
+                context,
+                compaction ?? (yield* startClaudeCompaction(context)),
+                completedAt,
+              );
+            }
             const resetTimes = Array.from(context.rateLimitResetTimes.values());
             const assistantLimit = context.latestAssistantRateLimit;
             if (
@@ -8517,11 +8482,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : null;
             const resultFailure = interrupted
               ? null
-              : limitedCompaction !== null
+              : explicitCompactionFailure !== null
                 ? makeProviderFailure({
-                    class: "usage_limit",
-                    message: limitedCompaction.message ?? failureHint,
-                    code: "compaction_failed",
+                    class: usageLimited ? "usage_limit" : "provider_error",
+                    message:
+                      explicitCompactionFailure.message ??
+                      failureHint ??
+                      "Claude compaction failed.",
+                    code: explicitCompactionFailure.code,
                   })
                 : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
             const terminalFailure =
@@ -8532,7 +8500,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               context,
               status: interrupted
                 ? "interrupted"
-                : limitedCompaction !== null
+                : explicitCompactionFailure !== null
                   ? "failed"
                   : terminalStatusFromResult(message, failureHint),
               completedAt,
@@ -8540,6 +8508,106 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(terminalFailure === null ? {} : { failure: terminalFailure }),
             });
           }
+        });
+
+        const startClaudeCompaction = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          nativeItemId?: string,
+        ) {
+          const id =
+            nativeItemId ?? `${context.nativeTurnId}:compaction:${++context.compactionSequence}`;
+          const operation: ClaudeCompactionOperation = {
+            nativeItemId: id,
+            startedAt: yield* DateTime.now,
+            ordinal: yield* resolveItemOrdinal(context, id),
+            outcome: null,
+            outcomeReported: false,
+            boundaryReported: false,
+            error: undefined,
+            beforeTokenCount: undefined,
+            afterTokenCount: undefined,
+          };
+          context.activeCompaction = operation;
+          return operation;
+        });
+
+        // A compaction with no reported outcome ends unconfirmed rather than
+        // successful. `stopped` carries how the turn ended when it ended first.
+        const settleClaudeCompaction = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          operation: ClaudeCompactionOperation,
+          settledAt: DateTime.Utc,
+          stopped?: "failed" | "interrupted" | "cancelled",
+        ) {
+          if (context.activeCompaction === operation) context.activeCompaction = null;
+          context.lastCompaction = operation;
+          yield* emitClaudeCompaction(
+            context,
+            operation,
+            operation.outcome === "success"
+              ? "completed"
+              : operation.outcome === "failed"
+                ? "failed"
+                : (stopped ?? "cancelled"),
+            settledAt,
+            operation.outcome === "failed"
+              ? operation.error
+              : operation.outcome === null && stopped === undefined
+                ? CLAUDE_COMPACTION_UNCONFIRMED
+                : undefined,
+          );
+        });
+
+        const emitClaudeCompaction = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          operation: ClaudeCompactionOperation,
+          status: "running" | "completed" | "failed" | "interrupted" | "cancelled",
+          updatedAt: DateTime.Utc,
+          summary?: string,
+        ) {
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: CLAUDE_PROVIDER,
+                nativeItemId: operation.nativeItemId,
+              }),
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: context.input.rootNodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: {
+                driver: CLAUDE_PROVIDER,
+                nativeId: operation.nativeItemId,
+                strength: "strong",
+              },
+              parentItemId: null,
+              ordinal: operation.ordinal,
+              type: "compaction",
+              driver: CLAUDE_PROVIDER,
+              status,
+              title:
+                status === "running"
+                  ? "Compacting context"
+                  : status === "completed"
+                    ? "Context compacted"
+                    : status === "failed"
+                      ? "Context compaction failed"
+                      : "Context compaction stopped",
+              startedAt: operation.startedAt,
+              completedAt: status === "running" ? null : updatedAt,
+              updatedAt,
+              ...(summary === undefined ? {} : { summary }),
+              ...(operation.beforeTokenCount === undefined
+                ? {}
+                : { beforeTokenCount: operation.beforeTokenCount }),
+              ...(operation.afterTokenCount === undefined
+                ? {}
+                : { afterTokenCount: operation.afterTokenCount }),
+            },
+          });
         });
 
         const takeReleasableSubagentFrames = Effect.fnUntraced(function* (message: SDKMessage) {
@@ -9430,14 +9498,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               },
               streamUsage: null,
               toolCalls: new Map(),
-              compaction: null,
               ignoredTaskIds: new Set(),
               announcedUsageLimits: new Set(),
               authenticationFailureMessage: undefined,
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimit: null,
-              compactionFailure: null,
+              compactionSequence: 0,
+              activeCompaction: null,
+              lastCompaction: null,
               steeredSegmentUsage: [],
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),

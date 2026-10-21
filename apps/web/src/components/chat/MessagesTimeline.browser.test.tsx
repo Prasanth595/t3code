@@ -1,6 +1,7 @@
-import { EnvironmentId, MessageId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { createRef, type ComponentProps, type ReactElement } from "react";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
@@ -85,6 +86,15 @@ function message(
       ...overrides,
     },
   };
+}
+
+function work(id: string, entry: Record<string, unknown>): Entry {
+  return {
+    id,
+    kind: "work",
+    createdAt: CREATED_AT,
+    entry: { id, createdAt: CREATED_AT, ...entry },
+  } as Entry;
 }
 
 async function renderElement(element: ReactElement) {
@@ -180,5 +190,68 @@ describe("compact reasoning math", () => {
       " and ",
       "x^2",
     ]);
+  });
+});
+
+describe("MessagesTimeline context compaction", () => {
+  it("ticks a running compaction and warns after two minutes", async () => {
+    const now = Date.parse(CREATED_AT);
+    using clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    const compaction = (
+      id: string,
+      status: string,
+      label: string,
+      fields: Record<string, unknown> = {},
+    ) =>
+      work(id, {
+        runId: "run-1",
+        label,
+        tone: "info",
+        itemType: "compaction",
+        sourceActivityKind: "context-compaction",
+        toolLifecycleStatus: status === "running" ? "inProgress" : status,
+        structuredPayload: {
+          id,
+          type: "compaction",
+          status,
+          startedAt: DateTime.makeUnsafe(now - 118_000),
+          ...fields,
+        },
+      });
+    await using screen = await renderTimeline(
+      [
+        compaction("compaction-done", "completed", "Context compacted", {
+          beforeTokenCount: 180_000,
+          afterTokenCount: 40_000,
+        }),
+        compaction("compaction-failed", "failed", "Context compaction failed"),
+        compaction("compaction-stopped", "interrupted", "Context compaction stopped"),
+        compaction("compaction-running", "running", "Compacting context"),
+      ],
+      {
+        isWorking: true,
+        activeTurnInProgress: true,
+        latestRun: {
+          runId: RunId.make("run-1"),
+          status: "running",
+          startedAt: CREATED_AT,
+          completedAt: null,
+        },
+      },
+    );
+    const separator = (label: string) =>
+      screen.container.querySelector<HTMLElement>(`[role="separator"][aria-label="${label}"]`)!;
+    await vi.waitFor(() => expect(separator("Compacting context")).not.toBeNull());
+    const running = separator("Compacting context");
+    expect(running.querySelectorAll(".tabular-nums")).toHaveLength(1);
+    expect(running.textContent).not.toContain("taking longer than expected");
+    clock.mockReturnValue(now + 2_000);
+    await vi.waitFor(() => expect(running.textContent).toContain("taking longer than expected"), {
+      timeout: 5_000,
+    });
+    for (const label of ["Context compaction failed", "Context compaction stopped"]) {
+      expect(separator(label).querySelector(".tabular-nums")).toBeNull();
+    }
+    expect(separator("Context compacted").querySelector(".tabular-nums")).toBeNull();
   });
 });

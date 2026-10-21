@@ -5,8 +5,12 @@ import * as DateTime from "effect/DateTime";
 
 import {
   commandDetailRepeatsCommand,
+  contextCompactionLabel,
+  contextCompactionTokenCounts,
   extractCommandOutputText,
   resolveWorkEntryToolPresentation,
+  summarizeToolGroup,
+  toolGroupSummaryKind,
   toolItemForDisplay,
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
@@ -94,6 +98,178 @@ describe("workEntryIndicatesToolFailure", () => {
 
     expect(workEntryIndicatesToolFailure(entry)).toBe(true);
     expect(workEntryDisplayIndicatesToolFailure({ ...entry, detail: "File not found" })).toBe(true);
+  });
+
+  it("treats successful tool rows as success candidates", () => {
+    expect(
+      workEntryIndicatesToolSuccess({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "ok",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolSuccess({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "inProgress",
+        detail: "…",
+      }),
+    ).toBe(false);
+    expect(workEntryIndicatesToolSuccess({ ...base, tone: "thinking", detail: "…" })).toBe(false);
+    expect(
+      workEntryIndicatesToolSuccess({ ...base, tone: "tool", toolLifecycleStatus: "stopped" }),
+    ).toBe(false);
+    expect(
+      workEntryIndicatesToolSuccess({ ...base, tone: "tool", toolLifecycleStatus: "idle" }),
+    ).toBe(false);
+  });
+
+  it("does not run heuristics on non-tool info rows", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Context compacted",
+        tone: "info",
+        detail: "File not found in conversation",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("contextCompactionLabel", () => {
+  it.each([
+    ["pending", "Compacting context"],
+    ["running", "Compacting context"],
+    ["completed", "Context compacted 899K → 19K tokens"],
+    ["failed", "Context compaction failed"],
+    ["cancelled", "Context compaction stopped"],
+    ["interrupted", "Context compaction stopped"],
+  ] as const)("labels a compaction with status %s", (status, label) => {
+    const item = { status, beforeTokenCount: 899_000, afterTokenCount: 19_000 };
+    expect(contextCompactionLabel(item)).toBe(label);
+    expect(contextCompactionTokenCounts(item) !== null).toBe(status === "completed");
+  });
+
+  it("labels a completed compaction without token counts", () => {
+    expect(contextCompactionLabel({ status: "completed" })).toBe("Context compacted");
+  });
+});
+
+describe("summarizeToolGroup", () => {
+  const entry = (
+    id: string,
+    overrides: Partial<WorkLogPresentationEntry>,
+  ): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-09-01T00:00:00Z",
+    label: "Tool call",
+    tone: "tool",
+    ...overrides,
+  });
+
+  it("excludes reasoning from mixed tool counts and icons", () => {
+    const thought = entry("thought", {
+      itemType: "reasoning",
+      tone: "thinking",
+      detail: "Check the source",
+    });
+    const command = entry("command", { itemType: "command_execution", command: "vp test run" });
+    expect(summarizeToolGroup([thought, command, { ...thought, id: "thought-2" }])).toEqual({
+      summary: "Ran 1 command",
+      hasFailure: false,
+    });
+    expect(toolGroupSummaryKind([thought, command])).toBe("command");
+    expect(summarizeToolGroup([thought]).summary).toBe("Thought");
+    expect(summarizeToolGroup([thought, { ...thought, id: "thought-2" }]).summary).toBe(
+      "Thought (×2)",
+    );
+    expect(toolGroupSummaryKind([thought])).toBe("reasoning");
+  });
+
+  it("counts created threads alongside adjacent commands", () => {
+    expect(
+      summarizeToolGroup([
+        entry("command", { itemType: "command_execution", command: "vp test run" }),
+        entry("created", {
+          itemType: "thread_created",
+
+          label: "Created thread",
+        }),
+      ]).summary,
+    ).toBe("Ran 1 command and created 1 thread");
+  });
+
+  it("deduplicates named sources ahead of ordinary actions", () => {
+    const source = { key: "browser-use:chrome", name: "Chrome", kind: "integration" as const };
+    expect(
+      summarizeToolGroup([
+        entry("open", { label: "Open page", toolSource: source }),
+        entry("inspect", { label: "Inspect page", toolSource: source }),
+        entry("command", {
+          label: "Ran command",
+          itemType: "command_execution",
+          command: "git status",
+        }),
+      ]).summary,
+    ).toBe("Used Chrome integration and ran 1 command");
+  });
+
+  it.each([
+    [["Foo", "Foo"], "Used Foo integration and ran 1 command"],
+    [["Foo", "Bar", "Foo"], "Used Foo and Bar integrations and ran 1 command"],
+  ] as const)(
+    "uses the displayed source names for integration plurality: %j",
+    (names, expected) => {
+      expect(
+        summarizeToolGroup([
+          ...names.map((name, index) =>
+            entry(`integration-${index}`, {
+              toolSource: { key: `integration-${index}`, name, kind: "integration" },
+            }),
+          ),
+          entry("command", {
+            itemType: "command_execution",
+            command: "git status",
+          }),
+        ]).summary,
+      ).toBe(expected);
+    },
+  );
+
+  it("omits the integration suffix for special browser and computer sources", () => {
+    expect(
+      summarizeToolGroup([
+        entry("inspect", {
+          label: "Inspect page",
+          toolSource: { key: "browser-use", name: "Browser", kind: "browser" },
+        }),
+        entry("click", {
+          label: "Click",
+          toolSource: { key: "computer-use", name: "Computer Use", kind: "computer" },
+        }),
+      ]).summary,
+    ).toBe("Used Browser and Computer Use");
+  });
+
+  it("names Computer Use once when native-app and fallback sources share its label", () => {
+    expect(
+      summarizeToolGroup([
+        entry("inspect-app", {
+          label: "Inspect app",
+          toolSource: {
+            key: "native-app:com.t3tools.t3code",
+            name: "Computer Use",
+            kind: "computer",
+          },
+        }),
+        entry("failed-sky", {
+          label: "Restrict the breakpoint to Git actions",
+          toolSource: { key: "computer-use", name: "Computer Use", kind: "computer" },
+        }),
+      ]).summary,
+    ).toBe("Used Computer Use");
   });
 });
 

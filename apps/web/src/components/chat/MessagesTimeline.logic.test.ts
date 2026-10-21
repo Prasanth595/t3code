@@ -457,6 +457,41 @@ describe("deriveMessagesTimelineRows", () => {
     },
   );
 
+  it("keeps context compaction visible outside folded work", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "compaction-entry",
+          kind: "work",
+          createdAt: "2026-01-01T00:00:00Z",
+          entry: {
+            id: "compaction",
+            createdAt: "2026-01-01T00:00:00Z",
+            label: "Compacted context 899K → 19K tokens",
+            tone: "info",
+            sourceActivityKind: "context-compaction",
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows).toEqual([
+      {
+        kind: "context-compaction",
+        id: "compaction-entry",
+        createdAt: "2026-01-01T00:00:00Z",
+        startedAt: "2026-01-01T00:00:00Z",
+        label: "Compacted context 899K → 19K tokens",
+        tokenCounts: null,
+        active: false,
+      },
+    ]);
+  });
+
   it("gives live compaction the activity slot and restores Thinking when it completes", () => {
     const fixture = makeStreamingTimelineFixture();
     const last = fixture.visibleTurnItems.at(-1)!;

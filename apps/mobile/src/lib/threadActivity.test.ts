@@ -1641,3 +1641,90 @@ describe("streamed feed updates", () => {
     expect(showsDelegation(steps[3]!)).toBe(false);
   });
 });
+
+// PR compaction projection coverage.
+it.each(["running", "completed", "interrupted", "failed"] as const)(
+  "uses the compaction row as the live activity only while %s",
+  (status) => {
+    const compact = projected(
+      {
+        ...base("compacted", "2026-06-20T00:00:02.000Z", 1),
+        type: "compaction",
+        status,
+        driver: null,
+        beforeTokenCount: 899_000,
+        afterTokenCount: 19_000,
+      },
+      1,
+    );
+    const latestRun = {
+      runId,
+      status: "running" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: null,
+    };
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed([projected(userMessage(), 0), compact]),
+      latestRun,
+      new Set(),
+      new Set(),
+      latestRun.startedAt,
+    );
+    expect(rows.some((row) => row.type === "thinking")).toBe(status !== "running");
+    expect(rows.find((row) => row.type === "activity-group")).toMatchObject({
+      activities: [
+        {
+          summary:
+            status === "running"
+              ? "Compacting context"
+              : status === "completed"
+                ? "Context compacted 899K → 19K tokens"
+                : status === "failed"
+                  ? "Context compaction failed"
+                  : "Context compaction stopped",
+        },
+      ],
+    });
+  },
+);
+
+it("keeps a standalone compaction visible and folds it with other completed work", () => {
+  const compact = projected(
+    {
+      ...base("compacted", "2026-06-20T00:00:02.000Z", 1),
+      type: "compaction",
+      driver: null,
+      summary: "Shorter context",
+    },
+    1,
+  );
+  const latestRun = {
+    runId,
+    status: "completed" as const,
+    startedAt: "2026-06-20T00:00:01.000Z",
+    completedAt: "2026-06-20T00:00:04.000Z",
+  };
+  const onlyCompaction = deriveThreadFeedPresentation(
+    buildThreadFeed([projected(userMessage(), 0), compact]),
+    latestRun,
+    new Set(),
+  );
+  expect(onlyCompaction.map((entry) => entry.type)).toEqual(["message", "activity-group"]);
+  const feed = buildThreadFeed([
+    projected(userMessage(), 0),
+    compact,
+    projected(command("2026-06-20T00:00:03.000Z"), 2),
+    projected(assistantMessage("2026-06-20T00:00:04.000Z"), 3),
+  ]);
+  expect(
+    deriveThreadFeedPresentation(feed, latestRun, new Set()).map((entry) => entry.type),
+  ).toEqual(["message", "run-fold", "message"]);
+  const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
+  expect(
+    expanded.find(
+      (entry) =>
+        entry.type === "activity-group" &&
+        entry.activities[0]?.projectedItem.item.type === "compaction",
+    ),
+  ).toMatchObject({ activities: [{ summary: "Context compacted" }] });
+});

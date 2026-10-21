@@ -25,15 +25,22 @@ function formatCompactElapsedSeconds(totalSeconds: number): string {
   return `${Math.floor(minutes / 6) / 10}h`;
 }
 
+export function elapsedWarningReached(elapsedMs: number | null, warnAfterSeconds: number): boolean {
+  return elapsedMs !== null && elapsedMs >= warnAfterSeconds * 1000;
+}
+
 export function AgentElapsed({
   agent,
   compact = false,
+  warnAfterSeconds,
 }: {
   agent: Pick<RuntimeSubagent, "status" | "startedAt" | "completedAt">;
   compact?: boolean;
+  warnAfterSeconds?: number;
 }) {
   const format = compact ? formatCompactElapsedSeconds : formatElapsedSeconds;
   const textRef = useRef<HTMLSpanElement>(null);
+  const warningRef = useRef<HTMLSpanElement>(null);
   const live = isOrchestrationV2WorkActive(agent.status);
   const startedAt = agent.startedAt;
   const completedAt = agent.completedAt;
@@ -50,21 +57,33 @@ export function AgentElapsed({
         );
         const text = elapsedMs === null ? "" : format(elapsedMs / 1000);
         if (textRef.current.textContent !== text) textRef.current.textContent = text;
+        const warning =
+          warnAfterSeconds !== undefined && elapsedWarningReached(elapsedMs, warnAfterSeconds)
+            ? "taking longer than expected"
+            : "";
+        if (warningRef.current && warningRef.current.textContent !== warning) {
+          warningRef.current.textContent = warning;
+        }
       }
     };
     update();
     if (!live) return;
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [live, startedAt, completedAt, agent.status, format]);
+  }, [live, startedAt, completedAt, agent.status, format, warnAfterSeconds]);
 
   const elapsedMs = deriveSubagentElapsedMs(agent, 0);
   if (elapsedMs === null) {
     return null;
   }
   return (
-    <span ref={textRef} className="tabular-nums">
-      {format(elapsedMs / 1000)}
+    <span className="inline-flex items-center gap-2">
+      <span ref={textRef} className="tabular-nums">
+        {format(elapsedMs / 1000)}
+      </span>
+      {warnAfterSeconds === undefined ? null : (
+        <span ref={warningRef} className="text-warning-foreground" />
+      )}
     </span>
   );
 }

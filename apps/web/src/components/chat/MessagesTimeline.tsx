@@ -2,6 +2,7 @@ import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
+import { AgentElapsed } from "./AgentElapsed";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { deriveTimelineMinimapItems } from "./timelineMinimapItems";
 import {
@@ -1320,15 +1321,25 @@ function ContextCompactionTimelineRow({
       aria-label={row.label}
       className="mx-auto flex w-full max-w-(--chat-content-max-width) items-center gap-3 py-1 text-muted-foreground text-xs"
     >
-      <span className="h-px flex-1 bg-border/70" />
-      <span
-        ref={row.active ? observeVisibleAnimation : undefined}
-        className="relative shrink-0 overflow-hidden"
-      >
-        {content}
-        {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
+      <span className="h-px min-w-4 flex-1 bg-border/70" />
+      <span className="flex min-w-0 flex-wrap items-center justify-center gap-x-1.5 gap-y-0.5">
+        <span
+          ref={row.active ? observeVisibleAnimation : undefined}
+          className="relative min-w-0 overflow-hidden"
+        >
+          {content}
+          {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
+        </span>
+        {/* Outside the shimmer so the ticking clock is rendered once. */}
+        {row.active ? (
+          <AgentElapsed
+            agent={{ status: "running", startedAt: row.startedAt, completedAt: null }}
+            compact
+            warnAfterSeconds={120}
+          />
+        ) : null}
       </span>
-      <span className="h-px flex-1 bg-border/70" />
+      <span className="h-px min-w-4 flex-1 bg-border/70" />
     </div>
   );
 }

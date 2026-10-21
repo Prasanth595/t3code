@@ -1,3 +1,4 @@
+import { contextCompactionStatusLabel } from "@t3tools/client-runtime/work-log/presentation";
 import { type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import { providerErrorPresentation } from "../../session-logic";
 import {
@@ -70,7 +71,7 @@ export function v2EventPresentation(item: OrchestrationV2TurnItem): {
           ? null
           : `${item.beforeTokenCount ?? "?"} → ${item.afterTokenCount ?? "?"} tokens`;
       return {
-        label: "Context compacted",
+        label: contextCompactionStatusLabel(item),
         detail: item.summary ?? tokenSummary,
         tone: item.status === "failed" ? "danger" : "muted",
         icon: MinusIcon,
