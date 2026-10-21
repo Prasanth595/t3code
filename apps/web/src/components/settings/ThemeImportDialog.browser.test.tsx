@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -12,23 +12,24 @@ import {
 } from "../../themePalette";
 import { ThemeImportDialog } from "./ThemeImportDialog";
 
-const theme = (name: string) => ({
+const theme = (name: string, accent = "#3b82f6") => ({
   version: THEME_FILE_VERSION,
   name,
   appearance: "dark",
-  colors: { accent: "#3b82f6" },
+  colors: { accent },
 });
 
-const themeFile = (name: string) =>
-  new File([JSON.stringify(theme(name))], `${name}.json`, { type: "application/json" });
-
-afterEach(() => {
-  window.localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
-  invalidateCustomThemes();
-});
+const themeFile = (name: string, accent?: string) =>
+  new File([JSON.stringify(theme(name, accent))], `${name}.json`, { type: "application/json" });
 
 describe("ThemeImportDialog", () => {
-  it("offers to resolve an installed theme when another file in the batch fails", async () => {
+  it("lets the user update an installed theme when another file in the batch fails", async () => {
+    using _themes = {
+      [Symbol.dispose]: () => {
+        window.localStorage.removeItem(CUSTOM_THEMES_STORAGE_KEY);
+        invalidateCustomThemes();
+      },
+    };
     installCustomTheme(parseThemeFile(theme("Dusk")));
     await using _screen = await render(
       <ThemeImportDialog
@@ -42,12 +43,18 @@ describe("ThemeImportDialog", () => {
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     await userEvent.upload(input, [
       themeFile("Dawn"),
-      themeFile("Dusk"),
+      themeFile("Dusk", "#f97316"),
       new File(["{"], "broken.json", { type: "application/json" }),
     ]);
 
     await expect.element(page.getByText("Already installed")).toBeVisible();
-    await expect.element(page.getByRole("alert")).toHaveTextContent(/broken\.json/);
+    await expect.element(page.getByText(/^broken\.json:/)).toBeVisible();
     expect(getCustomThemes().map((theme) => theme.label)).toContain("Dawn");
+
+    await page.getByRole("button", { name: "Update existing" }).click();
+    invalidateCustomThemes();
+    expect(getCustomThemes().find((theme) => theme.label === "Dusk")?.colors).toEqual(
+      parseThemeFile(theme("Dusk", "#f97316")).colors,
+    );
   });
 });
