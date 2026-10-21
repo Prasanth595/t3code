@@ -33,12 +33,12 @@ export const isMinimaxCodeBusyFailure: AcpPromptBusyRetryPolicy["isBusyFailure"]
  * The lease is released within seconds of the interrupt, so a short backoff
  * recovers the turn long before the user notices a failed prompt.
  *
- * The attempts land 1s, 3s, 7s, 15s, 25s, 35s and 45s after the rejected
- * attempt, so the budget covers the longest lease release observed in the wild,
- * which was 27.6s.
+ * The first send plus seven re-sends land 1s, 3s, 7s, 15s, 25s, 35s and 45s
+ * after the rejected attempt, so the budget covers the longest lease release
+ * observed in the wild, which was 27.6s.
  */
 export const minimaxCodePromptBusyRetry: AcpPromptBusyRetryPolicy = {
-  maxAttempts: 7,
+  maxAttempts: 8,
   isBusyFailure: isMinimaxCodeBusyFailure,
   delayMs: (attempt) => Math.min(10_000, 1_000 * 2 ** (attempt - 1)),
 };
