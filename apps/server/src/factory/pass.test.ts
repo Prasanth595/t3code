@@ -75,7 +75,10 @@ const machine = (max: number): MachineConfig => ({
   maxConcurrentRuns: max,
   maxConcurrentGates: 2,
   notify: true,
+  minFreeGib: 10,
 });
+
+const GIB = 1024 ** 3;
 
 /** What the T3 projects list as watched, for the repos a test names. */
 const watchedOf = (repos: ReadonlyArray<string>): Array<WatchedProject> =>
@@ -140,6 +143,10 @@ class Fake implements PassWorld {
   /** What `takeStopRequest` answers per `"<repo>#<issue>"`; `none` otherwise. */
   stopRequests: Record<string, StopRequestOutcome | LedgerIoError> = {};
   pause: HandPause | null = null;
+  /** The free bytes `freeSpace` reports; `"error"` is a probe that fails. */
+  free: number | "error" = 100 * GIB;
+  /** The machine's `min_free_gib` for the passes `pass` runs. */
+  minFreeGib = 10;
   machineLogFails = false;
   /** When set, `record` appends to the real machine log in this dir and `t3Trouble` reads it, as the live world does. */
   machineLogDir: string | null = null;
@@ -501,6 +508,13 @@ class Fake implements PassWorld {
     return this.pause;
   }
 
+  freeSpace() {
+    this.calls.push("free_space");
+    return this.free === "error"
+      ? Effect.fail<PassError>({ kind: "ledger", message: "statfs /data/worktrees: EIO" })
+      : Effect.succeed({ path: "/data/worktrees", freeBytes: this.free });
+  }
+
   nowMs() {
     return this.now;
   }
@@ -598,7 +612,9 @@ const pass = (
   fake.watched = watchedOf(repos);
   return Effect.gen(function* () {
     const lines: Array<string> = [];
-    const report = yield* runPass(fake, machine(max), (line) => lines.push(line));
+    const report = yield* runPass(fake, { ...machine(max), minFreeGib: fake.minFreeGib }, (line) =>
+      lines.push(line),
+    );
     return { report, lines };
   });
 };
@@ -1979,6 +1995,172 @@ describe("the hand pause", () => {
         assert.deepEqual(claimSkippedEvents(fake), []);
         assert.equal(report.claimed, 1);
       }),
+  );
+});
+
+describe("low disk space", () => {
+  /** The one line of a pass that finds 5 GiB free under a floor of 10. */
+  const LOW_LINE =
+    "low disk: 5.0 GiB free on /data/worktrees, below min_free_gib 10; no issue is claimed and no gate starts until there is more";
+  const lowLines = (lines: ReadonlyArray<string>) => lines.filter((l) => l.startsWith("low disk:"));
+  const lowItems = (fake: Fake) => fake.items.filter((item) => item.id === "low-disk");
+  const gates = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));
+  const readyForGate = (fake: Fake, issue: number) => {
+    fake.advances[`${REPO}#${issue}`] = [
+      { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+    ];
+  };
+
+  it.effect(
+    "below the floor no ready issue is claimed, one line says so, and one item is raised",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1, 2];
+        fake.ready[OTHER] = [4];
+        fake.free = 5 * GIB;
+        const { report, lines } = yield* pass(fake, [REPO, OTHER], 5);
+        assert.deepEqual(starts(fake), []);
+        assert.deepEqual(lowLines(lines), [LOW_LINE]);
+        assert.deepEqual(
+          lowItems(fake).map(({ kind, repo, issue, run, message }) => ({
+            kind,
+            repo,
+            issue,
+            run,
+            message,
+          })),
+          [{ kind: "attention", repo: null, issue: null, run: null, message: LOW_LINE }],
+        );
+        assert.deepEqual(
+          fake.events.filter((e) => e.event === "claim_skipped"),
+          [{ event: "claim_skipped", data: { reason: "low-disk" } }],
+        );
+        assert.equal(report.attention, 1);
+        assert.equal(report.errors, 0);
+      }),
+  );
+
+  it.effect("a second pass below the floor keeps the one item", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.free = 5 * GIB;
+      yield* pass(fake, [REPO], 5);
+      fake.now += 60_000;
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(lowLines(lines), [LOW_LINE]);
+      assert.equal(lowItems(fake).length, 1);
+      assert.equal(lowItems(fake)[0]!.firstSeenMs, T0);
+    }),
+  );
+
+  it.effect("once space is back the item clears and claiming resumes", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      fake.free = 5 * GIB;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), []);
+      fake.free = 10 * GIB;
+      fake.pushStart(`${REPO}#1`, started(1));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(lowLines(lines), []);
+      assert.deepEqual(lowItems(fake), []);
+      assert.equal(report.claimed, 1);
+    }),
+  );
+
+  // The gate counts an attempt only once it runs (`runner/gating.ts`), so a gate that is never
+  // started leaves the attempt count where it was.
+  it.effect(
+    "a building run's gate is not started below the floor, and starts once space is back",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(40, BUILDING, REPO, true);
+        fake.free = 5 * GIB;
+        readyForGate(fake, 40);
+        const { lines } = yield* pass(fake, [REPO], 3);
+        assert.deepEqual(gates(fake), []);
+        assert.equal(
+          runLine(lines, `${REPO}#40 `),
+          `${REPO}#40 building: session finished, the gate waits for more free disk space`,
+        );
+        fake.free = 50 * GIB;
+        readyForGate(fake, 40);
+        yield* pass(fake, [REPO], 3);
+        assert.deepEqual(gates(fake), [`gate ${REPO}#40`]);
+      }),
+  );
+
+  it.effect("a pending gate send waits below the floor too", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+      fake.advances[`${REPO}#40`] = [{ kind: "running" }];
+      fake.free = 5 * GIB;
+      yield* pass(fake, [REPO], 3);
+      assert.deepEqual(gates(fake), []);
+    }),
+  );
+
+  it.effect("a pr-open run is not gated again below the floor", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(41, "pr-open", REPO, false);
+      fake.openHeads[`${REPO}#12`] = PUSHED;
+      fake.free = 5 * GIB;
+      const { lines } = yield* pass(fake, [REPO], 3);
+      assert.deepEqual(gates(fake), []);
+      assert.equal(
+        runLine(lines, `${REPO}#41 `),
+        `${REPO}#41 pr-open: the gate waits for more free disk space`,
+      );
+    }),
+  );
+
+  it.effect("min_free_gib 0 reads no free space and holds nothing back", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      fake.free = 0;
+      fake.minFreeGib = 0;
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.ok(!fake.calls.includes("free_space"));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.deepEqual(lowLines(lines), []);
+    }),
+  );
+
+  it.effect("min_free_gib 0 clears an item a higher floor raised", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.free = 5 * GIB;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(lowItems(fake).length, 1);
+      fake.minFreeGib = 0;
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(lowItems(fake), []);
+    }),
+  );
+
+  it.effect("a free space that cannot be read is an error line, and the pass claims as usual", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      fake.free = "error";
+      const { report, lines } = yield* pass(fake, [REPO], 5);
+      assert.ok(
+        lines.includes("error: cannot read the free disk space: statfs /data/worktrees: EIO"),
+        lines.join("\n"),
+      );
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+      assert.equal(report.errors, 1);
+    }),
   );
 });
 
