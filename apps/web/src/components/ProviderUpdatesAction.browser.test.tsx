@@ -77,7 +77,9 @@ const provider: ServerProvider = {
   },
 };
 
-function session(scopes: AuthSessionState["scopes"]) {
+function session(
+  scopes: NonNullable<AuthSessionState["scopes"]>,
+): AsyncResult.AsyncResult<AuthSessionState> {
   return AsyncResult.success<AuthSessionState>({
     authenticated: true,
     scopes,
@@ -104,7 +106,12 @@ function setup() {
     [
       [state.environments[0]!.environmentId, Atom.make(session(["orchestration:read"]))],
       [state.environments[1]!.environmentId, Atom.make(session([AuthProvidersManageScope]))],
-      [state.environments[2]!.environmentId, Atom.make(AsyncResult.initial<AuthSessionState>())],
+      [
+        state.environments[2]!.environmentId,
+        Atom.make<AsyncResult.AsyncResult<AuthSessionState>>(
+          AsyncResult.initial<AuthSessionState>(),
+        ),
+      ],
     ],
   );
   state.sessions = sessions;
