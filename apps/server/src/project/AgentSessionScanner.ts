@@ -771,18 +771,18 @@ export const make = Effect.gen(function* () {
     const queued: Array<Uint8Array> = [];
     return {
       stat: file.stat,
-      readAlloc: (size: number) =>
-        Effect.gen(function* () {
-          let head = queued.shift();
-          while (head === undefined) {
-            const chunks = yield* pull.pipe(Pull.catchDone(() => Effect.succeed(null)));
-            if (chunks === null) return Option.none<Uint8Array>();
-            queued.push(...chunks);
-            head = queued.shift();
-          }
-          if (head.byteLength > size) queued.unshift(head.subarray(size));
-          return Option.some(head.subarray(0, size));
-        }),
+      // Runs once per decompressed chunk; avoid a span for each read.
+      readAlloc: Effect.fnUntraced(function* (size: number) {
+        let head = queued.shift();
+        while (head === undefined) {
+          const chunks = yield* pull.pipe(Pull.catchDone(() => Effect.succeed(null)));
+          if (chunks === null) return Option.none<Uint8Array>();
+          queued.push(...chunks);
+          head = queued.shift();
+        }
+        if (head.byteLength > size) queued.unshift(head.subarray(size));
+        return Option.some(head.subarray(0, size));
+      }),
     };
   });
 
