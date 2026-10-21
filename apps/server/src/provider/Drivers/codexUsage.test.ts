@@ -277,6 +277,46 @@ describe("parseCodexLine", () => {
     }).toEqual({ processed: [120, 120, 0, 120], skipped: 0 });
   });
 
+  it.each([
+    {
+      reset: true,
+      markerTotal: counters(0, 0),
+      nextTotal: counters(130, 25),
+      processed: [120, 120, 0, 120, 35],
+    },
+    {
+      reset: false,
+      markerTotal: counters(200, 40),
+      nextTotal: counters(230, 45),
+      processed: [120, 120, 0, 0, 35],
+    },
+  ])(
+    "bills a request equal to the old sequence start only after a context marker reset the counters (reset: $reset)",
+    ({ markerTotal, nextTotal, processed }) => {
+      const state = initialCodexScanState();
+      parseCodexLine(turnContext, state);
+      const request = counters(100, 20);
+      const marker = counted({ ...counters(0, 0), total_tokens: 26387 }, markerTotal, {
+        model_context_window: 475000,
+      });
+      const billed = [
+        counted(request, request),
+        counted(request, counters(200, 40)),
+        marker,
+        counted(request, request),
+        counted(counters(30, 5), nextTotal),
+      ].map((line) => {
+        const record = parseCodexLine(line, state);
+        return record === null ? 0 : totalTokens(record.totals);
+      });
+
+      expect({
+        processed: billed,
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed, skipped: 0 });
+    },
+  );
+
   it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
     const meta = (id: string, model_provider?: string) =>
       JSON.stringify({ type: "session_meta", payload: { id, model_provider } });

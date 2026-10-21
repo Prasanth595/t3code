@@ -225,6 +225,10 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   // post-compaction marker whose total is the new context size (its cumulative may reset to zero).
   if (last.input_tokens + last.output_tokens === 0) {
     state.lastUsageSignature = null;
+    // Zeroed counters rebase the sequence, so its remembered start can no longer be replayed.
+    if (cumulative !== null && cumulative.input_tokens + cumulative.output_tokens === 0) {
+      delete state.sequenceStartUsage;
+    }
     return null;
   }
 
