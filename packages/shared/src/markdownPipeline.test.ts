@@ -2,7 +2,11 @@ import { expect, it } from "vite-plus/test";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
-import { CHAT_MARKDOWN_REHYPE_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS } from "./markdownPipeline.ts";
+import {
+  CHAT_MARKDOWN_REHYPE_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS,
+  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+} from "./markdownPipeline.ts";
 
 it("preserves in-app thread links through the shared Markdown sanitizer", () => {
   const processor = unified()
@@ -54,4 +58,24 @@ it("keeps backslashes that CommonMark would read as escapes in prose Windows pat
   expect(render(String.raw`${"`"}C:\me\.t3${"`"} and C:\me\.t3`)).toBe(
     String.raw`<code>C:\me\.t3</code> and C:\me\.t3`,
   );
+});
+
+it("keeps single tildes literal and strikes only double-tilde pairs, like the rich composer", () => {
+  type Node = { type: string; value?: string; tagName?: string; children?: Node[] };
+  const text = (node: Node): string =>
+    node.type === "text"
+      ? (node.value ?? "")
+      : node.tagName === "del"
+        ? `<del>${(node.children ?? []).map(text).join("")}</del>`
+        : (node.children ?? []).map(text).join("");
+
+  for (const plugins of [CHAT_MARKDOWN_REMARK_PLUGINS, CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS]) {
+    const processor = unified().use(remarkParse).use(plugins).use(remarkRehype);
+    const render = (markdown: string) => text(processor.runSync(processor.parse(markdown)) as Node);
+
+    expect(render("Install it as ~/a/skills/x, then follow the guide (~/a/guide.md).")).toBe(
+      "Install it as ~/a/skills/x, then follow the guide (~/a/guide.md).",
+    );
+    expect(render("this is ~~struck~~ text")).toBe("this is <del>struck</del> text");
+  }
 });
