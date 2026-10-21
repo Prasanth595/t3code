@@ -67,6 +67,19 @@
       "ios": {
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
+    },
+    "chip-evidence": {
+      "extends": "preview",
+      "env": {
+        "APP_VARIANT": "preview",
+        "EXPO_PUBLIC_CHIP_EVIDENCE": "1",
+        "NODE_OPTIONS": "--max-old-space-size=8192"
+      },
+      "ios": {
+        "simulator": true,
+        "image": "macos-tahoe-26.6-xcode-27.1"
+      },
+      "channel": "chip-evidence-offline"
     }
   },
   "submit": {
