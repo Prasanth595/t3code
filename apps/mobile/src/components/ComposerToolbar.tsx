@@ -282,7 +282,7 @@ export function ComposerActionButton(props: {
           props.variant === "danger"
             ? "bg-danger"
             : props.disabled
-              ? "bg-primary/15"
+              ? "bg-foreground/12"
               : "bg-primary",
         )}
       >
@@ -290,8 +290,14 @@ export function ComposerActionButton(props: {
           name={props.icon}
           size={smallIconSize}
           weight="semibold"
+          // Disabled follows Material 3 (onSurface at 12% / 38%): the primary foreground is
+          // chosen against solid primary, so it vanishes on a faint primary tint.
           tintColorClassName={
-            props.variant === "danger" ? "accent-danger-foreground" : "accent-primary-foreground"
+            props.variant === "danger"
+              ? "accent-danger-foreground"
+              : props.disabled
+                ? "accent-foreground/38"
+                : "accent-primary-foreground"
           }
           type="monochrome"
         />
