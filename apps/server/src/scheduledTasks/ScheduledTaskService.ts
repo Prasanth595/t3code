@@ -31,6 +31,7 @@ import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Duration from "effect/Duration";
 import * as Metric from "effect/Metric";
 import * as Layer from "effect/Layer";
@@ -718,25 +719,6 @@ export const layer = Layer.effect(
       if (rows.length > 0) yield* notifyChanged;
     });
 
-    // Promoting a queued message to a steer cancels its queued run first and
-    // moves the message into the active run afterwards, so a cancel only ends
-    // the run if the message still belongs to the cancelled run.
-    const settleEnded = Effect.fn("ScheduledTaskService.settleEnded")(function* (run: SettledRun) {
-      if (run.cancelledRunId !== null) {
-        const moved =
-          run.threadId === null
-            ? null
-            : yield* threadManagement
-                .getThreadRecords(run.threadId, ["messages"], { messageIds: [run.messageId] })
-                .pipe(
-                  Effect.map(({ messages }) => messages[0]?.runId ?? null),
-                  Effect.orElseSucceed(() => null),
-                );
-        if (!trackedRuns.confirmCancel(run.messageId, moved)) return;
-      }
-      yield* recordRunEnd(run);
-    });
-
     // Best-effort escape hatch: if anything fails between markRunning and
     // markCompleted, write a full terminal record so runDueTasks neither skips
     // the task forever (it filters out 'running' rows) nor re-fires it
@@ -782,8 +764,26 @@ export const layer = Layer.effect(
 
     // Each outcome stands alone: one that still cannot be saved after retries is
     // released as failed so its row does not stay `running` and block the task.
-    const settleOutcome = (run: SettledRun) =>
-      settleEnded(run).pipe(
+    const settleOutcome = Effect.fn("ScheduledTaskService.settleOutcome")(function* (
+      run: SettledRun,
+    ) {
+      // Promoting a queued message to a steer cancels its queued run first and
+      // moves the message into the active run afterwards, so a cancel only ends
+      // the run if the message still belongs to the cancelled run. Decided once:
+      // confirming forgets the run, so it must not be repeated by a retry.
+      if (run.cancelledRunId !== null) {
+        const moved =
+          run.threadId === null
+            ? null
+            : yield* threadManagement
+                .getThreadRecords(run.threadId, ["messages"], { messageIds: [run.messageId] })
+                .pipe(
+                  Effect.map(({ messages }) => messages[0]?.runId ?? null),
+                  Effect.orElseSucceed(() => null),
+                );
+        if (!trackedRuns.confirmCancel(run.messageId, moved)) return;
+      }
+      yield* recordRunEnd(run).pipe(
         Effect.retry({ times: 2 }),
         Effect.catchCause((cause) =>
           Effect.logWarning("Could not record scheduled task run outcome", { cause }).pipe(
@@ -801,6 +801,7 @@ export const layer = Layer.effect(
           ),
         ),
       );
+    });
 
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
@@ -1178,30 +1179,44 @@ export const layer = Layer.effect(
       ),
     );
 
+    // The stream resumes after a cursor it fixes on its first pull. Starting
+    // that pull before the catch-up read means an event landing in between is
+    // delivered by the stream instead of missed, and a run seen by both is
+    // settled once because the tracker forgets it when it ends.
+    const runEvents = Stream.fromPull(
+      Effect.gen(function* () {
+        const pull = yield* Stream.toPull(threadManagement.streamDomainEvents);
+        const first = yield* Effect.forkScoped(pull, { startImmediately: true });
+        yield* catchUpRuns;
+        let joined = false;
+        return Effect.suspend(() => {
+          if (joined) return pull;
+          joined = true;
+          return Fiber.join(first);
+        });
+      }),
+    );
+
     // Dispatching a run only gets it accepted; its turn ends later, so the
-    // outcome is read from the thread's run events. If the stream drops it is
-    // resumed with a bounded backoff; once that is spent the runs still waiting
-    // are released as failed, because no one will report their end.
+    // outcome is read from the thread's run events. A dropped stream is resumed
+    // forever with a capped backoff: runs dispatched meanwhile stay tracked and
+    // are caught up on the next subscribe.
     yield* forkParked(
-      catchUpRuns.pipe(
-        Effect.andThen(
-          Stream.runForEach(threadManagement.streamDomainEvents, (event) => {
-            // Every domain event passes through here, so the common case stays allocation-free.
-            const ended = trackedRuns.observe(event);
-            return ended.length === 0
-              ? Effect.void
-              : Effect.forEach(ended, settleOutcome, { discard: true });
-          }),
-        ),
+      Stream.runForEach(runEvents, (event) => {
+        // Every domain event passes through here, so the common case stays allocation-free.
+        const ended = trackedRuns.observe(event);
+        return ended.length === 0
+          ? Effect.void
+          : Effect.forEach(ended, settleOutcome, { discard: true });
+      }).pipe(
         Effect.tapCause((cause) =>
           Effect.logWarning("Scheduled task run event stream failed", { cause }),
         ),
-        Effect.retry({ schedule: Schedule.exponential("1 second"), times: 5 }),
-        Effect.catchCause(() =>
-          Effect.forEach(
-            trackedRuns.abandonAll("Run outcomes could no longer be followed."),
-            settleOutcome,
-            { discard: true },
+        Effect.retry(
+          Schedule.exponential("1 second").pipe(
+            Schedule.modifyDelay(({ duration }) =>
+              Effect.succeed(Duration.min(duration, Duration.minutes(1))),
+            ),
           ),
         ),
       ),

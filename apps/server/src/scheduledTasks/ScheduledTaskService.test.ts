@@ -487,6 +487,12 @@ const makeTurnHarness = (
     readonly runs?: ReadonlyArray<OrchestrationV2Run>;
     /** How many times the event stream fails before it starts to deliver events. */
     readonly streamFailures?: number;
+    /** Makes the stream a live tail: events from before it was opened are not delivered. */
+    readonly liveTail?: boolean;
+    /** Runs when the projection's runs are read, so an event can land mid catch-up. */
+    readonly duringRunsRead?: (
+      events: Queue.Queue<OrchestrationV2DomainEvent>,
+    ) => Effect.Effect<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -503,22 +509,27 @@ const makeTurnHarness = (
                 Effect.andThen(options.duringDispatch?.(events, input.messageId) ?? Effect.void),
                 Effect.as(undefined as never),
               ),
-            getThreadRecords: (_threadId, _fields, filter) =>
-              Effect.succeed({
-                messages: (filter?.messageIds ?? []).map((id) => ({
-                  id,
-                  runId: options.messageRunId ?? null,
-                })),
-                runs: (options.runs ?? []).filter(
-                  (run) => filter?.runIds === undefined || filter.runIds.includes(run.id),
-                ),
-              } as never),
+            getThreadRecords: (_threadId, fields: ReadonlyArray<string>, filter) =>
+              Effect.gen(function* () {
+                if (fields.includes("runs")) yield* options.duringRunsRead?.(events) ?? Effect.void;
+                return {
+                  messages: (filter?.messageIds ?? []).map((id) => ({
+                    id,
+                    runId: options.messageRunId ?? null,
+                  })),
+                  runs: (options.runs ?? []).filter(
+                    (run) => filter?.runIds === undefined || filter.runIds.includes(run.id),
+                  ),
+                } as never;
+              }),
             streamDomainEvents: Stream.unwrap(
               Ref.getAndUpdate(subscriptions, (n) => n + 1).pipe(
-                Effect.map((attempt) =>
+                Effect.flatMap((attempt) =>
                   attempt < (options.streamFailures ?? 0)
-                    ? Stream.fail(new Error("event stream dropped") as never)
-                    : Stream.fromQueue(events),
+                    ? Effect.succeed(Stream.fail(new Error("event stream dropped") as never))
+                    : (options.liveTail ? Queue.clear(events) : Effect.void).pipe(
+                        Effect.as(Stream.fromQueue(events)),
+                      ),
                 ),
               ),
             ),
@@ -754,17 +765,74 @@ it.effect("a dropped event stream is resumed, and runs that ended meanwhile are 
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("runs are released as failed once the event stream cannot be resumed", () =>
+it.effect("the event stream keeps being resumed after many failures", () =>
   Effect.gen(function* () {
-    const harness = yield* makeTurnHarness({ streamFailures: 1_000 });
+    const runId = RunId.make("run:late");
+    const harness = yield* makeTurnHarness({
+      streamFailures: 8,
+      messageRunId: runId,
+      runs: [runOf(runId, MessageId.make("unused"), "failed")],
+    });
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const { task } = yield* upsertBoundTask(service);
       yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
       yield* TestClock.adjust("10 minutes");
       yield* untilStatus(service, task.id, "failed");
+      assert.equal(yield* Ref.get(harness.subscriptions), 9);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an event landing while the resumed listener catches up is not missed", () =>
+  Effect.gen(function* () {
+    const runId = RunId.make("run:handoff");
+    const harness = yield* makeTurnHarness({
+      streamFailures: 1,
+      liveTail: true,
+      messageRunId: runId,
+      // The projection read is stale: the run ends right after it.
+      runs: [runOf(runId, MessageId.make("unused"), "running")],
+      duringRunsRead: (events) =>
+        Queue.offer(events, runEvent(runOf(runId, MessageId.make("unused"), "completed"))).pipe(
+          Effect.asVoid,
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      yield* Queue.take(harness.dispatched);
+      yield* TestClock.adjust("30 seconds");
+      yield* untilStatus(service, task.id, "succeeded");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a cancelled run is still recorded when its first save fails", () =>
+  Effect.gen(function* () {
+    const harness = yield* makeTurnHarness();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const sql = yield* SqlClient.SqlClient;
+      const { task } = yield* upsertBoundTask(service);
+      yield* service.runNow({ id: task.id });
+      const messageId = yield* Queue.take(harness.dispatched);
+      // Fails the first write only; the retry must still record the cancel.
+      yield* sql`CREATE TABLE fail_once (id INTEGER)`;
+      yield* sql`INSERT INTO fail_once VALUES (1)`;
+      yield* sql`CREATE TRIGGER fail_first_outcome BEFORE UPDATE ON scheduled_tasks
+        WHEN OLD.last_run_status = 'running' AND NEW.last_run_status = 'failed'
+          AND EXISTS (SELECT 1 FROM fail_once)
+        BEGIN DELETE FROM fail_once; SELECT RAISE(FAIL, 'outcome unavailable'); END`;
+      yield* Queue.offerAll(harness.events, [
+        runEvent(runOf("run:cancelled", messageId, "queued")),
+        runEvent(runOf("run:cancelled", messageId, "cancelled")),
+      ]);
+      yield* untilStatus(service, task.id, "failed");
       const [settled] = (yield* service.list()).tasks;
-      assert.equal(settled?.lastRunError, "Run outcomes could no longer be followed.");
+      assert.equal(settled?.lastRunError, "The run was cancelled.");
     }).pipe(Effect.provide(harness.layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

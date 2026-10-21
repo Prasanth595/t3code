@@ -131,11 +131,6 @@ export function makeTrackedRuns() {
       const run = runs.get(messageId);
       if (run !== undefined) run.runId = runId;
     },
-    /** Ends every dispatched run as failed, for when events can no longer be followed. */
-    abandonAll: (error: string): ReadonlyArray<SettledRun> =>
-      [...runs.values()].flatMap((run) =>
-        run.dispatched ? settled(end(run, { status: "failed", error, cancelledRunId: null })) : [],
-      ),
     /**
      * Rules on a cancelled run, given the run its message belongs to now.
      * Returns false when the message moved into another run, which is then

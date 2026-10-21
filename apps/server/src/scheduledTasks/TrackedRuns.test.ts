@@ -105,14 +105,6 @@ it("lists only dispatched runs as pending, and follows a run bound from the proj
   assert.deepEqual(runs.pending(), []);
 });
 
-it("fails every dispatched run when events can no longer be followed", () => {
-  const runs = makeTrackedRuns();
-  runs.track(messageId, taskId, "start");
-  runs.dispatched(messageId, threadId);
-  assert.deepEqual(runs.abandonAll("gave up"), [settledFor("failed", "gave up")]);
-  assert.deepEqual(runs.abandonAll("gave up"), []);
-});
-
 it("fails a run whose thread is deleted before the turn ends", () => {
   const runs = makeTrackedRuns();
   runs.track(messageId, taskId, "start");
