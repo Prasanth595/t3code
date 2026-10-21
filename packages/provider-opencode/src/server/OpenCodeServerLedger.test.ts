@@ -11,7 +11,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -44,8 +43,9 @@ const killGroup = (pgid: number) =>
 // that still has members (such as a sleep orphaned by an earlier test). The child would then
 // share the test worker's group, so the script first confirms it leads its own group and exits
 // with 97 before starting anything if it does not.
-const groupLeaderGuard = `[ "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" ] || exit 97; echo grouped; `;
+const groupLeaderGuard = `pgid="$(ps -o pgid= -p $$ 2>&1 | tr -d ' ')"; [ "$pgid" = "$$" ] || { echo "ungrouped:$pgid"; exit 97; }; echo grouped; `;
 
+// Yields the group, or a description of why this shell cannot be used as one.
 const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
   Effect.gen(function* () {
     const child = NodeChildProcess.spawn("/bin/sh", ["-c", groupLeaderGuard + script, ...args], {
@@ -54,29 +54,53 @@ const spawnGroupLeader = (args: ReadonlyArray<string>, script: string) =>
     });
     const pid = child.pid;
     if (pid === undefined) return yield* Effect.die("spawn failed");
-    const grouped = yield* Deferred.make<boolean>();
+    const grouped = yield* Deferred.make<true | string>();
     const exited = yield* Deferred.make<NodeJS.Signals | null>();
     const printed = yield* Deferred.make<void>();
-    child.once("exit", (code, signal) => {
-      if (code === 97) Deferred.doneUnsafe(grouped, Effect.succeed(false));
-      Deferred.doneUnsafe(exited, Effect.succeed(signal));
-    });
+    child.once("exit", (_code, signal) => Deferred.doneUnsafe(exited, Effect.succeed(signal)));
+    // "close" fires after stdout drains, so a guard line always lands first. It only fires before
+    // "grouped" when the shell died without starting the script, such as from a signal.
+    child.once("close", (code, signal) =>
+      Deferred.doneUnsafe(
+        grouped,
+        Effect.succeed(
+          `shell ${pid} exited (code ${code}, signal ${signal}) before its group check`,
+        ),
+      ),
+    );
     NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
       if (line === "grouped") Deferred.doneUnsafe(grouped, Effect.succeed(true));
+      if (line.startsWith("ungrouped:")) {
+        const output = line.slice("ungrouped:".length);
+        Deferred.doneUnsafe(
+          grouped,
+          Effect.succeed(`\`ps -o pgid= -p ${pid}\` printed ${JSON.stringify(output)}`),
+        );
+      }
       if (line === "ready") Deferred.doneUnsafe(printed, Effect.void);
     });
-    return (yield* Deferred.await(grouped))
-      ? Option.some({ pid, exited: Deferred.await(exited), printed: Deferred.await(printed) })
-      : Option.none();
+    const result = yield* Deferred.await(grouped);
+    return result === true
+      ? { pid, exited: Deferred.await(exited), printed: Deferred.await(printed) }
+      : result;
   });
+
+// A pid colliding with a live group id is rare, so a few retries clear it. Repeated failures
+// mean the guard itself is broken (for example a missing or BusyBox `ps`).
+const GROUP_LEADER_ATTEMPTS = 5;
 
 const spawnGroup = (args: ReadonlyArray<string>, script = "sleep 600 & wait") =>
   Effect.acquireRelease(
     Effect.gen(function* () {
-      while (true) {
+      let failure = "";
+      for (let attempt = 0; attempt < GROUP_LEADER_ATTEMPTS; attempt++) {
         const group = yield* spawnGroupLeader(args, script);
-        if (Option.isSome(group)) return group.value;
+        if (typeof group !== "string") return group;
+        failure = group;
       }
+      return yield* Effect.die(
+        `no shell led its own process group after ${GROUP_LEADER_ATTEMPTS} attempts; last: ${failure}`,
+      );
     }),
     ({ pid }) => killGroup(pid),
   );
