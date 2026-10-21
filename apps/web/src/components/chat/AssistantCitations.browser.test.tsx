@@ -1,26 +1,14 @@
 import { EnvironmentId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
-import { act, useState, type ReactNode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
+import { act, render } from "../../../test/render";
 import "~/index.css";
-
-vi.mock(import("@tanstack/react-router"), async (original) => ({
-  ...(await original()),
-  useNavigate: () => vi.fn(),
-  Link: (({ children }: { children: ReactNode }) => <a>{children}</a>) as never,
-}));
 
 import { AssistantCitationChip } from "./AssistantCitationChip";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
-
-let root: Root;
-let viewport: HTMLDivElement;
-let boundary: HTMLDivElement;
-let source: HTMLDivElement;
-let container: HTMLDivElement;
 
 const cite = () =>
   document.querySelector<HTMLButtonElement>('button[aria-label="Cite selection in composer"]');
@@ -28,7 +16,7 @@ const popup = () => document.querySelector<HTMLElement>('[data-slot="popover-pop
 const comment = () =>
   document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Comment on selected text"]');
 
-function expectInside(element: Element | null) {
+function expectInside(element: Element | null, boundary: HTMLElement) {
   expect(element).not.toBeNull();
   const rect = element!.getBoundingClientRect();
   const bounds = boundary.getBoundingClientRect();
@@ -40,7 +28,7 @@ function expectInside(element: Element | null) {
   expect(rect.bottom).toBeLessThanOrEqual(bounds.bottom);
 }
 
-async function scrollTo(top: number) {
+async function scrollTo(viewport: HTMLElement, top: number) {
   await act(async () => {
     const scrolled = new Promise<void>((resolve) =>
       viewport.addEventListener("scroll", () => resolve(), { once: true }),
@@ -50,7 +38,7 @@ async function scrollTo(top: number) {
   });
 }
 
-async function mount() {
+function mount({ viewport, boundary }: ReturnType<typeof setup>) {
   function Chat() {
     const [selected, setSelected] = useState<{
       citation: AssistantCitation;
@@ -87,36 +75,39 @@ async function mount() {
       </>
     );
   }
-  await act(async () => root.render(<Chat />));
+  return render(<Chat />);
 }
 
-beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  viewport = document.createElement("div");
+function setup() {
+  const host = document.createElement("div");
+  const viewport = document.createElement("div");
   viewport.style.cssText =
     "position: fixed; left: 20px; top: 70px; width: 360px; height: 400px; overflow: auto";
-  boundary = document.createElement("div");
+  const boundary = document.createElement("div");
   boundary.style.cssText =
     "position: fixed; left: 20px; top: 70px; width: 360px; height: 260px; pointer-events: none";
-  source = document.createElement("div");
+  const source = document.createElement("div");
   source.dataset.assistantCitationSource = "message";
   viewport.append(source);
-  container = document.createElement("div");
-  document.body.append(viewport, boundary, container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  window.getSelection()?.removeAllRanges();
-  document.body.replaceChildren();
-  vi.unstubAllGlobals();
-});
+  host.append(viewport, boundary);
+  document.body.append(host);
+  return {
+    viewport,
+    boundary,
+    source,
+    [Symbol.dispose]() {
+      window.getSelection()?.removeAllRanges();
+      host.remove();
+    },
+  };
+}
 
 for (const kind of ["long response", "wide code"] as const) {
   it.each(["forward", "backward"] as const)(
     `${kind}: keeps Cite and its box in the message area for a %s selection and scrolling`,
     async (direction) => {
+      using fixture = setup();
+      const { viewport, boundary, source } = fixture;
       const paragraphs = Array.from({ length: 40 }, (_, index) => {
         const paragraph = document.createElement("p");
         paragraph.style.lineHeight = "24px";
@@ -143,24 +134,24 @@ for (const kind of ["long response", "wide code"] as const) {
         first = paragraphs[0]!.firstChild!;
         last = paragraphs.at(-1)!.firstChild!;
       }
-      await mount();
+      await using _screen = await mount(fixture);
       await act(async () => {
         if (direction === "forward")
           window.getSelection()!.setBaseAndExtent(first, 0, last, last.textContent!.length);
         else window.getSelection()!.setBaseAndExtent(last, last.textContent!.length, first, 0);
       });
-      await vi.waitFor(() => expectInside(cite()));
+      await vi.waitFor(() => expectInside(cite(), boundary));
       const originalButton = cite();
       if (kind === "wide code")
         expect(window.getSelection()!.getRangeAt(0).getBoundingClientRect().left).toBeGreaterThan(
           window.innerWidth,
         );
-      else await scrollTo(500);
+      else await scrollTo(viewport, 500);
       expect(cite()).toBe(originalButton);
-      expectInside(cite());
-      await act(async () => userEvent.click(cite()!));
-      await vi.waitFor(() => expectInside(popup()));
-      await act(async () => userEvent.keyboard("note"));
+      expectInside(cite(), boundary);
+      await userEvent.click(cite()!);
+      await vi.waitFor(() => expectInside(popup(), boundary));
+      await userEvent.keyboard("note");
       if (codeScroller) {
         const pre = codeScroller;
         await act(async () => {
@@ -170,17 +161,17 @@ for (const kind of ["long response", "wide code"] as const) {
           pre.scrollLeft = pre.scrollWidth;
           await scrolled;
         });
-        await vi.waitFor(() => expectInside(popup()));
+        await vi.waitFor(() => expectInside(popup(), boundary));
       }
 
-      await scrollTo(1000);
-      await vi.waitFor(() => expectInside(popup()));
-      await scrollTo(0);
-      await vi.waitFor(() => expectInside(popup()));
+      await scrollTo(viewport, 1000);
+      await vi.waitFor(() => expectInside(popup(), boundary));
+      await scrollTo(viewport, 0);
+      await vi.waitFor(() => expectInside(popup(), boundary));
       await act(async () => {
         boundary.style.height = "180px";
       });
-      await vi.waitFor(() => expectInside(popup()));
+      await vi.waitFor(() => expectInside(popup(), boundary));
       expect(comment()?.value).toBe("note");
       expect(document.scrollingElement?.scrollTop).toBe(0);
       expect(document.scrollingElement?.scrollLeft).toBe(0);
@@ -189,31 +180,35 @@ for (const kind of ["long response", "wide code"] as const) {
 }
 
 it("dismisses Cite when the virtualized source unmounts and collapses the selection", async () => {
+  using fixture = setup();
+  const { source, boundary } = fixture;
   source.textContent = "The selected assistant response.";
-  await mount();
+  await using _screen = await mount(fixture);
   await act(async () =>
     window.getSelection()!.setBaseAndExtent(source.firstChild!, 0, source.firstChild!, 12),
   );
-  await vi.waitFor(() => expectInside(cite()));
+  await vi.waitFor(() => expectInside(cite(), boundary));
   await act(async () => source.remove());
   await vi.waitFor(() => expect(cite()).toBeNull());
   expect(window.getSelection()!.isCollapsed).toBe(true);
 });
 
 it("keeps the action when an upward drag extends into the header", async () => {
+  using fixture = setup();
+  const { source, boundary, viewport } = fixture;
   const header = document.createElement("header");
   header.textContent = "Thread title";
-  document.body.prepend(header);
+  viewport.before(header);
   source.textContent = "The assistant response selected by the user.";
-  await mount();
+  await using _screen = await mount(fixture);
   await act(async () =>
     window
       .getSelection()!
       .setBaseAndExtent(source.firstChild!, source.textContent!.length, header.firstChild!, 0),
   );
-  await vi.waitFor(() => expectInside(cite()));
-  await act(async () => userEvent.click(cite()!));
-  await vi.waitFor(() => expectInside(popup()));
+  await vi.waitFor(() => expectInside(cite(), boundary));
+  await userEvent.click(cite()!);
+  await vi.waitFor(() => expectInside(popup(), boundary));
   const markdown = document
     .querySelector("[data-assistant-citation-chip]")!
     .getAttribute("data-markdown-copy")!;
@@ -229,6 +224,8 @@ for (const neighbor of [
   it.each(["forward", "backward"] as const)(
     `cites only assistant text when a %s selection includes a ${neighbor}`,
     async (direction) => {
+      using fixture = setup();
+      const { boundary, source } = fixture;
       source.textContent = "The selected assistant response.";
       const adjacent = document.createElement("p");
       adjacent.textContent = neighbor === "following timestamp" ? "1:50 AM" : "A user message.";
@@ -237,17 +234,17 @@ for (const neighbor of [
       else source.after(adjacent);
       const first = before ? adjacent.firstChild! : source.firstChild!;
       const last = before ? source.firstChild! : adjacent.firstChild!;
-      await mount();
+      await using _screen = await mount(fixture);
       await act(async () => {
         if (direction === "forward")
           window.getSelection()!.setBaseAndExtent(first, 0, last, last.textContent!.length);
         else window.getSelection()!.setBaseAndExtent(last, last.textContent!.length, first, 0);
       });
 
-      await vi.waitFor(() => expectInside(cite()));
+      await vi.waitFor(() => expectInside(cite(), boundary));
       expect(window.getSelection()!.toString()).toContain(adjacent.textContent);
-      await act(async () => userEvent.click(cite()!));
-      await vi.waitFor(() => expectInside(popup()));
+      await userEvent.click(cite()!);
+      await vi.waitFor(() => expectInside(popup(), boundary));
       const markdown = document
         .querySelector("[data-assistant-citation-chip]")!
         .getAttribute("data-markdown-copy")!;
