@@ -1623,7 +1623,9 @@ it.each([false, true])(
     expect(label).toMatch(/^python3 - <<'PY' print/);
     expect(label).not.toContain("\n");
     const feed = buildThreadFeed([projected(approval, 0)]);
-    const activity = feed.flatMap((row) => (row.type === "activity-group" ? row.activities : []))[0]!;
+    const activity = feed.flatMap((row) =>
+      row.type === "activity-group" ? row.activities : [],
+    )[0]!;
     expect(activity.detail).toBe(prompt);
     expect(JSON.parse(activity.getFullDetail()!).item).toMatchObject({ prompt });
     expect(activity.getCopyText()).toContain(prompt);
