@@ -373,7 +373,7 @@ export function ThreadRelationshipsPanel(props: {
     const result = await interruptTurn({
       environmentId: props.environmentId,
       input:
-        agent.origin === "provider_native"
+        agent.origin === "provider_native" || agent.origin === "app_owned"
           ? { threadId: agent.threadId, subagentId: agent.id }
           : { threadId: childThreadId },
     });

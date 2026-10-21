@@ -163,6 +163,8 @@ const threadState = (threadId: ThreadId) =>
 it.effect.each([
   ["idle", "thread.stop"],
   ["idle", "run.interrupt"],
+  ["idle", "subagent.stop"],
+  ["running", "subagent.stop"],
   ["archived", "thread.stop"],
   ["missing", "thread.stop"],
   ["running", "thread.stop"],
@@ -425,17 +427,23 @@ it.effect.each([
       yield* orchestrator.dispatch(
         type === "run.interrupt"
           ? { ...stop, type, runId: parent.runs.at(-1)!.id, holdQueue: true }
-          : { ...stop, type },
+          : type === "subagent.stop"
+            ? { ...stop, type, runId: original.runId!, subagentId: taskId }
+            : { ...stop, type },
       );
       const after = yield* orchestrator.getThreadProjection(parentThreadId);
-      assert.isEmpty((after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined));
+      // The Lineage stop of one subagent leaves the parent's watches alone.
+      assert.lengthOf(
+        (after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined),
+        type === "subagent.stop" ? 1 : 0,
+      );
       const expected = childState === "idle" || childState === "archived" ? "cancelled" : "running";
       assert.equal(after.subagents.find((task) => task.id === taskId)?.status, expected);
       assert.equal(after.nodes.find((node) => node.id === taskId)?.status, expected);
       assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
       assert.equal(
         after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
-        "disposed",
+        type === "subagent.stop" && expected === "running" ? undefined : "disposed",
       );
       assert.equal(
         after.subagents.find((task) => task.id === original.id)?.result,
@@ -444,7 +452,9 @@ it.effect.each([
       assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childBeforeStop);
       if (expected === "cancelled") {
         assert.lengthOf(
-          (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? [],
+          (
+            (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? []
+          ).filter((task) => task.kind === "subagent"),
           0,
         );
         yield* orchestrator.recoverDelegatedTasks;

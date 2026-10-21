@@ -2375,6 +2375,29 @@ const make = Effect.gen(function* () {
             (run.delegatedTaskId === input.taskId || run.id === current.childRunId),
         )
       ) {
+        // A follow-up that lost its child run (#19002) has nothing to interrupt. The parent
+        // cancels it, and any other orphan of the same child, when that child is idle.
+        if (parentTask?.runId != null) {
+          yield* threadManagement
+            .dispatch({
+              type: "subagent.stop",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "cancel-task-orphan",
+              }),
+              threadId: scope.thread.threadId,
+              runId: parentTask.runId,
+              subagentId: parentTask.id,
+            })
+            .pipe(Effect.mapError(threadManagementFailure));
+          const { subagents } = yield* threadManagement
+            .getThreadRecords(scope.thread.threadId, ["subagents"])
+            .pipe(Effect.mapError(threadManagementFailure));
+          if (subagents.some((task) => task.id === input.taskId && task.status === "cancelled")) {
+            return { taskId: input.taskId, status: "cancelled" };
+          }
+        }
         return yield* failure(
           "task_not_cancellable",
           `Delegated task ${input.taskId} has no interruptible child run.`,

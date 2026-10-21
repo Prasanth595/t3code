@@ -190,6 +190,8 @@ export class OrchestratorProjectionError extends Schema.TaggedError<Orchestrator
   }
 }
 
+const isOrchestratorProjectionError = Schema.is(OrchestratorProjectionError);
+
 export class OrchestratorDomainEventStreamError extends Schema.TaggedError<OrchestratorDomainEventStreamError>()(
   "OrchestratorDomainEventStreamError",
   {
@@ -9395,6 +9397,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ]);
     const run = projection.runs.find((candidate) => candidate.id === command.runId);
     const subagent = projection.subagents.find((candidate) => candidate.id === command.subagentId);
+    // An app-owned task stops through its child thread. Here the parent only cancels the child's
+    // orphaned tasks: the child is idle and no child run is bound to them (#19002).
+    if (
+      subagent?.origin === "app_owned" &&
+      subagent.childThreadId !== null &&
+      subagent.runId === command.runId
+    ) {
+      const records = yield* loadProjectionForCommand(command, ["subagents", "turnItems"], {
+        turnItemTypes: ["subagent"],
+        turnItemStatuses: ["pending", "running", "waiting"],
+      });
+      return yield* cancelIdleOrphans({
+        command,
+        events,
+        projection: records,
+        childThreadId: subagent.childThreadId,
+      });
+    }
     if (
       subagent === undefined ||
       subagent.runId !== command.runId ||
@@ -9837,15 +9857,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return undefined;
   });
 
-  const cancelIdleOrphans = (input: {
-    readonly command: Extract<
-      OrchestrationV2ServerCommand,
-      { readonly type: "run.interrupt" | "thread.stop" }
-    >;
-    readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
-    readonly projection: Pick<OrchestrationV2ThreadProjection, "subagents" | "turnItems">;
-  }) =>
-    Effect.gen(function* () {
+  const cancelIdleOrphans = Effect.fn("Orchestrator.cancelIdleOrphans")(
+    function* (input: {
+      readonly command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "run.interrupt" | "thread.stop" | "subagent.stop" }
+      >;
+      readonly events: Ref.Ref<Array<OrchestrationV2DomainEvent>>;
+      readonly projection: Pick<OrchestrationV2ThreadProjection, "subagents" | "turnItems">;
+      /** Limits the repair to tasks delegated to this child thread. */
+      readonly childThreadId?: ThreadId;
+    }) {
       const { command, events, projection } = input;
       const pending = yield* Ref.get(events);
       const children = new Map<
@@ -9862,7 +9884,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           task.origin !== "app_owned" ||
           task.childThreadId === null ||
-          !isOrchestrationV2WorkActive(task.status)
+          !isOrchestrationV2WorkActive(task.status) ||
+          (input.childThreadId !== undefined && task.childThreadId !== input.childThreadId)
         )
           continue;
         const childThreadId = task.childThreadId;
@@ -9944,13 +9967,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         }
       }
-    }).pipe(
-      Effect.mapError((cause) =>
-        Schema.is(OrchestratorProjectionError)(cause)
-          ? cause
-          : new OrchestratorProjectionError({ threadId: input.command.threadId, cause }),
+    },
+    (effect, input) =>
+      effect.pipe(
+        Effect.mapError((cause) =>
+          isOrchestratorProjectionError(cause)
+            ? cause
+            : new OrchestratorProjectionError({ threadId: input.command.threadId, cause }),
+        ),
       ),
-    );
+  );
 
   const dispatchThreadStop = Effect.fn("Orchestrator.dispatchThreadStop")(function* (
     command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.stop" }>,
