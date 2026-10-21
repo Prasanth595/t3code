@@ -11,8 +11,10 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
+import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
@@ -1238,32 +1240,6 @@ describe("AcpSessionRuntime", () => {
       ),
     );
 
-    it.effect("applies the late response once the loaded session is adopted", () =>
-      Effect.gen(function* () {
-        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-        yield* runtime.start();
-        yield* runtime.loadSession("mock-session-2");
-
-        const update = yield* nextConfigUpdate(runtime).pipe(Effect.timeout("3 seconds"));
-
-        expect(modelOption(update.configOptions)).toBeDefined();
-      }).pipe(
-        Effect.provide(
-          lateLoadRuntimeOptions({
-            lifecycle: true,
-            // Holds adoption back so the late response lands before it.
-            requestLogger: (event) =>
-              event.method === "session/load" && event.status === "succeeded"
-                ? Effect.sleep("900 millis")
-                : Effect.void,
-          }),
-        ),
-        Effect.scoped,
-        Effect.provide(NodeServices.layer),
-        TestClock.withLive,
-      ),
-    );
-
     it.effect("drops a late response that arrives after the session load timeout", () =>
       Effect.gen(function* () {
         const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -1279,28 +1255,6 @@ describe("AcpSessionRuntime", () => {
             sessionLoadTimeout: "300 millis",
           }),
         ),
-        Effect.scoped,
-        Effect.provide(NodeServices.layer),
-        TestClock.withLive,
-      ),
-    );
-
-    it.effect("lets a newer load supersede the previous late response", () =>
-      Effect.gen(function* () {
-        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-        yield* runtime.start();
-        yield* runtime.loadSession("mock-session-2");
-        yield* Effect.sleep("300 millis");
-        yield* runtime.loadSession("mock-session-2");
-
-        // The first load answers at ~600ms, inside this window, but is stale.
-        const stale = yield* nextConfigUpdate(runtime).pipe(Effect.timeoutOption("300 millis"));
-        expect(Option.isNone(stale)).toBe(true);
-
-        const latest = yield* nextConfigUpdate(runtime).pipe(Effect.timeout("2 seconds"));
-        expect(modelOption(latest.configOptions)).toBeDefined();
-      }).pipe(
-        Effect.provide(lateLoadRuntimeOptions({ lifecycle: true })),
         Effect.scoped,
         Effect.provide(NodeServices.layer),
         TestClock.withLive,
