@@ -21,8 +21,18 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ProviderMaintenance from "@t3tools/provider-core/server/maintenanceResolver";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import { OpenCodeDriver, openCodeUpdateFor } from "./driver.ts";
+import { OpenCodeDriver, isLocalOpenCodeServerUrl, openCodeUpdateFor } from "./driver.ts";
+import { OPENCODE_2_RESPONSES, replayOpenCodeServer } from "./probeResponses.fixture.ts";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+
+it("only probes a locally configured OpenCode server's installed CLI", () => {
+  assert.isTrue(isLocalOpenCodeServerUrl("http://127.0.0.1:35768"));
+  assert.isTrue(isLocalOpenCodeServerUrl("http://localhost:4096"));
+  assert.isTrue(isLocalOpenCodeServerUrl("http://[::1]:4096"));
+  assert.isFalse(isLocalOpenCodeServerUrl("https://remote.example.com:4096"));
+  assert.isFalse(isLocalOpenCodeServerUrl(""));
+  assert.isFalse(isLocalOpenCodeServerUrl("file:///tmp/opencode"));
+});
 
 const serverStarts: Array<string> = [];
 const reachedServer = (operation: string) =>
@@ -78,6 +88,24 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         }),
       );
       assert.deepStrictEqual(serverStarts, ["start"]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("distinguishes an updated CLI from an older running loopback server", () =>
+    Effect.gen(function* () {
+      const runtime = {
+        ...openCode2Runtime,
+        runOpenCodeCommand: () =>
+          Effect.succeed({ stdout: "opencode v2.1.2\n", stderr: "", code: 0 }),
+      } as OpenCodeRuntime.OpenCodeRuntime["Service"];
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096" },
+        replayOpenCodeServer(OPENCODE_2_RESPONSES, ""),
+      ).pipe(Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime));
+
+      const snapshot = yield* instance.snapshot.refresh;
+      assert.strictEqual(snapshot.version, "2.0.18");
+      assert.strictEqual(snapshot.installedVersion, "2.1.2");
     }).pipe(Effect.scoped),
   );
 

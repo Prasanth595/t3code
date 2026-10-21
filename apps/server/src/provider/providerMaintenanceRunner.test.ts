@@ -729,6 +729,12 @@ it.effect.each([
       const provider = result.providers[0];
       assert.ok(provider);
       assert.strictEqual(provider.updateState?.status, status);
+      if (mode === "default" || mode === "targeted") {
+        assert.strictEqual(
+          provider.updateState?.message,
+          "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version.",
+        );
+      }
       assert.strictEqual(provider.version, version);
       assert.strictEqual("installedVersion" in provider, mode !== "legacy");
       assert.strictEqual(

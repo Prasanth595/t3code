@@ -520,6 +520,14 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             const stillOutdated =
               targetVersion === undefined &&
               verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+            const needsOpenCodeServerRestart =
+              provider === ProviderDriverKind.make("opencode") &&
+              verifiedProviders.some(
+                (verifiedProvider) =>
+                  verifiedProvider.installedVersion != null &&
+                  verifiedProvider.version != null &&
+                  verifiedProvider.installedVersion !== verifiedProvider.version,
+              );
             return yield* finish(
               makeUpdateState({
                 status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
@@ -529,7 +537,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   ? "Update command completed, but T3 Code could not verify the provider version."
                   : stillOutdated
                     ? "Update command completed, but T3 Code still detects an outdated provider version."
-                    : "Provider updated.",
+                    : needsOpenCodeServerRestart
+                      ? "OpenCode CLI updated. Restart the configured local OpenCode server to use the new version."
+                      : "Provider updated.",
                 output: commandOutput(result),
               }),
             );
