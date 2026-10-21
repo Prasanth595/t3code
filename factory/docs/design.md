@@ -80,18 +80,7 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 
 ### Seams: the only upstream files we edit
 
-`factory/SEAMS` lists them, and CI fails any change to an upstream file not on the list:
-
-1. `apps/server/src/server.ts`: one line adding `FactoryLayer` to `layerRuntimeCoreDependenciesBase` (#1), and one adding the factory route layer `FactoryRoutes` to `layerMakeRoutes` (#57).
-2. `.gitignore` (#3): `.worktrees/`, so `build.sh` counts a main checkout that holds local worktrees as clean.
-3. One nav link in the web sidebar, `apps/web/src/components/sidebar/SidebarChrome.tsx` (#28).
-4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand. `apps/web/src/routes/settings.factory*` is factory-owned like `routes/factory*`.
-5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
-6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
-7. `apps/web/src/components/ui/input.tsx` (#61): a `touch` size, 44 px tall below `sm` and the default height from `sm` up. `Button` needs none: its base class already gives every button a 44 px tap area on a coarse pointer.
-8. `apps/web/src/components/sidebar/mainAppLocation.ts` and its test (#28 follow-up, b6bde560b): `/factory` counts as a utility page, so the sidebar shows Back.
-
-Eight entries, all in `factory/SEAMS`. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+A seam is acceptable when it is a hook, not a feature: the smallest edit that calls fork-owned code. [`factory/AGENTS.md`](../AGENTS.md) has the rule. `apps/server/src/ws.ts`, `apps/server/src/rpc.ts`, `packages/contracts/` and `apps/server/src/persistence/Migrations.ts` are never seams. Those are the files upstream churns most, and adding an RPC would touch five of them, so the factory API is a separate HTTP route layer instead. [`factory/SEAMS`](../SEAMS) is the list, and CI fails any change to an upstream file not on it.
 
 ### Boundary rules, checked by a test
 
@@ -131,7 +120,7 @@ Persistence: JSONL files under `<base>/factory/`, the same layout as `~/.local/s
 - **Install health check, auto-rollback and the hand-back runbook (#59).** After restarting the job, `install.sh` waits up to `T3FAC_HEALTH_WAIT` seconds (default 90) for the port to accept connections and for a `factory started` or `no factory config` log line written after the restart, and otherwise runs `rollback.sh` and exits 1. `factory/README.md` "Recovery" is the runbook for rolling back by hand, and `factory/docs/handover.md` is the one for handing this repo back to the Rust factory and moving it back.
 - **A separate log-rotation LaunchAgent (#60).** `io.github.rawphp.t3fac.logrotate` runs `rotate-log.sh` every 600 seconds and copytruncates `~/Library/Logs/t3fac/t3fac.log`, because a crash-looping server writes the most log and is the one that cannot rotate it. `install.sh` and `rollback.sh` copy the script from `factory/scripts/` to `~/.local/share/t3fac/` and reload the job before restarting the server.
 - **Factory CI's `Lint` job, with the gate unchanged (#56).** `factory-ci.yml` has a `Lint` job beside `Check` that runs `vp check`, the command upstream's own Lint job runs. `check.sh`, and so the gate, do not run it.
-- **Remote and phone use through the fork's own served web, with no native mobile screen (#61).** The Factory pages are reached over the tailnet from the fork server's web, paired like any T3 browser. Below 640 px the runs, the gate commands and the ledger are stacked cards and lists, the status rows come first and the attention items follow, and every control is a 44 px tap target: inputs through a `touch` size on `Input` (seam 7), buttons through the coarse-pointer hit area upstream's `Button` already has, inline links through the factory's own `TouchLink`. Every factory call goes through `factory/http.ts` on an environment's prepared connection: its HTTP base, the session cookie or the bearer token, never the page's own origin. The Factory pages read every connected environment, the primary first, and leave out one whose status answers 404; each control (Stop, Pause/Resume, Dismiss) goes to the environment that owns the run or item, and a run page reads the environment in its URL (#162); the settings page follows the settings scope's environment. A relay (DPoP) connection is reported as unavailable because the factory routes are not in the typed API groups that T3 signs proofs for. `factory/README.md` "Remote" has the pairing steps. The T3 mobile app on phones is upstream's App Store build and never contains fork code, so there is no native factory screen.
+- **Remote and phone use through the fork's own served web, with no native mobile screen (#61).** The Factory pages are reached over the tailnet from the fork server's web, paired like any T3 browser. Below 640 px the runs, the gate commands and the ledger are stacked cards and lists, the status rows come first and the attention items follow, and every control is a 44 px tap target: inputs through a `touch` size on `Input` (a seam), buttons through the coarse-pointer hit area upstream's `Button` already has, inline links through the factory's own `TouchLink`. Every factory call goes through `factory/http.ts` on an environment's prepared connection: its HTTP base, the session cookie or the bearer token, never the page's own origin. The Factory pages read every connected environment, the primary first, and leave out one whose status answers 404; each control (Stop, Pause/Resume, Dismiss) goes to the environment that owns the run or item, and a run page reads the environment in its URL (#162); the settings page follows the settings scope's environment. A relay (DPoP) connection is reported as unavailable because the factory routes are not in the typed API groups that T3 signs proofs for. `factory/README.md` "Remote" has the pairing steps. The T3 mobile app on phones is upstream's App Store build and never contains fork code, so there is no native factory screen.
 - **Factory HTTP API (#27, #28, #86, #108).** Eight routes in `t3/http.ts`: `GET /api/factory/status`, `GET /api/factory/runs` and `GET /api/factory/runs/:id` need `orchestration:read`; `POST /api/factory/runs/:id/stop`, `POST /api/factory/claims/pause`, `resume` and `POST /api/factory/attention/dismiss` need `orchestration:operate`; `POST /api/factory/restart` needs `environment:maintain`, the scope T3 gives its own process control (`server.signalProcess`, `server.updateServer`), so an MCP client, whose tokens carry only read and operate, cannot end the server. The status is softfac's `status --json` report with the fork's open attention items added, and without the keys the fork has nothing for (`commit`, `self_update_repo`, `disk`, `claims_paused`, `t3_env_holds`, `t3_logs`). `runs` and `runs/:id` are `runs list` and `runs show`. `runs` lists every unfinished run and the finished runs of the last seven days, or every run with `?all=1` (#28), and reads a finished one only at the ends of its file: the first line, and back from the end to its last state change and pull request. A finished file older than the window is not read at all. Only unfinished runs are read whole. The fork accepts softfac's `is_file` filter, so a directory or symlink named like a run file is not a run and holds no slot. A stop leaves a stop request for the next pass, as `stop-run.sh` does, and wakes the loop. The route never writes the ledger: the pass takes the request when the gate does not have the run, then archives the thread and removes the worktree (#20). Pause and resume write and remove `claims-paused`. Dismiss takes `{ ids }`, marks those open attention items dismissed, and answers `{ dismissed }`, the ids it dismissed; a body without an `ids` array of strings is 400 `invalid_body`. A restart answers 202 first, then logs `factory restart requested` and ends the process through an injected `ServerExit` (`t3/exit.ts`): SIGTERM to itself, which `runMain` turns into the normal shutdown, with the interrupt's exit code 130 made 0 (a failed teardown keeps its code) and `process.exit(0)` after 10 seconds if the shutdown hangs; the LaunchAgent starts the server again, and a dev server simply exits. A second request while one is pending answers 409 `restart_pending`. Open question 1 (do `layerMakeRoutes` routes get T3's auth) is answered by Decided 1 (#57): these routes use the same `withScope`, so an unauthenticated call gets 401.
 
 ## Scope of the experiment (v1)
@@ -169,8 +158,8 @@ The rule is the one softfac already has: one factory per repo.
 ### Repo and branches
 
 - `original-solutions/t3code-factory`, a public GitHub fork of `pingdotgg/t3code`. `main` is upstream plus our commits. On 2026-10-15 it was identical to upstream `main`, and the factory's `rawphp` login has admin on it.
-- Issues and auto-merge are on (set 2026-10-15). Forks start with issues off, the factory works from issues, and green sync PRs need auto-merge.
-- Actions are off for the whole repo (set 2026-10-15). GitHub had not registered upstream's 19 workflows yet, so `gh workflow disable` had nothing to act on. Step 1 adds the `factory-*.yml` workflows. In that step, turn Actions back on and run `gh workflow disable` on every upstream workflow straight away, without editing their files, so they stay off the seam list. Upstream's `ci.yml` may run once on that first push.
+- Issues are on (set 2026-10-15). Forks start with issues off, and the factory works from issues. Auto-merge is not used: `sync.sh` lands a green sync by pushing the checked merge commit to `main`.
+- Actions are on. Each of upstream's workflows is disabled in the repo's settings, without editing their files, so they stay off the seam list, and the fork's `factory-*.yml` workflows run.
 
 ### Syncing with upstream
 
@@ -180,9 +169,9 @@ We sync to upstream's newest nightly tag, not to the tip of main. A nightly has 
 
 1. Find the newest `v*-nightly.*` tag upstream.
 2. Merge it into a `sync/<tag>` branch. Use merge, not rebase: our history stays intact and conflicts only show up in the seam files.
-3. Regenerate `routeTree.gen.ts`, run the seam check, typecheck `apps/server` and `apps/web`, then run the factory suite and the contract suite.
-4. Green: open the PR and auto-merge it.
-5. Red: open the PR as a draft and file a `factory:ready` issue on the fork saying what broke. The Rust factory builds it, because the fork is one of the Rust factory's repos (below).
+3. Run `factory/scripts/check.sh` on the branch ([README](../README.md#checks) "Checks" has the steps).
+4. Green: open the PR and fast-forward `main` to the checked merge commit, which marks the PR merged.
+5. Red: open the PR as a draft and file a `factory:proposed` issue on the fork naming the failing step.
 
 The fork never runs a build that failed its own gates. The installed version only moves when a sync merges and a release builds.
 
@@ -192,9 +181,7 @@ The fork never runs a build that failed its own gates. The installed version onl
 
 ### Release build
 
-Local on this Mac. No CI macOS runners, so no cost to the `rawphp` budget. Signing is ad hoc, which is fine on the machine that built it.
-
-`factory/scripts/build.sh`:
+The server archive is built locally on this Mac by `factory/scripts/build.sh`:
 
 1. `vp i`
 2. `vp run --filter @t3tools/web build`
@@ -207,11 +194,13 @@ Version: `<upstream nightly version>+fac.<fork short sha>`, for example `0.0.46-
 
 `factory/scripts/install.sh` unpacks the archive into `~/.local/share/t3fac/versions/<version>`, points a `current` symlink at it, and restarts the LaunchAgent. `rollback.sh` points `current` at the previous version. That is the same idea as `softfac t3 install` and `rollback`, as two short scripts.
 
-Not built: npm packages, the desktop app, other platforms, notarisation. A second machine can install from a GitHub Release asset later.
+The desktop app is built, signed, notarised and published as a prerelease by `.github/workflows/factory-desktop.yml` on a `macos-15` runner, and the iOS app is built and uploaded to TestFlight by `.github/workflows/factory-mobile.yml`. [README](../README.md) "Desktop app" and "Mobile app" have the detail.
+
+Not built: npm packages, Linux and Windows desktop builds, Android. A second machine can install from a GitHub Release asset later.
 
 ### Fork CI on pull requests
 
-`factory-ci.yml` on an Ubuntu runner: seam check, boundary test, factory unit tests, contract tests, typecheck of server and web. Upstream's own `AGENTS.md` asks agents not to run repo-wide checks, and we don't need them, because the sync job already pins us to tags upstream tested.
+`factory-ci.yml` on an Ubuntu runner runs `factory/scripts/check.sh` (the `Check` job) and `vp check` (the `Lint` job).
 
 ## Who builds the fork
 
