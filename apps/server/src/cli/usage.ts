@@ -50,7 +50,7 @@ const formatReading = (title: string, reading: Reading, now: number) => {
 const formatNotices = (notices: ReadonlyArray<string>) =>
   notices.length === 0 ? [] : ["Notices", ...notices.map((notice) => `  ${notice}`)];
 
-export const formatLimits = (limits: OrchestratorMcpUsageLimitsResult, now: number) => {
+const formatLimits = (limits: OrchestratorMcpUsageLimitsResult, now: number) => {
   const lines = [
     ...limits.providers.flatMap((provider) =>
       formatReading(
@@ -82,7 +82,7 @@ const joinNonZero = (parts: ReadonlyArray<readonly [string, number]>) =>
     .map(([label, value]) => `${label} ${formatUsd(value)}`)
     .join(" · ");
 
-export const formatSpend = (spend: OrchestratorMcpUsageSpendResult) => {
+const formatSpend = (spend: OrchestratorMcpUsageSpendResult) => {
   const { window, tokens } = spend;
   const range =
     window.days === 1
