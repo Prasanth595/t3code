@@ -10,7 +10,6 @@ import { contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
 import { contextChipIconSource } from "../lib/contextChipIconSource";
-import { markdownLinkTexts, markdownWithHtml } from "../lib/markdownDocument";
 import { markdownFileIconSource } from "../lib/markdownFileIcons";
 import { markdownLinkIconSource } from "../lib/markdownLinkIcons";
 import { resolveMarkdownLinkIcon, resolveMarkdownLinkPresentation } from "../lib/markdownLinks";
@@ -19,12 +18,11 @@ import type {
   SelectableMarkdownTextProps,
 } from "./SelectableMarkdownText.types";
 import {
-  enrichedChatLinkPresentation,
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
   enrichedSkillReference,
-  type PullRequestChipState,
+  enrichedThreadLinkPresentation,
 } from "../lib/enrichedLinkPresentation";
 
 function chipCustomization(
@@ -45,20 +43,15 @@ export function enrichedContextLinkCustomization(
   return chipCustomization(enrichedContextLinkPresentation(href, records));
 }
 
-export function enrichedChatLinkCustomization(
-  href: string,
-  pullRequestStates: ReadonlyMap<string, PullRequestChipState>,
-  linkTexts: () => ReadonlySet<string> | undefined,
-) {
-  return chipCustomization(enrichedChatLinkPresentation(href, pullRequestStates, linkTexts));
+export function enrichedThreadLinkCustomization(href: string) {
+  return chipCustomization(enrichedThreadLinkPresentation(href));
 }
 
 function presentation(
   url: string,
   props: Pick<SelectableMarkdownTextProps, "linkCustomization" | "skills" | "textStyle">,
-  linkTexts: () => ReadonlySet<string> | undefined,
 ): MarkdownLinkCustomization | undefined {
-  const custom = props.linkCustomization?.(url, linkTexts);
+  const custom = props.linkCustomization?.(url);
   if (custom) return custom;
   const context = enrichedContextLinkCustomization(url);
   if (context) return context;
@@ -86,31 +79,20 @@ function presentation(
     : undefined;
 }
 
-function lazyLinkTexts(markdown: string) {
-  let texts: ReadonlyMap<string, ReadonlySet<string>> | undefined;
-  return (url: string) => {
-    texts ??= markdownLinkTexts(markdownWithHtml(markdown));
-    return texts.get(url);
-  };
-}
-
 export function useEnrichedLinkVariants(
   assets: ReadonlyArray<MarkdownDocumentAsset>,
   props: SelectableMarkdownTextProps,
 ) {
-  const { linkCustomization, markdown, skills, textStyle } = props;
+  const { linkCustomization, skills, textStyle } = props;
   const links = useMemo(() => {
     const byUrl = new Map<string, MarkdownLinkCustomization>();
-    const linkTexts = lazyLinkTexts(markdown);
     for (const asset of assets) {
       if (asset.kind !== "link" || byUrl.has(asset.url)) continue;
-      const value = presentation(asset.url, { linkCustomization, skills, textStyle }, () =>
-        linkTexts(asset.url),
-      );
+      const value = presentation(asset.url, { linkCustomization, skills, textStyle });
       if (value) byUrl.set(asset.url, value);
     }
     return byUrl;
-  }, [assets, linkCustomization, markdown, skills, textStyle]);
+  }, [assets, linkCustomization, skills, textStyle]);
   const chipForegrounds = useMemo(
     () =>
       new Map(

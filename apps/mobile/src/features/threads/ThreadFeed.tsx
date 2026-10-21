@@ -5,8 +5,8 @@ import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-wid
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
-  enrichedChatLinkCustomization,
   enrichedContextLinkCustomization,
+  enrichedThreadLinkCustomization,
 } from "../../native/useEnrichedLinkVariants";
 import {
   enrichedSkillDisplayName,
@@ -233,7 +233,7 @@ import {
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
-import { useLiveThreadLinkLabels, usePullRequestChipStates } from "../../state/entities";
+import { useLiveThreadLinkLabels } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -748,10 +748,7 @@ interface MarkdownLinkHandlers {
   readonly onFileContextMenuAction: (href: string, actionId: string) => void;
   readonly onImagePress?: (href: string) => void;
   readonly resolveImageSource?: MarkdownImageSourceResolver;
-  readonly linkCustomization?: (
-    href: string,
-    linkTexts: () => ReadonlySet<string> | undefined,
-  ) => MarkdownLinkCustomization | undefined;
+  readonly linkCustomization?: (href: string) => MarkdownLinkCustomization | undefined;
 }
 
 interface MarkdownStyleSets {
@@ -1579,9 +1576,9 @@ function UserMessageContent(props: UserMessageContentProps) {
                 });
             }
           },
-          linkCustomization: (href, linkTexts) =>
+          linkCustomization: (href) =>
             enrichedContextLinkCustomization(href, props.context?.records ?? []) ??
-            props.linkHandlers.linkCustomization?.(href, linkTexts),
+            props.linkHandlers.linkCustomization?.(href),
         }}
       />
       {selected ? (
@@ -1976,7 +1973,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       void openPullRequest(presentation.href);
     }
   };
-  const pullRequestChipStates = usePullRequestChipStates(props.environmentId);
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,
     threadId: props.threadId,
@@ -1984,8 +1980,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   });
   const markdownLinkHandlers: MarkdownLinkHandlers = {
     onLinkPress: onMarkdownLinkPress,
-    linkCustomization: (href, linkTexts) =>
-      enrichedChatLinkCustomization(href, pullRequestChipStates, linkTexts),
+    linkCustomization: enrichedThreadLinkCustomization,
     onImagePress: (href) => onMarkdownLinkPress(href, true),
     resolveImageSource,
     fileContextMenu: (href) => {
@@ -2156,7 +2151,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     workRowSizing,
     iconSubtleColor,
     markdownStyles,
-    pullRequestChipStates,
     reviewCommentColors,
     themeAppearance,
     userBubbleColor,
