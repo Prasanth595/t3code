@@ -7,6 +7,7 @@ import {
   type ModelSelection,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -25,6 +26,7 @@ import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
+import { resolveWorktreesDirectory } from "../../worktreesDirectory.ts";
 
 /**
  * Agent sessions as the factory sees them: softfac's `Sessions` trait
@@ -173,6 +175,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "archive",
     "remove-worktree",
     "running-threads",
+    "worktrees-directory",
   ]),
   cause: Schema.Defect(),
 }) {
@@ -342,6 +345,13 @@ export class FactorySessions extends Context.Service<
      * preparing, starting or running. A run waiting on a person does not count.
      */
     readonly runningThreads: Effect.Effect<number, SessionsError>;
+    /**
+     * The folder T3 makes a new thread's worktree under now: the one Settings → Storage names,
+     * else `defaultDir`. Null for a setting T3 cannot make a worktree under.
+     */
+    readonly worktreesDirectory: (
+      defaultDir: string,
+    ) => Effect.Effect<string | null, SessionsError>;
   }
 >()("t3/factory/t3/sessions/FactorySessions") {}
 
@@ -594,6 +604,16 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new SessionsError({ operation: "running-threads", cause })),
     );
 
+  const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = Effect.fn(
+    "Sessions.worktreesDirectory",
+  )(
+    function* (defaultDir) {
+      const { worktreesDirectory: setting } = yield* settings.getSettings;
+      return resolveWorktreesDirectory(setting, defaultDir, path, yield* HostProcess.HomeDirectory);
+    },
+    Effect.mapError((cause) => new SessionsError({ operation: "worktrees-directory", cause })),
+  );
+
   return FactorySessions.of({
     findProject,
     launch,
@@ -603,6 +623,7 @@ export const make = Effect.gen(function* () {
     archive,
     removeWorktree,
     runningThreads,
+    worktreesDirectory,
   });
 });
 

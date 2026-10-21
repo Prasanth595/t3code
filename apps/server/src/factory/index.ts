@@ -35,6 +35,7 @@ import {
   type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
+import { readLowestFreeSpace, type FreeSpace } from "./disk.ts";
 import * as Gate from "./gate.ts";
 import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
 import type { State } from "./domain/lifecycle.ts";
@@ -375,7 +376,8 @@ const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock.
- * It does not know which repos are watched: `startFactory` adds `watchedRepos`.
+ * It does not know which repos are watched or where the worktrees are: `startFactory` adds
+ * `watchedRepos` and `freeSpace`.
  */
 export const liveWorld = (
   machine: MachineConfig,
@@ -396,7 +398,7 @@ export const liveWorld = (
     claimMemo: new ClaimMemo(),
     stuckReads: new Map(),
   },
-): Omit<PassWorld, "watchedRepos"> => {
+): Omit<PassWorld, "watchedRepos" | "freeSpace"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
   const githubFor = (watched: WatchedRepo) =>
@@ -753,6 +755,8 @@ export interface RuntimeOptions {
   readonly gateRemoteBase?: string;
   /** Called with each world a start or reload builds, once the world is built: for a test that needs the pass world a reload built. */
   readonly onWorld?: (world: PassWorld) => void;
+  /** How a directory's free space is read. Default `statfs`; a test passes the sizes it needs. */
+  readonly readFreeSpace?: (path: string) => FreeSpace;
 }
 
 /** A pass of a factory with no config to run on. */
@@ -765,7 +769,7 @@ interface Current {
 }
 
 const startFactory = Effect.fn("Factory.startFactory")(function* (options: RuntimeOptions) {
-  const { factoryDir, machineConfigPath } = yield* Paths.FactoryPaths;
+  const { factoryDir, machineConfigPath, worktreesDir } = yield* Paths.FactoryPaths;
   const attention = yield* Attention;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -851,6 +855,25 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
       ),
       // Where the list comes from is known here alone.
       watchedRepos: listWatched.pipe(Effect.mapError(asPassError("t3"))),
+      // The sessions write under the worktrees folder T3 uses now, the gate under the factory dir.
+      freeSpace: () =>
+        sessions.worktreesDirectory(worktreesDir).pipe(
+          Effect.mapError(asPassError("t3")),
+          Effect.flatMap((worktrees) =>
+            Effect.try({
+              try: () =>
+                readLowestFreeSpace(
+                  [...(worktrees === null ? [] : [worktrees]), factoryDir],
+                  options.readFreeSpace,
+                ),
+              // Local disk, as softfac files it: the kind the machine's own files have.
+              catch: (cause): PassError => ({
+                kind: "ledger",
+                message: cause instanceof Error ? cause.message : String(cause),
+              }),
+            }),
+          ),
+        ),
     };
     options.onWorld?.(world);
     state.current = { machine, world };

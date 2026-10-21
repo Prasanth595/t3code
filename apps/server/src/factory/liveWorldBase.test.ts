@@ -49,6 +49,7 @@ const machine: MachineConfig = {
   maxConcurrentRuns: 1,
   maxConcurrentGates: 1,
   notify: true,
+  minFreeGib: 0,
 };
 
 const repo: Repo = {
@@ -66,6 +67,7 @@ const stubSessions = Sessions.FactorySessions.of({
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
   runningThreads: Effect.succeed(0),
+  worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
 
 describe("liveWorld: a step of a run is built for the base the pass hands it", () => {

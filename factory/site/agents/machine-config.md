@@ -11,6 +11,7 @@ File: `<base dir>/factory/config.yml`, by default `~/.config/t3fac/factory/confi
 | `max_concurrent_runs`  | integer ≥ 1  | yes      |         | Across all repos.                          |
 | `max_concurrent_gates` | integer ≥ 1  | no       | `2`     |                                            |
 | `notify`               | boolean      | no       | `true`  | macOS notification per new attention item. |
+| `min_free_gib`         | integer ≥ 0  | no       | `10`    | Free GiB floor; `0` turns the check off.   |
 
 | Retired key      | Load result                       |
 | ---------------- | --------------------------------- |
@@ -35,10 +36,13 @@ Errors print as `<file>: <field>: <message>`. A missing file means the factory i
 | `poll_seconds`         | at once                                                                                                                                                                                                                                                                         |
 | `max_concurrent_runs`  | next pass                                                                                                                                                                                                                                                                       |
 | `max_concurrent_gates` | next pass                                                                                                                                                                                                                                                                       |
+| `min_free_gib`         | next pass                                                                                                                                                                                                                                                                       |
 | `notify`               | next attention item                                                                                                                                                                                                                                                             |
 | `gh_config_dir`        | next pass, for the factory's own `gh` calls. Sessions use the server's `GH_CONFIG_DIR` env (set in `factory/launchd/io.github.rawphp.t3fac.plist`): edit it there, then run `install.sh` on the built archive (`deploy.sh` refuses the uncommitted edit until it is committed). |
 
-Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates`. It keeps `notify` and the retired keys, and drops unknown keys.
+Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates`. It keeps `notify`, `min_free_gib` and the retired keys, and drops unknown keys.
+
+A pass reads the free space of the volume holding the worktrees folder T3 uses now (Settings → Storage, else `<base>/worktrees`) and of the one holding the data dir, and takes the lower. Below `min_free_gib` it claims nothing and starts no gate (a held gate records no attempt), prints one `low disk:` line, writes `claim_skipped` with reason `low-disk`, and keeps the attention item `low-disk` open until a pass finds the space back. A probe that fails is an error line and holds nothing back. Relaunches of claimed runs are not held.
 
 ## Data dir
 
