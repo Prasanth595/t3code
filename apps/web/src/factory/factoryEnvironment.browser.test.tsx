@@ -459,13 +459,34 @@ describe("the Factory page shows every environment that runs a factory", () => {
     expect(page.all("button").filter((b) => b.textContent === "Pause claims")).toHaveLength(1);
   });
 
-  it("shows the runs of the others while a candidate has not answered", async () => {
+  it("shows the runs of the others while a candidate has not answered, and reads no runs of it yet", async () => {
     worlds.set(ENV_1, { status: statusBody("running"), runs: [], hang: true });
     const page = await show(createElement(FactoryPage));
     expect(page.text()).toContain("acme/widgets");
     expect(
       rowOf(page, "Desktop").querySelector('[role="status"][aria-label="Loading Desktop"]'),
     ).not.toBeNull();
+    expect(calls.runs.map(([env]) => env)).toEqual([ENV_2]);
+    const links = linksTo(page, "/factory/$environmentId/$runId");
+    expect(links).toContainEqual({ environmentId: ENV_2, runId: RUN_2 });
+    expect(links.map(({ environmentId }) => environmentId)).not.toContain(ENV_1);
+  });
+
+  it("shows a status that failed on its first read as a notice in its row, and reads no runs for it", async () => {
+    const status = fakeApi.status;
+    __setFactoryApiForTests({
+      ...fakeApi,
+      status: async (env) => {
+        if (env === ENV_1) throw new FactoryApiError(500, null, "state file locked");
+        return status(env);
+      },
+    });
+    const page = await show(createElement(FactoryPage));
+    expect(page.text()).toContain("Could not read Desktop: state file locked");
+    expect(page.text()).not.toContain("Could not refresh Desktop");
+    expect(page.text()).toContain("acme/widgets");
+    expect(calls.runs.map(([env]) => env)).toEqual([ENV_2]);
+    expect(buttonIn(rowOf(page, "Desktop"), "Retry")).toBeDefined();
   });
 
   it("names the environment whose runs could not be read, and keeps the rest", async () => {

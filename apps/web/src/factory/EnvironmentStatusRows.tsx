@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 
+import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
 
@@ -19,6 +20,29 @@ function Row({
 }) {
   const report = status.data;
   const paused = report?.paused_by_hand ?? null;
+  // A first read that failed is the same notice the page shows for a status that fails after data,
+  // so a failure looks the same whenever it happens.
+  if (report === null && status.status === "error") {
+    return (
+      <li>
+        <Alert variant="error">
+          <AlertDescription>
+            Could not read {label}: {messageOf(status.error)}
+          </AlertDescription>
+          <AlertAction>
+            <Button
+              aria-label={`Retry ${label}`}
+              onClick={status.refresh}
+              size="sm"
+              variant="outline"
+            >
+              Retry
+            </Button>
+          </AlertAction>
+        </Alert>
+      </li>
+    );
+  }
   return (
     <li className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-card px-3 py-2 text-sm">
       <span className="min-w-0 break-words font-medium">{label}</span>
@@ -45,21 +69,6 @@ function Row({
             variant="outline"
           >
             {paused ? "Resume claims" : "Pause claims"}
-          </Button>
-        </>
-      ) : status.status === "error" ? (
-        <>
-          <span className="min-w-0 break-words text-destructive-foreground">
-            {messageOf(status.error)}
-          </span>
-          <Button
-            aria-label={`Retry ${label}`}
-            className="ml-auto shrink-0"
-            onClick={status.refresh}
-            size="sm"
-            variant="outline"
-          >
-            Retry
           </Button>
         </>
       ) : (

@@ -1,6 +1,8 @@
+import { isRedirect } from "@tanstack/react-router";
 import { describe, expect, it } from "vite-plus/test";
 
 import tree from "../routeTree.gen.ts?raw";
+import { Route as oldRunRoute } from "../routes/factory_.$runId";
 
 // Building the real router in a unit test pulls in the whole app (workers, browser globals), so
 // this pins the generated tree's structure: the run route must not nest under the runs list,
@@ -29,5 +31,19 @@ describe("factory routes", () => {
       );
     expect(update?.[0]).toContain("getParentRoute: () => rootRouteImport");
     expect(tree).toMatch(/'\/factory_\/\$runId': \{[^}]*fullPath: '\/factory\/\$runId'/);
+  });
+
+  it("sends an old /factory/<runId> link to the runs list", () => {
+    let thrown: unknown;
+    try {
+      oldRunRoute.options.beforeLoad?.({} as never);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(isRedirect(thrown)).toBe(true);
+    expect((thrown as { options: { to?: string; replace?: boolean } }).options).toMatchObject({
+      to: "/factory",
+      replace: true,
+    });
   });
 });

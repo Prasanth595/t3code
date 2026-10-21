@@ -3,16 +3,21 @@ import { createRoot, type Root } from "react-dom/client";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import {
+  __setFactoryApiForTests,
+  FactoryApiError,
+  type FactoryApi,
+  type FactoryRunRow,
+  type FactoryStatus,
+} from "./api";
 import {
   __resetFactoryStoresForTests,
   useFactoryAttentionCount,
   useFactoryEnvironmentLabel,
   useFactoryEnvironments,
+  useFactoryResource,
   useFactoryRun,
-  useFactoryRuns,
   useFactoryRunsOf,
-  useFactoryStatus,
   useFactorySupported,
   type FactoryResource,
 } from "./useFactoryData";
@@ -37,6 +42,16 @@ vi.mock("~/state/environments", () => ({
 const ENV_1 = "env-1" as EnvironmentId;
 const ENV_2 = "env-2" as EnvironmentId;
 const ENV_3 = "env-3" as EnvironmentId;
+
+// One key's reader: the store behaves the same whichever key reads it, and these keep its tests
+// short.
+const useFactoryStatus = (environmentId: EnvironmentId | null) =>
+  useFactoryResource<FactoryStatus>(environmentId, "status");
+const useFactoryRuns = (environmentId: EnvironmentId | null, all = false) =>
+  useFactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }>(
+    environmentId,
+    all ? "runs:all" : "runs",
+  );
 
 const status = (attention: number, state: "running" | "idle" = "running") => ({
   state,

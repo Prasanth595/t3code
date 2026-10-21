@@ -163,7 +163,7 @@ const noUnsubscribe = () => {};
  * factory ever made, every half minute, is the cost the recent window exists to avoid. Without an
  * environment there is nothing to read: the loading state, and a refresh that does nothing.
  */
-function useFactoryResource<T>(
+export function useFactoryResource<T>(
   environmentId: EnvironmentId | null,
   resource: Resource,
 ): FactoryResource<T> {
@@ -186,17 +186,6 @@ function useFactoryResource<T>(
   });
   return { ...state, refresh: refreshNow };
 }
-
-export const useFactoryStatus = (
-  environmentId: EnvironmentId | null,
-): FactoryResource<FactoryStatus> => useFactoryResource<FactoryStatus>(environmentId, "status");
-
-/** The runs list: the recent window the server lists by default, polled; or every run with `all`, read once. */
-export const useFactoryRuns = (
-  environmentId: EnvironmentId | null,
-  all = false,
-): FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }> =>
-  useFactoryResource(environmentId, all ? "runs:all" : "runs");
 
 export const useFactoryRun = (
   environmentId: EnvironmentId | null,
@@ -311,8 +300,11 @@ export function useFactorySupported(): boolean {
 
 /** The open attention items over every listed environment, for the sidebar badge: 0 before any answer. */
 export function useFactoryAttentionCount(): number {
-  return useFactoryEnvironments().reduce(
-    (sum, { status }) => sum + (status.data?.attention.length ?? 0),
+  // From the candidates, not `useFactoryEnvironments`: the badge needs no labels, so it does not
+  // read the environments' presentations.
+  const { statuses } = useFactoryCandidates();
+  return statuses.reduce(
+    (sum, status) => sum + (isNotFound(status.error) ? 0 : (status.data?.attention.length ?? 0)),
     0,
   );
 }
