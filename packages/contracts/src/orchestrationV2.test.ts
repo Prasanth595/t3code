@@ -2,12 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import {
-  NodeId,
-  ProviderInstanceId,
-  RunAttemptId,
-  TrimmedNonEmptyString,
-} from "./index.ts";
+import { NodeId, ProviderInstanceId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
   OrchestrationV2AppThreadJson,
