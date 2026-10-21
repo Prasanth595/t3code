@@ -56,6 +56,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ProviderTurn,
   type PreviewAnnotationPayload,
+  ProviderInstanceId,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
