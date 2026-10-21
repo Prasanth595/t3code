@@ -457,8 +457,10 @@ describe("decodeOtlpTraceRecords", () => {
     // Protobuf JSON leaves out unset and empty fields, so this batch is valid.
     const payload = cast<unknown, OtlpTracer.TraceData>({
       resourceSpans: [
+        {},
         {
           scopeSpans: [
+            {},
             {
               spans: [
                 {
@@ -468,7 +470,6 @@ describe("decodeOtlpTraceRecords", () => {
                   startTimeUnixNano: "1000000",
                   endTimeUnixNano: "3000000",
                   attributes: [{ key: "tags", value: { arrayValue: {} } }],
-                  events: [{ name: "flushed", timeUnixNano: "2000000" }],
                 },
               ],
             },
@@ -477,6 +478,7 @@ describe("decodeOtlpTraceRecords", () => {
       ],
     });
 
+    assert.deepStrictEqual(decodeOtlpTraceRecords(cast<unknown, OtlpTracer.TraceData>({})), []);
     assert.deepStrictEqual(decodeOtlpTraceRecords(payload), [
       {
         type: "otlp-span",
@@ -491,7 +493,7 @@ describe("decodeOtlpTraceRecords", () => {
         attributes: { tags: [] },
         resourceAttributes: {},
         scope: { attributes: {} },
-        events: [{ name: "flushed", timeUnixNano: "2000000", attributes: {} }],
+        events: [],
         links: [],
         status: { code: "0" },
       },
