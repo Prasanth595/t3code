@@ -494,11 +494,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
+      // Existing installs live at this path; changing it fails their relaunch.
       assert.notEqual(stable.productName, nightly.productName);
-      assert.deepStrictEqual(
-        (stable.mac as { executableName: string }).executableName,
-        (nightly.mac as { executableName: string }).executableName,
-      );
+      assert.equal((stable.mac as { executableName: string }).executableName, "T3 Code (Beta)");
+      assert.equal((nightly.mac as { executableName: string }).executableName, "T3 Code (Beta)");
     }).pipe(
       Effect.provide(
         ConfigProvider.layer(
