@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { memo } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
@@ -78,8 +78,10 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 
 export function SidebarBrandWidthProbe({
   onWidthChange,
+  style,
 }: {
   onWidthChange: (width: number) => void;
+  style?: CSSProperties;
 }) {
   const observeWidth = (probe: HTMLDivElement) => {
     return observeResize(probe, ([entry]) => {
@@ -92,6 +94,7 @@ export function SidebarBrandWidthProbe({
       aria-hidden="true"
       className="pointer-events-none invisible fixed top-0 left-0 flex w-max border-r border-transparent pr-3"
       ref={observeWidth}
+      style={style}
     >
       <div className="ml-[var(--workspace-titlebar-content-left)] flex">
         <SidebarBrandMark onBackdrop={false} />

@@ -2476,3 +2476,9 @@ code {
     }
   }
 }
+
+/* Main navigation can occupy the right edge. Keep chat controls in the
+   workspace and leave native window controls and the navigation toggle at left. */
+[data-main-sidebar-side="right"][data-sidebar-state="expanded"] {
+  --workspace-controls-right: calc(var(--sidebar-width) + env(safe-area-inset-right) + 0.75rem);
+}
