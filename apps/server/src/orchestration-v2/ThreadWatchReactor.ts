@@ -9,6 +9,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FiberSet from "effect/FiberSet";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,7 +19,9 @@ import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
-import { FetchHttpClient, HttpBody, HttpClient } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as HttpBody from "effect/http/HttpBody";
+import * as HttpClient from "effect/http/HttpClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -73,6 +76,12 @@ class ThreadWatchDeliveryError extends Schema.TaggedError<ThreadWatchDeliveryErr
   { status: Schema.NullOr(Schema.Number) },
 ) {}
 
+interface ThreadWatchDelivery {
+  readonly url: string;
+  readonly secret?: string | undefined;
+  readonly secretRef?: SecretRef | undefined;
+}
+
 export class ThreadWatchReactor extends Context.Service<
   ThreadWatchReactor,
   {
@@ -81,11 +90,7 @@ export class ThreadWatchReactor extends Context.Service<
     readonly watch: (input: {
       readonly threadId: ThreadId;
       readonly projectId: ProjectId;
-      readonly delivery: {
-        readonly url: string;
-        readonly secret?: string | undefined;
-        readonly secretRef?: SecretRef | undefined;
-      };
+      readonly delivery: ThreadWatchDelivery;
     }) => Effect.Effect<
       { readonly wasWatching: boolean },
       ThreadWatchInvalidError | ThreadWatchStoreError | SecretRequestError
@@ -94,6 +99,17 @@ export class ThreadWatchReactor extends Context.Service<
       readonly threadId: ThreadId;
       readonly url: string;
     }) => Effect.Effect<{ readonly wasWatching: boolean }, ThreadWatchStoreError>;
+    /** Watches the thread `launch` creates before it exists, so its first run cannot be missed. */
+    readonly watchLaunch: <A, E, R>(input: {
+      readonly threadId: ThreadId;
+      readonly projectId: ProjectId;
+      readonly delivery: ThreadWatchDelivery;
+      readonly launch: Effect.Effect<A, E, R>;
+    }) => Effect.Effect<
+      A,
+      E | ThreadWatchInvalidError | ThreadWatchStoreError | SecretRequestError,
+      R
+    >;
     readonly drain: Effect.Effect<void>;
   }
 >()("t3/orchestration-v2/ThreadWatchReactor") {}
@@ -236,24 +252,29 @@ export const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       for (const watch of watches.values()) {
         const prior = told.get(watch.id);
-        const { state, kind } = observeThreadWatch(shell, prior ?? UNSEEN);
+        const { state, kinds } = observeThreadWatch(shell, prior ?? UNSEEN);
         told.set(watch.id, state);
         // A first look only sets the baseline, unless the thread already ended.
-        if (kind === null || (prior === undefined && kind !== "ended")) continue;
-        const eventId = threadWatchEventId(watch.id, kind, state);
-        const body = threadWatchEventBody({
-          eventId,
-          environmentId,
-          threadId,
-          shell,
-          kind,
-          occurredAt: now,
-        });
+        const send = prior === undefined ? kinds.filter((kind) => kind === "ended") : kinds;
+        if (send.length === 0) continue;
         yield* FiberSet.run(
           deliveries,
-          kind === "ended"
-            ? deliver(watch, eventId, body).pipe(Effect.andThen(end(watch)))
-            : deliver(watch, eventId, body),
+          Effect.forEach(
+            send,
+            (kind) => {
+              const eventId = threadWatchEventId(watch.id, kind, state, now);
+              const body = threadWatchEventBody({
+                eventId,
+                environmentId,
+                threadId,
+                shell,
+                kind,
+                occurredAt: now,
+              });
+              return deliver(watch, eventId, body);
+            },
+            { discard: true },
+          ).pipe(Effect.andThen(state.ended ? end(watch) : Effect.void)),
         );
       }
     },
@@ -277,7 +298,6 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError((cause) => new ThreadWatchStoreError({ cause })));
       if (shell?.lineage.relationshipToParent === "subagent")
         return yield* new ThreadWatchInvalidError({ reason: "subagent" });
-      // A thread that does not exist yet is being launched: its first run is news.
       const baseline = shell === null ? UNSEEN : observeThreadWatch(shell, UNSEEN).state;
       if (baseline.ended) return yield* new ThreadWatchInvalidError({ reason: "ended" });
       const secret =
@@ -322,6 +342,21 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const watchLaunch: ThreadWatchReactor["Service"]["watchLaunch"] = ({ launch, ...input }) =>
+    Effect.uninterruptibleMask((restore) =>
+      watch(input).pipe(
+        Effect.andThen(
+          restore(launch).pipe(
+            // A failed launch may still have created the thread; the check ends
+            // the watch only if it did not.
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit) ? Effect.void : worker.enqueue(input.threadId),
+            ),
+          ),
+        ),
+      ),
+    ).pipe(Effect.withSpan("ThreadWatchReactor.watchLaunch"));
+
   const start: ThreadWatchReactor["Service"]["start"] = Effect.fn("ThreadWatchReactor.start")(
     function* () {
       yield* forkParked(
@@ -329,7 +364,6 @@ export const make = Effect.gen(function* () {
           wakesWatchers(event) ? worker.enqueue(event.threadId) : Effect.void,
         ),
       );
-      // Watches from before this start take their baseline now.
       yield* Effect.forEach([...watchesByThread.keys()], worker.enqueue, { discard: true });
     },
   );
@@ -339,6 +373,7 @@ export const make = Effect.gen(function* () {
     checkThread: (threadId) => worker.enqueue(threadId).pipe(Effect.asVoid),
     watch,
     unwatch,
+    watchLaunch,
     drain: worker.drain.pipe(Effect.andThen(FiberSet.awaitEmpty(deliveries))),
   });
 });

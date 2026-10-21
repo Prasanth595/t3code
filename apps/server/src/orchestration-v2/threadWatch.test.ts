@@ -81,7 +81,7 @@ function told(shells: ReadonlyArray<OrchestrationV2ThreadShell | null>) {
   return shells.map((next) => {
     const observed = observeThreadWatch(next, state);
     state = observed.state;
-    return observed.kind;
+    return observed.kinds.join("+") || null;
   });
 }
 
@@ -112,9 +112,10 @@ describe("observeThreadWatch", () => {
         approval,
         question,
         shell({ latestRunId: RUN_2, status: "failed", activityRunStatus: null }),
-        completed(RUN_2, "2026-10-20T12:09:00.000Z"),
+        { ...completed(RUN_2, "2026-10-20T12:09:00.000Z"), settledOverride: "settled" },
+        null,
       ]),
-      [null, "completed", null, "approval", null, "question", "failed", "completed"],
+      [null, "completed", null, "approval", null, "question", "failed", "completed+ended", null],
     );
   });
 
@@ -130,10 +131,10 @@ describe("observeThreadWatch", () => {
     const first = observeThreadWatch(asking("request-1"), UNSEEN);
     const answered = observeThreadWatch(shell(), first.state);
     const second = observeThreadWatch(asking("request-2"), answered.state);
-    assert.strictEqual(second.kind, "question");
+    assert.deepStrictEqual(second.kinds, ["question"]);
     assert.notStrictEqual(
-      threadWatchEventId("tw", "question", first.state),
-      threadWatchEventId("tw", "question", second.state),
+      threadWatchEventId("tw", "question", first.state, at("2026-10-20T12:06:00.000Z")),
+      threadWatchEventId("tw", "question", second.state, at("2026-10-20T12:06:00.000Z")),
     );
   });
 });

@@ -15,20 +15,21 @@ export interface ThreadWatchState {
 
 export const UNSEEN: ThreadWatchState = { attention: null, completion: null, ended: false };
 
-/** Uses the phases mobile alerts use, so a watcher hears what a phone would. */
+/**
+ * Uses the phases mobile alerts use. A run that ends as its thread settles is
+ * reported before `ended`.
+ */
 export function observeThreadWatch(
   shell: OrchestrationV2ThreadShell | null,
   prior: ThreadWatchState,
-): { readonly state: ThreadWatchState; readonly kind: ThreadWatchEventKind | null } {
-  if (
+): { readonly state: ThreadWatchState; readonly kinds: ReadonlyArray<ThreadWatchEventKind> } {
+  if (prior.ended) return { state: prior, kinds: [] };
+  const ended =
     shell === null ||
     shell.deletedAt !== null ||
     shell.archivedAt !== null ||
-    shell.settledOverride === "settled"
-  ) {
-    return { state: { ...prior, ended: true }, kind: prior.ended ? null : "ended" };
-  }
-  const phase = resolveThreadAwarenessPhaseV2(shell);
+    shell.settledOverride === "settled";
+  const phase = shell === null ? null : resolveThreadAwarenessPhaseV2(shell);
   const attentionKind =
     phase === "waiting_for_approval"
       ? "approval"
@@ -41,31 +42,34 @@ export function observeThreadWatch(
   const attention =
     attentionKind === null
       ? null
-      : `${shell.latestRunId ?? ""}:${attentionKind}:${shell.pendingRuntimeRequest?.id ?? ""}`;
+      : `${shell?.latestRunId ?? ""}:${attentionKind}:${shell?.pendingRuntimeRequest?.id ?? ""}`;
   const completion =
-    phase === "completed"
+    phase === "completed" && shell !== null
       ? DateTime.formatIso(shell.latestRunCompletedAt ?? shell.updatedAt)
       : prior.completion;
-  const state = { attention, completion, ended: false };
-  if (attentionKind !== null && attention !== prior.attention)
-    return { state, kind: attentionKind };
-  if (completion !== null && completion !== prior.completion) return { state, kind: "completed" };
-  return { state, kind: null };
+  const kinds: Array<ThreadWatchEventKind> = [];
+  if (attentionKind !== null && attention !== prior.attention) kinds.push(attentionKind);
+  else if (completion !== null && completion !== prior.completion) kinds.push("completed");
+  if (ended) kinds.push("ended");
+  return { state: { attention, completion, ended }, kinds };
 }
 
 const digest = (value: string) =>
   NodeCrypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
 
-/** Deterministic, as MCP Events subscription ids are. */
 export const threadWatchId = (threadId: ThreadId, url: string) =>
   `tw_${digest(`${threadId}\0${url}`)}`;
 
-/** Stable across retries, so receivers can drop repeats. */
 export const threadWatchEventId = (
   watchId: string,
   kind: ThreadWatchEventKind,
   state: ThreadWatchState,
-) => `evt_${digest(`${watchId}\0${kind}\0${state.attention ?? state.completion ?? ""}`)}`;
+  occurredAt: DateTime.Utc,
+) =>
+  `evt_${digest(
+    // A watch made again on the same URL can end with nothing else changed.
+    `${watchId}\0${kind}\0${kind === "ended" ? DateTime.formatIso(occurredAt) : (state.attention ?? state.completion ?? "")}`,
+  )}`;
 
 export function threadWatchEventBody(input: {
   readonly eventId: string;

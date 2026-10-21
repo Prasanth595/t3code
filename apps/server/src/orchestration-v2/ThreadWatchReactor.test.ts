@@ -235,24 +235,28 @@ describe("ThreadWatchReactor", () => {
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 
-  it.effect(
-    "a watch made before its thread exists hears its first run, or ends if it never comes",
-    () =>
-      Effect.gen(function* () {
-        const { received, reactor, watch, settle } = yield* makeHarness({ initial: null });
-        yield* watch();
-        yield* reactor.drain;
-        assert.strictEqual(received.length, 0, "the thread is still being launched");
-        yield* settle(shell({ status: "failed", activityRunStatus: null }));
-        assert.deepInclude(verified(received[0]).data, { kind: "failed", runId: RUN_1 });
+  it.effect("a launch is watched before its thread exists, and a launch that fails ends it", () =>
+    Effect.gen(function* () {
+      const delivery = { url: URL, secret: SECRET };
+      const launched = yield* makeHarness({ initial: null });
+      const launch = (harness: typeof launched, effect: Effect.Effect<void, string>) =>
+        harness.reactor
+          .watchLaunch({ threadId: THREAD_ID, projectId: PROJECT_ID, delivery, launch: effect })
+          .pipe(Effect.exit);
+      yield* launch(launched, Effect.void);
+      yield* launched.reactor.drain;
+      assert.strictEqual(launched.received.length, 0, "the thread is still being launched");
+      yield* launched.settle(shell({ status: "failed", activityRunStatus: null }));
+      assert.deepInclude(verified(launched.received[0]).data, { kind: "failed", runId: RUN_1 });
 
-        // A launch that failed before creating its thread.
+      for (const failure of [Effect.fail("no thread"), Effect.interrupt]) {
         const unborn = yield* makeHarness({ initial: null });
-        yield* unborn.watch();
-        yield* unborn.settle(null);
+        yield* launch(unborn, failure);
+        yield* unborn.reactor.drain;
         assert.deepInclude(verified(unborn.received[0]).data, { kind: "ended" });
         assert.isFalse(yield* stillWatching(unborn.reactor));
-      }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+      }
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 
   it.effect("after a restart, a watch picks up from the thread as it is then", () =>
@@ -341,15 +345,30 @@ describe("ThreadWatchReactor", () => {
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 
-  it.effect("settling the thread sends ended and ends the watch", () =>
+  it.effect("settling sends what changed, then ended, and ends the watch", () =>
     Effect.gen(function* () {
       const { received, reactor, settle, watch } = yield* makeHarness();
       yield* watch();
-      yield* settle(shell({ settledOverride: "settled" }));
-      assert.deepInclude(verified(received[0]).data, { kind: "ended" });
-      yield* settle(completed());
-      assert.strictEqual(received.length, 1);
+      yield* settle({ ...completed(), settledOverride: "settled" });
+      assert.deepStrictEqual(
+        received.map((request) => verified(request).data["kind"]),
+        ["completed", "ended"],
+      );
+      yield* settle(completed(RUN_2, "2026-10-20T12:30:00.000Z"));
+      assert.strictEqual(received.length, 2);
       assert.isFalse(yield* stillWatching(reactor));
+
+      // Watched again after unsettling, a thread can end with nothing else changed.
+      const again = yield* makeHarness();
+      const settled = shell({ settledOverride: "settled" });
+      yield* again.watch();
+      yield* again.settle(settled);
+      yield* again.settle(shell());
+      yield* again.watch();
+      yield* TestClock.adjust("1 minute");
+      yield* again.settle(settled);
+      const [first, second] = again.received;
+      assert.notStrictEqual(second?.headers.get("webhook-id"), first?.headers.get("webhook-id"));
     }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
   );
 

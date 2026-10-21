@@ -155,20 +155,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        // Watched before the thread exists, so its first run cannot be missed.
-        const watchDelivery = input.watch;
-        if (watchDelivery !== undefined)
-          yield* ThreadWatchReactor.ThreadWatchReactor.pipe(
-            Effect.flatMap((watches) =>
-              watches.watch({ threadId, projectId, delivery: watchDelivery }),
-            ),
-            Effect.catchTags({
-              ThreadWatchInvalidError: watchRefused,
-              ThreadWatchStoreError: watchRefused,
-              SecretRequestError: watchRefused,
-            }),
-          );
-        const result = yield* ThreadMessageIntake.launchThread({
+        const launch = ThreadMessageIntake.launchThread({
           commandId,
           threadId,
           projectId,
@@ -205,16 +192,21 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             }
             return unavailable();
           }),
-          // A failed launch may still have created the thread; a check ends the
-          // watch only if it did not.
-          Effect.onError(() =>
-            watchDelivery === undefined
-              ? Effect.void
-              : ThreadWatchReactor.ThreadWatchReactor.pipe(
-                  Effect.flatMap((watches) => watches.checkThread(threadId)),
-                ),
-          ),
         );
+        const delivery = input.watch;
+        const result =
+          delivery === undefined
+            ? yield* launch
+            : yield* ThreadWatchReactor.ThreadWatchReactor.pipe(
+                Effect.flatMap((watches) =>
+                  watches.watchLaunch({ threadId, projectId, delivery, launch }),
+                ),
+                Effect.catchTags({
+                  ThreadWatchInvalidError: watchRefused,
+                  ThreadWatchStoreError: watchRefused,
+                  SecretRequestError: watchRefused,
+                }),
+              );
         const thread = result.projection.thread;
         const run = result.projection.runs.find((run) => run.userMessageId === messageId);
         return {
