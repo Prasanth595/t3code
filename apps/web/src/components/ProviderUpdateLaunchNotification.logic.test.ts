@@ -447,7 +447,7 @@ describe("provider update launch notification logic", () => {
       ).toBe(true);
     });
 
-    it("waits for a connection before offering cached provider updates", () => {
+    it("keeps the notification key stable while connection readiness changes", () => {
       const cachedProvider = provider({ driver: driver("codex") });
       const primary = environment({
         environmentId: "env-cached",
@@ -455,17 +455,17 @@ describe("provider update launch notification logic", () => {
         connectionState: "connecting",
         providers: [cachedProvider],
       });
-      const waiting = buildLocalEnvironmentUpdateGroups([primary]);
-      expect(waiting.groups[0]?.candidates).toEqual([]);
-      expect(localEnvironmentUpdateNotificationKey(waiting.groups)).toBeNull();
-
-      const connected = buildLocalEnvironmentUpdateGroups([
-        { ...primary, connectionState: "ready" },
-      ]);
-      expect(connected.groups[0]?.candidates).toEqual([cachedProvider]);
-      expect(localEnvironmentUpdateNotificationKey(connected.groups)).toBe(
-        "env-cached=codex:1.1.0",
-      );
+      for (const connectionState of [
+        "connecting",
+        "ready",
+        "disconnected",
+        "error",
+        "ready",
+      ] as const) {
+        const { groups } = buildLocalEnvironmentUpdateGroups([{ ...primary, connectionState }]);
+        expect(groups[0]?.isReady).toBe(connectionState === "ready");
+        expect(localEnvironmentUpdateNotificationKey(groups)).toBe("env-cached=codex:1.1.0");
+      }
     });
   });
 
@@ -475,6 +475,7 @@ describe("provider update launch notification logic", () => {
       label: "WSL",
       isPrimary: false,
       isSettling: false,
+      isReady: true,
       candidates: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
       providers: [],
     };
