@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId } from "@t3tools/contracts";
 
-import {
-  providerModelKey,
-  sortProviderModelItems,
-} from "./modelOrdering";
+import { providerModelKey, sortProviderModelItems } from "./modelOrdering";
 
 const CODEX_WORK_ID = ProviderInstanceId.make("codex_work");
 const CLAUDE_ID = ProviderInstanceId.make("claudeAgent");
