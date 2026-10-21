@@ -73,7 +73,11 @@ const DRIVER_KIND = ProviderDriverKind.make("opencode");
 export function isLocalOpenCodeServerUrl(serverUrl: string): boolean {
   const url = URL.parse(serverUrl.trim());
   if (url?.protocol !== "http:" && url?.protocol !== "https:") return false;
-  return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  return (
+    url.hostname === "localhost" ||
+    url.hostname === "[::1]" ||
+    /^127\.(?:\d{1,3}\.){2}\d{1,3}$/.test(url.hostname)
+  );
 }
 
 function isOpenCodeNativeCommandPath(commandPath: string): boolean {
@@ -357,12 +361,13 @@ export const OpenCodeDriver: ProviderDriver<
         // A configured loopback server reports its running version. Probe the local
         // CLI separately so a completed npm update is not mistaken for a failure
         // while that independently managed server still runs the previous binary.
-        installedVersion: isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
-          ? probeOpenCodeBinary(effectiveConfig.binaryPath, processEnv).pipe(
-              Effect.map((probed) => probed.version),
-              Effect.orElseSucceed(() => undefined),
-            )
-          : Effect.succeed(undefined),
+        installedVersion:
+          effectiveConfig.enabled && isLocalOpenCodeServerUrl(effectiveConfig.serverUrl)
+            ? probeOpenCodeBinary(effectiveConfig.binaryPath, processEnv).pipe(
+                Effect.map((probed) => probed.version),
+                Effect.orElseSucceed(() => undefined),
+              )
+            : Effect.succeed(undefined),
         provider: checkOpenCodeProviderStatus(
           effectiveConfig,
           host.paths.cwd,
