@@ -333,20 +333,22 @@ export function AppearanceSettingsPanel() {
             ) : null
           }
           control={
-            <Select
-              value={settings.sidebarSide}
-              onValueChange={(value) => {
-                if (value === "left" || value === "right") updateSettings({ sidebarSide: value });
-              }}
-            >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Sidebar position">
-                <SelectValue>{settings.sidebarSide === "right" ? "Right" : "Left"}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value="left">Left (default)</SelectItem>
-                <SelectItem value="right">Right</SelectItem>
-              </SelectPopup>
-            </Select>
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.sidebarSide}
+                onValueChange={(value) => {
+                  if (value === "left" || value === "right") updateSettings({ sidebarSide: value });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Sidebar position">
+                  <SelectValue>{settings.sidebarSide === "right" ? "Right" : "Left"}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="left">Left (default)</SelectItem>
+                  <SelectItem value="right">Right</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
 

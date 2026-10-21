@@ -53,10 +53,8 @@ function Draft() {
         <span>Current thread</span>
       </WorkspacePageHeader>
       <input aria-label="Draft" value={value} onChange={(event) => setValue(event.target.value)} />
-      <button style={{ position: "fixed", right: "var(--workspace-viewport-controls-right)" }}>
-        Chat tools
-      </button>
-      <button style={{ position: "absolute", top: 60, right: "var(--workspace-controls-right)" }}>
+      <button className="fixed right-[var(--workspace-viewport-controls-right)]">Chat tools</button>
+      <button className="absolute top-15 right-[var(--workspace-controls-right)]">
         Panel tools
       </button>
     </SidebarInset>

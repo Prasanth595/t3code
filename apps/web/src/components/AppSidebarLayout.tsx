@@ -406,14 +406,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         defaultOpen
         style={sidebarProviderStyle}
       >
-        <SidebarBrandWidthProbe
-          onWidthChange={setBrandWidth}
-          style={
-            sidebarSide === "right"
-              ? ({ "--workspace-titlebar-content-left": "0.75rem" } as CSSProperties)
-              : {}
-          }
-        />
+        <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
         <ProjectProjectionRetention />
         <Sidebar
           side={sidebarSide}
@@ -430,11 +423,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
             storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
             onResize: setSidebarWidth,
           }}
-          style={
-            sidebarSide === "right"
-              ? ({ "--workspace-titlebar-content-left": "0.75rem" } as CSSProperties)
-              : windowControlsInsetStyle
-          }
+          className={cn(sidebarSide === "right" && "[--workspace-titlebar-content-left:0.75rem]")}
+          style={windowControlsInsetStyle}
         >
           {isOnSettings ? (
             <>
