@@ -11,6 +11,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
   type OrchestrationV2ThreadShellSnapshot,
+  OrchestrationV2ThreadShell,
   NodeId,
   PlanId,
   ProjectId,
@@ -186,6 +187,44 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
 
   return threadId;
 });
+
+it.effect.each([
+  ["memory", ProjectionStore.layerMemory],
+  ["SQL", layerTest],
+] as const)("%s shells preserve optional side-chat metadata across JSON", ([, layer]) =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sourceId = yield* addRolledBackRecoveryCandidate("shell-side-chat");
+    const { thread } = yield* store.getThreadProjection(sourceId);
+    const codec = Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ThreadShell));
+    for (const [index, sideChatOf] of [undefined, null, sourceId].entries()) {
+      const threadId = ThreadId.make(`shell-side-chat:${index}`);
+      yield* store.apply({
+        id: EventId.make(`event:shell-side-chat:${index}`),
+        type: "thread.created",
+        threadId,
+        occurredAt: thread.createdAt,
+        payload: {
+          ...thread,
+          id: threadId,
+          ...(sideChatOf === undefined ? {} : { sideChatOf }),
+        },
+      });
+      const projection = yield* store.getThreadProjection(threadId);
+      const listed = (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId);
+      for (const shell of [
+        yield* store.getThreadShell(threadId),
+        listed,
+        ProjectionStore.threadShellFromProjection(projection),
+      ]) {
+        assert.isDefined(shell);
+        assert.strictEqual(shell!.sideChatOf, sideChatOf);
+        const encoded = yield* Schema.encodeEffect(codec)(shell!);
+        assert.deepEqual(yield* Schema.decodeUnknownEffect(codec)(encoded), shell);
+      }
+    }
+  }).pipe(Effect.provide(layer)),
+);
 
 it.effect.each([
   ["memory", ProjectionStore.layerMemory],
