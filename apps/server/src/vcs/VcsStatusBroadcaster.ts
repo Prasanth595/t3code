@@ -513,8 +513,20 @@ export const make = Effect.gen(function* () {
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     if (options?.localOnly) {
-      const local = yield* refreshLocalStatusCore(cwd);
-      return mergeGitStatusParts(local, null);
+      return yield* withRemoteWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          yield* workflow.invalidateLocalStatus(cwd);
+          const local = yield* workflow.localStatus({ cwd });
+          const previous = yield* getCachedStatus(cwd);
+          if (previous?.local?.value.refName !== local.refName) {
+            yield* workflow.invalidateRemoteStatus(cwd);
+            return yield* updateCachedStatus(cwd, local, null, { publish: true });
+          }
+          yield* updateCachedLocalStatus(cwd, local, { publish: true });
+          return mergeGitStatusParts(local, null);
+        }),
+      );
     }
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.

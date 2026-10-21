@@ -186,11 +186,61 @@ describe("VcsStatusBroadcaster", () => {
       assert.isNull(refreshed.pr);
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.remoteInvalidationCalls, 0);
+      assert.equal(state.remoteInvalidationCalls, 1);
       assert.deepStrictEqual((yield* Fiber.join(events))[1], {
-        _tag: "localUpdated",
+        _tag: "snapshot",
         local: state.currentLocalStatus,
+        remote: null,
       });
+      assert.isNull((yield* broadcaster.getStatus({ cwd: "/repo" })).pr);
+      const snapshot = yield* broadcaster
+        .streamStatus({ cwd: "/repo", includeRemote: false })
+        .pipe(Stream.take(1), Stream.runCollect);
+      assert.deepStrictEqual(snapshot[0], {
+        _tag: "snapshot",
+        local: state.currentLocalStatus,
+        remote: null,
+      });
+    }).pipe(Effect.provide(layerTestFor(state)));
+  });
+
+  it.effect("clears the previous branch's remote status after an in-flight PR refresh", () => {
+    const remoteReadStarted = Deferred.makeUnsafe<void>();
+    const releaseRemoteRead = Deferred.makeUnsafe<void>();
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: remoteStatusWithPr,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+      beforeRemoteStatus: Effect.void,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* broadcaster.getStatus({ cwd: "/repo" });
+      state.beforeRemoteStatus = Deferred.succeed(remoteReadStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseRemoteRead)),
+      );
+      const remoteRefresh = yield* broadcaster
+        .refreshPullRequestStatus("/repo")
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(remoteReadStarted);
+      state.currentLocalStatus = { ...baseLocalStatus, refName: "main" };
+      const localRefresh = yield* broadcaster
+        .refreshStatus("/repo", { localOnly: true })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.succeed(releaseRemoteRead, undefined);
+      yield* Fiber.join(remoteRefresh);
+      yield* Fiber.join(localRefresh);
+
+      const status = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(status.refName, "main");
+      assert.isNull(status.pr);
+      assert.equal(status.aheadCount, 0);
+      assert.equal(status.behindCount, 0);
+      assert.equal(state.remoteStatusCalls, 2);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
