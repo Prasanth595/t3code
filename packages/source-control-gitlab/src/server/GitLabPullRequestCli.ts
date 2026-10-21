@@ -33,6 +33,7 @@ import {
   decodeMergeRequestDiffsJson,
   decodeMergeRequestChangesJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
@@ -41,6 +42,7 @@ import {
   decodeRepositoryBlobsJson,
   decodeViewerJson,
   gitLabAwardName,
+  MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
   MERGE_REQUEST_STATS_GRAPHQL_QUERY,
   REPOSITORY_BLOBS_GRAPHQL_QUERY,
   type GitLabDiffRefs,
@@ -48,7 +50,10 @@ import {
   type GitLabMergeRequestListItem,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
-import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type {
+  ProviderFileStats,
+  ProviderListCursor,
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class GitLabMergeRequestReadError extends Schema.TaggedError<GitLabMergeRequestReadError>()(
   "GitLabMergeRequestReadError",
@@ -249,6 +254,12 @@ export class GitLabPullRequestCli extends Context.Service<
       }>,
       GitLabPullRequestCliError
     >;
+
+    readonly getMergeRequestFileStats: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly number: number;
+    }) => Effect.Effect<ProviderFileStats, GitLabPullRequestCliError>;
 
     readonly listNotes: (input: {
       readonly cwd: string;
@@ -994,34 +1005,46 @@ export const make = Effect.gen(function* () {
   /** The stats connection hands back one page, so a repository's rows are asked for 100 at a time. */
   const STAT_IIDS_PER_REQUEST = 100;
 
-  const mergeRequestStats = (input: {
+  const graphqlRead = <A>(input: {
     readonly cwd: string;
-    readonly repository: string;
-    readonly numbers: ReadonlyArray<number>;
+    readonly operation: string;
+    readonly query: string;
+    readonly variables: Record<string, unknown>;
+    readonly decode: (raw: string) => Result.Result<A, unknown>;
   }) =>
     api({
       cwd: input.cwd,
       path: "graphql",
       method: "POST",
-      stdin: JSON.stringify({
-        query: MERGE_REQUEST_STATS_GRAPHQL_QUERY,
-        variables: { fullPath: input.repository, iids: input.numbers.map(String) },
-      }),
+      stdin: JSON.stringify({ query: input.query, variables: input.variables }),
     }).pipe(
       Effect.flatMap((result) => {
-        const decoded = decodeMergeRequestStatsJson(result.stdout.trim());
+        const decoded = input.decode(result.stdout.trim());
         return Result.isSuccess(decoded)
           ? Effect.succeed(decoded.success)
           : Effect.fail(
               new GitLabMergeRequestReadError({
                 command: "glab",
                 cwd: input.cwd,
-                operation: "listMergeRequestStats",
+                operation: input.operation,
                 cause: decoded.failure,
               }),
             );
       }),
     );
+
+  const mergeRequestStats = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly numbers: ReadonlyArray<number>;
+  }) =>
+    graphqlRead({
+      cwd: input.cwd,
+      operation: "listMergeRequestStats",
+      query: MERGE_REQUEST_STATS_GRAPHQL_QUERY,
+      variables: { fullPath: input.repository, iids: input.numbers.map(String) },
+      decode: decodeMergeRequestStatsJson,
+    });
 
   const STAT_REQUEST_CONCURRENCY = 4;
 
@@ -1181,6 +1204,15 @@ export const make = Effect.gen(function* () {
     getMergeRequestDetail: mergeRequestDetail,
 
     listMergeRequestStats,
+
+    getMergeRequestFileStats: (input) =>
+      graphqlRead({
+        cwd: input.cwd,
+        operation: "getMergeRequestFileStats",
+        query: MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY,
+        variables: { fullPath: input.repository, iid: String(input.number) },
+        decode: decodeMergeRequestFileStatsJson,
+      }),
 
     listNotes: (input) => notesPage({ ...input, page: 1, collected: [] }),
 

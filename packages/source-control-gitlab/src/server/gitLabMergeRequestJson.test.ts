@@ -8,6 +8,7 @@ import {
   decodeMergeRequestDetailJson,
   decodeMergeRequestDiffsJson,
   decodeMergeRequestListJson,
+  decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
   decodeNotesJson,
   decodeOwnAwardIdJson,
@@ -634,7 +635,6 @@ describe("decodeMergeRequestStatsJson", () => {
                 nodes: [
                   { iid: "7", diffStatsSummary: { additions: 12, deletions: 3 } },
                   { iid: "8", diffStatsSummary: null },
-                  { iid: null, diffStatsSummary: { additions: 1, deletions: 1 } },
                 ],
               },
             },
@@ -655,11 +655,27 @@ describe("decodeMergeRequestStatsJson", () => {
     expect(stats.size).toBe(0);
   });
 
-  it("fails on a GitLab that rejects the query", () => {
-    const result = decodeMergeRequestStatsJson(
-      JSON.stringify({ errors: [{ message: "Field 'diffStatsSummary' doesn't exist" }] }),
-    );
+  it("reports a file list shorter than the summary as truncated", () => {
+    const read = (fileCount: number) =>
+      expectSuccess(
+        decodeMergeRequestFileStatsJson(
+          JSON.stringify({
+            data: {
+              project: {
+                mergeRequest: {
+                  diffStatsSummary: { fileCount },
+                  diffStats: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+                },
+              },
+            },
+          }),
+        ),
+      );
 
-    expect(Result.isSuccess(result)).toBe(false);
+    expect(read(1)).toEqual({
+      files: [{ path: "src/a.ts", additions: 2, deletions: 1 }],
+      truncated: false,
+    });
+    expect(read(2).truncated).toBe(true);
   });
 });

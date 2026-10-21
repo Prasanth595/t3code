@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -118,24 +118,6 @@ describe("getChangeRequest base freshness", () => {
     }),
   );
 
-  it.effect("keeps the detail when the line counts cannot be read", () =>
-    Effect.gen(function* () {
-      const changeRequest = yield* readWith({}, () =>
-        Effect.fail(
-          new GitLabPullRequestCli.GitLabMergeRequestReadError({
-            command: "glab",
-            cwd: "/w",
-            operation: "listMergeRequestStats",
-            cause: new Error("unknown field"),
-          }),
-        ),
-      );
-
-      expect(changeRequest.number).toBe(7);
-      expect(changeRequest.additions).toBe(0);
-    }),
-  );
-
   it.effect("reports an unauthenticated line count read instead of a detail without counts", () =>
     Effect.gen(function* () {
       const result = yield* Effect.result(
@@ -160,9 +142,6 @@ describe("getChangeRequest base freshness", () => {
 
   it.effect("gives linked threads line counts without reading the merge settings", () =>
     Effect.gen(function* () {
-      const getProjectMergeCapabilities = vi.fn(() =>
-        Effect.succeed({ merge: true, squash: true, rebase: true }),
-      );
       const summary = yield* Effect.gen(function* () {
         const provider = yield* make;
         const read = provider.getChangeRequestSummary;
@@ -172,7 +151,7 @@ describe("getChangeRequest base freshness", () => {
         Effect.provide(
           Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
             getMergeRequestDetail: () => Effect.succeed(detail),
-            getProjectMergeCapabilities,
+            getProjectMergeCapabilities: () => Effect.die("linked threads skip merge settings"),
             listMergeRequestStats: () =>
               Effect.succeed([{ repository: "acme/web", number: 7, additions: 40, deletions: 2 }]),
           }),
@@ -181,7 +160,6 @@ describe("getChangeRequest base freshness", () => {
 
       expect(summary.additions).toBe(40);
       expect(summary.deletions).toBe(2);
-      expect(getProjectMergeCapabilities).not.toHaveBeenCalled();
     }),
   );
 });

@@ -954,34 +954,23 @@ export const MERGE_REQUEST_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [
   }
 }`;
 
+const LineCountsSchema = Schema.Struct({ additions: Schema.Int, deletions: Schema.Int });
+
 const RawMergeRequestStatsSchema = Schema.Struct({
   data: Schema.Struct({
     project: Schema.NullOr(
       Schema.Struct({
-        mergeRequests: Schema.optional(
-          Schema.NullOr(
-            Schema.Struct({
-              nodes: Schema.optional(
-                Schema.NullOr(
-                  Schema.Array(
-                    Schema.NullOr(
-                      Schema.Struct({
-                        iid: Schema.optional(Schema.NullOr(Schema.String)),
-                        diffStatsSummary: Schema.optional(
-                          Schema.NullOr(
-                            Schema.Struct({
-                              additions: Schema.optional(Schema.NullOr(Schema.Int)),
-                              deletions: Schema.optional(Schema.NullOr(Schema.Int)),
-                            }),
-                          ),
-                        ),
-                      }),
-                    ),
-                  ),
-                ),
+        mergeRequests: Schema.NullOr(
+          Schema.Struct({
+            nodes: Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  iid: Schema.String,
+                  diffStatsSummary: Schema.NullOr(LineCountsSchema),
+                }),
               ),
-            }),
-          ),
+            ),
+          }),
         ),
       }),
     ),
@@ -1006,13 +995,63 @@ export function decodeMergeRequestStatsJson(
   }
   const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
-    const iid = Number(trimmed(node?.iid));
-    const summary = node?.diffStatsSummary;
-    if (!Number.isSafeInteger(iid) || iid <= 0 || summary == null) continue;
-    stats.set(iid, {
-      additions: Math.max(0, summary.additions ?? 0),
-      deletions: Math.max(0, summary.deletions ?? 0),
-    });
+    const iid = Number(node?.iid);
+    if (!Number.isSafeInteger(iid) || iid <= 0 || node?.diffStatsSummary == null) continue;
+    stats.set(iid, node.diffStatsSummary);
   }
   return Result.succeed(stats);
+}
+
+/** Per-file line counts for one merge request, which the code/tests/generated breakdown sorts. */
+export const MERGE_REQUEST_FILE_STATS_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
+  project(fullPath: $fullPath) {
+    mergeRequest(iid: $iid) {
+      diffStatsSummary { fileCount }
+      diffStats { path additions deletions }
+    }
+  }
+}`;
+
+const decodeMergeRequestFileStats = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      project: Schema.NullOr(
+        Schema.Struct({
+          mergeRequest: Schema.NullOr(
+            Schema.Struct({
+              diffStatsSummary: Schema.NullOr(Schema.Struct({ fileCount: Schema.Int })),
+              diffStats: Schema.NullOr(
+                Schema.Array(Schema.Struct({ path: Schema.String, ...LineCountsSchema.fields })),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  }),
+);
+
+/**
+ * GitLab stops listing files past its diff limits while the summary still counts them all, so a
+ * shorter list is reported as truncated rather than as a breakdown that misses lines.
+ */
+export function decodeMergeRequestFileStatsJson(raw: string): Result.Result<
+  {
+    readonly files: ReadonlyArray<{
+      readonly path: string;
+      readonly additions: number;
+      readonly deletions: number;
+    }>;
+    readonly truncated: boolean;
+  },
+  DecodeFailure
+> {
+  const decoded = decodeMergeRequestFileStats(raw);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mergeRequest = decoded.success.data.project?.mergeRequest;
+  const files = mergeRequest?.diffStats ?? [];
+  const fileCount = mergeRequest?.diffStatsSummary?.fileCount;
+  return Result.succeed({ files, truncated: fileCount === undefined || files.length < fileCount });
 }

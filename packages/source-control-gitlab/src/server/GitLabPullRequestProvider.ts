@@ -160,6 +160,9 @@ export const make = Effect.gen(function* () {
           Effect.map((batch) => ({ ...batch, continues: true })),
         ),
 
+    getFileStats: (input) =>
+      cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
+
     listChangeRequestStats: (input) =>
       cli
         .listMergeRequestStats({ cwd: input.cwd, changeRequests: input.changeRequests })
