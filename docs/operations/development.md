@@ -52,9 +52,13 @@ when changing this setup:
   chunks. Static imports can work on first load and fail after a route split.
 - Bundled dev rebuilds Tailwind through watched files. Its ordinary Vite hot-update hook expects
   a server/module graph that Rolldown does not provide.
+- The app and its routes are lazy chunks, built on first request. A plugin pre-bundles the
+  startup chain when the server starts. Renaming or moving a startup route or the app entry
+  silently drops it from that list.
 
-The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
-[Tailwind plugin](../../apps/web/vite/tailwind.ts).
+The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
+[Tailwind plugin](../../apps/web/vite/tailwind.ts), and
+[startup warmup](../../apps/web/vite/warmBundledDev.ts).
 
 #### Reusable dev credential
 
@@ -98,7 +102,14 @@ for the security model.
 
 ## Checks
 
-Run checks for the files and packages you changed:
+`vp run check:changed` runs what CI runs for your branch's changes: format and lint of the
+changed files, `knip:check` when files, exports, or dependencies change, typecheck of the affected
+packages and their dependents, and the test files beside the changed files. It maps files to
+packages with [ci-changes.cjs](../../.github/scripts/ci-changes.cjs), as CI does. It compares
+against the merge base with `origin/main`, or a ref you pass. Tests that reach a changed file only
+through imports run in CI.
+
+While you iterate, run single checks:
 
 ```sh
 vp test run <files>
