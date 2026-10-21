@@ -232,7 +232,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       },
       (error) => {
         reportMarkdownActionFailure(
-          { operation: "copy-file-link", target: targetPath, copyTarget: title },
+          { operation: "copy-file-path", target: targetPath, copyTarget: title },
           error,
         );
         toastManager.add(

@@ -60,6 +60,7 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { copyableFileContents } from "@t3tools/client-runtime/state/projects";
 import {
   executeAtomQuery,
   settlePromise,
@@ -2114,20 +2115,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               input: { cwd, relativePath: fullPath },
             }),
             { refresh: true, reportFailure: false },
-          ).then((result) => {
-            if (result._tag !== "Success") {
-              const error = squashAtomCommandFailure(result);
-              Dialog.alert(
-                "Could not copy file",
-                error instanceof Error ? error.message : "Try again.",
-              );
-            } else if (result.value.truncated) {
-              // A partial copy would look complete, so refuse files over the server's read cap.
-              Dialog.alert("Could not copy file", "File is too large to copy.");
-            } else {
-              copyTextWithHaptic(result.value.contents, { target: "file contents" });
-            }
-          });
+          )
+            .then(copyableFileContents)
+            .then(
+              (contents) => copyTextWithHaptic(contents, { target: "file contents" }),
+              (error: unknown) =>
+                Dialog.alert(
+                  "Could not copy file",
+                  error instanceof Error ? error.message : "Try again.",
+                ),
+            );
           return;
         }
         case "open-file":

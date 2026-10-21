@@ -21,10 +21,12 @@ import {
 } from "../rpc/client.ts";
 import type { EnvironmentProject } from "./models.ts";
 import {
+  type AtomCommandResult,
   createAtomCommandScheduler,
   createEnvironmentCommand,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  squashAtomCommandFailure,
 } from "./runtime.ts";
 import {
   type CreateProjectInput,
@@ -77,6 +79,26 @@ export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProj
   override get message(): string {
     return "The folder for threads without a project has not reached this device yet. Try again.";
   }
+}
+
+export class ProjectFileTooLargeToCopyError extends Schema.TaggedError<ProjectFileTooLargeToCopyError>()(
+  "ProjectFileTooLargeToCopyError",
+  { relativePath: Schema.String },
+) {
+  override get message(): string {
+    return "File is too large to copy.";
+  }
+}
+
+/** A partial copy would look complete, so a read truncated at the server's cap fails instead. */
+export function copyableFileContents(
+  result: AtomCommandResult<ProjectReadFileResult, unknown>,
+): string {
+  if (result._tag !== "Success") throw squashAtomCommandFailure(result);
+  if (result.value.truncated) {
+    throw new ProjectFileTooLargeToCopyError({ relativePath: result.value.relativePath });
+  }
+  return result.value.contents;
 }
 
 export function createProjectEnvironmentAtoms<R, E>(

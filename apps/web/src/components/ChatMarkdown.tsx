@@ -46,6 +46,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { copyableFileContents } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -859,16 +860,13 @@ function useChatMarkdownState({
         }
         resolveContents={
           environmentId !== null && cwd && canReadFiles
-            ? async () => {
-                const result = await readProjectFile({
-                  environmentId,
-                  input: { cwd, relativePath: (await resolveHostPath()).absolutePath },
-                });
-                if (result._tag !== "Success") throw squashAtomCommandFailure(result);
-                // A partial copy would look complete, so refuse files over the server's read cap.
-                if (result.value.truncated) throw new Error("File is too large to copy.");
-                return result.value.contents;
-              }
+            ? async () =>
+                copyableFileContents(
+                  await readProjectFile({
+                    environmentId,
+                    input: { cwd, relativePath: (await resolveHostPath()).absolutePath },
+                  }),
+                )
             : undefined
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
