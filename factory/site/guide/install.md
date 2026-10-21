@@ -46,6 +46,8 @@ Once it is on, the server follows `main` on its own. Every 10 minutes the autode
 
 A build that fails, or is still going after an hour, is tried again on the next two ticks; after the third failure that commit is left until `main` moves. A commit that fails its health check is left at once.
 
+After a deploy that passes its health check, the job deletes old versions from `~/.local/share/t3fac/versions` and logs each one in `autodeploy.log`. It keeps the current version and 3 others: the one `rollback.sh` returns to, then the most recently installed. Set `keep_versions` in the [machine config](/guide/machine-config) to keep a different number; `0` keeps only the current version, which leaves nothing to roll back to. A failed deploy deletes nothing, and neither does an install or rollback you run by hand. A `keep_versions` the job cannot read as one plain number, such as a quoted key, deletes nothing either, and the log says so.
+
 The job builds with its plist's `PATH`, which covers Homebrew, `vp` and `~/.cargo/bin` from rustup, plus anything `~/.config/t3fac/env` adds to it.
 
 To turn it on, make a clone used for nothing else, and mint a token that can read the factory's status:
@@ -93,14 +95,14 @@ Add `--tailscale` for a link that works over your tailnet, for example from a ph
 
 ## Logs
 
-| File                                          | What it holds                                                                         |
-| --------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `~/Library/Logs/t3fac/t3fac.log`              | The server's output, including each factory pass. Rotated at 20 MB, five copies kept. |
-| `~/Library/Logs/t3fac/logrotate.log`          | One line per rotation.                                                                |
-| `~/Library/Logs/t3fac/autodeploy.log`         | One line per deploy, failed deploy or wait while [following main](#follow-main).      |
-| `~/Library/Logs/t3fac/autodeploy-build.log`   | The build and install output of the latest autodeploy attempt.                        |
-| `~/.config/t3fac/factory/events.jsonl`        | The factory's machine log: passes, skipped repos, errors, server starts and stops.    |
-| `~/.config/t3fac/factory/runs/<run id>.jsonl` | One ledger per run. The run's page shows it.                                          |
+| File                                          | What it holds                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `~/Library/Logs/t3fac/t3fac.log`              | The server's output, including each factory pass. Rotated at 20 MB, five copies kept.             |
+| `~/Library/Logs/t3fac/logrotate.log`          | One line per rotation.                                                                            |
+| `~/Library/Logs/t3fac/autodeploy.log`         | One line per deploy, failed deploy, deleted version or wait while [following main](#follow-main). |
+| `~/Library/Logs/t3fac/autodeploy-build.log`   | The build and install output of the latest autodeploy attempt.                                    |
+| `~/.config/t3fac/factory/events.jsonl`        | The factory's machine log: passes, skipped repos, errors, server starts and stops.                |
+| `~/.config/t3fac/factory/runs/<run id>.jsonl` | One ledger per run. The run's page shows it.                                                      |
 
 To tell whether the server is up:
 

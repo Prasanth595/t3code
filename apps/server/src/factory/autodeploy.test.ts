@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the script is run for real, against a temp clone and a stub status API.
+// @effect-diagnostics nodeBuiltinImport:off - the script is run for real, against a temp clone, a stub status API and version directories whose real mtimes it compares.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
@@ -66,10 +66,13 @@ const git = (cwd: string, ...args: Array<string>) => {
 
 // A deploy.sh that records each call with the commit it ran at, whether it was told to leave the
 // autodeploy job loaded and whether it was told it already holds the deploy lock, and on an
-// install points `current` at the commit as install.sh would. DEPLOY_FAIL fails the build,
+// install keeps the old `current` as `previous` and points `current` at the commit, as install.sh
+// would. It makes the commit's version directory but, unlike install.sh, leaves the install time
+// of one already there, so a test can make `current` the oldest. DEPLOY_FAIL fails the build,
 // INSTALL_FAIL the install (as a health check that rolled back would), BUILD_HANG makes the build
-// hang on a child whose pid it writes there, and HOLD_DURING_BUILD leaves autodeploy.hold as a
-// deploy by hand during the build would.
+// hang on a child whose pid it writes there, HOLD_DURING_BUILD leaves autodeploy.hold as a
+// deploy by hand during the build would, and CURRENT_AT makes the version directory in that
+// directory instead and points `current` at it by absolute path, as a link repaired by hand might.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -82,8 +85,12 @@ const FAKE_DEPLOY = [
   '[[ -z ${HOLD_DURING_BUILD:-} ]] || : > "$HOME/.local/share/t3fac/autodeploy.hold"',
   "[[ ${1:-} == --build-only ]] && exit 0",
   '[[ -z ${INSTALL_FAIL:-} ]] || { echo "health check failed; rolled back" >&2; exit 1; }',
-  'mkdir -p "$HOME/.local/share/t3fac/versions"',
-  'ln -sfn "versions/0.0.1+fac.$sha" "$HOME/.local/share/t3fac/current"',
+  'r="$HOME/.local/share/t3fac"',
+  'target="versions/0.0.1+fac.$sha"; [[ -z ${CURRENT_AT:-} ]] || target="$CURRENT_AT/0.0.1+fac.$sha"',
+  'mkdir -p "$r/versions" && (cd "$r" && mkdir -p "$target")',
+  'old=$(readlink "$r/current" || true)',
+  '[[ -z $old || $old == "$target" ]] || ln -sfn "$old" "$r/previous"',
+  'ln -sfn "$target" "$r/current"',
   "",
 ].join("\n");
 
@@ -531,5 +538,231 @@ describe("autodeploy.sh", () => {
     expect(result.status).toBe(0);
     expect(result.output).toBe("");
     expect(result.deploys).toEqual([]);
+  });
+});
+
+describe("autodeploy.sh pruning old versions", () => {
+  const versionsDir = () => NodePath.join(root(), "versions");
+  const versions = () => NodeFS.readdirSync(versionsDir()).toSorted();
+  const installedName = () => current().slice("versions/".length);
+
+  // A version directory installed `minutesAgo` minutes ago: its mtime is its install time. The
+  // offset is taken from the mtime mkdir just stamped, so it lines up with the directories the
+  // deploy itself creates.
+  const addVersion = (name: string, minutesAgo: number) => {
+    const dir = NodePath.join(versionsDir(), name);
+    NodeFS.mkdirSync(dir, { recursive: true });
+    const time = (NodeFS.statSync(dir).mtimeMs - minutesAgo * 60_000) / 1000;
+    NodeFS.utimesSync(dir, time, time);
+  };
+
+  const writeMachineConfig = (text: string) => {
+    const dir = NodePath.join(home, ".config/t3fac/factory");
+    NodeFS.mkdirSync(dir, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(dir, "config.yml"), text);
+  };
+
+  const pruned = (output: string) =>
+    lines(output)
+      .filter((line) => line.includes("pruned"))
+      .map((line) => line.replace(/^.* autodeploy: /, ""));
+
+  beforeEach(() => {
+    setupSandbox();
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("keeps current and the three versions installed last, by install time not name, logging each it deletes", async () => {
+    // Name order is the reverse of install order for the older four.
+    addVersion("0.0.1+fac.aaaaaaa", 50);
+    addVersion("0.0.1+fac.zzzzzzz", 40);
+    addVersion("0.0.1+fac.bbbbbbb", 30);
+    addVersion("0.0.1+fac.yyyyyyy", 20);
+    addVersion(installedName(), 10);
+    const first = installedName();
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+
+    const result = await runAutodeploy();
+
+    expect(result.status).toBe(0);
+    expect(versions()).toEqual(
+      [`0.0.1+fac.${short}`, first, "0.0.1+fac.yyyyyyy", "0.0.1+fac.bbbbbbb"].toSorted(),
+    );
+    expect(pruned(result.output)).toEqual([
+      "pruned versions/0.0.1+fac.zzzzzzz",
+      "pruned versions/0.0.1+fac.aaaaaaa",
+    ]);
+    expect(lines(result.output)[0]).toContain(`deployed ${short}`);
+  });
+
+  it("keeps only current with keep_versions: 0, even when current is the oldest", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 0 # tight\n");
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+    // Older than every other, which install.sh never leaves, so only the name keeps it.
+    addVersion(`0.0.1+fac.${short}`, 60);
+    addVersion(installedName(), 30);
+    addVersion("0.0.1+fac.ccccccc", 20);
+
+    const result = await runAutodeploy();
+
+    expect(result.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${short}`);
+    expect(versions()).toEqual([`0.0.1+fac.${short}`]);
+    expect(pruned(result.output)).toHaveLength(2);
+  });
+
+  it("deletes nothing when the build or the install fails", async () => {
+    for (const [i, name] of ["a", "b", "c", "d", "e"].entries()) {
+      addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
+    }
+    addVersion(installedName(), 10);
+    const before = versions();
+
+    commitToOrigin("bad build");
+    const build = await runAutodeploy({ DEPLOY_FAIL: "1" });
+    expect(build.status).toBe(1);
+    expect(versions()).toEqual(before);
+
+    commitToOrigin("bad install");
+    const install = await runAutodeploy({ INSTALL_FAIL: "1" });
+    expect(install.status).toBe(1);
+    expect(versions()).toEqual(before);
+    expect(pruned(build.output + install.output)).toEqual([]);
+  });
+
+  // The server's YAML parser reads every one of these; the script reads none, so it must not guess.
+  it.each([
+    "keep_versions: lots",
+    "keep_versions: 10000000000000000000",
+    "keep_versions : 10",
+    '"keep_versions": 10',
+    "keep_versions: 1\nkeep_versions: 2",
+  ])("does not prune when it cannot read %j, and says so", async (line) => {
+    writeMachineConfig(`gh_config_dir: /gh\nmax_concurrent_runs: 1\n${line}\n`);
+    for (const [i, name] of ["a", "b", "c", "d", "e"].entries()) {
+      addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
+    }
+    addVersion(installedName(), 10);
+    const sha = commitToOrigin("second");
+
+    const result = await runAutodeploy();
+
+    expect(result.status).toBe(0);
+    expect(versions()).toHaveLength(7);
+    expect(pruned(result.output)).toEqual([]);
+    expect(result.output).toContain("not pruning versions: cannot read keep_versions");
+    expect(lines(result.output)[0]).toContain(
+      `deployed ${git(clone, "rev-parse", "--short", sha)}`,
+    );
+  });
+
+  it("takes the default past a commented-out keep_versions", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\n# keep_versions: 0\n");
+    for (const [i, name] of ["a", "b", "c", "d", "e"].entries()) {
+      addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
+    }
+    addVersion(installedName(), 10);
+    commitToOrigin("second");
+
+    const result = await runAutodeploy();
+
+    expect(result.status).toBe(0);
+    expect(versions()).toHaveLength(4);
+    expect(pruned(result.output)).toHaveLength(3);
+  });
+
+  // install.sh copies an absolute `current` into `previous` as it is on the next deploy.
+  it("knows current and previous by their directories when their links are absolute", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 1\n");
+    const first = installedName();
+    addVersion("0.0.1+fac.aaaaaaa", 60);
+    addVersion(first, 40);
+    const second = git(clone, "rev-parse", "--short", commitToOrigin("second"));
+
+    const absolute = await runAutodeploy({ CURRENT_AT: versionsDir() });
+
+    expect(absolute.status).toBe(0);
+    expect(current()).toBe(NodePath.join(versionsDir(), `0.0.1+fac.${second}`));
+    expect(versions()).toEqual([`0.0.1+fac.${second}`, first].toSorted());
+
+    // Installed after `second`, so only being `previous` keeps `second` ahead of it.
+    addVersion("0.0.1+fac.newerzz", -1);
+    const third = git(clone, "rev-parse", "--short", commitToOrigin("third"));
+
+    const relative = await runAutodeploy();
+
+    expect(relative.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${third}`);
+    expect(versions()).toEqual([`0.0.1+fac.${third}`, `0.0.1+fac.${second}`].toSorted());
+    expect(pruned(relative.output).toSorted()).toEqual(
+      [`pruned versions/${first}`, "pruned versions/0.0.1+fac.newerzz"].toSorted(),
+    );
+  });
+
+  it("deletes nothing when current is not one of the version directories", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 0\n");
+    for (const [i, name] of ["a", "b", "c"].entries()) {
+      addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
+    }
+    addVersion(installedName(), 10);
+    commitToOrigin("second");
+
+    const result = await runAutodeploy({ CURRENT_AT: NodePath.join(tmp, "elsewhere") });
+
+    expect(result.status).toBe(0);
+    expect(versions()).toHaveLength(4);
+    expect(pruned(result.output)).toEqual([]);
+  });
+
+  // `previous` is kept first, so a version installed after it (then rolled back from) goes first.
+  it("keeps the version rollback.sh returns to, and rollback.sh still works after pruning", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 1\n");
+    const first = installedName();
+    addVersion(first, 30);
+    addVersion("0.0.1+fac.rolledb", 20);
+    const sha = commitToOrigin("second");
+    const short = git(clone, "rev-parse", "--short", sha);
+
+    const result = await runAutodeploy();
+
+    expect(result.status).toBe(0);
+    expect(versions()).toEqual([`0.0.1+fac.${short}`, first].toSorted());
+    expect(pruned(result.output)).toEqual(["pruned versions/0.0.1+fac.rolledb"]);
+
+    // A launchctl whose jobs are never loaded, and whose server comes up at once.
+    const bin = NodePath.join(tmp, "bin");
+    NodeFS.mkdirSync(bin);
+    NodeFS.writeFileSync(
+      NodePath.join(bin, "launchctl"),
+      [
+        "#!/bin/sh",
+        'case "$1" in',
+        "  print) exit 113 ;;",
+        '  bootstrap) if [ "$(basename "$3")" = io.github.rawphp.t3fac.plist ]; then',
+        '    mkdir -p "$HOME/Library/Logs/t3fac"; echo "factory started" >> "$HOME/Library/Logs/t3fac/t3fac.log"; fi ;;',
+        "esac",
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const rollback = await new Promise<{ status: number | null; output: string }>((resolve) => {
+      const child = NodeChildProcess.spawn(
+        "bash",
+        [NodePath.join(NodePath.dirname(script), "rollback.sh")],
+        { env: { HOME: home, PATH: `${bin}:/usr/bin:/bin`, T3FAC_PORT: String(port) } },
+      );
+      let output = "";
+      child.stdout.on("data", (chunk) => (output += chunk));
+      child.stderr.on("data", (chunk) => (output += chunk));
+      child.on("close", (code) => resolve({ status: code, output }));
+    });
+    expect(rollback.status, rollback.output).toBe(0);
+    expect(current()).toBe(`versions/${first}`);
   });
 });

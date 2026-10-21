@@ -13,14 +13,17 @@
 #   any thread, and waits for the next tick when one is or when it cannot tell;
 # - checks the commit out and builds it with deploy.sh --build-only, asks again, then installs it
 #   with deploy.sh, whose health check rolls back a bad version. A build that fails or runs past
-#   its limit is tried on the next two ticks before the commit is given up on.
+#   its limit is tried on the next two ticks before the commit is given up on;
+# - after a deploy that passed its health check, deletes the installed versions beyond `current`
+#   and the `keep_versions` (machine config, default 3) installed before it.
 #
-# Prints one line per deploy, failure or wait, which the job appends to autodeploy.log; the
-# build's own output goes to autodeploy-build.log, replaced on each attempt.
+# Prints one line per deploy, deleted version, failure or wait, which the job appends to
+# autodeploy.log; the build's own output goes to autodeploy-build.log, replaced on each attempt.
 set -euo pipefail
 
 root="$HOME/.local/share/t3fac"
 env_file="$HOME/.config/t3fac/env"
+machine_config="$HOME/.config/t3fac/factory/config.yml"
 logs="$HOME/Library/Logs/t3fac"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
@@ -179,6 +182,51 @@ build() {
   return "$status"
 }
 
+# Deletes the version directories beyond `current` and the keep_versions others to keep, so
+# versions/ does not fill the disk. `previous` is kept first, so rollback.sh still has its version
+# whenever keep_versions is at least 1; the rest go by install time, the directory's mtime, which
+# install.sh's unpack into a fresh directory sets. Both links are matched by the directory they
+# reach (-ef), not their text, which a hand repair can make absolute and install.sh then copies
+# into `previous`. Deletes nothing when no version directory is `current`. Prints a line per
+# directory it deletes.
+prune_versions() {
+  local keep=3 previous="" name kept=0 found=0
+  local -a others=() order=()
+  # The server reads the file as YAML, which accepts forms this does not (a quoted or spaced key,
+  # a BOM). Any uncommented mention of the key that is not one plain `keep_versions: <n>` line
+  # stops the prune rather than falling back to the default. Nine digits at most keeps n inside
+  # bash's integer range.
+  if grep -qE '^[^#]*keep_versions' "$machine_config" 2> /dev/null; then
+    keep=$(sed -nE 's/^keep_versions:[[:space:]]*([0-9]{1,9})[[:space:]]*(#.*)?$/\1/p' "$machine_config")
+    if [[ ! $keep =~ ^[0-9]+$ ]]; then
+      say "not pruning versions: cannot read keep_versions in $machine_config as one whole number up to 999999999"
+      return 0
+    fi
+  fi
+  while IFS= read -r name; do
+    [[ -d $root/versions/$name ]] || continue
+    if [[ $root/versions/$name -ef $root/current ]]; then
+      found=1
+    elif [[ -z $previous && $root/versions/$name -ef $root/previous ]]; then
+      previous=$name
+    else
+      others+=("$name")
+    fi
+  done < <(ls -t "$root/versions" 2> /dev/null)
+  ((found)) || return 0
+  [[ -z $previous ]] || order+=("$previous")
+  order+=(${others[@]+"${others[@]}"})
+  for name in ${order[@]+"${order[@]}"}; do
+    if ((kept < 10#$keep)); then
+      kept=$((kept + 1))
+    elif rm -rf "${root:?}/versions/$name"; then
+      say "pruned versions/$name"
+    else
+      say "could not prune versions/$name"
+    fi
+  done
+}
+
 factory_idle || exit 0
 
 # deploy.sh's install.sh reloads every timer job; T3FAC_SKIP_RELOAD keeps it from booting this
@@ -203,3 +251,4 @@ export T3FAC_DEPLOY_LOCK=$$
 (cd "$clone" && factory/scripts/deploy.sh) >> "$build_log" 2>&1 || failed
 rm -f "$attempts_file"
 say "deployed $short"
+prune_versions

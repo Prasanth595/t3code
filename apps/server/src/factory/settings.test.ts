@@ -153,6 +153,11 @@ describe("editMachineConfig", () => {
       assert.include(text, "poll_seconds: 90");
     });
 
+    it("keeps keep_versions, which autodeploy.sh reads", () => {
+      const text = edited(COMMENTED + "keep_versions: 1\n", { poll_seconds: 90 });
+      assert.include(text, "keep_versions: 1");
+    });
+
     it("starts from an empty document when the existing file is not YAML", () => {
       const text = edited("poll_seconds: [unclosed\n  - : :\n", BODY);
       const parsed = parseMachineConfig(text, FILE);
