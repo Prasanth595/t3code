@@ -17,6 +17,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2ThreadProjection,
   type ProviderSessionId,
   type ProviderThreadId,
   type ProviderTurnId,
@@ -143,6 +144,11 @@ export function selectInheritedBackgroundTurnItems(input: {
       : [],
   );
 }
+
+type RunOwnedTools = Pick<
+  OrchestrationV2ThreadProjection,
+  "turnItems" | "nodes" | "runtimeRequests"
+>;
 
 type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
 
@@ -572,6 +578,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly loadRunOwnedTools?: () => Effect.Effect<RunOwnedTools, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
@@ -622,6 +629,7 @@ export const layer: Layer.Layer<
         readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
         readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
         readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
+        readonly loadRunOwnedTools?: () => Effect.Effect<RunOwnedTools, ProjectionStoreV2Error>;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
@@ -691,6 +699,136 @@ export const layer: Layer.Layer<
                 allocateEventId,
               })
             : [];
+        const cancelledToolEvents: OrchestrationV2DomainEvent[] = [];
+        if (input.loadRunOwnedTools !== undefined && !childTurnsContinue(input.terminal)) {
+          const { turnItems, nodes, runtimeRequests } = yield* input.loadRunOwnedTools();
+          const pendingApprovalNodes = new Set(
+            runtimeRequests
+              .filter((request) => request.status === "pending")
+              .map((request) => request.nodeId),
+          );
+          const blockedToolNodes = new Set(
+            nodes.flatMap((node) =>
+              node.runId === input.run.id &&
+              node.threadId === input.run.threadId &&
+              node.kind === "approval_request" &&
+              node.status === "waiting" &&
+              pendingApprovalNodes.has(node.id) &&
+              node.parentNodeId !== null
+                ? [node.parentNodeId]
+                : [],
+            ),
+          );
+          const cancelledToolNodeIds = new Set<NodeId>();
+          for (const item of turnItems) {
+            // Claude marks tool_use as running before asking permission. Only its
+            // pending approval child proves that a running tool never started.
+            if (
+              item.runId !== input.run.id ||
+              item.threadId !== input.run.threadId ||
+              (item.type !== "command_execution" && item.type !== "dynamic_tool") ||
+              !isOrchestrationV2WorkActive(item.status) ||
+              !(
+                item.status === "pending" ||
+                (item.nodeId !== null && blockedToolNodes.has(item.nodeId))
+              )
+            )
+              continue;
+            cancelledToolEvents.push({
+              id: yield* allocateEventId(),
+              type: "turn-item.updated",
+              threadId: item.threadId,
+              runId: input.run.id,
+              ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+              providerInstanceId: input.run.providerInstanceId,
+              occurredAt: completedAt,
+              payload: {
+                ...item,
+                status: "cancelled",
+                toolNonExecutionKind: "cancelled",
+                completedAt,
+                updatedAt: completedAt,
+              },
+            });
+            if (item.nodeId !== null) cancelledToolNodeIds.add(item.nodeId);
+            const node = nodes.find((candidate) => candidate.id === item.nodeId);
+            if (node !== undefined && isOrchestrationV2WorkActive(node.status)) {
+              cancelledToolEvents.push({
+                id: yield* allocateEventId(),
+                type: "node.updated",
+                threadId: node.threadId,
+                runId: input.run.id,
+                nodeId: node.id,
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: { ...node, status: "cancelled", completedAt },
+              });
+            }
+          }
+          for (const approvalNode of nodes) {
+            if (
+              approvalNode.kind !== "approval_request" ||
+              approvalNode.runId !== input.run.id ||
+              approvalNode.threadId !== input.run.threadId ||
+              approvalNode.parentNodeId === null ||
+              !cancelledToolNodeIds.has(approvalNode.parentNodeId)
+            )
+              continue;
+            const request = runtimeRequests.find(
+              (candidate) => candidate.nodeId === approvalNode.id && candidate.status === "pending",
+            );
+            if (request === undefined) continue;
+            cancelledToolEvents.push(
+              {
+                id: yield* allocateEventId(),
+                type: "runtime-request.updated",
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: approvalNode.id,
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: {
+                  ...request,
+                  status: "cancelled",
+                  responseCapability: {
+                    type: "not_resumable",
+                    reason: "The tool was cancelled before this approval was resolved.",
+                  },
+                  resolvedAt: completedAt,
+                },
+              },
+              {
+                id: yield* allocateEventId(),
+                type: "node.updated",
+                threadId: input.run.threadId,
+                runId: input.run.id,
+                nodeId: approvalNode.id,
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: { ...approvalNode, status: "cancelled", completedAt },
+              },
+            );
+            for (const approvalItem of turnItems) {
+              if (approvalItem.type !== "approval_request" || approvalItem.requestId !== request.id)
+                continue;
+              cancelledToolEvents.push({
+                id: yield* allocateEventId(),
+                type: "turn-item.updated",
+                threadId: input.run.threadId,
+                ...(approvalItem.runId === null ? {} : { runId: approvalItem.runId }),
+                ...(approvalItem.nodeId === null ? {} : { nodeId: approvalItem.nodeId }),
+                providerInstanceId: input.run.providerInstanceId,
+                occurredAt: completedAt,
+                payload: {
+                  ...approvalItem,
+                  status: "cancelled",
+                  completedAt,
+                  updatedAt: completedAt,
+                },
+              });
+            }
+          }
+        }
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
         // Completion cohorts are advanced by Orchestrator while a provider
@@ -743,6 +881,7 @@ export const layer: Layer.Layer<
               : [],
           events: [
             ...cascadedSubagentEvents,
+            ...cancelledToolEvents,
             ...(finalizedAttempt === null
               ? []
               : [
@@ -937,6 +1076,9 @@ export const layer: Layer.Layer<
                   }),
                   input.providerTurnOrdinal * 100 + 1,
                 ),
+                ...(input.loadRunOwnedTools === undefined
+                  ? {}
+                  : { loadRunOwnedTools: input.loadRunOwnedTools }),
                 failureItemPersisted: false,
                 refreshAfterTurn,
                 writeIfRunCurrent: {
@@ -1041,6 +1183,9 @@ export const layer: Layer.Layer<
                   hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
                 }),
             openRunOwnedSubagents: openSubagents,
+            ...(input.loadRunOwnedTools === undefined
+              ? {}
+              : { loadRunOwnedTools: input.loadRunOwnedTools }),
             terminal,
             failureItemPersisted: terminal.status === "failed",
             refreshAfterTurn,
@@ -1450,6 +1595,9 @@ export const layer: Layer.Layer<
                     expectedStatus: "running",
                   },
                   openRunOwnedSubagents: openSubagents,
+                  ...(input.loadRunOwnedTools === undefined
+                    ? {}
+                    : { loadRunOwnedTools: input.loadRunOwnedTools }),
                   completedAt,
                   terminal: makeFailedTerminalEvent(
                     makeProviderFailure({ cause: Cause.squash(cause), class: "unknown" }),
@@ -1603,6 +1751,9 @@ export const layer: Layer.Layer<
                             expectedStatus: "running",
                           },
                           openRunOwnedSubagents: openSubagents,
+                          ...(input.loadRunOwnedTools === undefined
+                            ? {}
+                            : { loadRunOwnedTools: input.loadRunOwnedTools }),
                           terminal: makeFailedTerminalEvent(
                             makeProviderFailure({
                               cause: Cause.squash(cause),
