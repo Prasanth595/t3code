@@ -1,0 +1,4 @@
+- [phase 1] Setup failed once with ERR_PNPM_PATCH_FAILED on patches/expo-sharing@58.0.19.patch. Default: retried; second run passed. Likely a race with parallel installs on the shared store.
+- [phase 2] Existing test 'compares the checked-out branch without a full status' fails on BeeBox with and without my change (git command error, likely this git version). Default: left it alone; will note in the PR if CI also fails it.
+- [phase 2] Same-device store with `packageImportMethod: copy` makes real copies that the new code skips (undercount). Default: not handled; the setting is rare and .modules.yaml does not record it.
+- [phase 2] `nodeLinker: hoisted` puts clones straight in node_modules, not .pnpm, so they still overcount. Default: not handled (YAGNI); T3 Code worktrees use the isolated linker.
