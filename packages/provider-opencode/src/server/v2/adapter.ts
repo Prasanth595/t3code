@@ -377,7 +377,7 @@ export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId:
  * the last matching rule wins, so every thread's T3 server is denied and then
  * this thread's own is allowed again, in every mode.
  */
-const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
+export const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
   mcpServerName === null
     ? []
     : [
@@ -3080,9 +3080,56 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
       ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
 
+    /**
+     * Servers this session registered before their thread's first turn, when no
+     * ThreadState exists to hold them. OpenCode builds a session's tool catalog
+     * when the session is created, so a server only added in `prepareTurn`
+     * misses the first request; registering here, before any `session.create`,
+     * keeps the first turn's catalog complete. Prepared per thread by the
+     * session manager before `openSession`, so the config is normally ready.
+     */
+    const registeredMcp = new Map<
+      string,
+      { readonly name: string; readonly directory: string; readonly credential: string }
+    >();
+    const mcpSession = yield* mcpSessions.read(input.threadId);
+    if (mcpSession !== undefined && !connection.external) {
+      const name = yield* mcpServerNameFor(input.threadId);
+      const added = yield* client.mcp
+        .add({
+          server: name,
+          location: { directory: host.paths.cwd },
+          config: new Mcp.RemoteConfig({
+            type: "remote",
+            url: mcpSession.endpoint,
+            headers: { Authorization: mcpSession.authorizationHeader },
+            oauth: false,
+          }),
+        })
+        .pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
+              Effect.as(false),
+            ),
+          ),
+        );
+      if (added) {
+        registeredMcp.set(input.threadId, {
+          name,
+          directory: host.paths.cwd,
+          credential: mcpSession.authorizationHeader,
+        });
+      }
+    }
+
     yield* Effect.addFinalizer(() =>
       Effect.forEach(
-        [...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+        [
+          ...[...threads.values()].flatMap((state) => (state.mcp === undefined ? [] : [state.mcp])),
+          ...registeredMcp.values(),
+        ],
         removeMcp,
         { concurrency: 8, discard: true },
       ),
@@ -3101,15 +3148,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         mcpSession === undefined || connection.external
           ? undefined
           : { name, directory, credential: mcpSession.authorizationHeader };
+      // A server registered before the thread's first turn lives in
+      // `registeredMcp`: no ThreadState existed yet. Removal decisions must see
+      // it, and once this turn records it on the state, the map copy goes away.
+      const known = state.mcp ?? registeredMcp.get(turnInput.threadId);
       if (
-        state.mcp !== undefined &&
+        known !== undefined &&
         (wanted === undefined ||
-          state.mcp.directory !== wanted.directory ||
-          state.mcp.credential !== wanted.credential)
+          known.directory !== wanted.directory ||
+          known.credential !== wanted.credential)
       ) {
-        yield* removeMcp(state.mcp);
-        state.mcp = undefined;
+        yield* removeMcp(known);
+        if (state.mcp === known) state.mcp = undefined;
       }
+      registeredMcp.delete(turnInput.threadId);
       // Idle Location eviction drops runtime MCP servers without clearing T3's cache.
       // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
@@ -3138,7 +3190,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       const instructions = [
         buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
-        t3OrchestrationSystemPrompt(mcpAvailable),
+        t3OrchestrationSystemPrompt(mcpAvailable, wanted?.name),
       ]
         .filter((part) => part !== undefined && part.length > 0)
         .join("\n\n");
