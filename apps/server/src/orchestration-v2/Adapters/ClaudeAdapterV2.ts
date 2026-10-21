@@ -3438,6 +3438,9 @@ interface ClaudeLiveQueryContext {
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
   // The CLI may fall back from the requested mode on its first init frame.
   openedPermissionMode: PermissionMode;
+  // Set when init reports a mode below the bypass this query asked for. T3 only asks when the
+  // effective settings allow bypass, so the next reuse tries once to move the CLI there.
+  bypassRestorePending: boolean;
   receivedInit: boolean;
   permissionMode: PermissionMode;
   stopping: boolean;
@@ -9141,22 +9144,28 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
-            // A denied ExitPlanMode leaves Claude in plan mode. Restore only from plan:
-            // Auto/default may reflect a policy restriction that forbids restoring bypass.
-            if (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan") {
-              existing.permissionMode = yield* existing.query
-                .setPermissionMode(existing.openedPermissionMode)
-                .pipe(
-                  Effect.as(existing.openedPermissionMode),
-                  Effect.catchTags({
-                    ClaudeAgentSdkQueryRunnerError: (error) =>
-                      existing.openedPermissionMode === "bypassPermissions"
-                        ? existing.query
-                            .setPermissionMode("default")
-                            .pipe(Effect.as("default" as const))
-                        : Effect.fail(error),
-                  }),
-                );
+            const restoreBypass =
+              existing.bypassRestorePending && existing.permissionMode !== "bypassPermissions";
+            existing.bypassRestorePending = false;
+            // A denied ExitPlanMode leaves Claude in plan mode. Past that, restore only the
+            // bypass init declined: a later Auto/default may be a policy restriction.
+            if (
+              restoreBypass ||
+              (existing.permissionMode === "plan" && existing.openedPermissionMode !== "plan")
+            ) {
+              const target = restoreBypass ? "bypassPermissions" : existing.openedPermissionMode;
+              existing.permissionMode = yield* existing.query.setPermissionMode(target).pipe(
+                Effect.as(target),
+                Effect.catchTags({
+                  ClaudeAgentSdkQueryRunnerError: (error) =>
+                    target === "bypassPermissions"
+                      ? existing.query
+                          .setPermissionMode("default")
+                          .pipe(Effect.as("default" as const))
+                      : Effect.fail(error),
+                }),
+              );
+              if (restoreBypass) existing.openedPermissionMode = existing.permissionMode;
             }
             return existing;
           }
@@ -9275,6 +9284,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             lastTurn: null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
+            bypassRestorePending: false,
             receivedInit: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
@@ -9296,6 +9306,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ) {
                     context.openedPermissionMode =
                       message.permissionMode ?? context.openedPermissionMode;
+                    context.bypassRestorePending =
+                      queryPolicy.permissionMode === "bypassPermissions" &&
+                      context.openedPermissionMode !== "bypassPermissions";
                     context.receivedInit = true;
                   }
                   if (

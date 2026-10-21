@@ -2795,6 +2795,117 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
     );
+
+    // The CLI can start below the bypass T3 asked for without any settings policy saying so
+    // (for example CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1); its init frame is the only signal.
+    const openFullAccessSessionDeclinedByCli = Effect.fn("openFullAccessSessionDeclinedByCli")(
+      function* (options?: Parameters<typeof makeWakeHarnessWithOptions>[0]) {
+        const harness = yield* makeWakeHarnessWithOptions(options);
+        const now = yield* DateTime.now;
+        let ordinal = 0;
+        const runTurn = Effect.gen(function* () {
+          ordinal += 1;
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-init-declined-${ordinal}`),
+              providerTurnOrdinal: ordinal,
+              text: "Run git status.",
+              attachments: [],
+            }),
+          );
+          if (ordinal === 1) {
+            yield* harness.offerAndWait(
+              claudeSdkFrame({
+                type: "system",
+                subtype: "init",
+                permissionMode: "default",
+                uuid: "init-declined-init",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            );
+          }
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: `init-declined-result-${ordinal}`, result: "Done." }),
+          );
+          yield* Queue.take(harness.terminalReceipts);
+        });
+        return { harness, runTurn };
+      },
+    );
+
+    // regression: #22483 #21806 stopped restoring bypass, so a CLI that opened in default kept asking
+    it.effect(
+      "moves a Full access query to bypass when init reports default and settings allow it",
+      () =>
+        Effect.gen(function* () {
+          const { harness, runTurn } = yield* openFullAccessSessionDeclinedByCli();
+          yield* runTurn;
+          const opened = harness.getOpenedOptions()!;
+          assert.equal(opened.permissionMode, "bypassPermissions");
+          assert.equal(opened.allowDangerouslySkipPermissions, true);
+          assert.deepEqual(harness.permissionModeChanges, []);
+          yield* runTurn;
+          yield* runTurn;
+          assert.strictEqual(harness.getOpenedOptions(), opened);
+          assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions"]);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    // regression: #22483 a bypass the CLI rejects (settings T3 could not see) must not be retried
+    it.effect("falls back to default once when Claude rejects the bypass restore", () =>
+      Effect.gen(function* () {
+        const { harness, runTurn } = yield* openFullAccessSessionDeclinedByCli({
+          setPermissionMode: (mode) =>
+            mode === "bypassPermissions"
+              ? Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "setPermissionMode",
+                    cause: new Error("Cannot set permission mode to bypassPermissions"),
+                  }),
+                )
+              : Effect.void,
+        });
+        yield* runTurn;
+        yield* runTurn;
+        yield* runTurn;
+        assert.deepEqual(harness.permissionModeChanges, ["bypassPermissions", "default"]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
+
+    // #21806 stays: when settings disable bypass, a lower mode from the CLI is not forced back
+    it.effect("does not force bypass when settings disable it and init reports default", () =>
+      Effect.gen(function* () {
+        vi.mocked(ClaudeSdk.resolveSettings).mockResolvedValue({
+          effective: { permissions: { disableBypassPermissionsMode: "disable" } },
+          provenance: {},
+          sources: [],
+        });
+        const { harness, runTurn } = yield* openFullAccessSessionDeclinedByCli();
+        yield* runTurn;
+        const opened = harness.getOpenedOptions()!;
+        assert.equal(opened.permissionMode, "auto");
+        assert.isUndefined(opened.allowDangerouslySkipPermissions);
+        yield* runTurn;
+        yield* runTurn;
+        assert.strictEqual(harness.getOpenedOptions(), opened);
+        assert.deepEqual(harness.permissionModeChanges, []);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    );
   });
 
   describe("Plan-mode tool approval", () => {
