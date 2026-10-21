@@ -199,7 +199,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   };
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
-    const warning = failureItem.failure.class === "usage_limit";
+    const warning =
+      failureItem.failure.class === "usage_limit" || failureItem.failure.class === "model_capacity";
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt ? formatUpcomingTimestamp(resetAt, timestampFormat) : null;
     const label = warning

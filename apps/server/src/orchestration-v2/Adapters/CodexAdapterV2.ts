@@ -1134,6 +1134,10 @@ function codexUsageLimitError(
   );
 }
 
+function codexModelCapacityError(code: string | null, message: string | undefined): boolean {
+  return code === "serverOverloaded" || /^Selected model is at capacity\b/iu.test(message ?? "");
+}
+
 interface ActiveCodexTurnContext {
   closedCommandItemIds?: ReadonlySet<string>;
   latestProviderFailure?: {
@@ -4566,9 +4570,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 failure: makeProviderFailure({
                   message: payload.error.additionalDetails?.trim() || payload.error.message,
                   code: notificationCode,
-                  class: codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
-                    ? "usage_limit"
-                    : "provider_error",
+                  class: codexModelCapacityError(notificationCode, payload.error.message)
+                    ? "model_capacity"
+                    : codexUsageLimitError(notificationCode, payload.error.codexErrorInfo)
+                      ? "usage_limit"
+                      : "provider_error",
                 }),
               };
               return;
@@ -4589,11 +4595,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ? payload.error.message
                   : additionalDetails,
               code,
-              class: codexUsageLimitError(code, payload.error.codexErrorInfo)
-                ? "usage_limit"
-                : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
-                  ? "transport_error"
-                  : "provider_error",
+              class: codexModelCapacityError(code, payload.error.message)
+                ? "model_capacity"
+                : codexUsageLimitError(code, payload.error.codexErrorInfo)
+                  ? "usage_limit"
+                  : code?.startsWith("http") === true || code?.startsWith("responseStream") === true
+                    ? "transport_error"
+                    : "provider_error",
               retryable: true,
             });
             const itemOrdinal =
@@ -5645,9 +5653,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 input.failureErrorInfo === undefined
                   ? undefined
                   : codexErrorInfoCode(input.failureErrorInfo);
-              const failureClass = codexUsageLimitError(failureCode ?? null, input.failureErrorInfo)
-                ? "usage_limit"
-                : "provider_error";
+              const failureClass = codexModelCapacityError(
+                failureCode ?? null,
+                input.failureMessage,
+              )
+                ? "model_capacity"
+                : codexUsageLimitError(failureCode ?? null, input.failureErrorInfo)
+                  ? "usage_limit"
+                  : "provider_error";
               // The notification carries the richer message, so it wins when the
               // completion repeats it. An explicit exhaustion status on the
               // completion still decides the class; a missing one is not evidence.
@@ -5709,17 +5722,26 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           event: CodexRootTerminalEvent,
         ) {
           const current =
-            event.status === "failed" && event.failure.class === "usage_limit"
+            event.status === "failed" && event.failure.class === "model_capacity"
               ? {
                   ...event,
                   failure: {
                     ...event.failure,
-                    resetAt:
-                      event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                    retryable: true,
+                    resetAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 30 })),
                   },
                 }
-              : event;
+              : event.status === "failed" && event.failure.class === "usage_limit"
+                ? {
+                    ...event,
+                    failure: {
+                      ...event.failure,
+                      resetAt:
+                        event.failure.resetAt ??
+                        codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                    },
+                  }
+                : event;
           yield* emitProviderEvent(current);
           for (const turn of goalRuns.get(context.providerTurnId) ?? []) {
             goalRuns.delete(turn.providerTurnId);

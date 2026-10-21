@@ -899,7 +899,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   );
   const failureItem = row.projectedItem.item;
   if (failureItem.type === "error" && failureItem.status === "failed") {
-    const warning = failureItem.failure.class === "usage_limit";
+    const warning =
+      failureItem.failure.class === "usage_limit" || failureItem.failure.class === "model_capacity";
     const timestamp = new Date(row.createdAt);
     const resetAt = failureItem.failure.resetAt;
     const resetTime = resetAt
@@ -1033,7 +1034,8 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&
-    row.projectedItem.item.failure.class === "usage_limit" &&
+    (row.projectedItem.item.failure.class === "usage_limit" ||
+      row.projectedItem.item.failure.class === "model_capacity") &&
     row.projectedItem.item.status !== "completed";
   const iconIsDestructive =
     !isSystemNotice && !isUsageLimit && (row.icon === "alert" || row.icon === "warning");
