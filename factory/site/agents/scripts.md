@@ -131,7 +131,7 @@ Merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. 
 |           |                                                                                                                                                                                                 |
 | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Usage     | `factory/scripts/sync.sh [prepare <dir> \| publish <dir>]`; no argument runs both                                                                                                               |
-| Env       | `SYNC_UPSTREAM` (default `https://github.com/pingdotgg/t3code`)                                                                                                                                 |
+| Env       | `SYNC_UPSTREAM` (default `https://github.com/pingdotgg/t3code`); a non-empty `GITHUB_ACTIONS` makes `publish` dispatch after landing                                                            |
 | `prepare` | Merges the tag on `sync/<tag>`, runs `vp i` and `check.sh`, writes the outcome and a bundle to `<dir>`. No write token.                                                                         |
 | `publish` | Verifies the bundle, then pushes, lands, or files an issue. Inside the workflow, a landing then dispatches Factory CI, desktop and, when the merge touched `apps/mobile` or `packages`, mobile. |
 | 0         | Up to date; waiting on an open sync PR; merged into `main`; or `prepare` recorded an outcome.                                                                                                   |
