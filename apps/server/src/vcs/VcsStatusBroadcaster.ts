@@ -524,7 +524,7 @@ export const make = Effect.gen(function* () {
             return yield* updateCachedStatus(cwd, local, null, { publish: true });
           }
           yield* updateCachedLocalStatus(cwd, local, { publish: true });
-          return mergeGitStatusParts(local, null);
+          return mergeGitStatusParts(local, previous?.remote?.value ?? null);
         }),
       );
     }

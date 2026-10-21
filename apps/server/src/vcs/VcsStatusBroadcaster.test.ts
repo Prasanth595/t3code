@@ -204,6 +204,31 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
+  it.effect(
+    "preserves cached remote status when a local-only refresh stays on the same branch",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: { ...remoteStatusWithPr, aheadCount: 2, behindCount: 3 },
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
+        const refreshed = yield* broadcaster.refreshStatus("/repo", { localOnly: true });
+        assert.deepStrictEqual(refreshed, initial);
+        assert.deepStrictEqual(yield* broadcaster.getStatus({ cwd: "/repo" }), refreshed);
+        assert.equal(state.localInvalidationCalls, 1);
+        assert.equal(state.remoteInvalidationCalls, 0);
+        assert.equal(state.remoteStatusCalls, 1);
+      }).pipe(Effect.provide(layerTestFor(state)));
+    },
+  );
+
   it.effect("clears the previous branch's remote status after an in-flight PR refresh", () => {
     const remoteReadStarted = Deferred.makeUnsafe<void>();
     const releaseRemoteRead = Deferred.makeUnsafe<void>();
