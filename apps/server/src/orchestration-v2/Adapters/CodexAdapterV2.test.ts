@@ -1148,6 +1148,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             "tools.update_plan.enabled": true,
             mcp_optional_startup_grace_ms: 10_000,
             "mcp_servers.t3-code": {
+              enabled: true,
               url: "http://127.0.0.1:43123/mcp",
               tool_timeout_sec: 3_900,
               http_headers: { Authorization: "Bearer secret-codex-token" },
