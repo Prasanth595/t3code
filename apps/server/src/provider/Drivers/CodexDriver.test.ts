@@ -96,6 +96,65 @@ const noSpawn = ChildProcessSpawner.make(() =>
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect(
+    "does not report an expired saved ChatGPT token as authenticated after a failed check",
+    () =>
+      Effect.gen(function* () {
+        const instanceId = ProviderInstanceId.make("expired-managed-account");
+        const store = yield* ProviderCredentialStore.make("codex-chatgpt", instanceId);
+        yield* store.set(
+          new TextEncoder().encode(
+            yield* encodeCredentials({
+              clientId: "oaiapp_expired",
+              accessToken: "expired-access",
+              refreshToken: "renewable-refresh",
+              expiresAt: 0,
+              earliestRefreshAt: null,
+              scopes: ["chatgpt.tokens.use.direct"],
+              subject: "test-user",
+              email: "account@example.test",
+            }),
+          ),
+        );
+        const instance = yield* CodexDriver.create({
+          instanceId,
+          enabled: true,
+          displayName: "Codex",
+          environment: [],
+          config: { ...CodexDriver.defaultConfig(), setupMode: "managed" },
+        });
+        const snapshot = yield* instance.snapshot.refresh;
+        expect(snapshot.auth.status).toBe("unknown");
+        expect(snapshot.auth.email).toBe("account@example.test");
+        expect(Option.isSome(yield* store.get)).toBe(true);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            ServerSecretStore.layer,
+            Layer.mock(CodexInstallation.CodexInstallation)({
+              managedDirectory: "unused-managed-installation",
+              resolve: () =>
+                Effect.succeed({
+                  executablePath: "/fixture/codex",
+                  managedVersionDirectory: null,
+                  source: "local",
+                  version: "0.156.1",
+                }),
+              acquire: () =>
+                Effect.fail(
+                  new CodexInstallation.CodexInstallationError({
+                    operation: "acquire",
+                    detail: "Runtime temporarily unavailable",
+                  }),
+                ),
+            }),
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, noSpawn),
+          ),
+        ),
+      ),
+  );
+
   it.effect("disconnect refreshes a restored managed account while its auth flow is idle", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");
@@ -246,7 +305,8 @@ it.layer(layerTest)("CodexDriver", (it) => {
         const launch = launches[0]!;
         expect(launch.settings.binaryPath).toBe(executable.executablePath);
         expect(launch.settings.launchArgs).toContain("openai_token_sharing");
-        expect(launch.environment.ACCESS_TOKEN).toBe("dummy-owned-access");
+        expect(launch.environment.ACCESS_TOKEN).toBeUndefined();
+        expect(launch.settings.launchArgs).toContain("__codex-token");
         expect(launch.environment.OPENAI_API_KEY).toBeUndefined();
         expect(launch.environment.CODEX_HOME).toBe(launch.settings.homePath);
         const before = yield* instance.auth!.subscribe("test-owner").pipe(Stream.runHead);

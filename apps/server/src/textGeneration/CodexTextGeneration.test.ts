@@ -177,7 +177,7 @@ function withFakeCodexEnv<A, E, R>(
         ? Effect.succeed({
             config,
             environment: input.environment ?? process.env,
-            revision: "test",
+            accessToken: "test",
           })
         : undefined,
     );

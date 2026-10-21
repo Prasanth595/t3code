@@ -1,5 +1,6 @@
 import { ProviderDriverKind, TextGenerationError, type CodexSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -128,10 +129,9 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
             effective.environment,
             managedAuth,
           );
-          const models = yield* chatGptModels(
-            effective.environment.ACCESS_TOKEN!,
-            draft.models,
-          ).pipe(Effect.provideService(HttpClient.HttpClient, http));
+          const models = yield* chatGptModels(effective.accessToken, draft.models).pipe(
+            Effect.provideService(HttpClient.HttpClient, http),
+          );
           return { ...draft, models };
         }),
       ),
@@ -166,30 +166,39 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       Effect.catch(() =>
         runtime.auth.read.pipe(
           Effect.orElseSucceed(() => Option.none()),
-          Effect.map((current) => ({
-            ...base,
-            installed: true,
-            version: executable.value.version,
-            models: [],
-            auth: {
-              status:
-                Option.isSome(current) && current.value.scopes.includes("chatgpt.tokens.use.direct")
-                  ? ("authenticated" as const)
-                  : ("unauthenticated" as const),
-              label: "ChatGPT",
-              ...(Option.isSome(current) &&
-              current.value.scopes.includes("chatgpt.tokens.use.direct")
-                ? { subscriptionSharing: true, profileId: current.value.clientId }
-                : {}),
-              ...(Option.isSome(current) && current.value.email?.trim()
-                ? { email: current.value.email.trim() }
-                : {}),
-            },
-            ...(Option.isSome(current) && current.value.scopes.includes("chatgpt.tokens.use.direct")
-              ? { usageLimits }
-              : {}),
-            message: "Could not check Codex right now. Retry, or reconnect in provider settings.",
-          })),
+          Effect.flatMap((current) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((now) => ({
+                ...base,
+                installed: true,
+                version: executable.value.version,
+                models: [],
+                auth: {
+                  status:
+                    Option.isSome(current) &&
+                    current.value.scopes.includes("chatgpt.tokens.use.direct")
+                      ? current.value.expiresAt > now
+                        ? ("authenticated" as const)
+                        : ("unknown" as const)
+                      : ("unauthenticated" as const),
+                  label: "ChatGPT",
+                  ...(Option.isSome(current) &&
+                  current.value.scopes.includes("chatgpt.tokens.use.direct")
+                    ? { subscriptionSharing: true, profileId: current.value.clientId }
+                    : {}),
+                  ...(Option.isSome(current) && current.value.email?.trim()
+                    ? { email: current.value.email.trim() }
+                    : {}),
+                },
+                ...(Option.isSome(current) &&
+                current.value.scopes.includes("chatgpt.tokens.use.direct")
+                  ? { usageLimits }
+                  : {}),
+                message:
+                  "Could not check Codex right now. Retry, or reconnect in provider settings.",
+              })),
+            ),
+          ),
         ),
       ),
       Effect.scoped,

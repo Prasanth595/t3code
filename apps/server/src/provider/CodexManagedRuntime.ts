@@ -1,5 +1,6 @@
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
+import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -12,9 +13,11 @@ import { materializeCodexShadowHome } from "./Drivers/CodexHomeLayout.ts";
 export interface CodexEffectiveRuntime {
   readonly config: CodexSettings;
   readonly environment: NodeJS.ProcessEnv;
-  readonly revision: string;
+  readonly accessToken: string;
 }
 const decodeSettings = Schema.decodeSync(CodexSettings);
+const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+const encodeArguments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const managedCodexLaunchArgs = [
   'model_provider="openai_token_sharing"',
   'model_providers.openai_token_sharing.name="OpenAI Token Sharing"',
@@ -23,13 +26,9 @@ const managedCodexLaunchArgs = [
   "features.api_key_model_discovery=true",
   "features.multi_agent=false",
   "features.multi_agent_v2=false",
-  'model_providers.openai_token_sharing.env_key="ACCESS_TOKEN"',
   'model_providers.openai_token_sharing.wire_api="responses"',
-  "model_providers.openai_token_sharing.requires_openai_auth=false",
   "model_providers.openai_token_sharing.supports_websockets=false",
-]
-  .map((value) => `-c '${value}'`)
-  .join(" ");
+];
 
 export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -41,6 +40,15 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const invocation = yield* resolveSelfInvocation();
+  const tokenArguments = selfInvocationArgs(invocation, [
+    "__codex-token",
+    "--base-dir",
+    config.baseDir,
+    ...(config.devUrl ? ["--dev-url", config.devUrl.toString()] : []),
+    "--instance-id",
+    options.instanceId,
+  ]);
   const auth = yield* makeCodexChatGptAuth({
     instanceId: options.instanceId,
     defaultReturnUrl: new URL(
@@ -66,6 +74,16 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       ),
     );
     const credentials = yield* auth.access;
+
+    const launchArgs = [
+      ...managedCodexLaunchArgs,
+      `model_providers.openai_token_sharing.auth.command=${encodeString(invocation.command)}`,
+      `model_providers.openai_token_sharing.auth.args=${encodeArguments([...tokenArguments, "--profile-id", credentials.clientId])}`,
+      "model_providers.openai_token_sharing.auth.timeout_ms=90000",
+      "model_providers.openai_token_sharing.auth.refresh_interval_ms=60000",
+    ]
+      .map((value) => `-c ${encodeString(value)}`)
+      .join(" ");
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -91,22 +109,23 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
     // Ambient CLI overrides cannot redirect a T3-owned token to a different provider.
     const environment: NodeJS.ProcessEnv = {
       ...options.environment,
-      ACCESS_TOKEN: credentials.accessToken,
       CODEX_HOME: homePath,
+      ELECTRON_RUN_AS_NODE: "1",
     };
     delete environment.T3CODE_CODEX_LAUNCH_ARGS;
     delete environment.OPENAI_API_KEY;
     delete environment.OPENAI_BASE_URL;
+    delete environment.ACCESS_TOKEN;
     return {
       config: decodeSettings({
         enabled: options.enabled,
         setupMode: "managed",
         binaryPath: executable.executablePath,
         homePath,
-        launchArgs: managedCodexLaunchArgs,
+        launchArgs,
       }),
       environment,
-      revision: credentials.accessToken,
+      accessToken: credentials.accessToken,
     } satisfies CodexEffectiveRuntime;
   });
   return { auth, resolve, installation, homePath, homeLayout };

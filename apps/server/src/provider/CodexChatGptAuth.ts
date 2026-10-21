@@ -103,6 +103,7 @@ const decodeOAuthError = Schema.decodeUnknownSync(OAuthError);
 
 export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
+  readonly expectedProfileId?: string;
   readonly discoveryUrl?: string;
   readonly resource?: string;
   readonly defaultReturnUrl?: string;
@@ -734,6 +735,14 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           if (Option.isNone(saved))
             return yield* failure("access", "Sign in with ChatGPT to use managed Codex.");
           let record = saved.value;
+          if (
+            options.expectedProfileId !== undefined &&
+            record.clientId !== options.expectedProfileId
+          )
+            return yield* failure(
+              "access",
+              "This Codex session belongs to a replaced ChatGPT connection. Restart the session.",
+            );
           if (!record.scopes.includes(REQUIRED_SCOPE))
             return yield* failure(
               "sharing",

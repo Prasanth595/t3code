@@ -1,4 +1,5 @@
 import { doctorCommand } from "./cli/doctor.ts";
+import { codexTokenCommand } from "./cli/codexToken.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -83,6 +84,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       uninstallCommand,
       serviceLauncherCommand,
       claudeHistoryCommand,
+      codexTokenCommand,
       sshHelperCommand,
 
       servicePreflightCommand,

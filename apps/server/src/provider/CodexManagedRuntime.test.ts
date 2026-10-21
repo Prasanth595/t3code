@@ -121,11 +121,19 @@ it.effect.each(
             );
             assert.isFalse(yield* fs.exists(path.join(effective.config.homePath, "auth.json")));
           }
-          assert.strictEqual(effective.environment.ACCESS_TOKEN, "dummy-owned-access");
+          assert.strictEqual(effective.accessToken, "dummy-owned-access");
+          assert.isUndefined(effective.environment.ACCESS_TOKEN);
           assert.isUndefined(effective.environment.OPENAI_API_KEY);
           assert.isUndefined(effective.environment.OPENAI_BASE_URL);
           assert.isUndefined(effective.environment.T3CODE_CODEX_LAUNCH_ARGS);
           const args = codexAppServerArgs(effective.config.launchArgs);
+          assert.isTrue(
+            args.some((arg) =>
+              arg.startsWith("model_providers.openai_token_sharing.auth.command="),
+            ),
+          );
+          assert.notInclude(args, 'model_providers.openai_token_sharing.env_key="ACCESS_TOKEN"');
+
           assert.include(
             args,
             'model_providers.openai_token_sharing.base_url="https://api.openai.com/v1"',
@@ -140,7 +148,10 @@ it.effect.each(
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(args, "model_providers.openai_token_sharing.supports_websockets=false");
-          assert.include(args, "model_providers.openai_token_sharing.requires_openai_auth=false");
+          assert.notInclude(
+            args,
+            "model_providers.openai_token_sharing.requires_openai_auth=false",
+          );
           assert.notInclude(effective.config.launchArgs, "dummy-owned-access");
           assert.strictEqual(ambient.CODEX_HOME, "/user/.codex");
         }).pipe(Effect.scoped);
