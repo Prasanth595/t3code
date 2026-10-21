@@ -1,4 +1,0 @@
-- [x] Phase 1: Run the setup command. Read storageCleanup.ts and its tests.
-- [x] Phase 2: Implement the fix, with a focused test for three cases (same-device store skipped, other-device store counted, no .modules.yaml unchanged).
-- [x] Phase 3: Measure one real BeeBox worktree before and after with a read-only call. No cleanup.
-- [ ] Phase 4: Open the PR.
