@@ -631,6 +631,8 @@ describe("V2 environment commands", () => {
           commandId: CommandId.make("lineage-stop"),
           threadId: v2ThreadId,
           subagentId,
+          // A parent run must not be interrupted on the child thread.
+          runId,
         }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
         expect(commands).toEqual([
           {

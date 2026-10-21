@@ -797,7 +797,9 @@ export const interruptThreadTurn = Effect.fn("EnvironmentCommands.interruptThrea
       });
     }
   }
-  let runId = input.runId ?? (input.turnId as RunId | undefined);
+  // A run named by the caller belongs to the parent, not the rerouted child.
+  let runId =
+    threadId === input.threadId ? (input.runId ?? (input.turnId as RunId | undefined)) : undefined;
   if (runId === undefined) {
     const config = yield* getInitialServerConfig();
     if (config.environment.capabilities.threadStop === true) {
