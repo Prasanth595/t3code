@@ -95,6 +95,19 @@ describe("HTML in native Markdown", () => {
       expect(document.children[1].children).toHaveLength(2);
   });
 
+  it("keeps a table row intact when an anchor href contains a pipe", () => {
+    const document = parseMarkdownDocument(
+      "| Preview | Logs |\n| - | - |\n| <a href='https://example.com/?a=1&#124;2'>Open</a> | done |",
+    );
+    const table = document.children[0];
+    expect(table?.type).toBe("table");
+    if (table?.type !== "table") return;
+    expect(table.children[1]?.children).toMatchObject([
+      { children: [{ type: "link", url: "https://example.com/?a=1%7C2" }] },
+      { children: [{ value: "done" }] },
+    ]);
+  });
+
   it("keeps anchor text unlinked for unsafe or unclosed hrefs", () => {
     expect(markdownWithHtml('Run <a href="javascript:alert(1)">this</a> now')).toBe("Run this now");
     expect(markdownWithHtml("<p><a href='https://example.com'>open</p>")).toBe("\n\nopen\n\n");

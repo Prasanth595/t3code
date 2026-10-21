@@ -56,7 +56,7 @@ function attribute(tag: string, name: string): string | null {
 }
 
 function markdownDestination(url: string): string {
-  return `<${url.replace(/&/g, "\\&").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\n/g, "")}>`;
+  return `<${url.replace(/&/g, "\\&").replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\|/g, "%7C").replace(/\n/g, "")}>`;
 }
 
 const ANCHOR_TAG = /^<\/?a[\s/>]/i;
