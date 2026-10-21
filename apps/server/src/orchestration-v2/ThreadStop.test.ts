@@ -12,6 +12,7 @@ import {
   ProviderSessionId,
   ProviderTurnId,
   RuntimeRequestId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -160,21 +161,24 @@ const threadState = (threadId: ThreadId) =>
   });
 
 it.effect.each([
-  "idle",
-  "archived",
-  "missing",
-  "running",
-  "queued",
-  "waiting",
-  "correlated",
-  "provider-active",
-  "roster",
-  "background",
-  "question",
-  "restart",
+  ["idle", "thread.stop"],
+  ["idle", "run.interrupt"],
+  ["idle", "subagent.stop"],
+  ["running", "subagent.stop"],
+  ["archived", "thread.stop"],
+  ["missing", "thread.stop"],
+  ["running", "thread.stop"],
+  ["queued", "thread.stop"],
+  ["waiting", "thread.stop"],
+  ["correlated", "thread.stop"],
+  ["provider-active", "thread.stop"],
+  ["roster", "thread.stop"],
+  ["background", "thread.stop"],
+  ["question", "thread.stop"],
+  ["restart", "thread.stop"],
 ] as const)(
-  "Stop clears an orphaned follow-up only when its child is finished (%s)",
-  (childState) =>
+  "Stop clears an orphaned follow-up only when its child is finished (%s via %s)",
+  ([childState, type]) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -366,6 +370,41 @@ it.effect.each([
         occurredAt: now,
         payload: { ...parent.runs[0]!, status: "completed", completedAt: now },
       });
+      if (type === "run.interrupt") {
+        const run = parent.runs[0]!;
+        yield* apply({
+          type: "provider-turn.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: {
+            id: ProviderTurnId.make("provider-turn:orphan-parent"),
+            providerThreadId: run.providerThreadId!,
+            nodeId: run.rootNodeId!,
+            runAttemptId: run.activeAttemptId!,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+        yield* apply({
+          type: "run-attempt.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: { ...parent.attempts[0]!, status: "completed", completedAt: now },
+        });
+        yield* apply({
+          type: "node.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: {
+            ...parent.nodes.find((node) => node.id === run.rootNodeId)!,
+            status: "completed",
+            completedAt: now,
+          },
+        });
+      }
       if (childState === "archived") {
         yield* apply({
           type: "thread.archived",
@@ -381,20 +420,30 @@ it.effect.each([
         ),
         1,
       );
-      yield* orchestrator.dispatch({
-        type: "thread.stop",
+      const stop = {
         commandId: CommandId.make(`stop-orphan:${childState}`),
         threadId: parentThreadId,
-      });
+      };
+      yield* orchestrator.dispatch(
+        type === "run.interrupt"
+          ? { ...stop, type, runId: parent.runs.at(-1)!.id, holdQueue: true }
+          : type === "subagent.stop"
+            ? { ...stop, type, runId: original.runId!, subagentId: taskId }
+            : { ...stop, type },
+      );
       const after = yield* orchestrator.getThreadProjection(parentThreadId);
-      assert.isEmpty((after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined));
+      // The Lineage stop of one subagent leaves the parent's watches alone.
+      assert.lengthOf(
+        (after.thread.pullRequests ?? []).filter((link) => link.watch !== undefined),
+        type === "subagent.stop" ? 1 : 0,
+      );
       const expected = childState === "idle" || childState === "archived" ? "cancelled" : "running";
       assert.equal(after.subagents.find((task) => task.id === taskId)?.status, expected);
       assert.equal(after.nodes.find((node) => node.id === taskId)?.status, expected);
       assert.equal(after.turnItems.find((item) => item.id === itemId)?.status, expected);
       assert.equal(
         after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
-        "disposed",
+        type === "subagent.stop" && expected === "running" ? undefined : "disposed",
       );
       assert.equal(
         after.subagents.find((task) => task.id === original.id)?.result,
@@ -403,7 +452,9 @@ it.effect.each([
       assert.deepEqual(yield* orchestrator.getThreadProjection(childThreadId), childBeforeStop);
       if (expected === "cancelled") {
         assert.lengthOf(
-          (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? [],
+          (
+            (yield* orchestrator.getThreadShell(parentThreadId))?.pendingBackgroundTasks ?? []
+          ).filter((task) => task.kind === "subagent"),
           0,
         );
         yield* orchestrator.recoverDelegatedTasks;
@@ -418,6 +469,30 @@ it.effect.each([
         assert.deepEqual(repeated.contextTransfers, after.contextTransfers);
       }
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("Stop still stops the thread when a delegated child cannot be read", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sql = yield* SqlClient.SqlClient;
+    const parentThreadId = ThreadId.make("thread:unreadable-child-parent");
+    yield* createWatchingThread(parentThreadId, 1);
+    yield* send(parentThreadId, "parent", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, "unreadable child");
+    yield* sql`
+      UPDATE orchestration_v2_projection_runs
+      SET payload_json = '{"obsolete":true}'
+      WHERE thread_id = ${childThreadId}
+    `;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make("stop:unreadable-child"),
+      threadId: parentThreadId,
+      runId: (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(-1)!.id,
+      holdQueue: true,
+    });
+    assert.deepEqual(yield* threadState(parentThreadId), { runs: ["interrupted"], watched: [] });
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("Stop ends watches, holds queues, and stops the delegated tasks under the thread", () =>
@@ -536,6 +611,95 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         [true, true],
       );
     }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a message the user sends after Stop releases the held queue; an agent's does not", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:stop-release");
+    const agentSend = (text: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`agent-send:${text}`),
+        threadId,
+        messageId: MessageId.make(`message:${threadId}:${text}`),
+        text,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    yield* createWatchingThread(threadId, 6);
+    yield* send(threadId, "active", "start_immediately");
+    yield* send(threadId, "queued before the stop", "queue_after_active");
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-release"),
+      threadId,
+    });
+    assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted", "queued:held"]);
+
+    // An agent's message starts on the idle thread, but the hold is the user's.
+    yield* agentSend("agent nudge");
+    assert.deepEqual((yield* threadState(threadId)).runs, [
+      "interrupted",
+      "queued:held",
+      "starting",
+    ]);
+    const nudge = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+    const now = yield* DateTime.now;
+    yield* projections.apply({
+      id: EventId.make("event:stop-release:nudge-completed"),
+      type: "run.updated",
+      threadId,
+      runId: nudge.id,
+      occurredAt: now,
+      payload: { ...nudge, status: "completed", completedAt: now },
+    });
+
+    // A scheduled task the user created is not the user coming back.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("scheduled-send"),
+      threadId,
+      messageId: MessageId.make(`message:${threadId}:scheduled`),
+      text: "Nightly check",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: "web",
+      scheduledTaskId: ScheduledTaskId.make("scheduled:nightly"),
+    });
+    const scheduled = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+    assert.deepEqual((yield* threadState(threadId)).runs, [
+      "interrupted",
+      "queued:held",
+      "completed",
+      "starting",
+    ]);
+    yield* projections.apply({
+      id: EventId.make("event:stop-release:scheduled-completed"),
+      type: "run.updated",
+      threadId,
+      runId: scheduled.id,
+      occurredAt: now,
+      payload: { ...scheduled, status: "completed", completedAt: now },
+    });
+
+    // The user is back: the held message follows their run, and a wake that
+    // queues behind it is not held by the old Stop.
+    yield* send(threadId, "back", "start_immediately");
+    yield* agentSend("task finished");
+    assert.deepEqual((yield* threadState(threadId)).runs, [
+      "interrupted",
+      "queued",
+      "completed",
+      "completed",
+      "starting",
+      "queued",
+    ]);
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect(
@@ -895,34 +1059,6 @@ it.effect("a delegated task that cannot be stopped fails the walk after its sibl
     );
     assert.isTrue(Exit.isFailure(walked));
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted"]);
-  }).pipe(Effect.provide(layerTest)),
-);
-
-it.effect("thread.stop on a finished thread refuses a late agent watch", () =>
-  Effect.gen(function* () {
-    const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const projections = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = ThreadId.make("thread:stop-finished");
-    yield* createWatchingThread(threadId, 9);
-    yield* send(threadId, "work", "start_immediately");
-    const now = yield* DateTime.now;
-    const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-    yield* projections.apply({
-      id: EventId.make("event:stop-finished:completed"),
-      type: "run.updated",
-      threadId,
-      runId: run.id,
-      occurredAt: now,
-      payload: { ...run, status: "completed", startedAt: now, completedAt: now },
-    });
-
-    yield* orchestrator.dispatch({
-      type: "thread.stop",
-      commandId: CommandId.make("stop-finished"),
-      threadId,
-    });
-    assert.isTrue(Exit.isFailure(yield* Effect.exit(watch(threadId, 10))));
-    assert.deepEqual(yield* threadState(threadId), { runs: ["completed"], watched: [] });
   }).pipe(Effect.provide(layerTest)),
 );
 
