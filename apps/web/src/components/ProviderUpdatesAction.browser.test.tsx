@@ -21,12 +21,25 @@ const state = vi.hoisted(() => ({
   }[],
   providers: new Map<EnvironmentId, ReadonlyArray<ServerProvider>>(),
   requests: [] as EnvironmentId[],
+  sessions: new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(),
 }));
 
 vi.mock(import("~/state/environments"), () => ({
   useEnvironments: (() => ({ environments: state.environments })) as never,
   useEnvironmentProviders: () => state.providers,
 }));
+vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    createEnvironmentSessionAtoms: ((
+      ...args: Parameters<typeof actual.createEnvironmentSessionAtoms>
+    ) => ({
+      ...actual.createEnvironmentSessionAtoms(...args),
+      sessionStateAtom: (id: EnvironmentId) => state.sessions.get(id)!,
+    })) as typeof actual.createEnvironmentSessionAtoms,
+  };
+});
 vi.mock(import("~/state/server"), () => ({
   serverEnvironment: { updateProvider: {} } as never,
 }));
@@ -39,7 +52,6 @@ vi.mock(import("~/state/use-atom-command"), () => ({
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { environmentSession } from "~/state/session";
 import { useProviderUpdates } from "./ProviderUpdatesAction";
 
 const provider: ServerProvider = {
@@ -95,15 +107,12 @@ function setup() {
       [state.environments[2]!.environmentId, Atom.make(AsyncResult.initial<AuthSessionState>())],
     ],
   );
-  const spy = vi
-    .spyOn(environmentSession, "sessionStateAtom")
-    .mockImplementation(((id: EnvironmentId) =>
-      sessions.get(id)!) as typeof environmentSession.sessionStateAtom);
-  return { sessions, [Symbol.dispose]: () => spy.mockRestore() };
+  state.sessions = sessions;
+  return { sessions };
 }
 
 it("bulk provider updates exclude connections without a confirmed management grant", async () => {
-  using fixture = setup();
+  const fixture = setup();
   let updates!: ReturnType<typeof useProviderUpdates>;
   function Probe() {
     const nextUpdates = useProviderUpdates();
