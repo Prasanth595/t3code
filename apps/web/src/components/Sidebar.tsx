@@ -2860,6 +2860,12 @@ export default function Sidebar() {
                         const isCard =
                           section === "active" || section === "pinned" || section === "working";
                         const rowVariant = isCard ? "card" : "slim";
+                        const canDragThread =
+                          draggableThreadKeys.has(threadKey) ||
+                          (section === "active" &&
+                            !workingShelfEnabled &&
+                            activeReorderableThreadKeys.has(threadKey));
+
                         return (
                           <SortableThreadRow
                             key={threadKey}
@@ -2867,7 +2873,7 @@ export default function Sidebar() {
                             contextDrag={isContextDrag}
                             sortableDisabled={
                               renamingThreadKey === threadKey ||
-                              !draggableThreadKeys.has(threadKey) ||
+                              !canDragThread ||
                               optimisticDrop !== null
                             }
                             thread={thread}
