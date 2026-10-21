@@ -230,7 +230,7 @@ describe("MessagesTimeline automation prompts", () => {
     );
   });
 
-  it("keeps edit-from-here on automation prompts", async () => {
+  it("shows edit-from-here once an automation prompt is expanded", async () => {
     setup();
     const runId = RunId.make("run-1");
     await using screen = await renderTimeline(
@@ -258,6 +258,8 @@ describe("MessagesTimeline automation prompts", () => {
         ],
       },
     );
+    expect(screen.buttons("Edit from here")).toHaveLength(0);
+    await click(screen.button(/^Automation/));
     expect(screen.buttons("Edit from here")).toHaveLength(1);
   });
 });

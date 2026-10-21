@@ -1073,32 +1073,34 @@ function ThreadAutomationMessageRow(props: {
           </View>
         ) : null}
       </View>
-      <View className="mt-1 flex-row items-center justify-end gap-2 pr-0.5">
-        {props.scheduledTaskId ? (
-          <Pressable
-            accessibilityRole="link"
-            hitSlop={6}
-            onPress={() =>
-              navigation.navigate("SettingsSheet", {
-                screen: "SettingsContent",
-                params: { screen: "SettingsScheduledTasks" },
-              })
-            }
-          >
-            <Text className="font-t3-medium text-xs text-foreground-secondary">
-              Open automation
-            </Text>
-          </Pressable>
-        ) : null}
-        <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
-          {props.timestampLabel}
-        </Text>
-        <UserMessageCopyButton
-          text={props.text}
-          onCopy={undefined}
-          tintColor={props.iconSubtleColor}
-        />
-      </View>
+      {props.expanded ? (
+        <View className="mt-1 flex-row items-center justify-end gap-2 pr-0.5">
+          {props.scheduledTaskId ? (
+            <Pressable
+              accessibilityRole="link"
+              hitSlop={6}
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "SettingsScheduledTasks" },
+                })
+              }
+            >
+              <Text className="font-t3-medium text-xs text-foreground-secondary">
+                Open automation
+              </Text>
+            </Pressable>
+          ) : null}
+          <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+            {props.timestampLabel}
+          </Text>
+          <UserMessageCopyButton
+            text={props.text}
+            onCopy={undefined}
+            tintColor={props.iconSubtleColor}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }

@@ -2229,38 +2229,40 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         ) : null}
       </div>
       <UserMessageProjectedStatus row={row} />
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-        <div className="flex shrink-0 items-center gap-2">
-          {scheduledTaskId ? (
-            <Link
-              to="/settings/scheduled-tasks"
-              search={{ environmentId: ctx.activeThreadEnvironmentId, taskId: scheduledTaskId }}
-              className="rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              Open automation
-            </Link>
-          ) : null}
-          <TimelineRowTimestamp
-            createdAt={row.message.createdAt}
-            timestampFormat={ctx.timestampFormat}
-            alwaysVisible
-          />
-          <div className="flex items-center gap-0.5">
-            {typeof revertTurnCount === "number" && (
-              <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-            )}
-            <MessageCopyButton text={text} variant="ghost" />
-            {promptLink !== null && (
-              <MessageCopyButton
-                text={promptLink}
-                label="Copy prompt link"
-                icon={LinkIconNode}
-                variant="ghost"
-              />
-            )}
+      {expanded ? (
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+          <div className="flex shrink-0 items-center gap-2">
+            {scheduledTaskId ? (
+              <Link
+                to="/settings/scheduled-tasks"
+                search={{ environmentId: ctx.activeThreadEnvironmentId, taskId: scheduledTaskId }}
+                className="rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                Open automation
+              </Link>
+            ) : null}
+            <TimelineRowTimestamp
+              createdAt={row.message.createdAt}
+              timestampFormat={ctx.timestampFormat}
+              alwaysVisible
+            />
+            <div className="flex items-center gap-0.5">
+              {typeof revertTurnCount === "number" && (
+                <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+              )}
+              <MessageCopyButton text={text} variant="ghost" />
+              {promptLink !== null && (
+                <MessageCopyButton
+                  text={promptLink}
+                  label="Copy prompt link"
+                  icon={LinkIconNode}
+                  variant="ghost"
+                />
+              )}
+            </div>
           </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }
