@@ -7,21 +7,25 @@ const ENV_FILES = [".env", NodePath.join("infra", "relay", ".env")];
 
 const worktree = NodePath.dirname(import.meta.dirname);
 
-// T3 runs setup in the background, so agents can start before it ends. They
-// wait for one of these markers instead of racing it with their own `vp i`.
+// T3 runs setup in the background, so agents can start before it ends.
+// `setup-running` holds this PID until setup ends with `setup-done` or
+// `setup-failed`, so agents wait instead of racing it with their own `vp i`.
 const markerDir = NodePath.join(worktree, ".t3");
+const runningMarker = NodePath.join(markerDir, "setup-running");
 const doneMarker = NodePath.join(markerDir, "setup-done");
 const failedMarker = NodePath.join(markerDir, "setup-failed");
 NodeFS.rmSync(doneMarker, { force: true });
 NodeFS.rmSync(failedMarker, { force: true });
+NodeFS.mkdirSync(markerDir, { recursive: true });
+NodeFS.writeFileSync(runningMarker, `${process.pid}\n`);
 let failureDetail = "";
 process.on("uncaughtExceptionMonitor", (error) => {
   failureDetail = error.stack ?? String(error);
 });
 process.on("exit", (code) => {
-  NodeFS.mkdirSync(markerDir, { recursive: true });
   if (code === 0) NodeFS.writeFileSync(doneMarker, "");
   else NodeFS.writeFileSync(failedMarker, `Setup exited with code ${code}.\n${failureDetail}\n`);
+  NodeFS.rmSync(runningMarker, { force: true });
 });
 // A cancelled setup must still leave a marker, or agents would wait forever.
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
