@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AndroidSheetHeader } from "../../components/ui/AndroidScreenHeader";
 import { AppText as Text } from "../../components/ui/AppText";
-import * as Dialog from "../../components/ui/Dialog";
+import { DialogSheetHost } from "../../components/ui/DialogHost";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { NativeSheetContent } from "../../native/NativeSheetContent";
 import { NativeStackScreenOptions, nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
@@ -134,7 +134,7 @@ export function ThreadPullRequestsSheet(
             />
           </NativeScreen>
         </ScreenStack>
-        <Dialog.SheetHost />
+        <DialogSheetHost />
       </View>
     );
   }

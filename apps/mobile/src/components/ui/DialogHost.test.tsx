@@ -32,10 +32,11 @@ vi.mock("../../features/settings/appearance/AppearancePreferencesProvider", () =
 }));
 
 import * as Dialog from "./Dialog";
+import { DialogHost, DialogSheetHost } from "./DialogHost";
 
 const roots: Root[] = [];
 
-function mountHost(host: () => ReactNode = () => <Dialog.Host />) {
+function mountHost(host: () => ReactNode = () => <DialogHost />) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const container = document.createElement("div");
   document.body.append(container);
@@ -87,7 +88,7 @@ it("confirms the edited value exactly once", () => {
 
 it("presents from a mounted sheet host, then falls back to the root host", () => {
   const app = mountHost();
-  const sheet = mountHost(() => <Dialog.SheetHost />);
+  const sheet = mountHost(() => <DialogSheetHost />);
 
   promptRename(vi.fn());
   expect(sheet.container.textContent).toContain("Rename thread");

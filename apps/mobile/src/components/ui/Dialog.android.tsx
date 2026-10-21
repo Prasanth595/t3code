@@ -128,11 +128,6 @@ export function Host() {
   ) : null;
 }
 
-/** Compose dialogs open in their own window, so sheets need no extra host on Android. */
-export function SheetHost() {
-  return null;
-}
-
 function DialogPresentation(props: DialogPresentationProps) {
   const { themeVariables: colors } = useAppearancePreferences();
   const titleTypography = useScaledTextRole("title");

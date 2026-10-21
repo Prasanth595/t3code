@@ -1,4 +1,5 @@
 import * as Dialog from "../../../components/ui/Dialog";
+import { DialogSheetHost } from "../../../components/ui/DialogHost";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
   type GitActionRequestInput,
@@ -71,7 +72,7 @@ export function GitOverviewSheet(props: GitOverviewSheetProps) {
   return (
     <>
       <GitOverviewSheetContent {...props} />
-      <Dialog.SheetHost />
+      <DialogSheetHost />
     </>
   );
 }
