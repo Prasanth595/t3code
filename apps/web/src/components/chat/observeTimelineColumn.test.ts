@@ -21,7 +21,7 @@ it("disables the hit strip for detached rows and observes their mounted replacem
     querySelector: () => current,
     getBoundingClientRect: () => ({ width: 1400 }),
   } as unknown as HTMLElement;
-  let measure!: () => void;
+  let measure!: (target: object) => void;
   const observe = vi.fn();
   const unobserve = vi.fn();
   const disconnect = vi.fn();
@@ -43,9 +43,9 @@ it("disables the hit strip for detached rows and observes their mounted replacem
     "ResizeObserver",
     class {
       constructor(callback: (entries: readonly ResizeObserverEntry[]) => void) {
-        measure = () =>
+        measure = (target) =>
           callback([
-            { target: viewport, contentRect: { width: 1400, height: 0 } },
+            { target, contentRect: { width: 1400, height: 0 } },
           ] as unknown as ResizeObserverEntry[]);
       }
       observe = observe;
@@ -69,7 +69,7 @@ it("disables the hit strip for detached rows and observes their mounted replacem
   expect(observe).toHaveBeenCalledWith(first);
 
   first.isConnected = false;
-  measure();
+  measure(viewport);
   expect(hitWidths.at(-1)).toBe(0);
   expect(unobserve).toHaveBeenCalledWith(first);
 
@@ -88,11 +88,11 @@ it("disables the hit strip for detached rows and observes their mounted replacem
   expect(requestFrame.mock.calls.length).toBe(scheduledCount);
 
   replacement.getBoundingClientRect = () => ({ width: 1400 });
-  measure();
+  measure(replacement);
   expect(hitWidths.at(-1)).toBe(0);
 
   current = null;
-  measure();
+  measure(viewport);
   expect(hitWidths.at(-1)).toBe(0);
   expect(unobserve).toHaveBeenCalledWith(replacement);
   cleanup();
