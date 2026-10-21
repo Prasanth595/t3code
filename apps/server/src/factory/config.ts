@@ -56,6 +56,8 @@ const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
+/** Installed versions autodeploy.sh keeps besides `current`; it reads the key itself. */
+const DEFAULT_KEEP_VERSIONS = 3;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -416,6 +418,7 @@ const MACHINE_KEYS = [
   "max_concurrent_runs",
   "max_concurrent_gates",
   "notify",
+  "keep_versions",
 ] as const;
 
 /**
@@ -461,6 +464,9 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const notify = c.optionalBoolean(root, "", "notify", true);
+  // Only checked here, so a bad value fails the load where a person sees it: autodeploy.sh reads
+  // keep_versions from the file and the server has no use for it.
+  const keepVersions = c.optionalUint(root, "", "keep_versions", DEFAULT_KEEP_VERSIONS, 0);
   checkUnknownKeys(c, root);
 
   if (
@@ -468,7 +474,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
-    notify === undefined
+    notify === undefined ||
+    keepVersions === undefined
   ) {
     return undefined;
   }

@@ -592,7 +592,7 @@ describe("autodeploy.sh pruning old versions", () => {
       "pruned versions/0.0.1+fac.zzzzzzz",
       "pruned versions/0.0.1+fac.aaaaaaa",
     ]);
-    expect(lines(result.output).at(-1)).toContain(`deployed ${short}`);
+    expect(lines(result.output)[0]).toContain(`deployed ${short}`);
   });
 
   it("keeps only current with keep_versions: 0, even when current is the oldest", async () => {
@@ -636,6 +636,7 @@ describe("autodeploy.sh pruning old versions", () => {
     for (const [i, name] of ["a", "b", "c", "d", "e"].entries()) {
       addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
     }
+    addVersion(installedName(), 10);
     const sha = commitToOrigin("second");
 
     const result = await runAutodeploy();
@@ -643,7 +644,7 @@ describe("autodeploy.sh pruning old versions", () => {
     expect(result.status).toBe(0);
     expect(versions()).toHaveLength(7);
     expect(result.output).toContain("not pruning versions: keep_versions");
-    expect(lines(result.output).at(-1)).toContain(
+    expect(lines(result.output)[0]).toContain(
       `deployed ${git(clone, "rev-parse", "--short", sha)}`,
     );
   });
