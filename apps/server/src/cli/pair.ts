@@ -136,7 +136,7 @@ export class IncompatibleServerError extends Schema.TaggedError<IncompatibleServ
   }
 }
 
-export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
   state.devUrl ?? resolveHeadlessConnectionString(state.host, state.port);
 
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
