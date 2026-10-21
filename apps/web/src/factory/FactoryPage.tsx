@@ -207,8 +207,13 @@ export function FactoryPage() {
     ({ environmentId, repo }) => inEnvironment(environmentId) && inRepo(repo),
   );
   const filtersHideEveryRun = runs.length === 0 && listedRuns.length > 0;
-  const runsListed = runsOf.some(({ data }) => data !== null);
-  const runsPending = runsOf.some(({ status }) => status === "loading");
+  // Only the shown environments' reads: a filtered-out read loading or listed says nothing here.
+  const shownRunsOf = shownEnvironments.flatMap(({ environmentId }) => {
+    const read = runsById.get(environmentId);
+    return read ? [read] : [];
+  });
+  const runsListed = shownRunsOf.some(({ data }) => data !== null);
+  const runsPending = shownRunsOf.some(({ status }) => status === "loading");
   // A failed read is a notice naming its environment while the rest of the page stays.
   const notices = shownEnvironments.flatMap(({ environmentId, label, status }) => {
     const runsRead = runsById.get(environmentId);
@@ -273,7 +278,7 @@ export function FactoryPage() {
             {note}
           </p>
         ) : null}
-        {!runsListed && runsPending ? (
+        {(!runsListed || runs.length === 0) && runsPending ? (
           <FactoryLoading label="Loading runs" />
         ) : runsListed ? (
           <RunsTable
@@ -296,7 +301,8 @@ export function FactoryPage() {
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <h1 className="min-w-0 truncate text-sm font-medium">Factory</h1>
           <div className="ml-auto flex min-w-0 items-center gap-2">
-            {environments.length > 1 ? (
+            {/* A filter that is on keeps its select, so it can be cleared. */}
+            {environments.length > 1 || environmentFilter !== null ? (
               <FilterSelect
                 all="All environments"
                 label="Environment"
@@ -308,7 +314,7 @@ export function FactoryPage() {
                 value={environmentFilter}
               />
             ) : null}
-            {repos.length > 1 ? (
+            {repos.length > 1 || repoFilter !== null ? (
               <FilterSelect
                 all="All repos"
                 label="Repo"
