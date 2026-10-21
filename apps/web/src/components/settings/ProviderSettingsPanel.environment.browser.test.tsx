@@ -318,7 +318,11 @@ describe("EnvironmentProviderSettings routing", () => {
     state.settings = {
       ...DEFAULT_UNIFIED_SETTINGS,
       providerInstances: {
-        [codexId]: { driver: codex, enabled: true, config: { enabled: true, setupMode: "managed" } },
+        [codexId]: {
+          driver: codex,
+          enabled: true,
+          config: { enabled: true, setupMode: "managed" },
+        },
       },
     };
     state.providerAuth = {
@@ -328,9 +332,7 @@ describe("EnvironmentProviderSettings routing", () => {
       authorizationUrl: null,
       expiresAt: null,
       message: null,
-      methods: [
-        { id: "chatgpt-profile:work", name: "Work", description: null, type: "agent" },
-      ],
+      methods: [{ id: "chatgpt-profile:work", name: "Work", description: null, type: "agent" }],
     };
     await setProviders([
       {
@@ -341,13 +343,17 @@ describe("EnvironmentProviderSettings routing", () => {
     ]);
     await using _screen = await render(panel({ targetInstanceId: codexId }));
     await expect.element(page.getByRole("button", { name: "Reconnect account" })).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "Use existing CLI" }));
+    await userEvent.click(page.getByRole("button", { name: "Use existing CLI" }).element());
 
     expect(state.mutateProviderInstance).toHaveBeenCalledWith(
       {
         operation: "upsert",
         instanceId: codexId,
-        instance: { driver: codex, enabled: true, config: { enabled: true, setupMode: "existing" } },
+        instance: {
+          driver: codex,
+          enabled: true,
+          config: { enabled: true, setupMode: "existing" },
+        },
       },
       {},
     );
