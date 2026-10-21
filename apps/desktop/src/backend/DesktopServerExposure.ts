@@ -231,7 +231,7 @@ const resolveDesktopCoreAdvertisedEndpoints = (
  * Tailscale HTTPS (Serve forwards to loopback and probes its own reachability)
  * and manual endpoints are never touched.
  */
-export const selectWslReachableEndpoints = (input: {
+const selectWslReachableEndpoints = (input: {
   readonly port: number;
   readonly windowsEndpoints: readonly AdvertisedEndpoint[];
   readonly distroAddresses: readonly string[];
