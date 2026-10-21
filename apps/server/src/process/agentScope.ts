@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
@@ -158,14 +159,22 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Undefined until the first agent sets up scopes, which reads the setting itself.
+  // Undefined until the first agent sets up scopes. A change before then needs
+  // no work, because setup reads the current setting.
+  let memoryLimitSystemctl: string | undefined;
   let appliedMemoryLimit: AgentMemoryLimit | undefined;
-  const applyMemoryLimits = Effect.fn("agentScope.applyMemoryLimits")(function* (
-    systemctl: string,
-    setting: AgentMemoryLimit,
-  ) {
-    appliedMemoryLimit = setting;
-    const limits = agentSliceMemoryLimits(NodeOS.totalmem(), setting);
+  const memoryLimitLock = yield* Semaphore.make(1);
+  // Reads the setting under the lock, so a change that lands while limits are
+  // being applied is applied next instead of losing to an older snapshot.
+  const syncMemoryLimits = Effect.gen(function* () {
+    const systemctl = memoryLimitSystemctl;
+    if (systemctl === undefined) return undefined;
+    const { agentMemoryLimit } = yield* serverSettings.getSettings.pipe(
+      Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+    );
+    if (agentMemoryLimit === appliedMemoryLimit) return undefined;
+    appliedMemoryLimit = agentMemoryLimit;
+    const limits = agentSliceMemoryLimits(NodeOS.totalmem(), agentMemoryLimit);
     const limited = yield* run(systemctl, [
       "--user",
       "set-property",
@@ -180,7 +189,7 @@ export const make = Effect.gen(function* () {
       });
     }
     return limits;
-  });
+  }).pipe(memoryLimitLock.withPermits(1), Effect.withSpan("agentScope.syncMemoryLimits"));
 
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
@@ -207,10 +216,8 @@ export const make = Effect.gen(function* () {
         yield* Effect.logInfo("Agent scopes are off: no systemd user manager");
         return undefined;
       }
-      const { agentMemoryLimit } = yield* serverSettings.getSettings.pipe(
-        Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
-      );
-      const limits = yield* applyMemoryLimits(systemctl, agentMemoryLimit);
+      memoryLimitSystemctl = systemctl;
+      const limits = yield* syncMemoryLimits;
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
@@ -228,14 +235,12 @@ export const make = Effect.gen(function* () {
   // Agents keep running under the old cap until a new one is set, so a change
   // takes effect without restarting them.
   const settingsChanges = yield* serverSettings.subscribeChanges;
-  yield* Stream.runForEach(settingsChanges, ({ agentMemoryLimit }) =>
-    Effect.gen(function* () {
-      if (appliedMemoryLimit === undefined || agentMemoryLimit === appliedMemoryLimit) return;
-      const scope = yield* systemd;
-      if (scope === undefined) return;
-      const limits = yield* applyMemoryLimits(scope.systemctl, agentMemoryLimit);
-      yield* Effect.logInfo("Agent memory limits changed", limits);
-    }),
+  yield* Stream.runForEach(settingsChanges, () =>
+    syncMemoryLimits.pipe(
+      Effect.flatMap((limits) =>
+        limits === undefined ? Effect.void : Effect.logInfo("Agent memory limits changed", limits),
+      ),
+    ),
   ).pipe(Effect.forkIn(layerScope));
 
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();

@@ -5,10 +5,16 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
+import type {
+  ServerSettings as ServerSettingsValue,
+  ServerSettingsError,
+} from "@t3tools/contracts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
@@ -65,10 +71,10 @@ const withFakeSystemd = <A, E>(
   }) => Effect.Effect<A, E>,
   {
     oomPolicy = true,
-    settings = {},
+    settings = ServerSettings.layerTest(),
   }: {
     readonly oomPolicy?: boolean;
-    readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+    readonly settings?: Layer.Layer<ServerSettings.ServerSettingsService, ServerSettingsError>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -120,7 +126,7 @@ const withFakeSystemd = <A, E>(
     Effect.provide(
       Layer.mergeAll(
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-agent-scope-" }),
-        ServerSettings.layerTest(settings),
+        settings,
       ).pipe(Layer.provideMerge(NodeServices.layer)),
     ),
   );
@@ -140,6 +146,32 @@ const launchCodex = (scope: Effect.Success<typeof make>, threadId: string) =>
       return command;
     }),
   );
+
+/**
+ * The first read returns "auto" after the setting has already changed to
+ * "off" and the change was published, as when a client saves the setting
+ * while the first agent is setting up scopes.
+ */
+const settingsChangedDuringFirstRead = Layer.effect(
+  ServerSettings.ServerSettingsService,
+  Effect.gen(function* () {
+    const base = yield* ServerSettings.ServerSettingsService;
+    const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+    const off = { ...(yield* base.getSettings), agentMemoryLimit: "off" as const };
+    let reads = 0;
+    return ServerSettings.ServerSettingsService.of({
+      ...base,
+      getSettings: Effect.gen(function* () {
+        reads += 1;
+        if (reads > 1) return off;
+        yield* PubSub.publish(changes, off);
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+        return { ...off, agentMemoryLimit: "auto" as const };
+      }),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+    });
+  }),
+).pipe(Layer.provide(ServerSettings.layerTest()));
 
 describe("AgentScope service", () => {
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
@@ -239,7 +271,20 @@ describe("AgentScope service", () => {
             ],
           ]);
         }),
-      { settings: { agentMemoryLimit: "off" } },
+      { settings: ServerSettings.layerTest({ agentMemoryLimit: "off" }) },
+    ),
+  );
+
+  it.effect("applies a setting changed while the first agent sets up scopes", () =>
+    withFakeSystemd(
+      ({ scope, calls }) =>
+        Effect.gen(function* () {
+          yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+          const limits = calls.filter(([, verb]) => verb === "set-property");
+          expect(limits.at(-1)?.slice(4)).toEqual(["MemoryHigh=infinity", "MemoryMax=infinity"]);
+        }),
+      { settings: settingsChangedDuringFirstRead },
     ),
   );
 });
