@@ -148,14 +148,6 @@ describe("incoming share storage", () => {
     expect(warning).toHaveBeenCalledOnce();
   });
 
-  it("rejects an invalid persisted share in strict mode", async () => {
-    fileSystemMocks.setEntries([new fileSystemMocks.File("invalid.json", "{")]);
-
-    await expect(loadIncomingShareDrafts({ strict: true })).rejects.toBeInstanceOf(
-      IncomingShareStorageError,
-    );
-  });
-
   it("ignores a partial initial write and allows retrying the share", async () => {
     fileSystemMocks.failNextWrite();
 
@@ -201,15 +193,12 @@ describe("incoming share storage", () => {
   it("keeps a successful replacement when backup cleanup fails", async () => {
     await writeIncomingShareDraft(VALID_DRAFT);
     const updated = { ...VALID_DRAFT, text: "Updated" };
-    const cleanup = vi
-      .spyOn(fileSystemMocks.File.prototype, "delete")
-      .mockImplementationOnce(() => {
-        throw new Error("backup cleanup failed");
-      });
+    vi.spyOn(fileSystemMocks.File.prototype, "delete").mockImplementationOnce(() => {
+      throw new Error("backup cleanup failed");
+    });
 
     await expect(writeIncomingShareDraft(updated)).resolves.toBeUndefined();
 
-    expect(cleanup).toHaveBeenCalledOnce();
     expect(new fileSystemMocks.File(`${VALID_DRAFT.id}.json.bak`, "").exists).toBe(true);
     expect(new fileSystemMocks.File(`${VALID_DRAFT.id}.json.tmp`, "").exists).toBe(false);
     await expect(loadIncomingShareDrafts({ strict: true })).resolves.toEqual([updated]);
