@@ -72,7 +72,7 @@ import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts"
 import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
 import Migration0071 from "./Migrations/071_ProjectionMessageSearchText.ts";
 
-export const migrationEntries = [
+const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
   [3, "CheckpointDiffBlobs", Migration0003],
