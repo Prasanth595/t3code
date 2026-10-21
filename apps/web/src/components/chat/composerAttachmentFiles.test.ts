@@ -4,12 +4,74 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
 import {
   attachmentsToReleaseOnUploadCapabilityLoss,
+  classifyComposerAttachmentFile,
+  localComposerFilePath,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
+  it("handles SVG clipboard files with the same text-paste behavior as ordinary files", () => {
+    const file = new File(['<svg xmlns="http://www.w3.org/2000/svg"/>'], "diagram.svg", {
+      type: "image/svg+xml",
+    });
+
+    expect(classifyComposerAttachmentFile(file)).toBe("file");
+    expect(shouldHandleComposerAttachmentPaste({ files: [file], plainText: "" })).toBe(true);
+    expect(shouldHandleComposerAttachmentPaste({ files: [file], plainText: "Copied text" })).toBe(
+      false,
+    );
+  });
+
+  it("resolves native file references only for the local desktop environment", () => {
+    const environmentId = EnvironmentId.make("local");
+    const file = new File(["video"], "clip.mov", { type: "video/quicktime" });
+    let pathReads = 0;
+    const local = {
+      file,
+      environmentId,
+      primaryEnvironmentId: environmentId,
+      localEnvironmentDisabled: false,
+      getPathForFile: (selected: File) => {
+        expect(selected).toBe(file);
+        pathReads += 1;
+        return "/local/clip.mov";
+      },
+    };
+    expect(localComposerFilePath(local)).toBe("/local/clip.mov");
+    expect(localComposerFilePath({ ...local, getPathForFile: undefined })).toBeNull();
+    expect(localComposerFilePath({ ...local, localEnvironmentDisabled: true })).toBeNull();
+    expect(localComposerFilePath({ ...local, primaryEnvironmentId: null })).toBeNull();
+    expect(
+      localComposerFilePath({ ...local, environmentId: EnvironmentId.make("remote") }),
+    ).toBeNull();
+    expect(pathReads).toBe(1);
+    expect(localComposerFilePath({ ...local, getPathForFile: () => "" })).toBeNull();
+  });
+
+  it("keeps the hard upload limit even when the server advertises a larger limit", () => {
+    const capability = {
+      attachmentUploadsCapabilityKnown: true,
+      supportsAttachmentUploads: true,
+      maxFileAttachmentBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES * 2,
+    };
+
+    expect(
+      fileAttachmentCapabilityBlockReason({
+        ...capability,
+        files: [{ name: "archive.zip", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES }],
+      }),
+    ).toBeNull();
+    const reason = fileAttachmentCapabilityBlockReason({
+      ...capability,
+      files: [{ name: "archive.zip", sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1 }],
+    });
+    expect(reason).toContain("archive.zip");
+    expect(reason).toContain("50 MB");
+    expect(reason).toMatch(/path/i);
+  });
+
   it("preserves text paste when an application adds a synthetic generic file", () => {
     const file = new File(["clipboard"], "clipboard.rtf", { type: "application/rtf" });
 
