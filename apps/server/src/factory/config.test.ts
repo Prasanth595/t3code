@@ -528,6 +528,21 @@ describe("machine config", () => {
     expect(errs[0]!.message).toBe("must be true or false");
   });
 
+  // autodeploy.sh reads keep_versions; the server only checks it, so a typo fails the load.
+  it("machine keep_versions may be zero or more and nothing else", () => {
+    for (const value of ["0", "3", "10"]) {
+      expect(machineLoaded(edit(MACHINE, (t) => set(t, "keep_versions", value))).warnings).toEqual(
+        [],
+      );
+    }
+    expect(machineErr(edit(MACHINE, (t) => set(t, "keep_versions", "-1")))[0]!.message).toBe(
+      "must be an integer of at least 0",
+    );
+    const errs = machineErr(edit(MACHINE, (t) => set(t, "keep_versions", '"3"')));
+    assertOne(errs, "keep_versions", MFILE);
+    expect(errs[0]!.message).toBe("must be an integer");
+  });
+
   it("machine every key can be set", () => {
     const t = edit(MACHINE, (tree) => {
       set(tree, "poll_seconds", "10");
