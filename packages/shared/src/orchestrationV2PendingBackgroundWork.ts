@@ -7,7 +7,7 @@ import type {
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { isOrchestrationV2WorkActive, THREAD_COMMAND_WATCH_ID_PREFIX } from "@t3tools/contracts";
+import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
@@ -322,13 +322,4 @@ function commandWatchTasks(
     description: `Watching: ${watch.label}`,
     kind: "monitor" as const,
   }));
-}
-
-/** The command watch a pending task stands for, so a client can stop it, or null. */
-export function commandWatchIdOfTask(
-  task: Pick<PendingBackgroundWorkTask, "taskId" | "kind">,
-): string | null {
-  return task.kind === "monitor" && task.taskId.startsWith(THREAD_COMMAND_WATCH_ID_PREFIX)
-    ? task.taskId
-    : null;
 }
