@@ -31,6 +31,7 @@ interface FindPayload extends FindRow {
   readonly payload: string;
   readonly entryId: string;
   readonly type: OrchestrationV2TurnItem["type"];
+  readonly runId: OrchestrationV2TurnItem["runId"];
 }
 interface FindDocument extends FindRow {
   readonly entryId: string;
@@ -83,17 +84,21 @@ function parseText(key: TextKey): readonly string[] {
 }
 
 function searchableRows(items: readonly OrchestrationV2ProjectedTurnItem[]) {
-  const foldedAnswers = new Set(
+  const answeredQuestionRuns = new Map(
     items.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
-        ? [`async-answer:${item.questionAnswer.requestId}`]
+        ? [[`async-answer:${item.questionAnswer.requestId}`, item.runId] as const]
         : [],
     ),
   );
   return items.filter(
     ({ item }) =>
       ["user_message", "assistant_message", "proposed_plan"].includes(item.type) &&
-      !(item.type === "user_message" && foldedAnswers.has(item.messageId)),
+      !(
+        item.type === "user_message" &&
+        item.runId !== null &&
+        answeredQuestionRuns.get(item.messageId) === item.runId
+      ),
   );
 }
 
@@ -236,8 +241,9 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
       payload_json: string;
       entry_id: string;
       item_type: OrchestrationV2TurnItem["type"];
+      run_id: OrchestrationV2TurnItem["runId"];
     }>`
-      SELECT item.thread_id, item.turn_item_id, item.payload_json,
+      SELECT item.thread_id, item.turn_item_id, item.payload_json, item.run_id,
         COALESCE(json_extract(item.payload_json, '$.messageId'), item.turn_item_id) AS entry_id,
         json_extract(item.payload_json, '$.type') AS item_type
       FROM orchestration_v2_projection_turn_items AS item
@@ -260,6 +266,7 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             payload: payload.payload_json,
             entryId: payload.entry_id,
             type: payload.item_type,
+            runId: payload.run_id,
           });
     });
   });
@@ -370,17 +377,21 @@ export const makeThreadFind = Effect.fn("makeThreadFind")(function* (
             ),
           );
         // Answers rendered inside question cards must not appear as separate matches.
-        const foldedAnswers = new Set<string>();
+        const answeredQuestionRuns = new Map<string, OrchestrationV2TurnItem["runId"]>();
         for (const payload of payloads) {
           if (payload.type !== "user_input_request") continue;
           const { item } = yield* decode(payload);
           if (item.type === "user_input_request" && item.questionAnswer)
-            foldedAnswers.add(`async-answer:${item.questionAnswer.requestId}`);
+            answeredQuestionRuns.set(`async-answer:${item.questionAnswer.requestId}`, item.runId);
         }
         const rows = payloads.filter(
           (row) =>
             row.type !== "user_input_request" &&
-            !(row.type === "user_message" && foldedAnswers.has(row.entryId)),
+            !(
+              row.type === "user_message" &&
+              row.runId !== null &&
+              answeredQuestionRuns.get(row.entryId) === row.runId
+            ),
         );
         const documents = new Map<number, FindDocument>();
         const count = Effect.fnUntraced(function* (row: FindPayload) {

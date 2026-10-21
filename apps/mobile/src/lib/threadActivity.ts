@@ -2044,11 +2044,11 @@ export function buildThreadFeed(
   };
   // Thread-wide facts that change rows anywhere in the feed. A cached prefix
   // is reused only while these match the build that produced it.
-  const foldedAnswerMessageIds = new Set<string>();
+  const answeredQuestionRuns = new Map<string, RunId | null>();
   const delegatedChildrenByRun = new Map<RunId, Set<string>>();
   for (const { item } of visibleTurnItems) {
     if (item.type === "user_input_request" && item.questionAnswer) {
-      foldedAnswerMessageIds.add(`async-answer:${item.questionAnswer.requestId}`);
+      answeredQuestionRuns.set(`async-answer:${item.questionAnswer.requestId}`, item.runId);
     } else if (item.type === "subagent" && item.origin === "app_owned" && item.runId !== null) {
       const children = delegatedChildrenByRun.get(item.runId) ?? new Set<string>();
       children.add(item.subagentId);
@@ -2056,6 +2056,15 @@ export function buildThreadFeed(
     }
   }
 
+  const foldedAnswerMessageIds = new Set(
+    visibleTurnItems.flatMap(({ item }) =>
+      item.type === "user_message" &&
+      item.runId !== null &&
+      answeredQuestionRuns.get(item.messageId) === item.runId
+        ? [item.messageId]
+        : [],
+    ),
+  );
   const cache = options?.cache;
   const previous = cache?.feedBuild ?? null;
   let restartIndex = -1;

@@ -648,10 +648,19 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
-  const foldedAnswerMessageIds = new Set(
+  const answeredQuestionRuns = new Map(
     input.visibleTurnItems.flatMap(({ item }) =>
       item.type === "user_input_request" && item.questionAnswer
-        ? [`async-answer:${item.questionAnswer.requestId}`]
+        ? [[`async-answer:${item.questionAnswer.requestId}`, item.runId] as const]
+        : [],
+    ),
+  );
+  const foldedAnswerMessageIds = new Set(
+    input.visibleTurnItems.flatMap(({ item }) =>
+      item.type === "user_message" &&
+      item.runId !== null &&
+      answeredQuestionRuns.get(item.messageId) === item.runId
+        ? [item.messageId]
         : [],
     ),
   );
