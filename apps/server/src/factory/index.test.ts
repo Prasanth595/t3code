@@ -82,6 +82,7 @@ const stubSessions = Sessions.FactorySessions.of({
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
   runningThreads: Effect.succeed(0),
+  worktreesDirectory: (defaultDir) => Effect.succeed(defaultDir),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
 

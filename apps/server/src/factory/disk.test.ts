@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
 
-import { readFreeSpace } from "./disk.ts";
+import { readFreeSpace, readLowestFreeSpace } from "./disk.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 
 const tempDir = useTempDirs();
@@ -23,5 +23,14 @@ describe("readFreeSpace", () => {
   it("reads the nearest directory that exists for one that is not made yet", () => {
     const dir = tempDir();
     expect(readFreeSpace(NodePath.join(dir, "worktrees", "repo")).path).toBe(dir);
+  });
+});
+
+describe("readLowestFreeSpace", () => {
+  it("answers the directory with the least free space", () => {
+    const space = (path: string, freeBytes: number) => ({ path, freeBytes });
+    const read = (path: string) => space(path, path === "/b" ? 5 : 9);
+    expect(readLowestFreeSpace(["/a", "/b", "/c"], read)).toEqual(space("/b", 5));
+    expect(readLowestFreeSpace(["/a"], read)).toEqual(space("/a", 9));
   });
 });

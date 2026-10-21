@@ -2002,6 +2002,9 @@ describe("low disk space", () => {
   /** The one line of a pass that finds 5 GiB free under a floor of 10. */
   const LOW_LINE =
     "low disk: 5.0 GiB free on /data/worktrees, below min_free_gib 10; no issue is claimed and no gate starts until there is more";
+  /** The item's message leaves the figure out: an open item is not raised again, so it would go stale. */
+  const LOW_ITEM =
+    "low disk: /data/worktrees has less free than min_free_gib 10; no issue is claimed and no gate starts until there is more";
   const lowLines = (lines: ReadonlyArray<string>) => lines.filter((l) => l.startsWith("low disk:"));
   const lowItems = (fake: Fake) => fake.items.filter((item) => item.id === "low-disk");
   const gates = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));
@@ -2030,7 +2033,7 @@ describe("low disk space", () => {
             run,
             message,
           })),
-          [{ kind: "attention", repo: null, issue: null, run: null, message: LOW_LINE }],
+          [{ kind: "attention", repo: null, issue: null, run: null, message: LOW_ITEM }],
         );
         assert.deepEqual(
           fake.events.filter((e) => e.event === "claim_skipped"),
@@ -2160,6 +2163,18 @@ describe("low disk space", () => {
       );
       assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
       assert.equal(report.errors, 1);
+    }),
+  );
+
+  it.effect("a free space that cannot be read clears the item, since claims go on", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.free = 5 * GIB;
+      yield* pass(fake, [REPO], 5);
+      assert.equal(lowItems(fake).length, 1);
+      fake.free = "error";
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(lowItems(fake), []);
     }),
   );
 });

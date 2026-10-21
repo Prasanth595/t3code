@@ -346,6 +346,39 @@ const layerSessions = (
     NodeServices.layer,
   );
 
+describe("FactorySessions.worktreesDirectory", () => {
+  const withSetting = (worktreesDirectory: string) =>
+    layerSessions(
+      {},
+      {},
+      {},
+      {},
+      NodeServices.layer,
+      ServerSettings.layerTest({ worktreesDirectory }),
+    );
+
+  it.effect("is the default folder while Settings → Storage names none", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(yield* sessions.worktreesDirectory("/base/worktrees"), "/base/worktrees");
+    }).pipe(Effect.provide(withSetting(""))),
+  );
+
+  it.effect("is the folder Settings → Storage names, where T3 makes new worktrees", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(yield* sessions.worktreesDirectory("/base/worktrees"), "/Volumes/ext/wt");
+    }).pipe(Effect.provide(withSetting("/Volumes/ext/wt"))),
+  );
+
+  it.effect("is null for a setting T3 cannot make worktrees under", () =>
+    Effect.gen(function* () {
+      const sessions = yield* Sessions.FactorySessions;
+      assert.strictEqual(yield* sessions.worktreesDirectory("/base/worktrees"), null);
+    }).pipe(Effect.provide(withSetting("relative/wt"))),
+  );
+});
+
 describe("FactorySessions.findProject", () => {
   it.effect("returns the id of the matching workspace root", () =>
     Effect.gen(function* () {
