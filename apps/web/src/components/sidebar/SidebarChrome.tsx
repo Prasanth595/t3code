@@ -30,8 +30,7 @@ import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
-import { FactoryNavIcon } from "~/factory/FactoryNavIcon";
-import { useFactorySupported } from "~/factory/useFactoryData";
+import { FactorySidebarUtilityItem } from "~/factory/FactorySidebarUtilityItem";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -166,7 +165,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
-  const factorySupported = useFactorySupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -182,11 +180,6 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleSettingsClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
-  };
-
-  const handleFactoryClick = () => {
-    closeMobileSidebar();
-    void navigate({ to: "/factory" });
   };
 
   const handleUsageClick = () => {
@@ -224,13 +217,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handlePullRequestsClick}
             />
           ) : null}
-          {factorySupported ? (
-            <SidebarUtilityItem
-              icon={<FactoryNavIcon />}
-              label="Factory"
-              onClick={handleFactoryClick}
-            />
-          ) : null}
+          <FactorySidebarUtilityItem Item={SidebarUtilityItem} onNavigate={closeMobileSidebar} />
           <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
