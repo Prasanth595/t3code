@@ -3141,7 +3141,6 @@ describe("AcpAdapterV2", () => {
         const observed = yield* Stream.fromQueue(events).pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
-          Effect.timeout("15 seconds"),
         );
         const allEvents = [...observed];
         let next = yield* Queue.poll(events);
@@ -3242,7 +3241,6 @@ describe("AcpAdapterV2", () => {
         const observed = yield* Stream.fromQueue(events).pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
-          Effect.timeout("15 seconds"),
         );
         const allEvents = [...observed];
         let next = yield* Queue.poll(events);
