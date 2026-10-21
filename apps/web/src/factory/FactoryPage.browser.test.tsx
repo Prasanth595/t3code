@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   runs: null as unknown,
   allRuns: null as unknown,
   // Environments beyond "env-2" (labelled "Mac Studio"), each with its own status and runs.
+  listed: true,
   others: [] as Array<{ environmentId: string; label: string; status: unknown; runs: unknown }>,
 }));
 
@@ -28,10 +29,19 @@ vi.mock("@tanstack/react-router", () => ({
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
 }));
 vi.mock("./useFactoryData", () => ({
-  useFactoryEnvironments: () => [
-    { environmentId: "env-2", label: "Mac Studio", status: state.status },
-    ...state.others.map(({ environmentId, label, status }) => ({ environmentId, label, status })),
-  ],
+  useFactoryEnvironments: () =>
+    state.listed
+      ? [
+          { environmentId: "env-2", label: "Mac Studio", status: state.status },
+          ...state.others.map(({ environmentId, label, status }) => ({
+            environmentId,
+            label,
+            status,
+          })),
+        ]
+      : [],
+  // Nothing listed means every candidate answered 404.
+  useFactorySupported: () => state.listed,
   useFactoryRunsOf: (environmentIds: ReadonlyArray<string>, all: boolean) =>
     environmentIds.map((id) =>
       id === "env-2"
@@ -99,6 +109,7 @@ beforeEach(() => {
   state.runs = resource({ data: { runs: [] } });
   state.allRuns = state.runs;
   state.others = [];
+  state.listed = true;
 });
 
 afterEach(() => {
@@ -396,6 +407,13 @@ describe("FactoryPage", () => {
 });
 
 describe("FactoryPage environments", () => {
+  it("says no factory runs when no connected environment has one", async () => {
+    state.listed = false;
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("No factory");
+    expect(page.all('[aria-label="Loading factory"]')).toHaveLength(0);
+  });
+
   it("shows a loading row for an environment whose status is loading, and the others' runs", async () => {
     state.runs = resource({ data: { runs: [runRow()] } });
     state.others = [
@@ -754,7 +772,7 @@ describe("FactoryPage dismissing attention items", () => {
     const page = await render(createElement(FactoryPage));
     const linksIn = (message: string) => Array.from(itemOf(page, message)!.querySelectorAll("a"));
     const [run] = linksIn(ATTENTION.message);
-    expect(run!.getAttribute("data-to")).toBe("/factory/$runId");
+    expect(run!.getAttribute("data-to")).toBe("/factory/$environmentId/$runId");
     expect(JSON.parse(run!.getAttribute("data-params")!)).toEqual({
       environmentId: "env-2",
       runId: RUN_ID,

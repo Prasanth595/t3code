@@ -13,6 +13,8 @@ import {
   TableRow,
 } from "~/components/ui/table";
 
+import type { EnvironmentId } from "@t3tools/contracts";
+
 import type { FactoryRunRow } from "./api";
 import { formatAge, labelForState, parseRunId, stateBadgeVariant } from "./format";
 import { TouchLink } from "./TouchLink";
@@ -20,10 +22,17 @@ import { TouchLink } from "./TouchLink";
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
 
+/** A run and the environment whose factory ran it. */
+export interface EnvironmentRun {
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly run: FactoryRunRow;
+}
+
 /** Newest first; a run with no readable start goes last. */
-const newestFirst = (a: FactoryRunRow, b: FactoryRunRow) => {
-  const x = startedMs(a);
-  const y = startedMs(b);
+const newestFirst = (a: EnvironmentRun, b: EnvironmentRun) => {
+  const x = startedMs(a.run);
+  const y = startedMs(b.run);
   if (Number.isNaN(x) || Number.isNaN(y)) return Number.isNaN(x) ? (Number.isNaN(y) ? 0 : 1) : -1;
   return y - x;
 };
@@ -81,7 +90,15 @@ function Ref({
  * One run for a phone: a link to the run that is the card's main tap target, and below it, outside
  * that link so no anchor nests in another, the links to the issue and the pull request.
  */
-function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
+function RunCard({
+  entry: { environmentId, label, run },
+  showEnvironment,
+  nowMs,
+}: {
+  entry: EnvironmentRun;
+  showEnvironment: boolean;
+  nowMs: number;
+}) {
   const parsed = parseRunId(run.id);
   const issue = parsed ? issueRef(parsed) : null;
   const pr = prRef(run.pr_url);
@@ -89,8 +106,8 @@ function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
     <li className="flex flex-col rounded-lg border bg-card text-sm">
       <Link
         className="flex min-h-11 flex-col gap-1 px-3 py-2"
-        params={{ runId: run.id }}
-        to="/factory/$runId"
+        params={{ environmentId, runId: run.id }}
+        to="/factory/$environmentId/$runId"
       >
         <span className="flex items-start justify-between gap-2">
           <span className="min-w-0 break-words font-medium">
@@ -101,6 +118,7 @@ function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
         <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           <span className="min-w-0 break-words">{run.step ?? run.last_event ?? "—"}</span>
           <span>{formatAge(startedMs(run), nowMs)}</span>
+          {showEnvironment ? <span className="min-w-0 break-words">{label}</span> : null}
         </span>
       </Link>
       {issue || pr ? (
@@ -119,12 +137,15 @@ function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
  */
 export function RunsTable({
   runs,
+  showEnvironment,
   nowMs,
   partial,
   onShowAll,
   onShowRecent,
 }: {
-  runs: ReadonlyArray<FactoryRunRow>;
+  runs: ReadonlyArray<EnvironmentRun>;
+  /** Whether several environments are listed, so a run says which one it is from. */
+  showEnvironment: boolean;
   nowMs: number;
   partial: boolean;
   onShowAll: () => void;
@@ -158,8 +179,13 @@ export function RunsTable({
     return (
       <>
         <ul className="flex flex-col gap-2" data-layout="cards">
-          {sorted.map((run) => (
-            <RunCard key={run.id} nowMs={nowMs} run={run} />
+          {sorted.map((entry) => (
+            <RunCard
+              entry={entry}
+              key={`${entry.environmentId} ${entry.run.id}`}
+              nowMs={nowMs}
+              showEnvironment={showEnvironment}
+            />
           ))}
         </ul>
         {showAll}
@@ -172,6 +198,7 @@ export function RunsTable({
         <TableHeader>
           <TableRow>
             <TableHead>Repo</TableHead>
+            {showEnvironment ? <TableHead>Environment</TableHead> : null}
             <TableHead>Issue</TableHead>
             <TableHead>State</TableHead>
             <TableHead>Step</TableHead>
@@ -181,13 +208,14 @@ export function RunsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {sorted.map((run) => {
+          {sorted.map(({ environmentId, label, run }) => {
             const parsed = parseRunId(run.id);
             const issue = parsed ? issueRef(parsed) : null;
             const pr = prRef(run.pr_url);
             return (
-              <TableRow key={run.id}>
+              <TableRow key={`${environmentId} ${run.id}`}>
                 <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
+                {showEnvironment ? <TableCell>{label}</TableCell> : null}
                 <TableCell>{issue ? <Ref {...issue} /> : "—"}</TableCell>
                 <TableCell>{stateBadge(run)}</TableCell>
                 <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
@@ -196,8 +224,8 @@ export function RunsTable({
                 <TableCell>
                   <Link
                     className="font-mono text-xs underline-offset-2 hover:underline"
-                    params={{ runId: run.id }}
-                    to="/factory/$runId"
+                    params={{ environmentId, runId: run.id }}
+                    to="/factory/$environmentId/$runId"
                   >
                     {run.id}
                   </Link>

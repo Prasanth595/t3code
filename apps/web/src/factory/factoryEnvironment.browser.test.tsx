@@ -1,4 +1,4 @@
-import { createElement, act, useEffect, type ReactNode } from "react";
+import { createElement, act, type ReactNode } from "react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -183,7 +183,7 @@ const show = async (element: Parameters<typeof render>[0]) => {
 const rowOf = (page: Page, label: string) =>
   page
     .all("*")
-    .filter(
+    .findLast(
       (node) =>
         node.querySelector("button") !== null &&
         node.textContent?.includes(label) === true &&
@@ -191,8 +191,7 @@ const rowOf = (page: Page, label: string) =>
         Array.from(node.querySelectorAll("button")).every((b) =>
           /claims|Retry/.test(b.textContent ?? ""),
         ),
-    )
-    .at(-1)!;
+    )!;
 const buttonIn = (row: Element, label: string) =>
   Array.from(row.querySelectorAll("button")).find((b) => b.textContent === label)!;
 
@@ -389,18 +388,8 @@ describe("the Factory page shows every environment that runs a factory", () => {
 });
 
 describe("the sidebar item follows the environments", () => {
-  const Probe = ({ out }: { out: { current: boolean | null } }) => {
-    const supported = useFactorySupported();
-    useEffect(() => {
-      out.current = supported;
-    });
-    return null;
-  };
-  const supported = async () => {
-    const out = { current: null as boolean | null };
-    await show(createElement(Probe, { out }));
-    return out.current;
-  };
+  const Probe = () => String(useFactorySupported());
+  const supported = async () => (await show(createElement(Probe))).text() === "true";
 
   it("stays when the primary has no factory and the second runs one", async () => {
     worlds.delete(ENV_1);

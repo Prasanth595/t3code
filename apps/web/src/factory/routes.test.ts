@@ -9,7 +9,7 @@ import tree from "../routeTree.gen.ts?raw";
 describe("factory routes", () => {
   it("hangs the run route off the root route, not the runs list", () => {
     const update =
-      /const \w+ = \w+RouteImport\.update\(\{\s*id: '\/factory_\/\$environmentId\/\$runId',[\s\S]*?as any\)/.exec(
+      /const \w+ =\s*\w+RouteImport\.update\(\{\s*id: '\/factory_\/\$environmentId\/\$runId',[\s\S]*?as any\)/.exec(
         tree,
       );
     expect(update?.[0]).toContain("getParentRoute: () => rootRouteImport");
