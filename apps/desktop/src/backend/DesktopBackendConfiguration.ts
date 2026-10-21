@@ -858,6 +858,7 @@ export const make = Effect.gen(function* () {
     currentBootstrapToken,
     resolvePrimary: Effect.gen(function* () {
       const { useWsl, wslRequested } = yield* describePrimary;
+      yield* serverExposure.setWslPrimary(useWsl);
       if (useWsl) {
         return yield* buildWslPrimaryConfig;
       }

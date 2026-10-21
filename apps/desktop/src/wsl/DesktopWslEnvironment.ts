@@ -986,6 +986,40 @@ const windowsToWslPathImpl = (
 
 const IPV4_PATTERN = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
+/** Runs `sh -c script` in the distro; `None` on non-zero exit, timeout or spawn failure. */
+const runDistroShell = (
+  distro: string | null,
+  script: string,
+): Effect.Effect<Option.Option<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const command = ChildProcess.make(
+        "wsl.exe",
+        [...buildDistroArgs(distro), "--", "sh", "-c", script],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          killSignal: "SIGTERM",
+          forceKillAfter: PROCESS_TERMINATE_GRACE,
+        },
+      );
+      const handle = yield* spawner.spawn(command);
+      const stdoutBytes = yield* Stream.runCollect(handle.stdout);
+      const exitCode = yield* handle.exitCode;
+      if ((exitCode as unknown as number) !== 0) return Option.none<string>();
+      return Option.some(decodeUtf8(concatChunks(stdoutBytes)).trim());
+    }),
+  ).pipe(
+    Effect.timeoutOption(USER_HOME_TIMEOUT),
+    Effect.map(Option.flatten),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+const parseIpv4Addresses = (raw: string): ReadonlyArray<string> =>
+  raw.split(/\s+/).filter((part) => IPV4_PATTERN.test(part));
+
 /**
  * Every IPv4 address the distro has bound (`hostname -I`, loopback excluded),
  * or `None` when the probe fails or times out. Under WSL2 NAT this is the eth0
@@ -998,32 +1032,18 @@ export const probeDistroIpv4Addresses = (
   Option.Option<ReadonlyArray<string>>,
   never,
   ChildProcessSpawner.ChildProcessSpawner
-> =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const command = ChildProcess.make(
-        "wsl.exe",
-        [...buildDistroArgs(distro), "--", "sh", "-c", "hostname -I"],
-        {
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "ignore",
-          killSignal: "SIGTERM",
-          forceKillAfter: PROCESS_TERMINATE_GRACE,
-        },
-      );
-      const handle = yield* spawner.spawn(command);
-      const stdoutBytes = yield* Stream.runCollect(handle.stdout);
-      const exitCode = yield* handle.exitCode;
-      if ((exitCode as unknown as number) !== 0) return Option.none<ReadonlyArray<string>>();
-      const raw = decodeUtf8(concatChunks(stdoutBytes)).trim();
-      return Option.some(raw.split(/\s+/).filter((part) => IPV4_PATTERN.test(part)));
-    }),
-  ).pipe(
-    Effect.timeoutOption(USER_HOME_TIMEOUT),
-    Effect.map(Option.flatten),
-    Effect.orElseSucceed(() => Option.none<ReadonlyArray<string>>()),
+> => runDistroShell(distro, "hostname -I").pipe(Effect.map(Option.map(parseIpv4Addresses)));
+
+/**
+ * The IPv4 addresses the distro's own Tailscale reports (`tailscale ip -4`).
+ * Empty when Tailscale isn't installed or running in the distro, since address
+ * ranges alone can't tell Tailscale from other VPNs sharing 100.64.0.0/10.
+ */
+export const probeDistroTailscaleIpv4Addresses = (
+  distro: string | null,
+): Effect.Effect<ReadonlyArray<string>, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  runDistroShell(distro, "tailscale ip -4").pipe(
+    Effect.map((raw) => Option.match(raw, { onNone: () => [], onSome: parseIpv4Addresses })),
   );
 
 // The first entry on the WSL2 default network is always the eth0 vEthernet

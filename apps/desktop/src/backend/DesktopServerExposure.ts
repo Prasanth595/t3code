@@ -235,6 +235,8 @@ const selectWslReachableEndpoints = (input: {
   readonly port: number;
   readonly windowsEndpoints: readonly AdvertisedEndpoint[];
   readonly distroAddresses: readonly string[];
+  /** The subset of `distroAddresses` the distro's own Tailscale reports. */
+  readonly distroTailscaleAddresses: readonly string[];
 }): readonly AdvertisedEndpoint[] => {
   const hostOf = (endpoint: AdvertisedEndpoint) => new URL(endpoint.httpBaseUrl).hostname;
   const isHostAddress = (endpoint: AdvertisedEndpoint) =>
@@ -244,8 +246,8 @@ const selectWslReachableEndpoints = (input: {
     (endpoint) => !isHostAddress(endpoint) || input.distroAddresses.includes(hostOf(endpoint)),
   );
   const knownHosts = new Set(kept.map(hostOf));
-  const distroTailscale = input.distroAddresses
-    .filter((address) => isTailscaleIpv4Address(address) && !knownHosts.has(address))
+  const distroTailscale = input.distroTailscaleAddresses
+    .filter((address) => input.distroAddresses.includes(address) && !knownHosts.has(address))
     .map((address) => createTailscaleIpAdvertisedEndpoint({ address, port: input.port }));
   return [...kept, ...distroTailscale];
 };
@@ -328,6 +330,12 @@ export class DesktopServerExposure extends Context.Service<
       readonly port?: number;
     }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
+    /**
+     * Records which primary backend is running. Called each time the primary
+     * config is resolved, so a persisted wsl-only setting that fell back to
+     * the Windows primary doesn't filter Windows addresses.
+     */
+    readonly setWslPrimary: (isWsl: boolean) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
 
@@ -483,6 +491,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const stateRef = yield* Ref.make(initialRuntimeState());
+  const wslPrimaryRef = yield* Ref.make(false);
   // Each change reads the runtime state, persists settings, then writes the
   // state back. Run them one at a time so a change never writes over another
   // with values it read before that change persisted.
@@ -500,15 +509,20 @@ export const make = Effect.gen(function* () {
       ),
   });
 
-  // The distro's addresses, keyed by distro ("" is the default distro). `None`
-  // means the probe failed, so callers keep the Windows addresses.
+  // The distro's addresses and the subset its own Tailscale reports, keyed by
+  // distro ("" is the default distro). `None` means the address probe failed,
+  // so callers keep the Windows addresses.
   const wslAddressesCache = yield* Cache.make({
     capacity: 1,
     timeToLive: WSL_ADDRESSES_CACHE_TTL,
     lookup: (distro: string) =>
-      DesktopWslEnvironment.probeDistroIpv4Addresses(distro === "" ? null : distro).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-      ),
+      Effect.gen(function* () {
+        const target = distro === "" ? null : distro;
+        const addresses = yield* DesktopWslEnvironment.probeDistroIpv4Addresses(target);
+        if (Option.isNone(addresses)) return Option.none();
+        const tailscale = yield* DesktopWslEnvironment.probeDistroTailscaleIpv4Addresses(target);
+        return Option.some({ addresses: addresses.value, tailscale });
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner)),
   });
 
   const readNetworkInterfaces = networkInterfaces.read;
@@ -644,7 +658,7 @@ export const make = Effect.gen(function* () {
     // A WSL primary listens inside the distro, which under NAT networking has
     // its own addresses. If the distro can't be probed (or WSL is unavailable
     // and the Windows primary is running instead), keep the Windows addresses.
-    if (!(settings.wslOnly && settings.wslBackendEnabled)) {
+    if (!(yield* Ref.get(wslPrimaryRef))) {
       return windowsEndpoints;
     }
     const distroAddresses = yield* Cache.get(wslAddressesCache, settings.wslDistro ?? "");
@@ -655,7 +669,8 @@ export const make = Effect.gen(function* () {
     return selectWslReachableEndpoints({
       port: state.port,
       windowsEndpoints,
-      distroAddresses: distroAddresses.value,
+      distroAddresses: distroAddresses.value.addresses,
+      distroTailscaleAddresses: distroAddresses.value.tailscale,
     });
   }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));
 
@@ -666,6 +681,7 @@ export const make = Effect.gen(function* () {
     setMode,
     setTailscaleServeEnabled,
     getAdvertisedEndpoints,
+    setWslPrimary: (isWsl) => Ref.set(wslPrimaryRef, isWsl),
   });
 });
 
