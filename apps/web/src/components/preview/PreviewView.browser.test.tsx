@@ -233,6 +233,7 @@ describe("PreviewView", () => {
     await expect.element(address).toHaveFocus();
     await userEvent.keyboard("example.com");
     await expect.element(address).toHaveValue("example.com");
+    await userEvent.click(page.getByRole("textbox", { name: "Chat draft" }));
     await screen.rerender(
       <>
         <textarea aria-label="Chat draft" />
@@ -243,6 +244,19 @@ describe("PreviewView", () => {
     await expect.element(address).toHaveValue("");
     await userEvent.keyboard("second.example.com");
     await expect.element(address).toHaveValue("second.example.com");
+    await userEvent.click(page.getByRole("textbox", { name: "Chat draft" }));
+    await screen.rerender(
+      <>
+        <textarea aria-label="Chat draft" />
+        {view()}
+      </>,
+    );
+    await expect.element(address).toHaveFocus();
+    await expect.element(address).toHaveValue("example.com");
+    await userEvent.keyboard("{Escape}");
+    await expect.element(address).toHaveValue("");
+    await userEvent.click(address);
+    await expect.element(address).toHaveValue("");
     await expect.element(page.getByRole("textbox", { name: "Chat draft" })).toHaveValue("");
   });
 

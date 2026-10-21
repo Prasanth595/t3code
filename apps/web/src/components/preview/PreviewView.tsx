@@ -919,7 +919,7 @@ export function PreviewView({
       data-thread-key={scopedThreadKey(threadRef)}
     >
       <PreviewChromeRow
-        key={tabId}
+        tabId={runtimeTabId}
         url={url}
         loading={loading || serverStreamPending}
         canGoBack={canGoBack && !serverInputDisabled}

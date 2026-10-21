@@ -22,6 +22,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
 interface Props {
+  tabId: string | null;
   url: string;
   loading: boolean;
   canGoBack: boolean;
@@ -52,6 +53,7 @@ interface Props {
 const NOOP = () => {};
 
 export function PreviewChromeRow({
+  tabId,
   url,
   loading,
   canGoBack,
@@ -79,7 +81,16 @@ export function PreviewChromeRow({
   leadingActions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [draft, setDraft] = useState(url);
+  const [drafts, setDrafts] = useState<ReadonlyMap<string | null, string>>(() => new Map());
+  const draft = drafts.get(tabId) ?? url;
+  const setDraft = (value: string | null) => {
+    setDrafts((current) => {
+      const next = new Map(current);
+      if (value === null) next.delete(tabId);
+      else next.set(tabId, value);
+      return next;
+    });
+  };
   const [inputFocused, setInputFocused] = useState(false);
 
   useEffect(() => {
@@ -99,6 +110,7 @@ export function PreviewChromeRow({
     const next = draft.trim();
     if (next.length === 0) return;
     onSubmit(next);
+    setDraft(null);
     inputRef.current?.blur();
   };
 
@@ -174,7 +186,6 @@ export function PreviewChromeRow({
                   value={inputFocused ? draft : url}
                   onChange={(event) => setDraft(event.target.value)}
                   onFocus={() => {
-                    setDraft(url);
                     setInputFocused(true);
                     queueMicrotask(() => inputRef.current?.select());
                   }}
@@ -185,7 +196,7 @@ export function PreviewChromeRow({
                     if (event.key === "Enter") submit(event);
                     if (event.key === "Escape") {
                       event.preventDefault();
-                      setDraft(url);
+                      setDraft(null);
                       inputRef.current?.blur();
                     }
                   }}
