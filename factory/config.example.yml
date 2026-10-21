@@ -32,9 +32,9 @@ max_concurrent_gates: 1
 # from this example has neither, so add both before rolling back to such a version. Delete
 # them once no rollback to one is possible.
 
-# The free GiB the volume holding the worktrees must have. Below it a pass claims no issue
-# and starts no gate, and the Factory page shows a low-disk item until space is back; a gate
-# that waits for it does not use up an attempt. 0 turns the check off. Defaults to 10.
+# The free GiB the disk holding the worktrees and this data must keep. Below it a pass
+# claims no issue and starts no gate, and the Factory page shows a low-disk item until space
+# is back; a gate that waits for it does not use up an attempt. 0 turns the check off. Defaults to 10.
 min_free_gib: 10
 
 # A macOS notification when something needs a person. false keeps the list on the

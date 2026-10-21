@@ -35,7 +35,7 @@ import {
   type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
-import { readFreeSpace } from "./disk.ts";
+import { readLowestFreeSpace } from "./disk.ts";
 import * as Gate from "./gate.ts";
 import { FactoryGate, clearGateLocks, gateLockFile } from "./gate.ts";
 import type { State } from "./domain/lifecycle.ts";
@@ -853,15 +853,22 @@ const startFactory = Effect.fn("Factory.startFactory")(function* (options: Runti
       ),
       // Where the list comes from is known here alone.
       watchedRepos: listWatched.pipe(Effect.mapError(asPassError("t3"))),
-      // The sessions' worktrees are what fills the disk, and they live here.
+      // The sessions write under the worktrees folder T3 uses now, the gate under the factory dir.
       freeSpace: () =>
-        Effect.try({
-          try: () => readFreeSpace(worktreesDir),
-          catch: (cause): PassError => ({
-            kind: "ledger",
-            message: cause instanceof Error ? cause.message : String(cause),
-          }),
-        }),
+        sessions.worktreesDirectory(worktreesDir).pipe(
+          Effect.mapError(asPassError("t3")),
+          Effect.flatMap((worktrees) =>
+            Effect.try({
+              try: () =>
+                readLowestFreeSpace([...(worktrees === null ? [] : [worktrees]), factoryDir]),
+              // Local disk, as softfac files it: the kind the machine's own files have.
+              catch: (cause): PassError => ({
+                kind: "ledger",
+                message: cause instanceof Error ? cause.message : String(cause),
+              }),
+            }),
+          ),
+        ),
     };
     options.onWorld?.(world);
     state.current = { machine, world };

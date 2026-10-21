@@ -210,7 +210,10 @@ export interface PassWorld {
   ) => Effect.Effect<void, LedgerError>;
   /** The claims pause a person made, when there is one. */
   readonly handPause: () => HandPause | null;
-  /** The free space of the volume that holds the worktrees; not read when `min_free_gib` is 0. */
+  /**
+   * The free space of the fuller of the volumes that hold the sessions' worktrees and the gate's
+   * checkouts; not read when `min_free_gib` is 0.
+   */
   readonly freeSpace: () => Effect.Effect<FreeSpace, PassError>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
@@ -653,11 +656,13 @@ const LOW_DISK_ITEM_ID = "low-disk";
 const GIB = 1024 ** 3;
 
 /**
- * Whether the volume of the worktrees has less free than `min_free_gib`. A run that writes to a
+ * Whether the volume of the worktrees or of the gate's checkouts has less free than
+ * `min_free_gib`. A run that writes to a
  * full disk fails partway, and its gate fails for reasons that are not the code, so while it is
  * low the pass claims nothing and starts no gate: one line, one `claim_skipped` event and one
  * attention item, which clears on the first pass that finds the space back. A space that cannot
- * be read is an error line and holds nothing back. 0 turns the check off.
+ * be read is an error line and holds nothing back. 0 turns the check off. Session relaunches of
+ * runs already claimed are not held back.
  */
 const lowDisk = Effect.fn("Pass.lowDisk")(function* (
   world: PassWorld,
@@ -675,6 +680,8 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
       null,
       passError(read.failure.kind, "cannot read the free disk space: ", read.failure.message),
     );
+    // Claims go on, so an item that says they do not would be wrong.
+    yield* clear;
     return false;
   }
   const { path, freeBytes } = read.success;
@@ -682,8 +689,10 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     yield* clear;
     return false;
   }
-  const text = `low disk: ${(freeBytes / GIB).toFixed(1)} GiB free on ${plain(path)}, below min_free_gib ${machine.minFreeGib}; no issue is claimed and no gate starts until there is more`;
-  pass.line(text);
+  const held = "no issue is claimed and no gate starts until there is more";
+  pass.line(
+    `low disk: ${(freeBytes / GIB).toFixed(1)} GiB free on ${plain(path)}, below min_free_gib ${machine.minFreeGib}; ${held}`,
+  );
   pass.report.attention += 1;
   yield* pass.record({ event: "claim_skipped", data: { reason: "low-disk" } });
   yield* world.attention.raise({
@@ -692,7 +701,8 @@ const lowDisk = Effect.fn("Pass.lowDisk")(function* (
     repo: null,
     issue: null,
     run: null,
-    message: text,
+    // No figure: an open item is not raised again, so one would go stale.
+    message: `low disk: ${plain(path)} has less free than min_free_gib ${machine.minFreeGib}; ${held}`,
   });
   return true;
 });

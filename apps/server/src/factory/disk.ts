@@ -25,3 +25,10 @@ export const readFreeSpace = (path: string): FreeSpace => {
   const stat = NodeFS.statfsSync(dir);
   return { path: dir, freeBytes: stat.bavail * stat.bsize };
 };
+
+/** The free space of the directory, of `paths`, whose volume has the least: the one that fills first. */
+export const readLowestFreeSpace = (
+  paths: ReadonlyArray<string>,
+  read: (path: string) => FreeSpace = readFreeSpace,
+): FreeSpace =>
+  paths.map(read).reduce((lowest, space) => (space.freeBytes < lowest.freeBytes ? space : lowest));
