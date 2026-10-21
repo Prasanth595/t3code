@@ -41,6 +41,7 @@ import {
   resolveMacPasskeySigningConfiguration,
   resolveMergedStageDependencies,
   resolveBuildOptions,
+  resolveDesktopProductName,
   resolveGitHubPublishConfig,
   stageWslRuntimeArchive,
   ancestorNodeModulesPaths,
@@ -66,6 +67,13 @@ import {
   ReleasePackageManifestError,
   releasePackageFiles,
 } from "./update-release-package-versions.ts";
+import {
+  FORK_DESKTOP_APP_ID,
+  FORK_DESKTOP_DEV_SCHEME,
+  FORK_DESKTOP_SCHEME,
+  FORK_NIGHTLY_PRODUCT_NAME,
+  FORK_PRODUCT_NAME,
+} from "@t3tools/shared/forkIdentity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -472,6 +480,33 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.equal(yield* fs.readFileString(path.join(root, relativePath)), original);
       }
     }),
+  );
+
+  it.effect("packages the app under the fork's id, name and URL schemes, never upstream's", () =>
+    Effect.gen(function* () {
+      const build = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "1.2.3",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const protocols = (build.mac as { protocols: Array<{ schemes: Array<string> }> }).protocols;
+
+      assert.equal(build.appId, FORK_DESKTOP_APP_ID);
+      assert.equal(build.productName, FORK_PRODUCT_NAME);
+      assert.equal(
+        resolveDesktopProductName("0.0.17-nightly.20260413.42"),
+        FORK_NIGHTLY_PRODUCT_NAME,
+      );
+      assert.deepEqual(protocols[0]?.schemes, [FORK_DESKTOP_SCHEME, FORK_DESKTOP_DEV_SCHEME]);
+      assert.notInclude(
+        protocols.flatMap((protocol) => protocol.schemes),
+        "t3code",
+      );
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );
 
   it.effect("has no update feed when no repository is configured", () =>

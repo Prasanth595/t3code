@@ -72,4 +72,17 @@ describe("DesktopEnvironment", () => {
       assert.equal(production.stateDir, "/Users/alice/.t3code-factory/userdata");
     }),
   );
+
+  it.effect("identifies as the fork's desktop app, never upstream's", () =>
+    Effect.gen(function* () {
+      const development = yield* makeEnvironment(
+        {},
+        { VITE_DEV_SERVER_URL: "http://localhost:5173" },
+      );
+      const production = yield* makeEnvironment();
+
+      assert.equal(development.appUserModelId, "io.github.original-solutions.t3code-factory.dev");
+      assert.equal(production.appUserModelId, "io.github.original-solutions.t3code-factory");
+    }),
+  );
 });
