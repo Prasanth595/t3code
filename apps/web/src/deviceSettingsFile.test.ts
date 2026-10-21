@@ -53,7 +53,11 @@ describe("parseDeviceSettingsFile", () => {
   it("restores exported settings and resets every covered setting the file omits", () => {
     const nightfall = makeTheme("Nightfall", "#1a1b26");
     const exported = {
-      settings: { ...DEFAULT_CLIENT_SETTINGS, chatWidth: "wide" as const, sendShortcut: "mod-enter" as const },
+      settings: {
+        ...DEFAULT_CLIENT_SETTINGS,
+        chatWidth: "wide" as const,
+        sendShortcut: "mod-enter" as const,
+      },
       appearance: {
         theme: nightfall.id,
         appearanceMode: "dark" as const,
@@ -112,7 +116,11 @@ describe("planCustomThemeImport", () => {
     const local = [makeTheme("Nightfall", "#1a1b26"), makeTheme("Dusk", "#303030")];
 
     const plan = planCustomThemeImport(
-      [makeTheme("Nightfall", "#1a1b26"), makeTheme("Dusk", "#404040"), makeTheme("Dawn", "#f0f0f0")],
+      [
+        makeTheme("Nightfall", "#1a1b26"),
+        makeTheme("Dusk", "#404040"),
+        makeTheme("Dawn", "#f0f0f0"),
+      ],
       local,
     );
 

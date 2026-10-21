@@ -21,7 +21,7 @@ import {
  * profiles, the legacy model preferences and merge overrides, and overrides keyed by project or
  * environment id.
  */
-export const DEVICE_SETTINGS_FILE_KEYS = [
+const DEVICE_SETTINGS_FILE_KEYS = [
   "notificationMode",
   "inAppNotificationsEnabled",
   "diffColorScheme",
@@ -315,7 +315,10 @@ export function diffDeviceSettings(
 export function planCustomThemeImport(
   imported: ReadonlyArray<ThemeDefinition>,
   existing: ReadonlyArray<ThemeDefinition>,
-): { readonly added: ReadonlyArray<ThemeDefinition>; readonly replaced: ReadonlyArray<ThemeDefinition> } {
+): {
+  readonly added: ReadonlyArray<ThemeDefinition>;
+  readonly replaced: ReadonlyArray<ThemeDefinition>;
+} {
   const added: ThemeDefinition[] = [];
   const replaced: ThemeDefinition[] = [];
   for (const theme of imported) {

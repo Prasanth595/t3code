@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import { getClientSettings } from "../../hooks/useSettings";
 import { DeviceSettingsImportDialog } from "./DeviceSettingsFileActions";
 
@@ -32,13 +32,19 @@ it("shows the changes a file makes and applies them on confirmation", async () =
   await userEvent.upload(page.getByLabelText("Device settings file"), file);
 
   const changes = page.getByRole("list", { name: "Changes" });
-  await expect.element(changes).toHaveTextContent('chatWidth: "comfortable" → "wide"');
-  await expect.element(changes).toHaveTextContent("wordWrap: false → true");
+  await expect.element(changes.getByText('chatWidth: "comfortable" → "wide"')).toBeVisible();
+  await expect.element(changes.getByText("wordWrap: false → true")).toBeVisible();
   const warnings = page.getByRole("list", { name: "Warnings" });
-  await expect.element(warnings).toHaveTextContent("sendShortcut: invalid value");
-  await expect.element(warnings).toHaveTextContent("addedInALaterVersion: not a device setting");
+  await expect
+    .element(warnings.getByText("sendShortcut: invalid value, reset to its default"))
+    .toBeVisible();
+  await expect
+    .element(warnings.getByText("addedInALaterVersion: not a device setting, ignored"))
+    .toBeVisible();
 
-  await userEvent.click(page.getByRole("button", { name: "Replace settings" }));
+  await act(async () =>
+    (page.getByRole("button", { name: "Replace settings" }).element() as HTMLButtonElement).click(),
+  );
 
   await vi.waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
   expect(onImported).toHaveBeenCalledOnce();

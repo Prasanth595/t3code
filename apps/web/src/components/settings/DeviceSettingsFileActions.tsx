@@ -1,6 +1,6 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
-import { DownloadIcon, UploadIcon } from "lucide-react";
+import { DownloadIcon, TriangleAlertIcon, UploadIcon } from "lucide-react";
 import { useRef, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
@@ -29,7 +29,7 @@ import {
   updateCustomTheme,
   type ThemeDefinition,
 } from "../../themePalette";
-import { Alert } from "../ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -313,7 +313,10 @@ export function DeviceSettingsImportDialog({
               {preview.changes.length === 0 && themeChanges.length === 0 ? (
                 <p className="text-sm">This file matches the current device settings.</p>
               ) : (
-                <ul aria-label="Changes" className="max-h-80 space-y-1 overflow-y-auto font-mono text-xs">
+                <ul
+                  aria-label="Changes"
+                  className="max-h-80 space-y-1 overflow-y-auto font-mono text-xs"
+                >
                   {preview.changes.map((change) => (
                     <li key={change.key}>
                       {change.key}: {formatSettingValue(change.from)} →{" "}
@@ -326,12 +329,16 @@ export function DeviceSettingsImportDialog({
                 </ul>
               )}
               {preview.imported.warnings.length > 0 ? (
-                <Alert variant="warning">
-                  <ul aria-label="Warnings" className="space-y-1 text-xs">
-                    {preview.imported.warnings.map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
+                <Alert variant="warning" controlAlignment="first-line">
+                  <TriangleAlertIcon />
+                  <AlertTitle>Warnings</AlertTitle>
+                  <AlertDescription>
+                    <ul aria-label="Warnings" className="space-y-1 text-xs">
+                      {preview.imported.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
                 </Alert>
               ) : null}
             </div>
