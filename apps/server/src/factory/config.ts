@@ -531,31 +531,29 @@ const toConfigErrors = <A>(
     : Effect.fail(new ConfigErrors({ file, errors: parsed.failure }));
 
 /** Reads the file on every call. Nothing is cached. */
-export const loadProjectConfig = (
+export const loadProjectConfig = Effect.fn("FactoryConfig.loadProjectConfig")(function* (
   file: string,
-): Effect.Effect<ProjectConfig, ConfigErrors, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs
-      .readFileString(file)
-      .pipe(Effect.mapError((cause) => cannotRead(file, cause)));
-    return yield* toConfigErrors(file, parseProjectConfig(text, file));
-  });
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs
+    .readFileString(file)
+    .pipe(Effect.mapError((cause) => cannotRead(file, cause)));
+  return yield* toConfigErrors(file, parseProjectConfig(text, file));
+});
 
 /** Reads the file on every call. A file that does not exist is `Option.none()`. */
-export const loadMachineConfig = (
+export const loadMachineConfig = Effect.fn("FactoryConfig.loadMachineConfig")(function* (
   file: string,
-): Effect.Effect<Option.Option<LoadedMachineConfig>, ConfigErrors, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const text = yield* fs.readFileString(file).pipe(
-      Effect.asSome,
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound"
-          ? Effect.succeed(Option.none<string>())
-          : Effect.fail(cannotRead(file, cause)),
-      ),
-    );
-    if (Option.isNone(text)) return Option.none<LoadedMachineConfig>();
-    return Option.some(yield* toConfigErrors(file, parseMachineConfig(text.value, file)));
-  });
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const text = yield* fs.readFileString(file).pipe(
+    Effect.asSome,
+    Effect.catch((cause) =>
+      cause.reason._tag === "NotFound"
+        ? Effect.succeed(Option.none<string>())
+        : Effect.fail(cannotRead(file, cause)),
+    ),
+  );
+  if (Option.isNone(text)) return Option.none<LoadedMachineConfig>();
+  return Option.some(yield* toConfigErrors(file, parseMachineConfig(text.value, file)));
+});

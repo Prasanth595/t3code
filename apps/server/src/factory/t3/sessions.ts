@@ -397,8 +397,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const settings = yield* ServerSettings.ServerSettingsService;
 
-  const findProject: FactorySessions["Service"]["findProject"] = (workspaceRoot) =>
-    Effect.gen(function* () {
+  const findProject: FactorySessions["Service"]["findProject"] = Effect.fn("Sessions.findProject")(
+    function* (workspaceRoot) {
       const row = yield* projects.findActiveByWorkspaceRoot(workspaceRoot);
       if (Option.isNone(row)) return null;
       // T3's own resolver, as a new thread uses it (`serverRuntimeStartup.ts`): a project
@@ -408,10 +408,12 @@ export const make = Effect.gen(function* () {
       const model = resolveProjectSettings(yield* settings.getSettings, projectId, row.value)
         .settings.defaultModelSelection;
       return { id: projectId as string, model };
-    }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })));
+    },
+    Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })),
+  );
 
-  const launch: FactorySessions["Service"]["launch"] = (request) =>
-    Effect.gen(function* () {
+  const launch: FactorySessions["Service"]["launch"] = Effect.fn("Sessions.launch")(
+    function* (request) {
       const commandId = yield* decodeCommandId(request.commandId);
       const projectId = yield* decodeProjectId(request.projectId);
       const instanceId = yield* decodeInstanceId(request.model.instanceId);
@@ -440,7 +442,9 @@ export const make = Effect.gen(function* () {
         worktreePath: result.projection.thread.worktreePath,
         branch: result.projection.thread.branch,
       };
-    }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "launch", cause })));
+    },
+    Effect.mapError((cause) => new SessionsError({ operation: "launch", cause })),
+  );
 
   // The factory polls this per session, so it reads only the rows
   // `threadStatusOf` uses, not the whole projection of a long thread.
@@ -464,8 +468,8 @@ export const make = Effect.gen(function* () {
 
   // Delivery is T3's to decide (`deliveryIntent: "auto"`); the dispatch mode is
   // required by the schema and ignored when the intent is set.
-  const send: FactorySessions["Service"]["send"] = (threadId, commandId, text) =>
-    Effect.gen(function* () {
+  const send: FactorySessions["Service"]["send"] = Effect.fn("Sessions.send")(
+    function* (threadId, commandId, text) {
       const id = yield* requireThreadId(threadId);
       return yield* Effect.gen(function* () {
         const command = yield* decodeCommandId(commandId);
@@ -489,7 +493,8 @@ export const make = Effect.gen(function* () {
             : new SessionsError({ operation: "send", cause }),
         ),
       );
-    });
+    },
+  );
 
   // T3 remembers a rejected command id for good, so each attempt needs its own.
   const archiveCommandId = (id: ThreadId) =>
@@ -510,8 +515,8 @@ export const make = Effect.gen(function* () {
   // A thread that cannot be read is archived anyway, so it is never left
   // running because its snapshot failed. When that fails, the thread is read
   // once more: a lost answer or a race can leave it archived all the same.
-  const archive: FactorySessions["Service"]["archive"] = (threadId) =>
-    Effect.gen(function* () {
+  const archive: FactorySessions["Service"]["archive"] = Effect.fn("Sessions.archive")(
+    function* (threadId) {
       const id = yield* Effect.option(decodeThreadId(threadId));
       if (Option.isNone(id)) return;
       const before = yield* archiveState(id.value);
@@ -532,7 +537,8 @@ export const make = Effect.gen(function* () {
             ),
           ),
         );
-    });
+    },
+  );
 
   const removeWorktreeFailed = (cause: unknown) =>
     new SessionsError({ operation: "remove-worktree", cause });
@@ -540,37 +546,38 @@ export const make = Effect.gen(function* () {
   // git matches a bare name by suffix against every worktree, so a relative
   // path could remove another thread's worktree. Run from the worktree itself:
   // git removes it from there, and a clone's path is not needed.
-  const removeWorktree: FactorySessions["Service"]["removeWorktree"] = (worktreePath) =>
-    Effect.gen(function* () {
-      if (!path.isAbsolute(worktreePath)) {
-        return yield* removeWorktreeFailed(`the worktree path is not absolute: ${worktreePath}`);
-      }
-      const attempt = yield* git
-        .execute({
-          operation: "factory.sessions.removeWorktree",
-          cwd: worktreePath,
-          args: ["worktree", "remove", "--force", "--", worktreePath],
-          env: { LC_ALL: "C" },
-          allowNonZeroExit: true,
-          timeoutMs: REMOVE_WORKTREE_TIMEOUT_MS,
-        })
-        .pipe(Effect.result);
-      if (attempt._tag === "Success" && attempt.success.exitCode === 0) return;
-      const exists = yield* fs.exists(worktreePath).pipe(Effect.mapError(removeWorktreeFailed));
-      if (!exists) return;
-      if (attempt._tag === "Failure") return yield* removeWorktreeFailed(attempt.failure);
-      if (!leftNotEmpty(attempt.success.stderr)) {
-        return yield* removeWorktreeFailed(
-          `git did not remove ${worktreePath}, which is still on disk: ${attempt.success.stderr.trim()}`,
-        );
-      }
-      // git took the worktree off the clone's list and could not empty the
-      // directory (a process still writing into it): wait, then finish it.
-      yield* Effect.sleep("3 seconds");
-      yield* fs
-        .remove(worktreePath, { recursive: true })
-        .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
-    });
+  const removeWorktree: FactorySessions["Service"]["removeWorktree"] = Effect.fn(
+    "Sessions.removeWorktree",
+  )(function* (worktreePath) {
+    if (!path.isAbsolute(worktreePath)) {
+      return yield* removeWorktreeFailed(`the worktree path is not absolute: ${worktreePath}`);
+    }
+    const attempt = yield* git
+      .execute({
+        operation: "factory.sessions.removeWorktree",
+        cwd: worktreePath,
+        args: ["worktree", "remove", "--force", "--", worktreePath],
+        env: { LC_ALL: "C" },
+        allowNonZeroExit: true,
+        timeoutMs: REMOVE_WORKTREE_TIMEOUT_MS,
+      })
+      .pipe(Effect.result);
+    if (attempt._tag === "Success" && attempt.success.exitCode === 0) return;
+    const exists = yield* fs.exists(worktreePath).pipe(Effect.mapError(removeWorktreeFailed));
+    if (!exists) return;
+    if (attempt._tag === "Failure") return yield* removeWorktreeFailed(attempt.failure);
+    if (!leftNotEmpty(attempt.success.stderr)) {
+      return yield* removeWorktreeFailed(
+        `git did not remove ${worktreePath}, which is still on disk: ${attempt.success.stderr.trim()}`,
+      );
+    }
+    // git took the worktree off the clone's list and could not empty the
+    // directory (a process still writing into it): wait, then finish it.
+    yield* Effect.sleep("3 seconds");
+    yield* fs
+      .remove(worktreePath, { recursive: true })
+      .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
+  });
 
   const runningThreads: FactorySessions["Service"]["runningThreads"] = projections
     .getShellSnapshot({ location: "active" })

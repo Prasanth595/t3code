@@ -364,17 +364,15 @@ export const leftoverCheckouts = (dataDir: string, run: RunId): ReadonlyArray<st
  * `gate_cleanup_failed` line records; the caller decides whether to write the line. The gate calls
  * this before each checkout, and `regate` before it reads anything.
  */
-export const removeLeftoverCheckouts = <E>(
-  root: string,
-  failed: (dir: string, error: string) => Effect.Effect<void, E>,
-): Effect.Effect<void, E> =>
-  Effect.gen(function* () {
-    for (const name of listNames(root)) {
-      const dir = NodePath.join(root, name);
-      const removed = yield* Effect.result(removeCheckout(dir));
-      if (Result.isFailure(removed)) yield* failed(dir, removed.failure.message);
-    }
-  });
+export const removeLeftoverCheckouts = Effect.fn("FactoryGate.removeLeftoverCheckouts")(function* <
+  E,
+>(root: string, failed: (dir: string, error: string) => Effect.Effect<void, E>) {
+  for (const name of listNames(root)) {
+    const dir = NodePath.join(root, name);
+    const removed = yield* Effect.result(removeCheckout(dir));
+    if (Result.isFailure(removed)) yield* failed(dir, removed.failure.message);
+  }
+});
 
 /** Removes a run's gate directory `root` when it is empty. */
 export const removeEmptyGateRoot = (root: string): Effect.Effect<void> =>
@@ -608,93 +606,90 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
   const isNotAncestor = (error: WorkspaceError) =>
     error._tag === "WorkspaceFailedError" && error.status === 1;
 
-  const checkoutIn = (
+  const checkoutIn = Effect.fn("FactoryGate.checkoutIn")(function* (
     repo: string,
     sha: string,
     base: string,
     dir: string,
-  ): Effect.Effect<Checkout, WorkspaceError> =>
-    Effect.gen(function* () {
-      // No template: nothing is copied into `.git`, hooks included.
-      yield* git(dir, { args: ["init", "--quiet", "--template="], timeoutMs: checkoutTimeoutMs });
-      // The commits come into the new object store and nothing else changes: no ref, no
-      // FETCH_HEAD, no tags, no submodules. The URL is the gate's, not git config's.
-      yield* git(dir, {
-        pre: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
-        args: [
-          "fetch",
-          "--no-tags",
-          "--no-recurse-submodules",
-          "--no-write-fetch-head",
-          `${remoteBase}/${repo}.git`,
-          sha,
-          ...(base === sha ? [] : [base]),
-        ],
-        timeoutMs: checkoutTimeoutMs,
-        fetch: true,
-      });
-      yield* git(dir, {
-        args: ["checkout", "--quiet", "--detach", "--no-recurse-submodules", sha],
-        timeoutMs: checkoutTimeoutMs,
-      });
-      const head = (yield* quick(dir, ["rev-parse", "HEAD"])).trim();
-      if (!isCommitId(head)) return yield* unexpected("`rev-parse HEAD` did not print a commit id");
-      // Fetched by its id, so this is git doing something it should not.
-      if (!sameCommit(head, sha)) {
-        return yield* unexpected(
-          `the checkout is at ${head} but the pull request's head is ${sha}`,
-        );
-      }
-      yield* checkTree(dir);
-
-      // Merge the base tip into the head, unless it is in the head already. Exit status 1 is
-      // "not an ancestor".
-      const ancestor = yield* Effect.result(
-        quick(dir, ["merge-base", "--is-ancestor", base, "HEAD"]),
-      );
-      if (Result.isSuccess(ancestor))
-        return { head, merge: { _tag: "contained" } } satisfies Checkout;
-      if (!isNotAncestor(ancestor.failure)) return yield* ancestor.failure;
-
-      // The gate's identity, no signing, `--no-ff` so that the head is always the first parent
-      // (a head behind the base would otherwise fast-forward to the base), and no editor.
-      const merged = yield* Effect.result(
-        git(dir, {
-          pre: [
-            "-c",
-            "user.name=softfac",
-            "-c",
-            "user.email=softfac@localhost",
-            "-c",
-            "commit.gpgsign=false",
-          ],
-          args: ["merge", "--no-ff", "--no-edit", base],
-          timeoutMs: checkoutTimeoutMs,
-        }),
-      );
-      if (Result.isFailure(merged)) {
-        // Exit status 1 is a conflict when git names conflicted files. Anything else that fails
-        // (unrelated histories, say) is the failure itself.
-        if (!isNotAncestor(merged.failure)) return yield* merged.failure;
-        const listed = yield* quick(dir, ["diff", "--name-only", "--diff-filter=U", "-z"]);
-        const paths = listed.split("\0").filter((path) => path !== "");
-        if (paths.length === 0) return yield* merged.failure;
-        // Leave the tree as the head's. The caller removes the directory anyway.
-        yield* Effect.ignore(quick(dir, ["merge", "--abort"]));
-        return { head, merge: { _tag: "conflict", paths } } satisfies Checkout;
-      }
-      // The merge commit must hold exactly the head and the base, in that order.
-      const [first = "", second = ""] = lines(
-        yield* quick(dir, ["rev-parse", "HEAD^1", "HEAD^2"]),
-      ).map((line) => line.trim());
-      if (!sameCommit(first, head) || !sameCommit(second, base)) {
-        return yield* unexpected(
-          `the merge commit's parents are ${first} and ${second}, not the head and the base`,
-        );
-      }
-      yield* checkTree(dir);
-      return { head, merge: { _tag: "merged" } } satisfies Checkout;
+  ) {
+    // No template: nothing is copied into `.git`, hooks included.
+    yield* git(dir, { args: ["init", "--quiet", "--template="], timeoutMs: checkoutTimeoutMs });
+    // The commits come into the new object store and nothing else changes: no ref, no
+    // FETCH_HEAD, no tags, no submodules. The URL is the gate's, not git config's.
+    yield* git(dir, {
+      pre: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
+      args: [
+        "fetch",
+        "--no-tags",
+        "--no-recurse-submodules",
+        "--no-write-fetch-head",
+        `${remoteBase}/${repo}.git`,
+        sha,
+        ...(base === sha ? [] : [base]),
+      ],
+      timeoutMs: checkoutTimeoutMs,
+      fetch: true,
     });
+    yield* git(dir, {
+      args: ["checkout", "--quiet", "--detach", "--no-recurse-submodules", sha],
+      timeoutMs: checkoutTimeoutMs,
+    });
+    const head = (yield* quick(dir, ["rev-parse", "HEAD"])).trim();
+    if (!isCommitId(head)) return yield* unexpected("`rev-parse HEAD` did not print a commit id");
+    // Fetched by its id, so this is git doing something it should not.
+    if (!sameCommit(head, sha)) {
+      return yield* unexpected(`the checkout is at ${head} but the pull request's head is ${sha}`);
+    }
+    yield* checkTree(dir);
+
+    // Merge the base tip into the head, unless it is in the head already. Exit status 1 is
+    // "not an ancestor".
+    const ancestor = yield* Effect.result(
+      quick(dir, ["merge-base", "--is-ancestor", base, "HEAD"]),
+    );
+    if (Result.isSuccess(ancestor))
+      return { head, merge: { _tag: "contained" } } satisfies Checkout;
+    if (!isNotAncestor(ancestor.failure)) return yield* ancestor.failure;
+
+    // The gate's identity, no signing, `--no-ff` so that the head is always the first parent
+    // (a head behind the base would otherwise fast-forward to the base), and no editor.
+    const merged = yield* Effect.result(
+      git(dir, {
+        pre: [
+          "-c",
+          "user.name=softfac",
+          "-c",
+          "user.email=softfac@localhost",
+          "-c",
+          "commit.gpgsign=false",
+        ],
+        args: ["merge", "--no-ff", "--no-edit", base],
+        timeoutMs: checkoutTimeoutMs,
+      }),
+    );
+    if (Result.isFailure(merged)) {
+      // Exit status 1 is a conflict when git names conflicted files. Anything else that fails
+      // (unrelated histories, say) is the failure itself.
+      if (!isNotAncestor(merged.failure)) return yield* merged.failure;
+      const listed = yield* quick(dir, ["diff", "--name-only", "--diff-filter=U", "-z"]);
+      const paths = listed.split("\0").filter((path) => path !== "");
+      if (paths.length === 0) return yield* merged.failure;
+      // Leave the tree as the head's. The caller removes the directory anyway.
+      yield* Effect.ignore(quick(dir, ["merge", "--abort"]));
+      return { head, merge: { _tag: "conflict", paths } } satisfies Checkout;
+    }
+    // The merge commit must hold exactly the head and the base, in that order.
+    const [first = "", second = ""] = lines(
+      yield* quick(dir, ["rev-parse", "HEAD^1", "HEAD^2"]),
+    ).map((line) => line.trim());
+    if (!sameCommit(first, head) || !sameCommit(second, base)) {
+      return yield* unexpected(
+        `the merge commit's parents are ${first} and ${second}, not the head and the base`,
+      );
+    }
+    yield* checkTree(dir);
+    return { head, merge: { _tag: "merged" } } satisfies Checkout;
+  });
 
   const remove = removeCheckout;
 
@@ -705,28 +700,27 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
    * merged tree. A conflict is not an error: the merge is aborted and the paths are returned.
    * On any error nothing is left behind.
    */
-  const checkout = (
+  const checkout = Effect.fn("FactoryGate.checkout")(function* (
     repo: string,
     sha: string,
     base: string,
     dir: string,
-  ): Effect.Effect<Checkout, WorkspaceError> =>
-    Effect.gen(function* () {
-      // The ids and the repo go to git as arguments, so they must be nothing but commit ids and
-      // an `owner/name`: a name starting with `-` would be an option.
-      if (!isCommitId(sha) || !isCommitId(base)) {
-        return yield* unexpected("the commits to check out are not full commit ids");
-      }
-      if (!isRepoName(repo)) return yield* unexpected("the repo is not an owner and a name");
-      yield* Effect.try({
-        try: () => NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 }),
-        catch: (cause) => new WorkspaceIoError({ path: dir, cause }),
-      });
-      return yield* checkoutIn(repo, sha, base, dir).pipe(
-        // Leave nothing half made.
-        Effect.onExit((exit) => (Exit.isFailure(exit) ? Effect.ignore(remove(dir)) : Effect.void)),
-      );
+  ) {
+    // The ids and the repo go to git as arguments, so they must be nothing but commit ids and
+    // an `owner/name`: a name starting with `-` would be an option.
+    if (!isCommitId(sha) || !isCommitId(base)) {
+      return yield* unexpected("the commits to check out are not full commit ids");
+    }
+    if (!isRepoName(repo)) return yield* unexpected("the repo is not an owner and a name");
+    yield* Effect.try({
+      try: () => NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 }),
+      catch: (cause) => new WorkspaceIoError({ path: dir, cause }),
     });
+    return yield* checkoutIn(repo, sha, base, dir).pipe(
+      // Leave nothing half made.
+      Effect.onExit((exit) => (Exit.isFailure(exit) ? Effect.ignore(remove(dir)) : Effect.void)),
+    );
+  });
 
   return { checkout, remove };
 };
@@ -826,41 +820,40 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
         // When an append fails once the ledger counts the attempt (an earlier line went in, or
         // the failed one did: a failed sync leaves the line in the file), the attempt is used and
         // the failure is a GateRecordError; otherwise it is the ledger's own error.
-        const appendCommandLines = (
+        const appendCommandLines = Effect.fn("FactoryGate.appendCommandLines")(function* (
           lines: ReadonlyArray<{
             readonly command: string;
             readonly exitCode: number;
             readonly durationMs: number;
             readonly cause: Parameters<Ledger["append"]>[1];
           }>,
-        ) =>
-          Effect.gen(function* () {
-            let written = 0;
-            for (const line of lines) {
-              const appended = yield* Effect.result(
-                append(
-                  {
-                    event: "gate_command",
-                    data: {
-                      attempt,
-                      command: line.command,
-                      exit_code: line.exitCode,
-                      duration_ms: line.durationMs,
-                    },
+        ) {
+          let written = 0;
+          for (const line of lines) {
+            const appended = yield* Effect.result(
+              append(
+                {
+                  event: "gate_command",
+                  data: {
+                    attempt,
+                    command: line.command,
+                    exit_code: line.exitCode,
+                    duration_ms: line.durationMs,
                   },
-                  line.cause,
-                ),
-              );
-              if (Result.isSuccess(appended)) {
-                written += 1;
-                continue;
-              }
-              const used = written > 0 || (yield* ledgerCountsAttempt);
-              return yield* used
-                ? new GateRecordError({ attempt, cause: appended.failure })
-                : appended.failure;
+                },
+                line.cause,
+              ),
+            );
+            if (Result.isSuccess(appended)) {
+              written += 1;
+              continue;
             }
-          });
+            const used = written > 0 || (yield* ledgerCountsAttempt);
+            return yield* used
+              ? new GateRecordError({ attempt, cause: appended.failure })
+              : appended.failure;
+          }
+        });
 
         // The lines go in once the commands have ended in a pass or a fail, never on an error path:
         // an attempt that errors (a command that cannot start, a ledger failure) used none,

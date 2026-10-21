@@ -208,131 +208,129 @@ const writeFile = (dir: string, items: ReadonlyArray<Kept>): void => {
   }
 };
 
-const make = (options: { readonly clock?: () => number }) =>
-  Effect.gen(function* () {
-    const { factoryDir } = yield* Paths.FactoryPaths;
-    const runner = yield* FactoryProcess;
-    const clock = options.clock ?? Date.now;
-    const path = NodePath.join(factoryDir, ATTENTION_FILE);
+const make = Effect.fn("FactoryAttention.make")(function* (options: {
+  readonly clock?: () => number;
+}) {
+  const { factoryDir } = yield* Paths.FactoryPaths;
+  const runner = yield* FactoryProcess;
+  const clock = options.clock ?? Date.now;
+  const path = NodePath.join(factoryDir, ATTENTION_FILE);
 
-    const loaded = readFile(path);
-    for (const warning of loaded.warnings) yield* Effect.logWarning(warning);
-    const items = new Map<string, Kept>(loaded.items.map((kept) => [kept.item.id, kept]));
-    let notifying = true;
-    let notifierDown = false;
-    let failedPasses = 0;
+  const loaded = readFile(path);
+  for (const warning of loaded.warnings) yield* Effect.logWarning(warning);
+  const items = new Map<string, Kept>(loaded.items.map((kept) => [kept.item.id, kept]));
+  let notifying = true;
+  let notifierDown = false;
+  let failedPasses = 0;
 
-    const persist = Effect.suspend(() => {
-      try {
-        writeFile(factoryDir, [...items.values()]);
-        return Effect.void;
-      } catch (error) {
-        return Effect.logWarning(
-          `cannot write ${path}, so open attention items may be notified again: ${String(error)}`,
-        );
-      }
-    });
+  const persist = Effect.suspend(() => {
+    try {
+      writeFile(factoryDir, [...items.values()]);
+      return Effect.void;
+    } catch (error) {
+      return Effect.logWarning(
+        `cannot write ${path}, so open attention items may be notified again: ${String(error)}`,
+      );
+    }
+  });
 
-    const post = (item: NewItem) =>
-      Effect.gen(function* () {
-        if (!notifying || notifierDown) return;
-        const result = yield* Effect.result(
-          runner.run({
-            command: "osascript",
-            args: ["-e", SCRIPT, titleOf(item), item.message],
-            timeoutMs: NOTIFY_TIMEOUT_MS,
-            termGraceMs: NOTIFY_TERM_GRACE_MS,
-          }),
-        );
-        if (result._tag === "Failure") {
-          return yield* Effect.logWarning(
-            `cannot notify attention item ${item.id}: ${String(result.failure.cause)}`,
-          );
-        }
-        const ran = result.success;
-        if (ran.exitCode === COMMAND_NOT_FOUND) {
-          notifierDown = true;
-          return yield* Effect.logWarning(
-            "osascript not found, so attention items are not notified on this machine",
-          );
-        }
-        if (ran.timedOut) {
-          // A hung notifier would cost its timeout again on every new item.
-          notifierDown = true;
-          return yield* Effect.logWarning(
-            "osascript did not answer in 15 seconds, so attention items are not notified again until the server restarts",
-          );
-        }
-        if (ran.exitCode !== 0) {
-          return yield* Effect.logWarning(
-            `cannot notify attention item ${item.id}: exit ${ran.exitCode}: ${ran.tail.trim()}`,
-          );
-        }
-      });
+  const post = Effect.fn("FactoryAttention.post")(function* (item: NewItem) {
+    if (!notifying || notifierDown) return;
+    const result = yield* Effect.result(
+      runner.run({
+        command: "osascript",
+        args: ["-e", SCRIPT, titleOf(item), item.message],
+        timeoutMs: NOTIFY_TIMEOUT_MS,
+        termGraceMs: NOTIFY_TERM_GRACE_MS,
+      }),
+    );
+    if (result._tag === "Failure") {
+      return yield* Effect.logWarning(
+        `cannot notify attention item ${item.id}: ${String(result.failure.cause)}`,
+      );
+    }
+    const ran = result.success;
+    if (ran.exitCode === COMMAND_NOT_FOUND) {
+      notifierDown = true;
+      return yield* Effect.logWarning(
+        "osascript not found, so attention items are not notified on this machine",
+      );
+    }
+    if (ran.timedOut) {
+      // A hung notifier would cost its timeout again on every new item.
+      notifierDown = true;
+      return yield* Effect.logWarning(
+        "osascript did not answer in 15 seconds, so attention items are not notified again until the server restarts",
+      );
+    }
+    if (ran.exitCode !== 0) {
+      return yield* Effect.logWarning(
+        `cannot notify attention item ${item.id}: exit ${ran.exitCode}: ${ran.tail.trim()}`,
+      );
+    }
+  });
 
-    const raise = (item: NewItem): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        if (items.has(item.id)) return;
-        items.set(item.id, { item: { ...item, firstSeenMs: clock() }, dismissed: false });
-        // Saved before it is posted, so a crash between the two cannot notify the item twice.
-        yield* persist;
-        yield* post(item);
-      });
+  const raise = Effect.fn("FactoryAttention.raise")(function* (item: NewItem) {
+    if (items.has(item.id)) return;
+    items.set(item.id, { item: { ...item, firstSeenMs: clock() }, dismissed: false });
+    // Saved before it is posted, so a crash between the two cannot notify the item twice.
+    yield* persist;
+    yield* post(item);
+  });
 
-    const clear = (matches: (item: AttentionItem) => boolean): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        const gone = [...items.values()].filter(({ item }) => matches(item));
-        if (gone.length === 0) return;
-        for (const { item } of gone) items.delete(item.id);
-        yield* persist;
-      });
+  const clear = Effect.fn("FactoryAttention.clear")(function* (
+    matches: (item: AttentionItem) => boolean,
+  ) {
+    const gone = [...items.values()].filter(({ item }) => matches(item));
+    if (gone.length === 0) return;
+    for (const { item } of gone) items.delete(item.id);
+    yield* persist;
+  });
 
-    const passEnded = (outcome: PassOutcome): Effect.Effect<void> =>
-      Effect.gen(function* () {
-        if (outcome.ok) {
-          failedPasses = 0;
-          return yield* clear((item) => item.id === PASS_ERRORS_ITEM_ID);
-        }
-        failedPasses += 1;
-        if (failedPasses < PASS_ERRORS_IN_A_ROW) return;
-        yield* raise({
-          id: PASS_ERRORS_ITEM_ID,
-          kind: "pass-errors",
-          repo: null,
-          issue: null,
-          run: null,
-          message: `the pass has failed ${PASS_ERRORS_IN_A_ROW} times in a row, last: ${outcome.message}`,
-        });
-      });
-
-    const dismiss = (ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<string>> =>
-      Effect.gen(function* () {
-        const dismissed: Array<string> = [];
-        for (const id of ids) {
-          const kept = items.get(id);
-          if (kept === undefined || kept.dismissed) continue;
-          items.set(id, { ...kept, dismissed: true });
-          dismissed.push(id);
-        }
-        if (dismissed.length > 0) yield* persist;
-        return dismissed;
-      });
-
-    return Attention.of({
-      list: () =>
-        Effect.sync(() =>
-          [...items.values()].flatMap(({ item, dismissed }) => (dismissed ? [] : [item])),
-        ),
-      raise,
-      clear,
-      passEnded,
-      setNotify: (on) =>
-        Effect.sync(() => {
-          notifying = on;
-        }),
-      dismiss,
+  const passEnded = Effect.fn("FactoryAttention.passEnded")(function* (outcome: PassOutcome) {
+    if (outcome.ok) {
+      failedPasses = 0;
+      return yield* clear((item) => item.id === PASS_ERRORS_ITEM_ID);
+    }
+    failedPasses += 1;
+    if (failedPasses < PASS_ERRORS_IN_A_ROW) return;
+    yield* raise({
+      id: PASS_ERRORS_ITEM_ID,
+      kind: "pass-errors",
+      repo: null,
+      issue: null,
+      run: null,
+      message: `the pass has failed ${PASS_ERRORS_IN_A_ROW} times in a row, last: ${outcome.message}`,
     });
   });
+
+  const dismiss = Effect.fn("FactoryAttention.dismiss")(function* (ids: ReadonlyArray<string>) {
+    const dismissed: Array<string> = [];
+    for (const id of ids) {
+      const kept = items.get(id);
+      if (kept === undefined || kept.dismissed) continue;
+      items.set(id, { ...kept, dismissed: true });
+      dismissed.push(id);
+    }
+    if (dismissed.length > 0) yield* persist;
+    return dismissed;
+  });
+
+  return Attention.of({
+    list: () =>
+      Effect.sync(() =>
+        [...items.values()].flatMap(({ item, dismissed }) => (dismissed ? [] : [item])),
+      ),
+    raise,
+    clear,
+    passEnded,
+    setNotify: (on) =>
+      Effect.sync(() => {
+        notifying = on;
+      }),
+    dismiss,
+  });
+});
 
 /** Needs FactoryPaths and FactoryProcess. `clock` is for a test; it reads the wall clock by default. */
 export const layer = (options: { readonly clock?: () => number } = {}) =>

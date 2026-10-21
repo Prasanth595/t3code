@@ -92,9 +92,10 @@ export const openOnFactoryServer = Effect.gen(function* () {
  * start it. Reads the environment as an optional service so upstream's manager tests, which
  * provide none, keep starting the primary.
  */
-export const skipsBundledBackend = (id: string) =>
-  Effect.gen(function* () {
-    if (id !== PRIMARY_LOCAL_ENVIRONMENT_ID) return false;
-    const environment = yield* Effect.serviceOption(DesktopEnvironment.DesktopEnvironment);
-    return Option.isSome(environment) && usesFactoryServer(environment.value);
-  });
+export const skipsBundledBackend = Effect.fn("DesktopFactoryServer.skipsBundledBackend")(function* (
+  id: string,
+) {
+  if (id !== PRIMARY_LOCAL_ENVIRONMENT_ID) return false;
+  const environment = yield* Effect.serviceOption(DesktopEnvironment.DesktopEnvironment);
+  return Option.isSome(environment) && usesFactoryServer(environment.value);
+});

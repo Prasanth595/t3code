@@ -9,7 +9,6 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import type * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { isMap, isScalar, parseDocument, YAMLMap } from "yaml";
 
@@ -204,12 +203,12 @@ const watchedReport = (
  * every report lists it, and a listing the reader could not make is reported as such rather
  * than as no project watched.
  */
-export const readMachineConfigReport = (
-  file: string,
-  watched: Result.Result<WatchedListing, WatchedReposError>,
-  readings: ReadonlyMap<string, RepoConfigReading>,
-): Effect.Effect<MachineConfigReport, never, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
+export const readMachineConfigReport = Effect.fn("FactorySettings.readMachineConfigReport")(
+  function* (
+    file: string,
+    watched: Result.Result<WatchedListing, WatchedReposError>,
+    readings: ReadonlyMap<string, RepoConfigReading>,
+  ): Effect.fn.Return<MachineConfigReport, never, FileSystem.FileSystem> {
     const fs = yield* FileSystem.FileSystem;
     const repos = watchedReport(watched, readings);
     const loaded = yield* Effect.result(loadMachineConfig(file));
@@ -244,7 +243,8 @@ export const readMachineConfigReport = (
       errors: [],
       ...repos,
     } satisfies MachineConfigReport;
-  });
+  },
+);
 
 /** A request body the edit can read: a JSON object. */
 export const isJsonObject = (body: unknown): body is Readonly<Record<string, unknown>> =>
@@ -293,16 +293,16 @@ export class SaveError extends Data.TaggedError("SaveError")<{ readonly cause: u
  * then `reload`s the loop and reports the file as it is now. A body that is not a JSON object is
  * `invalid-body`, and an edit the parser refuses is `invalid`, with the file untouched.
  */
-export const saveMachineConfig = (
-  file: string,
-  body: unknown,
-  loop: {
-    readonly reload: Effect.Effect<void>;
-    readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
-    readonly watchedRepos: Effect.Effect<WatchedListing, WatchedReposError>;
-  },
-): Effect.Effect<SaveResult, SaveError, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
+export const saveMachineConfig = Effect.fn("FactorySettings.saveMachineConfig")(
+  function* (
+    file: string,
+    body: unknown,
+    loop: {
+      readonly reload: Effect.Effect<void>;
+      readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
+      readonly watchedRepos: Effect.Effect<WatchedListing, WatchedReposError>;
+    },
+  ) {
     if (!isJsonObject(body)) return { kind: "invalid-body" } as const;
     const fs = yield* FileSystem.FileSystem;
     const existing = yield* fs
@@ -322,4 +322,6 @@ export const saveMachineConfig = (
       yield* loop.repoConfigs,
     );
     return { kind: "ok", report } as const;
-  }).pipe(Effect.mapError((cause) => new SaveError({ cause })));
+  },
+  Effect.mapError((cause) => new SaveError({ cause })),
+);
