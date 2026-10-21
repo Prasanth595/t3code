@@ -8987,6 +8987,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (request.dialogKind !== "resume_return") {
                 return { behavior: "cancelled" as const };
               }
+              if (adapterOptions.settings.idleCompaction === "off") {
+                return { behavior: "completed" as const, result: "continue" as const };
+              }
               const ageMinutes =
                 typeof request.payload.sessionAgeMinutes === "number" &&
                 Number.isFinite(request.payload.sessionAgeMinutes)

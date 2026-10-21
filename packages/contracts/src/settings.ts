@@ -6,6 +6,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
@@ -643,6 +644,16 @@ export type CodexSettings = typeof CodexSettings.Type;
 
 const CLAUDE_AUTO_COMPACT_WINDOW_PATTERN = /^(?:|[1-9]\d{5}|1000000)$/;
 
+const CLAUDE_IDLE_COMPACTION_MODES = [
+  { value: "onReturn", label: "When you return" },
+  { value: "beforeCacheExpires", label: "Before the cache expires (beta)" },
+  { value: "off", label: "Never" },
+] as const;
+const ClaudeIdleCompaction = Schema.Literals(
+  CLAUDE_IDLE_COMPACTION_MODES.map((mode) => mode.value),
+);
+export type ClaudeIdleCompaction = typeof ClaudeIdleCompaction.Type;
+
 export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -694,9 +705,22 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    idleCompaction: ClaudeIdleCompaction.pipe(
+      Schema.withDecodingDefault(Effect.succeed("onReturn" as const)),
+      Schema.annotateKey({
+        title: "Compact idle threads",
+        description:
+          "When to compact a thread over 200,000 tokens whose prompt cache expired while you were away.",
+        providerSettingsForm: {
+          control: "select",
+          options: CLAUDE_IDLE_COMPACTION_MODES,
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "launchArgs"],
+    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
@@ -1160,7 +1184,6 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
-  compactIdleThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1334,6 +1357,20 @@ export const resolveProjectProviderInstanceEnabled = (
     : isUnconfiguredDefaultInstanceEnabled(instanceId);
 };
 
+const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+
+export const resolveClaudeIdleCompaction = (
+  settings: Pick<ServerSettings, "providerInstances">,
+  instanceId: ProviderInstanceId,
+): ClaudeIdleCompaction => {
+  const instance = Object.hasOwn(settings.providerInstances, instanceId)
+    ? settings.providerInstances[instanceId]
+    : undefined;
+  return decodeClaudeSettings(instance?.config ?? {}).pipe(
+    Option.match({ onNone: () => "onReturn" as const, onSome: (config) => config.idleCompaction }),
+  );
+};
+
 export const ServerSettingsOperation = Schema.Literals([
   "normalize",
   "check-exists",
@@ -1475,7 +1512,6 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   easDeviceHosts: Schema.optionalKey(EasDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
-  compactIdleThreads: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),

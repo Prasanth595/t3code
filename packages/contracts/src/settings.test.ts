@@ -9,6 +9,7 @@ import {
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
+  resolveClaudeIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   ServerSettings,
@@ -131,6 +132,26 @@ describe("custom model settings", () => {
       "bare-slug",
       { slug: "named", name: "Named", capabilities },
     ]);
+  });
+});
+
+describe("resolveClaudeIdleCompaction", () => {
+  it("reads each Claude instance's own mode and defaults to compacting on return", () => {
+    const settings = decodeServerSettings({
+      providerInstances: {
+        claude_work: { driver: "claudeAgent", config: { idleCompaction: "off" } },
+        claude_personal: { driver: "claudeAgent" },
+      },
+    });
+    expect(resolveClaudeIdleCompaction(settings, ProviderInstanceId.make("claude_work"))).toBe(
+      "off",
+    );
+    expect(resolveClaudeIdleCompaction(settings, ProviderInstanceId.make("claude_personal"))).toBe(
+      "onReturn",
+    );
+    expect(resolveClaudeIdleCompaction(settings, ProviderInstanceId.make("claudeAgent"))).toBe(
+      "onReturn",
+    );
   });
 });
 
