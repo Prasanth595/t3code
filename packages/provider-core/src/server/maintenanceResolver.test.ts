@@ -463,6 +463,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       real: "D:\\Tools\\Choco\\bin\\claude.exe",
       env: { ChocolateyInstall: "D:\\Tools\\Choco" },
     },
+    {
+      name: "a custom root package",
+      resolved: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      real: "D:\\Tools\\Choco\\lib\\claude-code\\tools\\claude.exe",
+      env: { ChocolateyInstall: "D:\\Tools\\Choco" },
+    },
   ] as const)("keeps a Chocolatey Claude install manual-only through $name", (fixture) =>
     Effect.gen(function* () {
       const capabilities = yield* resolveInstall({ definition: claudeUpdate, ...fixture });
@@ -589,6 +595,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       definition: otherProviderUpdate,
       resolved: userWinGetLink,
       real: userWinGetPackage,
+    },
+    {
+      name: "a claude-code tools path outside Chocolatey",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
+      real: "C:\\Work\\lib\\claude-code\\tools\\claude.exe",
     },
     {
       name: "another WinGet package",

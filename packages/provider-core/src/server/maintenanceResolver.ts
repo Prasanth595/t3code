@@ -262,20 +262,24 @@ function isWinGetClaudeCommandPath(commandPath: string): boolean {
 const CHOCOLATEY_CLAUDE_PACKAGE_ID = "claude-code";
 
 /**
- * Chocolatey's Claude Code package: the shimgen shim in `<ChocolateyInstall>\bin`
- * (default `chocolatey\bin`) or the binary it launches from `lib\claude-code\tools`.
- * The shim is a real executable rather than a link, so following symlinks never
- * reaches the package directory. A custom root is not in that path shape, so it is
- * also compared with `ChocolateyInstall`.
+ * Chocolatey's Claude Code package: the shimgen shim in `<root>\bin` or the
+ * binary it launches from `<root>\lib\claude-code\tools`. The default root's
+ * directory is named `chocolatey`. A custom root is not, so those paths are
+ * compared with `ChocolateyInstall`. The shim is a real executable rather than
+ * a link, so following symlinks never reaches the package directory.
  */
-const chocolateyClaudeCommandPath = /\/(?:chocolatey\/bin|lib\/claude-code\/tools)\/claude\.exe$/;
+const chocolateyClaudeCommandPath = /\/chocolatey\/(?:bin|lib\/claude-code\/tools)\/claude\.exe$/;
 
 function isChocolateyClaudeCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
-  if (chocolateyClaudeCommandPath.test(normalizeCommandPath(commandPath))) return true;
+  const normalized = normalizeCommandPath(commandPath);
+  if (chocolateyClaudeCommandPath.test(normalized)) return true;
   const root = nonEmptyString(env.ChocolateyInstall);
   if (!root) return false;
-  const shim = normalizeCommandPath(`${root.replace(/[\\/]+$/, "")}/bin/claude.exe`);
-  return normalizeCommandPath(commandPath) === shim;
+  const prefix = normalizeCommandPath(root.replace(/[\\/]+$/, ""));
+  return (
+    normalized === `${prefix}/bin/claude.exe` ||
+    normalized === `${prefix}/lib/claude-code/tools/claude.exe`
+  );
 }
 
 /** `choco search --exact --limit-output` prints `<id>|<version>` for a match and nothing otherwise. */
