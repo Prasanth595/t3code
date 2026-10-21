@@ -32,20 +32,50 @@ export const isMinimaxCodeBusyFailure: AcpPromptBusyRetryPolicy["isBusyFailure"]
 /**
  * The lease is released within seconds of the interrupt, so a short backoff
  * recovers the turn long before the user notices a failed prompt.
+ *
+ * The attempts land 1s, 3s, 7s, 15s, 25s, 35s and 45s after the rejected
+ * attempt, so the budget covers the longest lease release observed in the wild,
+ * which was 27.6s.
  */
 export const minimaxCodePromptBusyRetry: AcpPromptBusyRetryPolicy = {
-  maxAttempts: 5,
+  maxAttempts: 7,
   isBusyFailure: isMinimaxCodeBusyFailure,
   delayMs: (attempt) => Math.min(10_000, 1_000 * 2 ** (attempt - 1)),
 };
+
+/** The id the ACP registry publishes the minimax-code agent under. */
+const MINIMAX_CODE_REGISTRY_AGENT_ID = "minimax-code";
+
+/** Local installs launch the `mcode` binary directly, with no registry id. */
+const MINIMAX_CODE_LOCAL_COMMAND = /^mcode(\.exe|\.cmd)?$/i;
+
+export interface MinimaxCodeAgentIdentity {
+  /** The registry agent id, empty for a local install. */
+  readonly registryAgentId: string;
+  /** Whether the agent runs as a local install. */
+  readonly isLocal: boolean;
+  /** The local command, when the agent runs as a local install. */
+  readonly commandPath: string;
+}
+
+/**
+ * Whether the agent is minimax-code, either installed from the registry or
+ * installed locally.
+ */
+export function isMinimaxCodeAgent(identity: MinimaxCodeAgentIdentity): boolean {
+  if (identity.registryAgentId === MINIMAX_CODE_REGISTRY_AGENT_ID) return true;
+  if (!identity.isLocal) return false;
+  const command = identity.commandPath.split(/[\\/]/).pop() ?? "";
+  return MINIMAX_CODE_LOCAL_COMMAND.test(command);
+}
 
 /**
  * minimax-code holds a turn lease on the session until the interrupted turn
  * has finished unwinding, so a prompt that arrives in that window is re-sent
  * instead of failing the turn.
  */
-export function acpRegistryAgentFlavorExtras(
-  registryAgentId: string,
+export function minimaxCodeFlavorExtras(
+  identity: MinimaxCodeAgentIdentity,
 ): Pick<AcpAdapterV2Flavor, "promptBusyRetry"> {
-  return registryAgentId === "minimax-code" ? { promptBusyRetry: minimaxCodePromptBusyRetry } : {};
+  return isMinimaxCodeAgent(identity) ? { promptBusyRetry: minimaxCodePromptBusyRetry } : {};
 }

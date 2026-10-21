@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as EffectAcpErrors from "effect-acp/errors";
 
-import { acpRegistryAgentFlavorExtras, isMinimaxCodeBusyFailure } from "./minimaxCodeAcp.ts";
+import { isMinimaxCodeBusyFailure, minimaxCodeFlavorExtras } from "./minimaxCodeAcp.ts";
 
 const busyError = new EffectAcpErrors.AcpRequestError({
   code: -32603,
@@ -47,10 +47,72 @@ describe("isMinimaxCodeBusyFailure", () => {
   });
 });
 
-describe("acpRegistryAgentFlavorExtras", () => {
-  it("re-sends busy prompts for minimax-code only", () => {
-    assert.isDefined(acpRegistryAgentFlavorExtras("minimax-code").promptBusyRetry);
-    assert.isUndefined(acpRegistryAgentFlavorExtras("claude-acp").promptBusyRetry);
-    assert.isUndefined(acpRegistryAgentFlavorExtras("codex").promptBusyRetry);
+describe("minimaxCodeFlavorExtras", () => {
+  it("re-sends busy prompts for the registry agent", () => {
+    assert.isDefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "minimax-code",
+        isLocal: false,
+        commandPath: "",
+      }).promptBusyRetry,
+    );
+  });
+
+  it("re-sends busy prompts for a local install", () => {
+    assert.isDefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "",
+        isLocal: true,
+        commandPath: "/Users/someone/.minimax-code/bin/mcode",
+      }).promptBusyRetry,
+    );
+    assert.isDefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "",
+        isLocal: true,
+        commandPath: "C:\\tools\\mcode.exe",
+      }).promptBusyRetry,
+    );
+  });
+
+  it("leaves other agents alone", () => {
+    assert.isUndefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "claude-acp",
+        isLocal: false,
+        commandPath: "",
+      }).promptBusyRetry,
+    );
+    assert.isUndefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "codex",
+        isLocal: false,
+        commandPath: "",
+      }).promptBusyRetry,
+    );
+    assert.isUndefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "",
+        isLocal: true,
+        commandPath: "/usr/local/bin/mcode-tools",
+      }).promptBusyRetry,
+    );
+    assert.isUndefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "",
+        isLocal: true,
+        commandPath: "/usr/local/bin/other-agent",
+      }).promptBusyRetry,
+    );
+  });
+
+  it("does not match the local command of a registry install", () => {
+    assert.isUndefined(
+      minimaxCodeFlavorExtras({
+        registryAgentId: "codex",
+        isLocal: false,
+        commandPath: "/usr/local/bin/mcode",
+      }).promptBusyRetry,
+    );
   });
 });
