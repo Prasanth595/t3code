@@ -8,6 +8,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useEffect } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../test/render";
@@ -30,10 +31,11 @@ vi.mock(import("~/state/server"), () => ({
   serverEnvironment: { updateProvider: {} } as never,
 }));
 vi.mock(import("~/state/use-atom-command"), () => ({
-  useAtomCommand: (() => async ({ environmentId }: { environmentId: EnvironmentId }) => {
-    state.requests.push(environmentId);
-    return AsyncResult.success(undefined);
-  }) as never,
+  useAtomCommand: (() =>
+    async ({ environmentId }: { environmentId: EnvironmentId }) => {
+      state.requests.push(environmentId);
+      return AsyncResult.success(undefined);
+    }) as never,
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -82,19 +84,21 @@ function setup() {
     { environmentId: EnvironmentId.make("writable"), label: "Writable" },
     { environmentId: EnvironmentId.make("unresolved"), label: "Unresolved" },
   ].map((environment) => ({ ...environment, connection: { phase: "connected" } }));
-  state.providers = new Map(state.environments.map(({ environmentId }) => [environmentId, [provider]]));
-  state.requests = [];
-  const sessions = new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>([
-    [state.environments[0]!.environmentId, Atom.make(session(["orchestration:read"]))],
-    [state.environments[1]!.environmentId, Atom.make(session([AuthProvidersManageScope]))],
-    [
-      state.environments[2]!.environmentId,
-      Atom.make(AsyncResult.initial<AuthSessionState>()),
-    ],
-  ]);
-  const spy = vi.spyOn(environmentSession, "sessionStateAtom").mockImplementation(
-    ((id: EnvironmentId) => sessions.get(id)!) as typeof environmentSession.sessionStateAtom,
+  state.providers = new Map(
+    state.environments.map(({ environmentId }) => [environmentId, [provider]]),
   );
+  state.requests = [];
+  const sessions = new Map<EnvironmentId, Atom.Writable<AsyncResult.AsyncResult<AuthSessionState>>>(
+    [
+      [state.environments[0]!.environmentId, Atom.make(session(["orchestration:read"]))],
+      [state.environments[1]!.environmentId, Atom.make(session([AuthProvidersManageScope]))],
+      [state.environments[2]!.environmentId, Atom.make(AsyncResult.initial<AuthSessionState>())],
+    ],
+  );
+  const spy = vi
+    .spyOn(environmentSession, "sessionStateAtom")
+    .mockImplementation(((id: EnvironmentId) =>
+      sessions.get(id)!) as typeof environmentSession.sessionStateAtom);
   return { sessions, [Symbol.dispose]: () => spy.mockRestore() };
 }
 
@@ -102,10 +106,13 @@ it("bulk provider updates exclude connections without a confirmed management gra
   using fixture = setup();
   let updates!: ReturnType<typeof useProviderUpdates>;
   function Probe() {
-    updates = useProviderUpdates();
+    const nextUpdates = useProviderUpdates();
+    useEffect(() => {
+      updates = nextUpdates;
+    }, [nextUpdates]);
     return null;
   }
-  await using screen = await render(
+  await using _screen = await render(
     <RegistryContext.Provider value={appAtomRegistry}>
       <Probe />
     </RegistryContext.Provider>,
