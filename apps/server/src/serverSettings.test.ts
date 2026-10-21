@@ -401,6 +401,19 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           yield* service.start;
           yield* Queue.clear(reads);
           const changes = yield* service.subscribeChanges;
+          const editPublished = yield* Deferred.make<void>();
+          const published = yield* Effect.forkChild(
+            changes.pipe(
+              Stream.tap((settings) =>
+                settings.defaultProjectScripts.length > 0
+                  ? Deferred.succeed(editPublished, undefined)
+                  : Effect.void,
+              ),
+              Stream.take(3),
+              Stream.runCollect,
+            ),
+            { startImmediately: true },
+          );
 
           yield* service.updateSettings({ responseStreamingMode: "turn" });
           const savedContents = yield* fs.readFileString(config.settingsPath);
@@ -411,14 +424,11 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             config.settingsPath,
             JSON.stringify({ responseStreamingMode: "turn", defaultProjectScripts: [usageScript] }),
           );
-          yield* Queue.take(reads).pipe(Effect.timeout("2 seconds"));
-          yield* service.withSettingsSnapshot(() => Effect.void);
+          yield* Deferred.await(editPublished).pipe(Effect.timeout("2 seconds"));
           // Once another edit is published, the saved contents are an edit of their own.
           yield* fs.writeFileString(config.settingsPath, savedContents);
 
-          const [saved, edited, restored] = yield* changes.pipe(
-            Stream.take(3),
-            Stream.runCollect,
+          const [saved, edited, restored] = yield* Fiber.join(published).pipe(
             Effect.timeout("2 seconds"),
           );
           assert.equal(saved?.responseStreamingMode, "turn");
