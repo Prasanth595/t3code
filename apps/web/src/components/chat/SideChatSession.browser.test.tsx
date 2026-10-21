@@ -1,3 +1,4 @@
+import { act, render } from "../../../test/render";
 import * as Cause from "effect/Cause";
 import {
   RuntimeRequestId,
@@ -6,9 +7,8 @@ import {
 } from "@t3tools/contracts";
 import type { PendingApproval } from "../../session-logic";
 import { page, userEvent } from "vite-plus/test/browser";
-import { act, type ComponentProps } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { type ComponentProps } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import { SideChatSession } from "./SideChat";
 
 const state = vi.hoisted(() => ({
@@ -126,8 +126,6 @@ vi.mock("./SecretRequestCard", () => ({
   ),
 }));
 
-let root: Root;
-let container: HTMLDivElement;
 const props = () =>
   ({
     source: {
@@ -143,14 +141,9 @@ const props = () =>
     settings: { planModeEnabled: false },
     instanceEntries: [],
   }) as unknown as ComponentProps<typeof SideChatSession>;
-const render = () =>
-  act(async () => {
-    root.render(<SideChatSession {...props()} />);
-  });
-const draft = () => container.querySelector("textarea")!;
-const send = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+const draft = () => document.querySelector("textarea")!;
+const send = () => document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+function setup() {
   state.status = "running";
   state.userInputs = [];
   state.approvals = [];
@@ -161,17 +154,10 @@ beforeEach(async () => {
   state.metaKey = false;
   state.start.mockReset().mockResolvedValue({ _tag: "Success" });
   state.interrupt.mockReset().mockResolvedValue({ _tag: "Success" });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await render();
-});
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-});
+}
 it("steers the side thread with the inherited model and clears only accepted input", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
   expect(send().getAttribute("aria-label")).toBe("Steer message");
   await act(async () => send().click());
   expect(state.start).toHaveBeenCalledWith(
@@ -189,6 +175,9 @@ it("steers the side thread with the inherited model and clears only accepted inp
   expect(state.interrupt).not.toHaveBeenCalled();
 });
 it("keeps the failed steer draft for retry", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
+  const container = screen.container;
   state.start.mockResolvedValueOnce({
     _tag: "Failure",
     cause: Cause.fail(new Error("Steering unavailable")),
@@ -200,6 +189,8 @@ it("keeps the failed steer draft for retry", async () => {
   expect(draft().value).toBe("");
 });
 it("Enter steers and Shift+Enter keeps the multiline draft", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
   await act(async () =>
     draft().dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true }),
@@ -214,8 +205,11 @@ it("Enter steers and Shift+Enter keeps the multiline draft", async () => {
 it.each(["ctrlKey", "metaKey"] as const)(
   "keeps %s-click steering with no queue action",
   async (modifier) => {
+    setup();
+    await using screen = await render(<SideChatSession {...props()} />);
+    const container = screen.container;
     state[modifier] = true;
-    await render();
+    await screen.rerender(<SideChatSession {...props()} />);
     expect(send().getAttribute("aria-label")).toBe("Steer message");
     expect(container.textContent).not.toContain("Queue");
     await act(async () =>
@@ -225,15 +219,20 @@ it.each(["ctrlKey", "metaKey"] as const)(
   },
 );
 it("submits normally when idle, retaining the server-resolved steering intent for races", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
   state.status = "idle";
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   expect(send().getAttribute("aria-label")).toBe("Submit message");
   await act(async () => send().click());
   expect(state.start.mock.calls[0]![0].input.dispatchMode).toBe("steer");
 });
 
 it("shows the side answer without a separate send-to-main action", async () => {
-  await render();
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
+  const container = screen.container;
+  await screen.rerender(<SideChatSession {...props()} />);
   expect(container.textContent).toContain("Side answer");
   expect(container.querySelector('[aria-label="Send to Main Chat"]')).toBeNull();
   expect(state.start).not.toHaveBeenCalled();
@@ -242,6 +241,9 @@ it("shows the side answer without a separate send-to-main action", async () => {
 it.each(["local", "inherited"] as const)(
   "renders secret requests with their owning environment and %s visibility",
   async (visibility) => {
+    setup();
+    await using screen = await render(<SideChatSession {...props()} />);
+    const container = screen.container;
     const threadId = visibility === "local" ? "side" : "parent";
     state.visibleTurnItems = [
       {
@@ -258,7 +260,7 @@ it.each(["local", "inherited"] as const)(
         },
       },
     ] as unknown as OrchestrationV2ProjectedTurnItem[];
-    await render();
+    await screen.rerender(<SideChatSession {...props()} />);
     const card = container.querySelector('[data-secret-request="secret-card"]');
     expect(card?.textContent).toBe("Deploy token");
     expect(card?.getAttribute("data-environment")).toBe("env");
@@ -282,8 +284,11 @@ const editorRequest = () => [
   },
 ];
 it("shows and submits a proposed editor answer without changing its whitespace", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
+  const container = screen.container;
   state.userInputs = editorRequest();
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   const field = container.querySelector<HTMLTextAreaElement>('[aria-label="Proposed text"]')!;
   expect(field.value).toBe("  First line\nSecond line\n");
   await userEvent.click(page.getByRole("button", { name: "Reply", exact: true }));
@@ -298,19 +303,22 @@ it("shows and submits a proposed editor answer without changing its whitespace",
   );
 });
 it("preserves edits and an intentionally empty editor answer across projection refreshes", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
+  const container = screen.container;
   state.userInputs = editorRequest();
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   await userEvent.fill(
     page.getByRole("textbox", { name: "Proposed text", exact: true }),
     "Edited\ntext",
   );
   state.userInputs = editorRequest();
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Proposed text"]')!.value).toBe(
     "Edited\ntext",
   );
   await userEvent.fill(page.getByRole("textbox", { name: "Proposed text", exact: true }), "");
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Proposed text"]')!.value).toBe(
     "",
   );
@@ -321,6 +329,8 @@ it("preserves edits and an intentionally empty editor answer across projection r
 });
 
 it("keeps stale approvals and non-resumable questions visible but prevents responses", async () => {
+  setup();
+  await using screen = await render(<SideChatSession {...props()} />);
   state.approvals = [
     {
       requestId: RuntimeRequestId.make("stale-approval"),
@@ -338,7 +348,7 @@ it("keeps stale approvals and non-resumable questions visible but prevents respo
     ...request,
     responseCapability: "not_resumable",
   }));
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   await expect
     .element(page.getByRole("button", { name: "Allow once", exact: true }))
     .toBeDisabled();
@@ -350,7 +360,7 @@ it("keeps stale approvals and non-resumable questions visible but prevents respo
     responseCapability: "live",
   }));
   state.userInputs = [];
-  await render();
+  await screen.rerender(<SideChatSession {...props()} />);
   await userEvent.click(page.getByRole("button", { name: "Allow once", exact: true }));
   expect(state.approve).toHaveBeenCalledWith(
     expect.objectContaining({

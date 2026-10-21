@@ -1,6 +1,6 @@
-import { act, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -48,8 +48,6 @@ const entries = deriveProviderInstanceEntries([
     skills: [],
   },
 ]);
-let root: Root;
-let container: HTMLDivElement;
 function Fixture({ active = true }: { active?: boolean }) {
   const [draft, setDraft] = useState("unsent side question");
   const [model, setModel] = useState(models[0]!.slug);
@@ -95,25 +93,10 @@ function button(label: string) {
 }
 async function click(label: string) {
   await act(() => button(label).click());
-  await act(() => vi.advanceTimersByTimeAsync(0));
-  await act(() => vi.advanceTimersToNextFrame());
 }
-beforeEach(async () => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() => root.render(<Fixture />));
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-});
 it("shows the model and reasoning in the footer and changes reasoning without losing the draft", async () => {
+  await using screen = await render(<Fixture />);
+  const container = screen.container;
   expect(document.body.textContent).toContain("High");
   expect(document.body.textContent).toContain("first-model");
   await click("High");
@@ -126,24 +109,25 @@ it("shows the model and reasoning in the footer and changes reasoning without lo
   expect(container.querySelector("textarea")?.value).toBe("unsent side question");
 });
 it("closes portaled controls when its tab hides and does not reopen them on return", async () => {
+  await using screen = await render(<Fixture />);
+  const container = screen.container;
   expect(document.body.textContent).toContain("first-model");
   await click("High");
   expect(document.querySelector('[role="menu"]')).not.toBeNull();
-  await act(() => root.render(<Fixture active={false} />));
-  await act(() => vi.runAllTimersAsync());
+  await screen.rerender(<Fixture active={false} />);
   expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
   expect(document.querySelector('[role="menu"]')).toBeNull();
-  await act(() => root.render(<Fixture />));
+  await screen.rerender(<Fixture />);
   expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
   expect(container.querySelector("textarea")?.value).toBe("unsent side question");
 });
 
 it("hides frozen-context help with its panel without reopening it on return", async () => {
+  await using screen = await render(<Fixture />);
   await click("Side chat context");
   expect(document.body.textContent).toContain("Each side chat uses the main conversation");
-  await act(() => root.render(<Fixture active={false} />));
-  await act(() => vi.runAllTimersAsync());
+  await screen.rerender(<Fixture active={false} />);
   expect(document.body.textContent).not.toContain("Each side chat uses the main conversation");
-  await act(() => root.render(<Fixture />));
+  await screen.rerender(<Fixture />);
   expect(document.body.textContent).not.toContain("Each side chat uses the main conversation");
 });

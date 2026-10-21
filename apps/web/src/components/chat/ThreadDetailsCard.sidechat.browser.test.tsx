@@ -1,6 +1,6 @@
-import { act, useRef, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../../test/render";
+import { useRef, useState } from "react";
+import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { ChatCanvasContext } from "./ChatCanvasContext";
@@ -25,8 +25,6 @@ const canvas = {
   reportDetailsCard: report,
   detailsCardTopInset: 0,
 };
-let root: Root;
-let container: HTMLDivElement;
 function Fixture({ sidechat = false }: { sidechat?: boolean }) {
   const anchor = useRef<HTMLButtonElement>(null);
   const [handle] = useState(PopoverCreateHandle);
@@ -50,36 +48,23 @@ function Fixture({ sidechat = false }: { sidechat?: boolean }) {
     </ChatCanvasContext>
   );
 }
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+it("yields the main column while sidechat is open, keeps details accessible, and restores the inline preference", async () => {
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
   presentation.mockClear();
   report.mockClear();
-});
-afterEach(async () => {
-  await act(() => root.unmount());
-  container.remove();
-  vi.unstubAllGlobals();
-  vi.restoreAllMocks();
-  vi.useRealTimers();
-});
-it("yields the main column while sidechat is open, keeps details accessible, and restores the inline preference", async () => {
-  await act(() => root.render(<Fixture />));
+  await using screen = await render(<Fixture />);
+  const container = screen.container;
+  await screen.rerender(<Fixture />);
   expect(document.querySelector('[data-thread-details-panel="inline"]')).not.toBeNull();
-  await act(() => root.render(<Fixture sidechat />));
+  await screen.rerender(<Fixture sidechat />);
   expect(document.querySelector('[data-thread-details-panel="inline"]')).toBeNull();
   expect(presentation).toHaveBeenLastCalledWith("popover");
   expect(report).toHaveBeenLastCalledWith(null);
   await act(() => container.querySelector("button")!.click());
-  await act(() => vi.advanceTimersToNextFrame());
   expect(document.querySelector('[data-thread-details-panel="popover"]')?.textContent).toContain(
     "Workspace content",
   );
-  await act(() => root.render(<Fixture />));
+  await screen.rerender(<Fixture />);
   expect(document.querySelector('[data-thread-details-panel="inline"]')).not.toBeNull();
   expect(presentation).toHaveBeenLastCalledWith("inline");
 });

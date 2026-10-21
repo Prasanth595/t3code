@@ -92,7 +92,7 @@ function useViewportClampedMaxWidth(
   }, [container, hostRef, enabled, balancedDefault]);
   return size;
 }
-export function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
+function getPreviewPanelMaxWidth(viewportWidth: number, containerWidth?: number): number {
   const fractionCap = Math.floor(viewportWidth * PREVIEW_PANEL_MAX_WIDTH_FRACTION);
   const containerCap =
     containerWidth === undefined ? Infinity : Math.floor(containerWidth) - SIBLING_COLUMN_MIN_WIDTH;

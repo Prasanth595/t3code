@@ -1,7 +1,7 @@
-import { act, useLayoutEffect } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { useLayoutEffect } from "react";
 import { page } from "vite-plus/test/browser";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
+import { act, render } from "../../test/render";
 import { usePreviewPanelInlineSize } from "./usePreviewPanelInlineSize";
 const state = vi.hoisted(() => ({ resize: () => {} }));
 vi.mock("../lib/observeResize", () => ({
@@ -10,59 +10,56 @@ vi.mock("../lib/observeResize", () => ({
     return () => {};
   },
 }));
-let renderer: Root;
-let container: HTMLDivElement;
-let result: ReturnType<typeof usePreviewPanelInlineSize>;
-const row = { clientWidth: 1500 };
-function Panel({
-  balanced = true,
-  storageKey = "sidechat",
-}: {
-  balanced?: boolean;
-  storageKey?: string;
-}) {
-  const size = usePreviewPanelInlineSize(undefined, {
-    container: row as HTMLElement,
-    balancedDefault: balanced,
-    widthStorageKey: storageKey,
-  });
-  useLayoutEffect(() => {
-    result = size;
-  });
-  return null;
+function setup() {
+  state.resize = () => {};
+  localStorage.clear();
+  const row = { clientWidth: 1500 };
+  let result: ReturnType<typeof usePreviewPanelInlineSize>;
+  function Panel({
+    balanced = true,
+    storageKey = "sidechat",
+  }: {
+    balanced?: boolean;
+    storageKey?: string;
+  }) {
+    const size = usePreviewPanelInlineSize(undefined, {
+      container: row as HTMLElement,
+      balancedDefault: balanced,
+      widthStorageKey: storageKey,
+    });
+    useLayoutEffect(() => {
+      result = size;
+    });
+    return null;
+  }
+  return {
+    row,
+    Panel,
+    get result() {
+      return result;
+    },
+  };
 }
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  localStorage.clear();
+it("starts at half the available row and follows sidebar resizes before an explicit drag", async () => {
+  const fixture = setup();
   await page.viewport(1920, 1080);
-  container = document.createElement("div");
-  document.body.append(container);
-  renderer = createRoot(container);
-  row.clientWidth = 1500;
-  await act(() => {
-    renderer.render(<Panel />);
-  });
-});
-afterEach(async () => {
-  await act(() => renderer.unmount());
-  container.remove();
-  localStorage.clear();
-  vi.unstubAllGlobals();
-});
-it("starts at half the available row and follows a sidebar resize before any explicit drag", async () => {
-  expect(result.width).toBe(750);
-  row.clientWidth = 1200;
-  await act(() => state.resize());
-  expect(result.width).toBe(600);
-  row.clientWidth = 800;
-  await act(() => state.resize());
-  expect(result.width).toBe(400);
-  row.clientWidth = 650;
-  await act(() => state.resize());
-  expect(result.width).toBe(360);
+  await using screen = await render(<fixture.Panel />);
+  expect(fixture.result.width).toBe(750);
+  for (const [width, expected] of [
+    [1200, 600],
+    [800, 400],
+    [650, 360],
+  ]) {
+    fixture.row.clientWidth = width!;
+    await act(() => state.resize());
+    expect(fixture.result.width).toBe(expected);
+  }
 });
 it("keeps the normal file/browser default when the active surface changes", async () => {
-  expect(result.width).toBe(750);
-  await act(() => renderer.render(<Panel balanced={false} storageKey="browser" />));
-  expect(result.width).toBe(540);
+  const fixture = setup();
+  await page.viewport(1920, 1080);
+  await using screen = await render(<fixture.Panel />);
+  expect(fixture.result.width).toBe(750);
+  await screen.rerender(<fixture.Panel balanced={false} storageKey="browser" />);
+  expect(fixture.result.width).toBe(540);
 });
