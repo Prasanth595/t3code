@@ -18,6 +18,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -546,6 +547,8 @@ export const make = Effect.gen(function* () {
           url: target.link.url,
           baseBranch: detail.baseBranch,
           headSha: report.next.headSha,
+          observedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+          checks: detail.checks,
           report,
         });
         // An ending watch keeps what this pass saw, so watching again starts from it.

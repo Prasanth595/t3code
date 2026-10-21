@@ -5,7 +5,11 @@ import type {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 
-import { PULL_REQUEST_WATCH_WAKE_LIMIT, evaluatePullRequestWatch } from "./pullRequestWatch.ts";
+import {
+  PULL_REQUEST_WATCH_WAKE_LIMIT,
+  evaluatePullRequestWatch,
+  pullRequestWatchMessage,
+} from "./pullRequestWatch.ts";
 
 const STARTED = "2026-10-02T12:00:00.000Z";
 
@@ -58,6 +62,71 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it("reports success again after a same-head rerun, and still reports its new failure", () => {
+    const green = detail({ checks: [{ ...check("test", "success"), required: true }] });
+    const passed = evaluatePullRequestWatch(watch(), green, noRemarks);
+    const pending = detail({ checks: [{ ...check("test", "pending"), required: true }] });
+    const waiting = evaluatePullRequestWatch(passed.next, pending, noRemarks);
+    assert.deepEqual(waiting.changes, []);
+    assert.isFalse(waiting.next.passed);
+    const rerun = evaluatePullRequestWatch(waiting.next, green, noRemarks);
+    assert.deepEqual(rerun.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(evaluatePullRequestWatch(rerun.next, green, noRemarks).changes, []);
+    const failed = { ...green.checks[0]!, status: "failure" as const };
+    const failure = evaluatePullRequestWatch(rerun.next, detail({ checks: [failed] }), noRemarks);
+    assert.deepEqual(failure.changes, [{ kind: "checks-failed", failed: [failed] }]);
+    const retrying = evaluatePullRequestWatch(failure.next, pending, noRemarks);
+    assert.deepEqual(
+      evaluatePullRequestWatch(retrying.next, detail({ checks: [failed] }), noRemarks).changes,
+      [{ kind: "checks-failed", failed: [failed] }],
+    );
+  });
+
+  it("does not pass while a same-name required run is still pending in either order", () => {
+    const success = { ...check("test", "success"), required: true };
+    const pending = { ...check("test", "pending"), required: true };
+    for (const checks of [
+      [success, pending],
+      [pending, success],
+    ]) {
+      const report = evaluatePullRequestWatch(watch(), detail({ checks }), noRemarks);
+      assert.deepEqual(report.changes, []);
+      assert.isFalse(report.next.passed);
+    }
+  });
+
+  it("labels pass messages as snapshots and lists pending advisory checks", () => {
+    const observed = detail({
+      headSha: "0123456789abcdef0123456789abcdef01234567",
+      checks: [{ ...check("test", "success"), required: true }, check("review", "pending")],
+    });
+    const report = evaluatePullRequestWatch(watch(), observed, noRemarks);
+    const message = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: observed.headSha ?? null,
+      observedAt: STARTED,
+      checks: observed.checks,
+      report,
+    });
+    assert.include(message.text, `passed on ${observed.headSha} at the latest observation`);
+    assert.include(message.text, "Advisory checks still pending at that observation:");
+    assert.include(message.text, "review https://ci.example/review");
+    assert.include(message.text, "Delivery may be delayed; reruns may now be pending");
+    assert.include(message.text, "not confirmation of current merge readiness");
+    assert.include(message.text, `Snapshot observed at ${STARTED}`);
+    assert.equal(message.notification.summary, "#1: checks passed at observation");
+
+    const pending = detail({
+      ...observed,
+      checks: [{ ...check("test", "pending"), required: true }],
+    });
+    const latest = evaluatePullRequestWatch(report.next, pending, noRemarks);
+    assert.isFalse(latest.next.passed);
+    assert.include(message.text, "passed on 0123456789abcdef0123456789abcdef01234567");
+  });
+
   it("reports each failure at once, even while another check never finishes", () => {
     const bot = check("CodeRabbit", "pending");
     const first = detail({ checks: [check("lint", "failure"), check("test", "pending"), bot] });

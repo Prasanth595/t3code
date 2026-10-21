@@ -560,6 +560,7 @@ describe("pull request detail decoding", () => {
     const finished = {
       name: "check",
       workflowName: "Checks",
+      isRequired: true,
       status: "COMPLETED",
       conclusion: "SUCCESS",
       startedAt: "2026-10-08T04:06:10Z",
@@ -585,6 +586,35 @@ describe("pull request detail decoding", () => {
       [queued, finished],
     ]) {
       expect(checksOf(rollup)).toEqual([[["check", "pending"]], "pending"]);
+      expect(detailOf(rollup.map(inWorkflow)).checks[0]?.required).toBe(true);
+    }
+  });
+
+  it("does not hide a newer completed failure behind an older same-name success", () => {
+    const finished = {
+      name: "check",
+      workflowName: "Checks",
+      isRequired: true,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-08T04:06:10Z",
+      completedAt: "2026-10-08T04:18:58Z",
+    };
+    const failed = {
+      ...finished,
+      conclusion: "FAILURE",
+      startedAt: "2026-10-08T05:06:10Z",
+      completedAt: "2026-10-08T05:18:58Z",
+    };
+    for (const rollup of [
+      [finished, failed],
+      [failed, finished],
+    ]) {
+      const detail = detailOf(rollup.map(inWorkflow));
+      expect(detail.checks.map((check) => [check.name, check.status, check.required])).toEqual([
+        ["check", "failure", true],
+      ]);
+      expect(detail.checksState).toBe("failing");
     }
   });
 

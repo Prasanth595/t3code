@@ -2523,7 +2523,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("wakes once for a state it reported, across a restart and a new watch", () =>
+  it.effect("keeps queued pass snapshots historical across restarts, new watches and reruns", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threadId = ThreadId.make("runtime-pull-request-watch-told");
@@ -2563,6 +2563,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watch(true, "start");
 
       let headSha = "ad70160aaa";
+      let status: "success" | "pending" = "success";
       const host = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -2576,7 +2577,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               headSha,
               checks: ["lint", "test"].map((name) => ({
                 name,
-                status: "success" as const,
+                status,
                 description: null,
                 url: null,
                 required: true,
@@ -2601,23 +2602,54 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, ["#12: checks passed at observation"]);
 
       // A restart keeps nothing in memory; the watch state is all it has.
       const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* restarted.sweep;
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, ["#12: checks passed at observation"]);
 
       // A new watch on the same pull request knows what the last one told.
       yield* watch(false, "stop");
       yield* watch(true, "again");
       yield* restarted.sweep;
-      assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      assert.deepEqual(yield* summaries, ["#12: checks passed at observation"]);
 
       headSha = "bbbbbbbbbb";
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
-      assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+      assert.deepEqual(yield* summaries, [
+        "#12: checks passed at observation",
+        "#12: checks passed at observation",
+      ]);
+
+      // The first wake is still active, so later observations queue behind it.
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const queued = before.runs.find((run) => run.status === "queued");
+      assert.isDefined(queued);
+      const snapshot = before.messages.find((message) => message.id === queued?.userMessageId);
+      assert.include(snapshot?.text ?? "", "passed on bbbbbbbbbb at the latest observation");
+      assert.include(snapshot?.text ?? "", "Delivery may be delayed; reruns may now be pending");
+
+      status = "pending";
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      const pending = yield* orchestrator.getThreadShell(threadId);
+      assert.isFalse(pending?.pullRequests?.[0]?.watch?.passed);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs.find((run) => run.id === queued?.id)?.status, "queued");
+      assert.equal(
+        after.messages.find((message) => message.id === snapshot?.id)?.text,
+        snapshot?.text,
+      );
+
+      status = "success";
+      yield* restarted.sweep;
+      assert.deepEqual(yield* summaries, [
+        "#12: checks passed at observation",
+        "#12: checks passed at observation",
+        "#12: checks passed at observation",
+      ]);
       yield* watch(false, "end");
     }),
   );
@@ -2734,7 +2766,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* reactor.sweep;
       assert.deepEqual(yield* summaries, [
         "#13: new comments, stopped watching",
-        "#13: checks passed",
+        "#13: checks passed at observation",
       ]);
       yield* orchestrator.dispatch({
         type: "thread.pull-request.watch",

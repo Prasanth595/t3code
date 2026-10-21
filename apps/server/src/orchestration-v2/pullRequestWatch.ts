@@ -141,7 +141,7 @@ function changeLines(
       ];
     case "checks-passed":
       return [
-        `- All ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
+        `- The host reported all ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit} at the latest observation.`,
       ];
     case "remarks":
       return [
@@ -160,7 +160,7 @@ function changeLines(
 
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
-  "checks-passed": "checks passed",
+  "checks-passed": "checks passed at observation",
   remarks: "new comments",
   conflicting: "merge conflict",
 };
@@ -170,16 +170,31 @@ export function pullRequestWatchMessage(input: {
   readonly url: string;
   readonly baseBranch: string;
   readonly headSha: string | null;
+  readonly observedAt: string;
+  readonly checks: ReadonlyArray<PullRequestCheck>;
   readonly report: PullRequestWatchReport;
 }): { readonly text: string; readonly notification: OrchestrationV2Notification } {
   const { changes, exhausted } = input.report;
   const context = {
     baseBranch: input.baseBranch,
-    commit: input.headSha === null ? "" : ` on ${input.headSha.slice(0, 7)}`,
+    commit: input.headSha === null ? "" : ` on ${input.headSha}`,
   };
+  const passed = changes.some((change) => change.kind === "checks-passed");
+  const pending = passed ? input.checks.filter((check) => check.status === "pending") : [];
   const text = [
     `Update on pull request #${input.number} (${input.url}), which T3 Code is watching for you:`,
     ...changes.flatMap((change) => changeLines(change, context)),
+    ...(pending.length === 0
+      ? []
+      : [
+          "- Advisory checks still pending at that observation:",
+          ...listed(pending, (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`),
+        ]),
+    ...(passed
+      ? [
+          `Snapshot observed at ${input.observedAt}, not confirmation of current merge readiness. Delivery may be delayed; reruns may now be pending. Recheck the current head, checks, reviews and conflicts before merging.`,
+        ]
+      : []),
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
