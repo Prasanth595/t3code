@@ -456,7 +456,7 @@ describe("GitCafePullRequestProvider", () => {
       "GET /repos/owner/repo/pulls/7/labels": { items: [labels[0]], next: null },
       "GET /repos/owner/repo/pulls/7/status": {
         merge: {
-          conflicts: "unknown",
+          conflicts: "none",
           fastForward: true,
           strategies: ["merge", "squash", "rebase"],
           blockers: [{ blockedStrategies: ["squash"] }, {}],
@@ -491,7 +491,12 @@ describe("GitCafePullRequestProvider", () => {
     return Effect.gen(function* () {
       const provider = yield* GitCafePullRequestProvider.make;
       const detail = yield* provider.getChangeRequest(target);
-      assert.deepInclude(detail, { additions: 6, deletions: 3, changedFiles: 3 });
+      assert.deepInclude(detail, {
+        additions: 6,
+        deletions: 3,
+        changedFiles: 3,
+        mergeability: "mergeable",
+      });
       assert.strictEqual(
         server.sent.filter((request) => request.path.endsWith("/changes"))[1]?.query.get("after"),
         "cursor-1",

@@ -78,7 +78,9 @@ const Versioned = Schema.Struct({ version: NonNegativeInt });
 const CommentDetail = Schema.Struct({ id: Id, version: NonNegativeInt });
 const Status = Schema.Struct({
   merge: Schema.Struct({
-    conflicts: Schema.Literals(["unknown", "conflicting"]),
+    // The API reference lists "unknown" and "conflicting", but git.cafe also sends "none" and
+    // "pending", so any state is read and only the known ones are mapped.
+    conflicts: Schema.String,
     fastForward: Schema.NullOr(Schema.Boolean),
     strategies: Schema.Array(Schema.String),
     permitted: Schema.optional(Schema.Boolean),
@@ -631,7 +633,9 @@ export const make = Effect.gen(function* () {
         mergeability:
           status.merge.conflicts === "conflicting"
             ? ("conflicting" as const)
-            : ("unknown" as const),
+            : status.merge.conflicts === "none"
+              ? ("mergeable" as const)
+              : ("unknown" as const),
         baseComparison:
           status.merge.fastForward === null
             ? ("unknown" as const)
