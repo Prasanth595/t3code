@@ -11,6 +11,19 @@ index 97a5a25d58584c9bf04997fcec67e29923a0cf76..f830912f5b2900f2f96018b723a86c27
  		assertExternalOAuthUrl(url);
  		const window = electron.BrowserWindow.fromWebContents(event.sender);
  		const callbackPromise = new Promise((resolve, reject) => {
+diff --git a/dist/cjs/preload/index.js b/dist/cjs/preload/index.js
+index 310c21a720e7b5da06ee301f6b51597f081a8179..3518d29e786258065bc5ab92b664ea06dc99b659 100644
+--- a/dist/cjs/preload/index.js
++++ b/dist/cjs/preload/index.js
+@@ -33,7 +33,7 @@ function exposeClerkBridge(options) {
+ 		},
+ 		oauthTransport: {
+ 			getRedirectUrl: () => electron.ipcRenderer.invoke(require_ipc.OAUTH_TRANSPORT_CHANNELS.getRedirectUrl),
+-			open: (url) => electron.ipcRenderer.invoke(require_ipc.OAUTH_TRANSPORT_CHANNELS.open, url)
++			open: (options?.wrapOAuthOpen ?? ((open) => open))((url) => electron.ipcRenderer.invoke(require_ipc.OAUTH_TRANSPORT_CHANNELS.open, url))
+ 		}
+ 	};
+ 	if (process.contextIsolated) electron.contextBridge.exposeInMainWorld("__clerk_internal_electron", bridge);
 diff --git a/dist/esm/index.js b/dist/esm/index.js
 index 29284ea0e6325afc72024ec8c2e69ab3cb78ad00..e17ac66a597afce4273aa8bdd308a794504a8340 100644
 --- a/dist/esm/index.js
@@ -24,3 +37,35 @@ index 29284ea0e6325afc72024ec8c2e69ab3cb78ad00..e17ac66a597afce4273aa8bdd308a794
  		assertExternalOAuthUrl(url);
  		const window = BrowserWindow.fromWebContents(event.sender);
  		const callbackPromise = new Promise((resolve, reject) => {
+diff --git a/dist/esm/preload/index.js b/dist/esm/preload/index.js
+index 4a131a7d148fb402fe5e04336ccf7398723501b4..110dab808a7c6a1a7664dc5d9ab254af2fa4c4bc 100644
+--- a/dist/esm/preload/index.js
++++ b/dist/esm/preload/index.js
+@@ -32,7 +32,7 @@ function exposeClerkBridge(options) {
+ 		},
+ 		oauthTransport: {
+ 			getRedirectUrl: () => ipcRenderer.invoke(OAUTH_TRANSPORT_CHANNELS.getRedirectUrl),
+-			open: (url) => ipcRenderer.invoke(OAUTH_TRANSPORT_CHANNELS.open, url)
++			open: (options?.wrapOAuthOpen ?? ((open) => open))((url) => ipcRenderer.invoke(OAUTH_TRANSPORT_CHANNELS.open, url))
+ 		}
+ 	};
+ 	if (process.contextIsolated) contextBridge.exposeInMainWorld("__clerk_internal_electron", bridge);
+diff --git a/dist/types/shared/types.d.ts b/dist/types/shared/types.d.ts
+index ed127cc9e02808600b7f51dd71b278e223180534..96b6cc803a4e245f9966237003511b3cbe2121c8 100644
+--- a/dist/types/shared/types.d.ts
++++ b/dist/types/shared/types.d.ts
+@@ -40,6 +40,14 @@ export type ExposeClerkBridgeOptions = {
+      * Exposes the native passkey bridge to the renderer. Requires `createClerkBridge({ passkeys: true })`.
+      */
+     passkeys?: boolean;
++    /**
++     * Wraps the renderer's OAuth open call, for example to let the app cancel a pending flow.
++     */
++    wrapOAuthOpen?: (open: (url: string) => Promise<{
++        callbackUrl: string;
++    }>) => (url: string) => Promise<{
++        callbackUrl: string;
++    }>;
+ };
+ export type ClerkBridge = {
+     /**

@@ -30,7 +30,30 @@ function isSnapShotEvent(value: unknown): value is DesktopSnapShotEvent {
   );
 }
 
-exposeClerkBridge({ passkeys: true });
+let cancelClerkOAuth: (() => void) | null = null;
+const clerkOAuthPendingListeners = new Set<(pending: boolean) => void>();
+const setCancelClerkOAuth = (cancel: (() => void) | null) => {
+  cancelClerkOAuth = cancel;
+  for (const listener of clerkOAuthPendingListeners) listener(cancel !== null);
+};
+
+exposeClerkBridge({
+  passkeys: true,
+  wrapOAuthOpen: (open) => (url) => {
+    cancelClerkOAuth?.();
+    return new Promise((resolve, reject) => {
+      const settle = () => {
+        if (cancelClerkOAuth === cancel) setCancelClerkOAuth(null);
+      };
+      const cancel = () => {
+        settle();
+        reject(new Error("Clerk: OAuth flow was cancelled."));
+      };
+      setCancelClerkOAuth(cancel);
+      open(url).then(resolve, reject).finally(settle);
+    });
+  },
+});
 
 // Runs before any app script reads localStorage. See DesktopLegacyLocalStorage.
 try {
@@ -251,6 +274,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.removeListener(IpcChannels.QUIT_SHORTCUT_CHANNEL, wrappedListener);
     };
   },
+  isClerkOAuthPending: () => cancelClerkOAuth !== null,
+  onClerkOAuthPendingChange: (listener) => {
+    clerkOAuthPendingListeners.add(listener);
+    return () => {
+      clerkOAuthPendingListeners.delete(listener);
+    };
+  },
+  cancelClerkOAuth: () => cancelClerkOAuth?.(),
   getWindowFullscreenState: () =>
     ipcRenderer.sendSync(IpcChannels.GET_WINDOW_FULLSCREEN_STATE_CHANNEL) === true,
   getWindowZoomFactor: () => webFrame.getZoomFactor(),
