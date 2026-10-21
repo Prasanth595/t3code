@@ -5537,13 +5537,14 @@ export default function ChatView(props: ChatViewProps) {
   );
   // The server commits the handoff divider with the sent message; until it
   // echoes back, the stale pending row would paint below the optimistic one.
-  const pendingHandoff = isSendBusy
-    ? null
-    : resolvePendingHandoff(
-        serverProjection,
-        pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
-        providerStatuses,
-      );
+  const pendingHandoff =
+    isSendBusy || (setupQueueSendThreadKey !== null && setupQueueSendThreadKey === activeThreadKey)
+      ? null
+      : resolvePendingHandoff(
+          serverProjection,
+          pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
+          providerStatuses,
+        );
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
