@@ -67,3 +67,15 @@ it("checks revocation and regrant when a retained editor callback is invoked", a
   });
   expect(state.setPreference).toHaveBeenCalledTimes(1);
 });
+
+it("opens files in an editor when the favorite is a terminal, without replacing it", async () => {
+  state.allowed.add(secondary);
+  state.getPreference.mockReturnValue("warp");
+  const open = useOpenInPreferredEditor(secondary, ["vscode", "warp"]);
+  expect(await open("/work/readme.md")).toMatchObject({ _tag: "Success", value: "vscode" });
+  expect(state.run).toHaveBeenCalledExactlyOnceWith({
+    environmentId: secondary,
+    input: { cwd: "/work/readme.md", editor: "vscode" },
+  });
+  expect(state.setPreference).not.toHaveBeenCalled();
+});
