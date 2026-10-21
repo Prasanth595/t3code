@@ -204,6 +204,7 @@ import {
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
 import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { useRevealSidebarThread } from "./sidebar/useRevealSidebarThread";
 import {
   SidebarDragBoundary,
   SidebarSectionHeader,
@@ -1061,6 +1062,14 @@ export default function Sidebar() {
   });
 
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
+  useRevealSidebarThread(
+    !isSearchingThreads &&
+      routeRowThreadKey !== null &&
+      orderedThreadKeys.includes(routeRowThreadKey)
+      ? routeRowThreadKey
+      : null,
+    threadListRef,
+  );
   const threadSearchMatchByKey = new Map(
     threadSearch.matches.map((match) => [threadSearchMatchKey(match), match] as const),
   );
