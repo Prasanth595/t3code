@@ -191,6 +191,17 @@ describe("React Compiler coverage", () => {
     ).toEqual([true]);
   });
 
+  // The compiler once silently dropped this cache, so every sidebar render
+  // rebuilt the list and re-registered the thread jump shortcuts.
+  it("caches the sidebar thread list", () => {
+    expect(
+      compilerCachedCalls(
+        "src/features/threads/ThreadNavigationSidebar.tsx",
+        "buildThreadListV2ListItems",
+      ),
+    ).toEqual([true]);
+  });
+
   it("lists only files that exist", () => {
     expect(Object.keys(KNOWN_BAILOUTS).filter((file) => !sourceFiles.includes(file))).toEqual([]);
   });
