@@ -34,6 +34,8 @@ import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { usePaginatedBranches } from "../state/queries";
 import { useProject, useQuietThreadShell } from "../state/entities";
+import { useEnvironmentSettings } from "../hooks/useSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useEnvironmentQuery } from "../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "../state/threads";
@@ -53,6 +55,7 @@ import {
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
+  resolveWorktreeBaseBranch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
@@ -143,6 +146,7 @@ export function BranchToolbarBranchSelector({
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const settings = useEnvironmentSettings(environmentId);
 
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch =
@@ -477,9 +481,18 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const configuredBaseBranch = resolveProjectSettings(
+    settings,
+    activeProject?.id ?? null,
+    activeProject ?? undefined,
+  ).settings.newWorktreesBaseBranch;
   const worktreeBaseBranchCandidate = isInitialBranchesLoadPending
     ? null
-    : (defaultBranchName ?? currentGitBranch);
+    : resolveWorktreeBaseBranch({
+        configuredBaseBranch,
+        defaultBranch: defaultBranchName,
+        currentGitBranch,
+      });
 
   // A started thread's server is creating its worktree and records the branch
   // itself; defaulting it here would reset the thread to the base checkout and
