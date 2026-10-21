@@ -2002,9 +2002,9 @@ describe("low disk space", () => {
   /** The one line of a pass that finds 5 GiB free under a floor of 10. */
   const LOW_LINE =
     "low disk: 5.0 GiB free on /data/worktrees, below min_free_gib 10; no issue is claimed and no gate starts until there is more";
-  /** The item's message leaves the figure out: an open item is not raised again, so it would go stale. */
+  /** The item leaves out the figure and the path: an open item is not raised again, so they would go stale. */
   const LOW_ITEM =
-    "low disk: /data/worktrees has less free than min_free_gib 10; no issue is claimed and no gate starts until there is more";
+    "low disk: free space is below min_free_gib 10; no issue is claimed and no gate starts until there is more";
   const lowLines = (lines: ReadonlyArray<string>) => lines.filter((l) => l.startsWith("low disk:"));
   const lowItems = (fake: Fake) => fake.items.filter((item) => item.id === "low-disk");
   const gates = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));

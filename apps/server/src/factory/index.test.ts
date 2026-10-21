@@ -2220,6 +2220,7 @@ describe("reloading the machine config", () => {
     events: Layer.Layer<FactoryEvents> = quietEvents,
     options: RuntimeOptions = {},
     watched: Layer.Layer<FactoryWatchedRepos> = watching([A_B]),
+    sessions: Layer.Layer<Sessions.FactorySessions> = noSessions,
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2240,7 +2241,7 @@ describe("reloading the machine config", () => {
             }),
           ),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
-          Layer.provide(noSessions),
+          Layer.provide(sessions),
           Layer.provide(watched),
           Layer.provide(events),
           Layer.provide(noGate),
@@ -2357,6 +2358,50 @@ describe("reloading the machine config", () => {
           });
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  // The sessions write where T3 makes worktrees now, which Settings → Storage can move off the
+  // default folder; the gate writes under the factory dir.
+  it.effect("free space is read where the sessions' worktrees and the gate's checkouts go", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "factory-worktrees-" });
+        for (const [setting, expected] of [
+          [elsewhere, (factoryDir: string) => [elsewhere, factoryDir]],
+          [null, (factoryDir: string) => [factoryDir]],
+        ] as const) {
+          const worlds: Array<PassWorld> = [];
+          const read: Array<string> = [];
+          const sessions = Layer.succeed(Sessions.FactorySessions, {
+            ...stubSessions,
+            worktreesDirectory: () => Effect.succeed(setting),
+          });
+          const { factoryDir } = yield* started(
+            VALID,
+            holdingProcess().process,
+            quietEvents,
+            {
+              onWorld: (world) => worlds.push(world),
+              readFreeSpace: (path) => {
+                read.push(path);
+                return { path, freeBytes: path === factoryDir ? 7 : 3 };
+              },
+            },
+            watching([A_B]),
+            sessions,
+          );
+          const space = yield* worlds[0]!.freeSpace();
+          assert.deepStrictEqual(read, expected(factoryDir));
+          assert.deepStrictEqual(
+            space,
+            setting === null
+              ? { path: factoryDir, freeBytes: 7 }
+              : { path: elsewhere, freeBytes: 3 },
+          );
+        }
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("a reload's world sees the gates the world before it started", () =>
