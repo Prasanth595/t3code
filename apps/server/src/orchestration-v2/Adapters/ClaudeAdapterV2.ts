@@ -300,9 +300,6 @@ export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROV
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 // Entry extensions the Claude SDK runs through node instead of executing.
 const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
-// The SDK puts no deadline on control requests. The CLI answers
-// mcp_set_servers once each server connected or hit its own 30 s timeout.
-const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
 // Claude can consume a subagent result before the launching turn ends, leaving
 // its notification with no native wake turn to answer the continuation.
 const CLAUDE_WAKE_TURN_START_DEADLINE = "2 minutes";
@@ -947,6 +944,10 @@ export const layerQueryRunner: Layer.Layer<
               restore(
                 Effect.gen(function* () {
                   if (mcpServers !== undefined) {
+                    // No deadline: the CLI answers only after startup, including SessionStart
+                    // hooks that may run for minutes in a fresh worktree. Hook and server
+                    // timeouts bound that wait, a CLI exit rejects the request, and Stop
+                    // interrupts it.
                     // Error texts and the CLI's mcp_status response can echo the headers, so
                     // only server names are logged.
                     const failed = yield* Effect.tryPromise(() =>
@@ -954,16 +955,6 @@ export const layerQueryRunner: Layer.Layer<
                     ).pipe(
                       Effect.map((result) => Object.keys(result.errors)),
                       Effect.orElseSucceed(() => Object.keys(mcpServers)),
-                      Effect.timeoutOrElse({
-                        duration: CLAUDE_MCP_REGISTRATION_TIMEOUT,
-                        orElse: () =>
-                          Effect.fail(
-                            queryRunnerError(
-                              "Claude Code did not answer the MCP server registration.",
-                              "setMcpServers",
-                            ),
-                          ),
-                      }),
                     );
                     if (failed.length > 0) {
                       yield* Effect.logWarning("orchestration-v2.claude-mcp-servers-unavailable", {
