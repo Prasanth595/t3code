@@ -435,9 +435,9 @@ const probeClaudeCapabilities = (
 type ClaudeCapabilitiesProbeError = Effect.Error<ReturnType<typeof probeClaudeCapabilities>>;
 
 const CLAUDE_INVENTORY_TIMEOUT_MS = 30_000;
+const CLAUDE_INVENTORY_INITIALIZATION_TIMEOUT_MS = 10_000;
+const CLAUDE_INVENTORY_SERVER_TIMEOUT_MS = 15_000;
 const CLAUDE_INVENTORY_POLL_MS = 250;
-// Servers connect after initialization. One still connecting after this is listed as pending.
-const CLAUDE_INVENTORY_MAX_POLLS = 60;
 
 const readClaudeInventoryPart = Effect.fn("ClaudeProvider.readInventoryPart")(
   <A, E>(effect: Effect.Effect<A, E>, message: string) =>
@@ -487,32 +487,50 @@ export const probeClaudeInventory = Effect.fn("probeClaudeInventory")(
         stderr: () => {},
       },
     });
-    yield* Effect.tryPromise(() => q.initializationResult());
+    yield* Effect.tryPromise(() => q.initializationResult()).pipe(
+      Effect.timeout(CLAUDE_INVENTORY_INITIALIZATION_TIMEOUT_MS),
+    );
     const readServers = readClaudeInventoryPart(
       Effect.tryPromise(() => q.mcpServerStatus()),
       "Claude could not list its MCP servers.",
     );
-    let servers = yield* readServers;
-    for (
-      let poll = 0;
-      poll < CLAUDE_INVENTORY_MAX_POLLS &&
-      servers._tag === "Success" &&
-      servers.value.some((server) => server.status === "pending");
-      poll++
-    ) {
-      yield* Effect.sleep(CLAUDE_INVENTORY_POLL_MS);
-      servers = yield* readServers;
-    }
-    const plugins = yield* readClaudeInventoryPart(
+    let lastServers: ClaudeInventoryProbe["servers"] = {
+      _tag: "Failure",
+      message: "Claude could not list its MCP servers.",
+    };
+    const pollServers = Effect.gen(function* () {
+      lastServers = yield* readServers;
+      while (
+        lastServers._tag === "Success" &&
+        lastServers.value.some((server) => server.status === "pending")
+      ) {
+        yield* Effect.sleep(CLAUDE_INVENTORY_POLL_MS);
+        const next = yield* readServers;
+        if (next._tag === "Failure") break;
+        lastServers = next;
+      }
+      return lastServers;
+    }).pipe(
+      // Keep the last listing, including pending servers, before the outer
+      // deadline can discard sections that already loaded.
+      Effect.timeoutOrElse({
+        duration: CLAUDE_INVENTORY_SERVER_TIMEOUT_MS,
+        orElse: () => Effect.succeed(lastServers),
+      }),
+    );
+    const readPlugins = readClaudeInventoryPart(
       Effect.tryPromise(() => q.reloadPlugins({ holdOnCacheImpact: true })).pipe(
         Effect.map((result) => result.plugins),
       ),
       "Claude could not list its plugins.",
     );
-    const skills = yield* readClaudeInventoryPart(
+    const readSkills = readClaudeInventoryPart(
       Effect.tryPromise(() => q.reloadSkills()).pipe(Effect.map((result) => result.skills)),
       "Claude could not list its skills.",
     );
+    const [servers, plugins, skills] = yield* Effect.all([pollServers, readPlugins, readSkills], {
+      concurrency: "unbounded",
+    });
     const probe: ClaudeInventoryProbe = { servers, plugins, skills };
     return claudeInventoryFromProbe(probe);
   },

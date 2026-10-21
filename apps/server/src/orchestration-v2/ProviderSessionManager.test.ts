@@ -1299,6 +1299,63 @@ it.effect(
     }),
 );
 
+it.effect("ProviderSessionManagerV2 retires a session whose idle activity probe hangs", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const instanceBuild = yield* Ref.make<number | undefined>(0);
+    const probeEntered = yield* Deferred.make<void>();
+    const probe = yield* Ref.make<Effect.Effect<boolean>>(
+      Deferred.succeed(probeEntered, undefined).pipe(Effect.andThen(Effect.never)),
+    );
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-idle-hung-probe");
+      const providerSessionId = idAllocator.derive.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const before = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* Ref.set(instanceBuild, 1);
+      yield* TestClock.adjust("1 second");
+      yield* Deferred.await(probeEntered);
+      assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+      yield* TestClock.adjust("5 seconds");
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal((yield* Ref.get(state)).closeCount, 1);
+      yield* Ref.set(probe, Effect.succeed(false));
+      const after = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.notStrictEqual(after, before);
+      assert.equal((yield* Ref.get(state)).openCount, 2);
+    });
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1_000,
+          instanceBuild,
+          hasPendingBackgroundWork: Ref.get(probe).pipe(Effect.flatMap((check) => check)),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 starts a thread's session without its last agent's OOM kill",
   () =>

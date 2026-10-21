@@ -1132,6 +1132,7 @@ export const layerWithOptions = (
             probedRuntime.hasPendingBackgroundWork === undefined
               ? false
               : yield* probedRuntime.hasPendingBackgroundWork.pipe(
+                  Effect.timeout(RECONFIGURATION_PROBE_TIMEOUT_MS),
                   Effect.catchCause(() => Effect.succeed(false)),
                 );
           if (hasPendingWork) {

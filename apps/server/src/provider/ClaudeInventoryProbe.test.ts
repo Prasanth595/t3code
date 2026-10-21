@@ -162,6 +162,91 @@ it.effect("preserves loaded Claude inventory when a plugin lookup never responds
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("keeps the last Claude server listing when a later poll fails", () =>
+  Effect.gen(function* () {
+    const firstRead = yield* Deferred.make<void>();
+    const servers = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        Deferred.doneUnsafe(firstRead, Effect.void);
+        return Promise.resolve([
+          { name: "claude.ai Gmail", source: "claudeai", status: "connected" },
+          { name: "slow", source: "user", status: "pending" },
+        ]);
+      })
+      .mockRejectedValue(new Error("Server disconnected"));
+    using _query = vi.spyOn(ClaudeSdk, "query").mockReturnValue({
+      initializationResult: async () => ({}),
+      mcpServerStatus: servers,
+      reloadPlugins: async () => ({ plugins: [] }),
+      reloadSkills: async () => ({ skills: [] }),
+    } as unknown as ReturnType<typeof ClaudeSdk.query>);
+
+    const fiber = yield* probeClaudeInventory(settings, {}, "/inventory-test").pipe(
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(firstRead);
+    yield* TestClock.adjust("250 millis");
+    const inventory = yield* Fiber.join(fiber);
+    assert.equal(inventory.connectors._tag, "Listed");
+    if (inventory.connectors._tag === "Listed") {
+      assert.deepEqual(
+        inventory.connectors.items.map((item) => item.id),
+        ["claude.ai Gmail"],
+      );
+    }
+    assert.equal(inventory.mcpServers._tag, "Listed");
+    if (inventory.mcpServers._tag === "Listed") {
+      assert.equal(inventory.mcpServers.items[0]?.status, "pending");
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("finishes partial Claude inventory before the outer deadline after a slow startup", () =>
+  Effect.gen(function* () {
+    const initializationStarted = yield* Deferred.make<void>();
+    const initialization = Promise.withResolvers<object>();
+    const firstRead = yield* Deferred.make<void>();
+    let controller: AbortController | undefined;
+    const plugins = vi.fn(() => new Promise(() => {}));
+    const skills = vi.fn(() => new Promise(() => {}));
+    using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation((input) => {
+      controller = input.options!.abortController!;
+      return {
+        initializationResult: () => {
+          Deferred.doneUnsafe(initializationStarted, Effect.void);
+          return initialization.promise;
+        },
+        mcpServerStatus: () => {
+          Deferred.doneUnsafe(firstRead, Effect.void);
+          return Promise.resolve([
+            { name: "claude.ai Gmail", source: "claudeai", status: "connected" },
+            { name: "slow", source: "user", status: "pending" },
+          ]);
+        },
+        reloadPlugins: plugins,
+        reloadSkills: skills,
+      } as unknown as ReturnType<typeof ClaudeSdk.query>;
+    });
+
+    const fiber = yield* probeClaudeInventory(settings, {}, "/inventory-test").pipe(
+      Effect.forkScoped,
+    );
+    yield* Deferred.await(initializationStarted);
+    yield* TestClock.adjust("9 seconds");
+    initialization.resolve({});
+    yield* Deferred.await(firstRead);
+    yield* TestClock.adjust("15 seconds");
+    assert.isDefined(fiber.pollUnsafe());
+    const inventory = yield* Fiber.join(fiber);
+    assert.equal(inventory.connectors._tag, "Listed");
+    assert.equal(inventory.mcpServers._tag, "Listed");
+    assert.equal(inventory.plugins._tag, "Failed");
+    assert.equal(inventory.skills._tag, "Failed");
+    assert.isTrue(controller?.signal.aborted);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("closes a Claude inventory probe when the request is cancelled", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
