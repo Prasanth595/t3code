@@ -785,10 +785,15 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
       const shared = yield* Effect.acquireRelease(
         shareDevServer({
           webPort: sharedWebPort,
-          // The backend binds 127.0.0.1 unless --host widens it, and a
-          // wildcard bind still answers there.
+          // The backend binds 127.0.0.1 unless --host changes it. A wildcard
+          // still answers there; `--host ::1` binds only the IPv6 loopback.
           ...(input.built
-            ? { localTarget: { port: Number(env.T3CODE_PORT), host: "127.0.0.1" } }
+            ? {
+                localTarget: {
+                  port: Number(env.T3CODE_PORT),
+                  host: ["::1", "[::1]"].includes(input.host?.trim() ?? "") ? "[::1]" : "127.0.0.1",
+                },
+              }
             : {}),
         }),
         () =>

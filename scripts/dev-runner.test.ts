@@ -425,6 +425,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
       const shareSpawned = (input: {
         readonly ambientBundledDev?: string | undefined;
         readonly built?: boolean;
+        readonly host?: string;
       }) =>
         Effect.gen(function* () {
           let captured: Record<string, string | undefined> | undefined;
@@ -474,6 +475,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             port: undefined,
             share: true,
             built: input.built ?? false,
+            host: input.host,
           }).pipe(
             Effect.provide(Layer.mergeAll(emptyConfigLayer, netServiceLayer, spawnerLayer)),
             Effect.provideService(HostProcess.Platform, "linux"),
@@ -507,6 +509,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
             `--https=${env?.PORT}`,
             `http://127.0.0.1:${env?.T3CODE_PORT}`,
           ]);
+        }),
+      );
+
+      it.effect("--built --host ::1 targets the backend's IPv6 loopback", () =>
+        Effect.gen(function* () {
+          const { env, tailscaleCalls } = yield* shareSpawned({ built: true, host: "::1" });
+          const serve = tailscaleCalls.find((args) => args.includes("--bg"));
+          assert.equal(serve?.at(-1), `http://[::1]:${env?.T3CODE_PORT}`);
         }),
       );
 
