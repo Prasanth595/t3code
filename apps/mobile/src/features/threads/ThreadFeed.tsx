@@ -214,7 +214,6 @@ import {
   ThreadWorkLog,
   WORK_GROUP_TOGGLE_HEIGHT,
 } from "./thread-work-log";
-import { WorkLogIconSlot, WorkLogLabel, WorkLogPressable } from "./work-log-layout";
 import { appendPendingThreadMessages, type PendingThreadFeedEntry } from "./pending-thread-feed";
 import type { QueuedThreadMessage } from "../../state/thread-outbox-model";
 import { resolveThreadFeedFixedItemSize } from "./thread-feed-item-size";
@@ -987,7 +986,7 @@ function AgentMessageAttribution(props: {
   );
 }
 
-/** Automation prompts are long, repeated runbooks; a work-log row keeps them out of the way. */
+/** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function ThreadAutomationMessageRow(props: {
   readonly environmentId: EnvironmentId;
   readonly text: string;
@@ -996,7 +995,9 @@ function ThreadAutomationMessageRow(props: {
   readonly timestampLabel: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
-  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly bubbleColor: ColorValue;
+  readonly bubbleMaxWidth: number | "85%";
+  readonly contentMaxWidth: number;
   readonly iconSubtleColor: ColorValue;
   readonly markdownStyles: MarkdownStyleSet;
   readonly reviewCommentColors: ReviewCommentColors;
@@ -1014,79 +1015,90 @@ function ThreadAutomationMessageRow(props: {
   const summary = taskTitle ?? props.text.trim().split(/\r?\n/, 1)[0] ?? "";
 
   return (
-    <View className="mb-1 px-1">
-      <WorkLogPressable
-        rowSizing={props.rowSizing}
-        accessibilityRole="button"
-        accessibilityLabel={`Automation: ${summary}`}
-        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
-        accessibilityState={{ expanded: props.expanded }}
-        onPress={() => {
-          void Haptics.selectionAsync();
-          props.onToggle();
+    <View className="mb-5 items-end">
+      <View
+        className="min-w-0 rounded-[20px]"
+        style={{
+          backgroundColor: props.bubbleColor,
+          maxWidth: props.bubbleMaxWidth,
+          ...(props.expanded ? { width: props.bubbleMaxWidth } : null),
         }}
       >
-        <WorkLogIconSlot>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Automation: ${summary}`}
+          accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the prompt.`}
+          accessibilityState={{ expanded: props.expanded }}
+          hitSlop={4}
+          className="min-h-10 flex-row items-center gap-1.5 px-3.5 py-2"
+          onPress={() => {
+            void Haptics.selectionAsync();
+            props.onToggle();
+          }}
+        >
           <SymbolView
             name="calendar.badge.clock"
             size={14}
             weight="medium"
-            tintColor={props.iconSubtleColor}
+            tintColorClassName="accent-user-bubble-foreground-muted"
             type="monochrome"
           />
-        </WorkLogIconSlot>
-        <WorkLogLabel>
-          Automation <Text className="text-foreground">{summary}</Text>
-        </WorkLogLabel>
-        <Text className="shrink-0 text-xs tabular-nums text-foreground-subtle">
-          {props.timestampLabel}
-        </Text>
-        <View className="h-4 w-4 items-center justify-center">
+          <Text className="font-t3-medium text-sm text-user-bubble-foreground-muted">
+            Automation
+          </Text>
+          <Text numberOfLines={1} className="min-w-0 shrink text-sm text-user-bubble-foreground">
+            {summary}
+          </Text>
           <ThreadDisclosureChevron
             expanded={props.expanded}
             collapsedDirection="down"
             size={11}
             tintColor={props.iconSubtleColor}
           />
-        </View>
-      </WorkLogPressable>
-      {props.expanded ? (
-        <View className="ml-7 gap-1 pb-1 pt-0.5">
-          <UserMessageContent
-            text={renderAssistantCitationsAsText(props.text)}
-            environmentId={props.environmentId}
-            context={props.context}
-            markdownStyles={props.markdownStyles}
-            reviewCommentColors={props.reviewCommentColors}
-            skills={props.skills}
-            linkHandlers={props.linkHandlers}
-            renderImage={props.renderImage}
-          />
-          <View className="flex-row items-center gap-2">
-            {props.scheduledTaskId ? (
-              <Pressable
-                accessibilityRole="link"
-                hitSlop={6}
-                onPress={() =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "SettingsScheduledTasks" },
-                  })
-                }
-              >
-                <Text className="font-t3-medium text-xs text-foreground-secondary">
-                  Open automation
-                </Text>
-              </Pressable>
-            ) : null}
-            <UserMessageCopyButton
-              text={props.text}
-              onCopy={undefined}
-              tintColor={props.iconSubtleColor}
-            />
+        </Pressable>
+        {props.expanded ? (
+          <View className="px-3.5 pb-2.5">
+            <MarkdownImageAvailableWidthContext value={props.contentMaxWidth}>
+              <UserMessageContent
+                text={renderAssistantCitationsAsText(props.text)}
+                environmentId={props.environmentId}
+                context={props.context}
+                markdownStyles={props.markdownStyles}
+                reviewCommentColors={props.reviewCommentColors}
+                skills={props.skills}
+                linkHandlers={props.linkHandlers}
+                renderImage={props.renderImage}
+              />
+            </MarkdownImageAvailableWidthContext>
           </View>
-        </View>
-      ) : null}
+        ) : null}
+      </View>
+      <View className="mt-1 flex-row items-center justify-end gap-2 pr-0.5">
+        {props.scheduledTaskId ? (
+          <Pressable
+            accessibilityRole="link"
+            hitSlop={6}
+            onPress={() =>
+              navigation.navigate("SettingsSheet", {
+                screen: "SettingsContent",
+                params: { screen: "SettingsScheduledTasks" },
+              })
+            }
+          >
+            <Text className="font-t3-medium text-xs text-foreground-secondary">
+              Open automation
+            </Text>
+          </Pressable>
+        ) : null}
+        <Text className="font-t3-medium text-xs tabular-nums text-foreground-secondary">
+          {props.timestampLabel}
+        </Text>
+        <UserMessageCopyButton
+          text={props.text}
+          onCopy={undefined}
+          tintColor={props.iconSubtleColor}
+        />
+      </View>
     </View>
   );
 }
@@ -1319,9 +1331,11 @@ function renderFeedEntry(
           timestampLabel={timestampLabel}
           expanded={props.expandedWorkRows[rowId] ?? false}
           onToggle={() => props.onToggleWorkRow(rowId, entry.id)}
-          rowSizing={props.workRowSizing}
+          bubbleColor={userBubbleColor}
+          bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+          contentMaxWidth={props.userBubbleMaxWidth - USER_BUBBLE_HORIZONTAL_PADDING * 2}
           iconSubtleColor={iconSubtleColor}
-          markdownStyles={markdownStyles.assistant}
+          markdownStyles={markdownStyles.user}
           reviewCommentColors={props.reviewCommentColors}
           skills={props.skills}
           linkHandlers={props.markdownLinkHandlers}

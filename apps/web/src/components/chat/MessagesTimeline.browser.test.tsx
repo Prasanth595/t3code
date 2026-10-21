@@ -175,7 +175,7 @@ describe("MessagesTimeline messages", () => {
 });
 
 describe("MessagesTimeline automation prompts", () => {
-  it("folds an automation prompt into a work-log row titled by its task", async () => {
+  it("folds an automation prompt into a bubble titled by its task", async () => {
     setup({ scheduledTasks: [{ id: TASK_ID, title: "Nightly triage" }] });
     await using screen = await renderTimeline([
       message(AUTOMATION_PROMPT, { scheduledTaskId: TASK_ID }),
@@ -221,7 +221,7 @@ describe("MessagesTimeline automation prompts", () => {
       expect(screen.button(/^Automation/).getAttribute("aria-expanded")).toBe("true"),
     );
     const { range } = collectThreadFindRanges(screen.container, "duplicates")[0]!;
-    const details = screen.container.querySelector("[data-thread-find-text]")!.parentElement!;
+    const details = screen.container.querySelector("[data-thread-find-text]")!;
     expect(range.getBoundingClientRect().top - details.getBoundingClientRect().top).toBeGreaterThan(
       384,
     );

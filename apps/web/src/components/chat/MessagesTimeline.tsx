@@ -2165,7 +2165,7 @@ function UserMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }
   );
 }
 
-/** Automation prompts are long, repeated runbooks; a work-log row keeps them out of the way. */
+/** Automation prompts are long, repeated runbooks; a folded bubble keeps them out of the way. */
 function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const [expanded, setExpanded] = useState(false);
@@ -2188,73 +2188,80 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const bodyMounted = expanded || ctx.findActive;
 
   return (
-    <WorkLogBlock>
-      <div
-        className="group flex min-w-0 items-center gap-1"
-        data-user-message-attribution="automation"
-      >
-        <div className="min-w-0 flex-1">
-          <WorkLogButton
-            aria-expanded={expanded}
-            data-scroll-anchor-ignore
-            onClick={() => setExpanded((value) => !value)}
-            icon={<CalendarClockIcon className="size-4 shrink-0 stroke-2 text-icon-muted" />}
-            label={
-              <span className="flex min-w-0 gap-1.5">
-                <span className="shrink-0">Automation</span>
-                <span className="min-w-0 truncate text-foreground">{summary}</span>
-              </span>
-            }
-            trailing={
-              <TimelineRowTimestamp
-                createdAt={row.message.createdAt}
-                timestampFormat={ctx.timestampFormat}
-              />
-            }
-          />
-        </div>
-        {row.message.inputIntent === "steer" ||
-        row.message.inputIntent === "promoted_queued_to_steer" ? (
-          <UserMessageIntentMarker intent={row.message.inputIntent} />
-        ) : null}
-        <UserMessageProjectedStatus row={row} />
-        {typeof revertTurnCount === "number" && (
-          <div className="opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-            <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
-          </div>
-        )}
-      </div>
-      {bodyMounted ? (
-        // `beforematch` does not bubble, so the reveal listener sits on the hidden fold itself.
-        <div ref={revealRef} hidden={!expanded}>
-          <WorkLogDetails scrollable={!ctx.findActive}>
-            <div data-thread-find-text="true">
-              <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
-            </div>
-            <div className="flex items-center gap-2">
-              {scheduledTaskId ? (
-                <Link
-                  to="/settings/scheduled-tasks"
-                  search={{ environmentId: ctx.activeThreadEnvironmentId, taskId: scheduledTaskId }}
-                  className="rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-                >
-                  Open automation
-                </Link>
-              ) : null}
-              <MessageCopyButton text={text} variant="ghost" />
-              {promptLink !== null && (
-                <MessageCopyButton
-                  text={promptLink}
-                  label="Copy prompt link"
-                  icon={LinkIconNode}
-                  variant="ghost"
-                />
-              )}
-            </div>
-          </WorkLogDetails>
-        </div>
+    <div className="group flex flex-col items-end gap-1" data-user-message-attribution="automation">
+      {row.message.inputIntent === "steer" ||
+      row.message.inputIntent === "promoted_queued_to_steer" ? (
+        <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-    </WorkLogBlock>
+      <div
+        className={cn(
+          "min-w-0 max-w-[80%] rounded-2xl bg-message text-message-foreground",
+          expanded && "w-full",
+        )}
+      >
+        <button
+          type="button"
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          onClick={() => setExpanded((value) => !value)}
+          className="flex w-full min-w-0 items-center gap-1.5 rounded-2xl px-3 py-2 text-left text-sm focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <CalendarClockIcon className="size-4 shrink-0 stroke-2 text-muted-foreground" />
+          <span className="shrink-0 text-muted-foreground">Automation</span>
+          <span className="min-w-0 flex-1 truncate">{summary}</span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 shrink-0 text-muted-foreground transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+        </button>
+        {bodyMounted ? (
+          // `beforematch` does not bubble, so the reveal listener sits on the hidden fold itself.
+          <div
+            ref={revealRef}
+            hidden={!expanded}
+            className={cn("px-3 pb-3", !ctx.findActive && "max-h-96 overflow-auto")}
+            data-thread-find-text="true"
+          >
+            <UserMessageBody text={text} skills={ctx.skills} markdownCwd={ctx.markdownCwd} />
+          </div>
+        ) : null}
+      </div>
+      <UserMessageProjectedStatus row={row} />
+      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+        <div className="flex shrink-0 items-center gap-2">
+          {scheduledTaskId ? (
+            <Link
+              to="/settings/scheduled-tasks"
+              search={{ environmentId: ctx.activeThreadEnvironmentId, taskId: scheduledTaskId }}
+              className="rounded-sm text-xs text-muted-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              Open automation
+            </Link>
+          ) : null}
+          <TimelineRowTimestamp
+            createdAt={row.message.createdAt}
+            timestampFormat={ctx.timestampFormat}
+            alwaysVisible
+          />
+          <div className="flex items-center gap-0.5">
+            {typeof revertTurnCount === "number" && (
+              <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
+            )}
+            <MessageCopyButton text={text} variant="ghost" />
+            {promptLink !== null && (
+              <MessageCopyButton
+                text={promptLink}
+                label="Copy prompt link"
+                icon={LinkIconNode}
+                variant="ghost"
+              />
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
