@@ -201,6 +201,21 @@ export function resolveBranchToolbarValue(input: {
   return currentGitBranch ?? activeThreadBranch;
 }
 
+/**
+ * Base branch a new worktree draft starts from: the project's configured base
+ * branch, then the repo default branch (origin/HEAD), then the checked-out one.
+ */
+export function resolveWorktreeBaseBranch(input: {
+  configuredBaseBranch: string;
+  defaultBranch: string | null;
+  currentGitBranch: string | null;
+}): string | null {
+  if (input.configuredBaseBranch.length > 0) {
+    return input.configuredBaseBranch;
+  }
+  return input.defaultBranch ?? input.currentGitBranch;
+}
+
 export function resolveBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: EnvMode;

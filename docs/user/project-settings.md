@@ -60,6 +60,15 @@ to override its environment defaults. Worktree directories keep their original n
 If generation fails, or a custom name is invalid or already taken, the temporary
 branch name remains.
 
+## Worktree base branch
+
+New worktrees start from the repository default branch. To start them from another branch,
+such as `develop`, set **Settings → General → Worktree base branch**. Select a project to set it
+for that project only. On mobile, use **Settings → Source control → Worktrees**.
+
+Leave the field empty to use the default branch again. You can still pick another branch for one
+thread in the branch selector before you send the first message.
+
 ## Scheduled tasks on mobile
 
 Open **Settings → Scheduled tasks** to create recurring tasks or manage existing

@@ -171,6 +171,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { WorktreeBaseBranchSetting } from "./WorktreeBaseBranchSetting";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -3024,6 +3025,7 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        <WorktreeBaseBranchSetting />
         <SettingsRow
           serverScoped
           settingKeys={["addProjectBaseDirectory"]}

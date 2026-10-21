@@ -892,9 +892,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (live && (live.mode !== "worktree" || live.branch !== null)) {
       return;
     }
-    // The default may only exist as origin/<default> (isRemote), which
-    // availableBranches filters out — search the unfiltered refs for it.
+    // The project's configured base branch wins. The default may only exist
+    // as origin/<default> (isRemote), which availableBranches filters out —
+    // search the unfiltered refs for it.
+    const configuredBaseBranch = projectSettings.settings.newWorktreesBaseBranch;
     const preferredBranch =
+      (configuredBaseBranch.length > 0
+        ? allBranchRefs.find((branch) => branch.name === configuredBaseBranch)
+        : undefined) ??
       allBranchRefs.find((branch) => branch.isDefault) ??
       availableBranches.find((branch) => branch.current) ??
       null;
@@ -905,6 +910,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     allBranchRefs,
     availableBranches,
     defaultWorkspaceModeSettled,
+    projectSettings.settings.newWorktreesBaseBranch,
     selectBranch,
     selectedBranchName,
     selectedProjectDraftKey,

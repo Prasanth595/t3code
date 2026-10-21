@@ -25,6 +25,7 @@ import {
 } from "./components/SettingsEnvironmentFilterHeader";
 import { BranchNamingSettings } from "./components/BranchNamingSettings";
 import { DatabaseStorageNotice } from "./components/DatabaseStorageNotice";
+import { WorktreeBaseBranchField } from "./components/WorktreeBaseBranchField";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -55,6 +56,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "defaultAutoPull",
     "removeAgentCreditsOnMerge",
     "newWorktreesStartFromOrigin",
+    "newWorktreesBaseBranch",
     "branchNamingMode",
     "branchNamePrefix",
     "branchNameInstructions",
@@ -392,6 +394,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       value={uniform("newWorktreesStartFromOrigin")}
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}
+                    />
+                    <WorktreeBaseBranchField
+                      value={uniform("newWorktreesBaseBranch")}
+                      disabled={disabledFor("newWorktreesBaseBranch")}
+                      onChange={write}
                     />
                   </SettingsSection>
                 </>

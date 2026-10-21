@@ -7,6 +7,7 @@ import {
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
   resolveBranchToolbarPrBranch,
+  resolveWorktreeBaseBranch,
   resolveLocalCheckoutBranchMismatch,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
@@ -252,5 +253,34 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+describe("resolveWorktreeBaseBranch", () => {
+  it("prefers the project's configured base branch over the repo default", () => {
+    expect(
+      resolveWorktreeBaseBranch({
+        configuredBaseBranch: "develop",
+        defaultBranch: "main",
+        currentGitBranch: "feature/x",
+      }),
+    ).toBe("develop");
+  });
+
+  it("falls back to the repo default, then the checked-out branch", () => {
+    expect(
+      resolveWorktreeBaseBranch({
+        configuredBaseBranch: "",
+        defaultBranch: "main",
+        currentGitBranch: "feature/x",
+      }),
+    ).toBe("main");
+    expect(
+      resolveWorktreeBaseBranch({
+        configuredBaseBranch: "",
+        defaultBranch: null,
+        currentGitBranch: "feature/x",
+      }),
+    ).toBe("feature/x");
   });
 });
