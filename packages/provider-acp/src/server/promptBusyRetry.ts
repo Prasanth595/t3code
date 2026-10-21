@@ -29,46 +29,34 @@ export interface AcpPromptBusyRetryGuard {
 }
 
 /**
- * Identifies one dispatched prompt.
- */
-export interface AcpPromptBusyRetryToken {
-  readonly _tag: "AcpPromptBusyRetryToken";
-  readonly generation: number;
-}
-
-/**
- * Tracks which dispatched prompts may still reach the agent.
+ * Tracks whether the prompt that is waiting to be re-sent may still reach the
+ * agent.
  *
  * A prompt the agent rejected as busy waits before it is re-sent, and the agent
- * never accepted it, so `session/cancel` has nothing to stop. The gate
- * invalidates the token of every prompt that is still waiting when the turn is
- * cancelled, so a cancelled prompt is never delivered after the fact.
+ * never accepted it, so `session/cancel` has nothing to stop. The gate records
+ * that the turn was cancelled, so the waiting prompt drops the re-send instead
+ * of delivering it after the user stopped the turn.
+ *
+ * A session runs one prompt at a time, so a single flag is enough: issuing a
+ * prompt clears the flag, and cancelling the turn sets it.
  */
 export interface AcpPromptBusyRetryGate {
-  /** Take a token for a prompt that is being dispatched right now. */
-  readonly issue: Effect.Effect<AcpPromptBusyRetryToken>;
-  /** Invalidate the token of every prompt that is still waiting. */
+  /** Start a new prompt, which is not cancelled. */
+  readonly issue: Effect.Effect<void>;
+  /** Cancel the prompt that is waiting to be re-sent. */
   readonly cancel: Effect.Effect<void>;
-  /** Whether the prompt holding the token was cancelled before it was delivered. */
-  readonly cancelled: (token: AcpPromptBusyRetryToken) => Effect.Effect<boolean>;
+  /** Whether the prompt that is waiting to be re-sent was cancelled. */
+  readonly cancelled: Effect.Effect<boolean>;
 }
 
-export const makeAcpPromptBusyRetryGate: Effect.Effect<AcpPromptBusyRetryGate> = Effect.gen(
-  function* () {
-    const generationRef = yield* Ref.make(0);
-    return {
-      issue: Ref.updateAndGet(generationRef, (generation) => generation + 1).pipe(
-        Effect.map((generation): AcpPromptBusyRetryToken => ({
-          _tag: "AcpPromptBusyRetryToken",
-          generation,
-        })),
-      ),
-      cancel: Ref.update(generationRef, (generation) => generation + 1),
-      cancelled: (token) =>
-        Ref.get(generationRef).pipe(Effect.map((generation) => generation !== token.generation)),
-    };
-  },
-);
+export const makeAcpPromptBusyRetryGate = Effect.fn("AcpPromptBusyRetryGate.make")(function* () {
+  const cancelledRef = yield* Ref.make(false);
+  return {
+    issue: Ref.set(cancelledRef, false),
+    cancel: Ref.set(cancelledRef, true),
+    cancelled: Ref.get(cancelledRef),
+  };
+});
 
 /**
  * Re-send a prompt the agent rejected because its session still owns an active

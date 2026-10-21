@@ -202,29 +202,29 @@ describe("retryPromptOnBusy", () => {
 describe("AcpPromptBusyRetryGate", () => {
   it.effect("drops a prompt that was issued before the cancel", () =>
     Effect.gen(function* () {
-      const gate = yield* makeAcpPromptBusyRetryGate;
-      const token = yield* gate.issue;
-      assert.isFalse(yield* gate.cancelled(token));
+      const gate = yield* makeAcpPromptBusyRetryGate();
+      yield* gate.issue;
+      assert.isFalse(yield* gate.cancelled);
 
       yield* gate.cancel;
-      assert.isTrue(yield* gate.cancelled(token));
+      assert.isTrue(yield* gate.cancelled);
     }),
   );
 
   it.effect("keeps a prompt that is issued after the cancel", () =>
     Effect.gen(function* () {
-      const gate = yield* makeAcpPromptBusyRetryGate;
+      const gate = yield* makeAcpPromptBusyRetryGate();
       yield* gate.cancel;
 
-      const token = yield* gate.issue;
-      assert.isFalse(yield* gate.cancelled(token));
+      yield* gate.issue;
+      assert.isFalse(yield* gate.cancelled);
     }),
   );
 
   it.effect("does not re-send a prompt that was cancelled while it was waiting", () =>
     Effect.gen(function* () {
-      const gate = yield* makeAcpPromptBusyRetryGate;
-      const token = yield* gate.issue;
+      const gate = yield* makeAcpPromptBusyRetryGate();
+      yield* gate.issue;
       let attempts = 0;
       const fiber = yield* Effect.forkChild(
         retryPromptOnBusy(
@@ -233,7 +233,7 @@ describe("AcpPromptBusyRetryGate", () => {
             attempts += 1;
             return Effect.fail(new BusyError("session is busy"));
           }),
-          { cancelled: gate.cancelled(token) },
+          { cancelled: gate.cancelled },
         ),
       );
 

@@ -127,6 +127,8 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 
 export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
+export type { AcpPromptBusyRetryPolicy };
+
 /**
  * Grok commonly sends its final summary just over two seconds after the
  * hydrated tool frame; two seconds split that tail into a second synthetic
