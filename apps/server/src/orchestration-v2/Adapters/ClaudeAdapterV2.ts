@@ -1244,6 +1244,22 @@ function claudeLiveSelectionFlagSettings(
   };
 }
 
+// Claude Code gives SDK sessions a 1h prompt cache on subscriptions, but a delegated child runs a
+// tight tool loop like a native subagent, which gets 5m. A 1h write costs 2x base input and a 5m
+// write 1.25x, so children use 5m unless the provider instance sets its own TTL.
+export function claudeQueryEnvironment(
+  environment: NodeJS.ProcessEnv,
+  appThread: Pick<OrchestrationV2AppThread, "lineage">,
+): NodeJS.ProcessEnv {
+  if (
+    appThread.lineage.relationshipToParent !== "subagent" ||
+    environment.CLAUDE_CODE_PROMPT_CACHE_TTL !== undefined
+  ) {
+    return environment;
+  }
+  return { ...environment, CLAUDE_CODE_PROMPT_CACHE_TTL: "5m" };
+}
+
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
   readonly nativeThreadId: string;
@@ -9154,7 +9170,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
-            environment: adapterOptions.environment,
+            environment: claudeQueryEnvironment(adapterOptions.environment, turnInput.appThread),
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}

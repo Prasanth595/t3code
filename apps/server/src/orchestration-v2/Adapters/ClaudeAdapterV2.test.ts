@@ -249,6 +249,30 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isUndefined(options.extraArgs?.["dangerously-skip-permissions"]);
   });
 
+  it("gives delegated children a 5m prompt cache unless the instance sets a TTL", () => {
+    const lineage = (relationshipToParent: "fork" | "subagent" | null) => ({
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent,
+        rootThreadId: ThreadId.make("thread-root"),
+      },
+    });
+    const env = { PATH: "/bin" };
+    assert.equal(
+      ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("subagent")).CLAUDE_CODE_PROMPT_CACHE_TTL,
+      "5m",
+    );
+    assert.strictEqual(ClaudeAdapterV2.claudeQueryEnvironment(env, lineage(null)), env);
+    assert.strictEqual(ClaudeAdapterV2.claudeQueryEnvironment(env, lineage("fork")), env);
+    assert.equal(
+      ClaudeAdapterV2.claudeQueryEnvironment(
+        { ...env, CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" },
+        lineage("subagent"),
+      ).CLAUDE_CODE_PROMPT_CACHE_TTL,
+      "1h",
+    );
+  });
+
   it("projects AskUserQuestion input with question text as the answer key", () => {
     const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
     assert.deepEqual(
