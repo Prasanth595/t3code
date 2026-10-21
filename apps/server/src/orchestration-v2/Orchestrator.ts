@@ -11832,7 +11832,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const providerThreadsWithBackgroundWork = new Set<string>();
   const settlesChildWork = (stored: OrchestrationV2StoredEvent) => {
     const { event } = stored;
-    if (event.type === "subagent.updated") return !isOrchestrationV2WorkActive(event.payload.status);
+    if (event.type === "subagent.updated")
+      return !isOrchestrationV2WorkActive(event.payload.status);
     if (event.type !== "provider-thread.updated") return false;
     if ((event.payload.pendingBackgroundTasks?.length ?? 0) > 0) {
       providerThreadsWithBackgroundWork.add(event.payload.id);

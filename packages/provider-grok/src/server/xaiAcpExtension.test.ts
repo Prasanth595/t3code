@@ -729,7 +729,10 @@ describe("XAiAcpExtension", () => {
   );
 
   // A successful RPC is not proof of a successful kill when its outcome says otherwise.
-  it("ignores a failed KillTask outcome", () => {
+  it.each([
+    { type: "KillTask", outcome: "failed" },
+    { type: "KillTask", Result: { task_id: "call-bg-1", outcome: "error" } },
+  ])("ignores a KillTask whose outcome is not a kill: %j", (rawOutput) => {
     expect(
       extractXAiKilledBackgroundTasks({
         toolCallId: "call-kill",
@@ -737,7 +740,7 @@ describe("XAiAcpExtension", () => {
         status: "completed",
         data: {
           rawInput: { variant: "KillTask", task_id: "call-bg-1" },
-          rawOutput: { type: "KillTask", outcome: "failed" },
+          rawOutput,
         },
       }),
     ).toEqual([]);

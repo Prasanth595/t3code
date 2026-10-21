@@ -373,7 +373,10 @@ export function extractXAiKilledBackgroundTasks(toolCall: AcpToolCallState): Rea
   const legacy = title.includes("kill_command_or_subagent") || variant === "kill";
   if (!legacy && variant !== "killtask" && rawOutput?.type !== "KillTask") return [];
   if (toolCall.status !== "completed") return [];
-  if (!legacy && rawOutput?.outcome === "failed") return [];
+  // Grok nests the outcome under Result; only a missing, killed or already_exited one ends the task.
+  const outcome = rawOutput?.outcome ?? unknownRecord(rawOutput?.Result)?.outcome;
+  if (!legacy && outcome !== undefined && outcome !== "killed" && outcome !== "already_exited")
+    return [];
   const taskIds: string[] = [];
   const push = (value: unknown) => {
     const id = nonEmptyString(value);
