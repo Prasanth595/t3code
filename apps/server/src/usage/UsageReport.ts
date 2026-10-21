@@ -10,7 +10,6 @@ import {
   type UsageProviderKind,
   type UsageSummary,
   type UsageTokenTotals,
-  type UsageSourceFingerprint,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { makeWindow } from "@t3tools/shared/usageFormat";
@@ -108,8 +107,8 @@ const summarizeLimits = (
   ),
 });
 
-const usd = (value: number) => Math.round(value * 100) / 100;
-const share = (value: number) => Math.round(value * 1_000) / 1_000;
+const CENTS = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2, useGrouping: false });
+const usd = (value: number) => Number(CENTS.format(value));
 
 const tokens = (totals: UsageTokenTotals) => ({
   total:
@@ -133,9 +132,6 @@ const periodProviders = (
     totalTokens: amount.totalTokens,
   }));
 
-const sourceName = (fingerprint: UsageSourceFingerprint) =>
-  `${fingerprint.provider} usage (${fingerprint.resolvedHomePath})`;
-
 const summarizeSpend = (
   summary: UsageSummary,
   environment: { readonly environmentId: EnvironmentId; readonly label: string },
@@ -154,7 +150,7 @@ const summarizeSpend = (
       },
       costUsd: usd(merged.costUsd),
       cacheSavingsUsd: usd(merged.costQuality.cacheSavingsUsd),
-      unpricedShare: share(merged.costQuality.unpricedShare),
+      unpricedShare: merged.costQuality.unpricedShare,
       sessions: merged.sessions,
       tokens: tokens({
         uncachedInputTokens: merged.uncachedInputTokens,
@@ -203,11 +199,19 @@ const summarizeSpend = (
           })),
       pricing: { status: summary.pricing.status, fetchedAt: summary.pricing.fetchedAt },
     },
-    notices: summary.sources.flatMap((source) =>
-      source.message !== null && (source.status === "partial" || source.status === "failed")
-        ? [`${sourceName(source.fingerprint)}: ${source.message}`]
-        : [],
-    ),
+    notices: summary.sources.flatMap((source) => [
+      ...(source.message !== null &&
+      (source.status === "partial" ||
+        source.status === "failed" ||
+        source.fingerprint.provider === "cursor")
+        ? [source.message]
+        : []),
+      ...(source.refreshing
+        ? [
+            `${source.fingerprint.provider} usage is still being read, so spend leaves it out. Pass refresh: true to wait for it.`,
+          ]
+        : []),
+    ]),
   };
 };
 

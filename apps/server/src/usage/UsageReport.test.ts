@@ -11,6 +11,7 @@ import {
   type ServerProviderUsageLimits,
   type UsageBucket,
   type UsageLimitSourceSnapshot,
+  type UsageSource,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -69,7 +70,7 @@ const bucket = (overrides: Partial<UsageBucket>): UsageBucket => ({
     outputTokens: 500,
     reasoningTokens: 200,
   },
-  costUsd: 1.234567,
+  costUsd: 1.005,
   cacheSavingsUsd: 0.5,
   costSource: "modelPriced",
   records: 4,
@@ -78,9 +79,29 @@ const bucket = (overrides: Partial<UsageBucket>): UsageBucket => ({
   ...overrides,
 });
 
+const source = (
+  usageProvider: UsageSource["fingerprint"]["provider"],
+  overrides: Partial<UsageSource> = {},
+): UsageSource => ({
+  fingerprint: {
+    hostId: "host",
+    provider: usageProvider,
+    resolvedHomePath: `/home/dev/.${usageProvider}`,
+    volumeId: "1:1",
+  },
+  status: "ok",
+  scannedFiles: 1,
+  skippedFiles: 0,
+  malformedRecords: 0,
+  distinctSessions: 2,
+  message: null,
+  ...overrides,
+});
+
 const layerUsage = (
   buckets: ReadonlyArray<UsageBucket>,
   requests: Array<UsageSummaryInput> = [],
+  sources: ReadonlyArray<UsageSource> = [source("codex"), source("claude")],
 ): Layer.Layer<UsageService.UsageService> =>
   Layer.mock(UsageService.UsageService)({
     readSummary: (input) =>
@@ -93,20 +114,7 @@ const layerUsage = (
           sinceDay: input.sinceDay,
           untilDay: input.untilDay,
           buckets,
-          sources: (["codex", "claude"] as const).map((usageProvider) => ({
-            fingerprint: {
-              hostId: "host",
-              provider: usageProvider,
-              resolvedHomePath: `/home/dev/.${usageProvider}`,
-              volumeId: "1:1",
-            },
-            status: "ok" as const,
-            scannedFiles: 1,
-            skippedFiles: 0,
-            malformedRecords: 0,
-            distinctSessions: 2,
-            message: null,
-          })),
+          sources,
           pricing: { status: "fresh", source: "test", fetchedAt: checkedAt, knownModels: 1 },
           scanDurationMs: 0,
         };
@@ -355,27 +363,27 @@ it.effect("totals spend by provider, model, and day for the Usage tab's window",
     assert.isNotNull(spend);
     if (spend === null) return;
     assert.strictEqual(spend.window.days, 7);
-    assert.strictEqual(spend.costUsd, 3.23);
+    assert.strictEqual(spend.costUsd, 3.01);
     assert.strictEqual(spend.tokens.total, 31_500);
     assert.strictEqual(spend.sessions, 4);
     assert.deepStrictEqual(
       spend.providers.map((entry) => [entry.provider, entry.costUsd, entry.totalTokens]),
       [
-        ["codex", 3.23, 21_000],
+        ["codex", 3.01, 21_000],
         ["claude", 0, 10_500],
       ],
     );
     assert.deepStrictEqual(
       spend.models.map((model) => [model.model, model.costUsd]),
       [
-        ["gpt-5.5", 3.23],
+        ["gpt-5.5", 3.01],
         ["claude-opus-5-5", null],
       ],
     );
     assert.deepStrictEqual(
       spend.periods.map((period) => [period.start, period.costUsd]),
       [
-        ["2026-10-20", 1.23],
+        ["2026-10-20", 1.01],
         ["2026-10-21", 2],
       ],
     );
@@ -416,5 +424,29 @@ it.effect("reads the past 24 hours by hour, as the Usage tab does", () =>
       report.spend?.periods.map((period) => period.start),
       ["2026-10-20T14:00:00.000Z"],
     );
+  }),
+);
+
+it.effect("says when spend leaves out a source that is still loading or cannot be read", () =>
+  Effect.gen(function* () {
+    const report = yield* read(
+      {},
+      {
+        usage: layerUsage(
+          [bucket({})],
+          [],
+          [
+            source("codex", { refreshing: true }),
+            source("cursor", { status: "missing", message: "Cursor account usage is off." }),
+            source("claude", { status: "missing", message: "No Claude transcripts found." }),
+          ],
+        ),
+      },
+    );
+
+    assert.deepStrictEqual(report.notices, [
+      "codex usage is still being read, so spend leaves it out. Pass refresh: true to wait for it.",
+      "Cursor account usage is off.",
+    ]);
   }),
 );

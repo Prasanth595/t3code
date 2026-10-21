@@ -649,7 +649,7 @@ const OrchestratorMcpUsageTokens = Schema.Struct({
   cachedInput: Schema.Finite,
   cacheCreation: Schema.Finite,
   output: Schema.Finite,
-  reasoning: Schema.Finite,
+  reasoning: Schema.Finite.annotate({ description: "Part of output." }),
 }).annotate({ identifier: "UsageTokens" });
 
 const OrchestratorMcpUsageAmount = {
@@ -667,7 +667,9 @@ export const OrchestratorMcpUsageSpend = Schema.Struct({
   }),
   costUsd: Schema.Finite,
   cacheSavingsUsd: Schema.Finite,
-  unpricedShare: Schema.Finite,
+  unpricedShare: Schema.Finite.annotate({
+    description: "Share of usage records with no known price, so missing from costUsd.",
+  }),
   sessions: Schema.Finite,
   tokens: OrchestratorMcpUsageTokens,
   costByCategoryUsd: Schema.Struct({
@@ -681,7 +683,7 @@ export const OrchestratorMcpUsageSpend = Schema.Struct({
     standard: Schema.Finite,
     fast: Schema.Finite,
     ultrafast: Schema.Finite,
-    premium: Schema.Finite,
+    premium: Schema.Finite.annotate({ description: "Part of fast and ultrafast." }),
   }),
   providers: Schema.Array(
     Schema.Struct({

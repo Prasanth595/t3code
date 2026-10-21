@@ -158,7 +158,7 @@ export const usageCommand = Command.make("usage", {
   ),
 }).pipe(
   Command.withDescription(
-    "Show what the Usage tab shows: each provider's subscription limits and reset times, and token and dollar spend.",
+    "Show what the Usage tab shows for this environment: each provider's subscription limits and reset times, and token and dollar spend, with days in the server's time zone.",
   ),
   Command.withHandler((flags) =>
     withThreadTools(

@@ -1464,7 +1464,7 @@ it.layer(
       }),
     );
 
-    it.effect("a fresh refresh re-probes past a driver's cached reading", () =>
+    it.effect("a fresh refresh re-probes past a cached reading and an in-flight pass", () =>
       Effect.gen(function* () {
         const driver = ProviderDriverKind.make("claudeAgent");
         const instanceId = ProviderInstanceId.make("claudeAgent");
@@ -1484,6 +1484,8 @@ it.layer(
           }) as const satisfies ServerProvider;
         const probes = yield* Ref.make(0);
         const cached = yield* Ref.make<string | null>(null);
+        const firstProbeStarted = yield* Deferred.make<void>();
+        const releaseFirstProbe = yield* Deferred.make<void>();
         const instances = [
           {
             instanceId,
@@ -1506,6 +1508,10 @@ it.layer(
                 const probe = yield* Ref.updateAndGet(probes, (count) => count + 1);
                 const checkedAt = `2026-06-10T00:0${probe}:00.000Z`;
                 yield* Ref.set(cached, checkedAt);
+                if (probe === 1) {
+                  yield* Deferred.succeed(firstProbeStarted, undefined);
+                  yield* Deferred.await(releaseFirstProbe);
+                }
                 return provider(checkedAt);
               }),
               streamChanges: Stream.empty,
@@ -1545,12 +1551,17 @@ it.layer(
           const registry = yield* ProviderRegistry.ProviderRegistry;
           const checkedAt = (providers: ReadonlyArray<ServerProvider>) =>
             providers.find((candidate) => candidate.instanceId === instanceId)?.checkedAt;
-          const first = checkedAt(yield* registry.refresh());
-          assert.strictEqual(checkedAt(yield* registry.refresh()), first);
-          assert.notStrictEqual(
+          const inFlight = yield* registry.refresh().pipe(Effect.forkChild);
+          yield* Deferred.await(firstProbeStarted);
+          assert.strictEqual(
             checkedAt(yield* registry.refresh(undefined, { fresh: true })),
-            first,
+            "2026-06-10T00:02:00.000Z",
           );
+          yield* Deferred.succeed(releaseFirstProbe, undefined);
+          yield* Fiber.join(inFlight);
+          assert.strictEqual(yield* Ref.get(probes), 2);
+          yield* registry.refresh();
+          assert.strictEqual(yield* Ref.get(probes), 2);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

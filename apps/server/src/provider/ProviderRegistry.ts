@@ -661,6 +661,13 @@ export const layer = Layer.effect(
           { discard: true },
         );
       }
+      if (provider === undefined && options?.fresh) {
+        yield* Effect.forEach(yield* getLiveSources, refreshOneSource, {
+          concurrency: "unbounded",
+          discard: true,
+        });
+        return yield* Ref.get(providersRef);
+      }
       if (provider === undefined) {
         return yield* refreshAll();
       }

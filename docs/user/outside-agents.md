@@ -116,7 +116,8 @@ result that always includes the thread id.
 
 `t3 usage` prints what the Usage tab shows for this environment: each
 provider's remaining subscription limits and when they reset, and the token and
-dollar spend for the last 30 days. `--days 1|7|30|90` picks the spend window,
+dollar spend for the last 30 days. Spend counts days in the server's time zone
+and includes every provider, even ones hidden on the Usage tab. `--days 1|7|30|90` picks the spend window,
 `--refresh` reads the limits again first, and `--json` prints the same result
 agents get from the `t3_usage` tool.
 

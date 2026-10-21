@@ -228,9 +228,11 @@ the foreground, so `refresh: true` clears driver caches and re-reads every
 provider before answering.
 
 `spend` is `UsageService.readSummary` for the Usage tab's window (`makeWindow`),
-merged with the tab's own `mergeUsage`, so the totals match the tab when only
-this environment is selected. The tab can merge several environments; the tool
-reports the environment that serves it. `t3 usage` prints the same result.
+merged with the tab's own `mergeUsage`, so the totals match the tab when it
+shows only this environment, hides no providers, and runs in the server's time
+zone. The tool reports the environment that serves it, every provider, and days
+in the server's zone; the tab can merge environments, hide providers, and uses
+the viewer's zone. `t3 usage` prints the same result.
 
 ### `delegate_task`
 
