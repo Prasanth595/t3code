@@ -55,6 +55,12 @@ function readCodexTokenUsage(value: unknown): CodexTokenUsage | null {
   return isCodexTokenUsage(usage) ? usage : null;
 }
 
+// A zeroed baseline rebases the counters, so the sequence start measured against it is forgotten.
+function rebaseCodexUsage(state: CodexScanState, cumulative: CodexTokenUsage) {
+  state.lastCumulativeUsage = cumulative;
+  if (cumulative.input_tokens + cumulative.output_tokens === 0) delete state.sequenceStartUsage;
+}
+
 function advanceCodexUsage(previous: CodexTokenUsage | null, last: CodexTokenUsage) {
   return readCodexTokenUsage(
     Object.fromEntries(CODEX_USAGE_FIELDS.map((key) => [key, (previous?.[key] ?? 0) + last[key]])),
@@ -202,7 +208,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
       state.forkCopyAnchorMs = timestampMs;
       // Copied history is already billed in the parent, but establishes the child's baseline.
       const signature = last === null ? null : JSON.stringify(last);
-      if (cumulative !== null) state.lastCumulativeUsage = cumulative;
+      if (cumulative !== null) rebaseCodexUsage(state, cumulative);
       else if (!hasCumulative && last !== null && signature !== state.lastUsageSignature) {
         state.lastCumulativeUsage = advanceCodexUsage(state.lastCumulativeUsage, last);
       }
@@ -215,7 +221,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   const previous = state.lastCumulativeUsage;
   // A valid snapshot remains the next baseline even when its paired request is malformed.
-  if (cumulative !== null) state.lastCumulativeUsage = cumulative;
+  if (cumulative !== null) rebaseCodexUsage(state, cumulative);
   if (last === null || (hasCumulative && cumulative === null)) {
     state.malformedRecords += 1;
     return null;
@@ -225,10 +231,6 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
   // post-compaction marker whose total is the new context size (its cumulative may reset to zero).
   if (last.input_tokens + last.output_tokens === 0) {
     state.lastUsageSignature = null;
-    // Zeroed counters rebase the sequence, so its remembered start can no longer be replayed.
-    if (cumulative !== null && cumulative.input_tokens + cumulative.output_tokens === 0) {
-      delete state.sequenceStartUsage;
-    }
     return null;
   }
 

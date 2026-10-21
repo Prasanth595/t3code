@@ -317,6 +317,26 @@ describe("parseCodexLine", () => {
     },
   );
 
+  it("forgets the old sequence start when a malformed pair zeroes the cumulative baseline", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const request = counters(100, 20);
+    const processed = [
+      counted(request, request),
+      counted(counters(30, 5), counters(0, 0)),
+      counted(request, request),
+      counted(counters(30, 5), counters(130, 25)),
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({
+      processed,
+      skipped: codexUsageFormat.readMalformedRecords?.(state),
+    }).toEqual({ processed: [120, 0, 120, 35], skipped: 1 });
+  });
+
   it("retains initial tier evidence only for the own OpenAI session and exact context until native settings arrive", () => {
     const meta = (id: string, model_provider?: string) =>
       JSON.stringify({ type: "session_meta", payload: { id, model_provider } });
@@ -478,6 +498,34 @@ describe("parseCodexLine", () => {
         state,
       );
       expect(record).not.toBeNull();
+    });
+
+    it("forgets the old sequence start when a copied zero baseline rebases the counters", () => {
+      const state = initialCodexScanState();
+      const forkInstant = "2026-08-01T05:00:00.000Z";
+      const request = counters(100, 20);
+      const billed = (line: string) => {
+        const record = parseCodexLine(line, state);
+        return record === null ? 0 : totalTokens(record.totals);
+      };
+      parseCodexLine(stamped("2026-08-01T04:59:00.000Z", turnContext), state);
+      const first = billed(stamped("2026-08-01T04:59:01.000Z", counted(request, request)));
+      parseCodexLine(meta({ id: "child", timestamp: forkInstant, forkedFromId: "parent" }), state);
+      const copied = billed(
+        stamped(
+          "2026-08-01T05:00:00.001Z",
+          counted({ ...counters(0, 0), total_tokens: 26387 }, counters(0, 0)),
+        ),
+      );
+      const afterBurst = billed(stamped("2026-08-01T05:00:06.000Z", counted(request, request)));
+      const next = billed(
+        stamped("2026-08-01T05:00:06.100Z", counted(counters(30, 5), counters(130, 25))),
+      );
+
+      expect({
+        processed: [first, copied, afterBurst, next],
+        skipped: codexUsageFormat.readMalformedRecords?.(state),
+      }).toEqual({ processed: [120, 0, 120, 35], skipped: 0 });
     });
   });
 });
