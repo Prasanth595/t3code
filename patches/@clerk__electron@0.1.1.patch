@@ -1,0 +1,26 @@
+diff --git a/dist/cjs/index.js b/dist/cjs/index.js
+index 97a5a25d58584c9bf04997fcec67e29923a0cf76..f830912f5b2900f2f96018b723a86c27e105954e 100644
+--- a/dist/cjs/index.js
++++ b/dist/cjs/index.js
+@@ -95,7 +95,7 @@ function setupOAuthTransportIpcHandlers(options) {
+ 	});
+ 	electron.ipcMain.handle(require_ipc.OAUTH_TRANSPORT_CHANNELS.open, async (event, url) => {
+ 		if (!isMainFrameEvent(event)) throw new Error("Clerk: OAuth request did not originate from a window's main frame.");
+-		if (pendingOAuthFlow) throw new Error("Clerk: an OAuth flow is already pending.");
++		disposePendingOAuthFlow(new Error("Clerk: OAuth flow was replaced by a new one."));
+ 		assertExternalOAuthUrl(url);
+ 		const window = electron.BrowserWindow.fromWebContents(event.sender);
+ 		const callbackPromise = new Promise((resolve, reject) => {
+diff --git a/dist/esm/index.js b/dist/esm/index.js
+index 29284ea0e6325afc72024ec8c2e69ab3cb78ad00..e17ac66a597afce4273aa8bdd308a794504a8340 100644
+--- a/dist/esm/index.js
++++ b/dist/esm/index.js
+@@ -94,7 +94,7 @@ function setupOAuthTransportIpcHandlers(options) {
+ 	});
+ 	ipcMain.handle(OAUTH_TRANSPORT_CHANNELS.open, async (event, url) => {
+ 		if (!isMainFrameEvent(event)) throw new Error("Clerk: OAuth request did not originate from a window's main frame.");
+-		if (pendingOAuthFlow) throw new Error("Clerk: an OAuth flow is already pending.");
++		disposePendingOAuthFlow(new Error("Clerk: OAuth flow was replaced by a new one."));
+ 		assertExternalOAuthUrl(url);
+ 		const window = BrowserWindow.fromWebContents(event.sender);
+ 		const callbackPromise = new Promise((resolve, reject) => {
