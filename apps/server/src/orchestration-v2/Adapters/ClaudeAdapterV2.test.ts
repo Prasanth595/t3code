@@ -7463,6 +7463,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               uuid: "goal",
             },
             {
+              type: "stream_event",
+              event: { type: "message_start", message: { id: "child" } },
+              parent_tool_use_id: "child-tool",
+              uuid: "child",
+              user_message_uuid: promptUuid,
+            },
+            {
               ...makeAssistantTextFrame({ uuid: "other", text: "Hi." }),
               user_message_uuid: "other",
             },
