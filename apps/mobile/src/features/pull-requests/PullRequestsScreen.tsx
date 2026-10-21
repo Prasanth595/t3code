@@ -25,6 +25,7 @@ import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
 import {
@@ -228,9 +229,17 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
-  const projects = allProjects.filter(
-    (project) =>
-      !project.isScratch && (environmentId === null || project.environmentId === environmentId),
+  const projects = pullRequestFilterProjects(
+    allProjects.filter(
+      (project) =>
+        !project.isScratch && (environmentId === null || project.environmentId === environmentId),
+    ),
+    new Map(environments.map((item) => [item.environmentId, item.environmentLabel])),
+    allProjects.find(
+      (project) =>
+        project.id === controls.projectId &&
+        project.environmentId === controls.projectEnvironmentId,
+    ),
   );
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
