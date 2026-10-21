@@ -512,7 +512,7 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
-  it.effect("projects Cursor directory trees and lint diagnostics as file search results", () =>
+  it.effect("projects Cursor directory trees, lint diagnostics and plans", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -717,6 +717,26 @@ describe("CursorAdapterV2", () => {
             result: { status: "error", error: "lint failed" },
           },
         },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "plan-created",
+          toolCall: {
+            type: "createPlan",
+            args: { plan: "Ship the fix." },
+            result: { status: "success", value: {} },
+          },
+        },
+        {
+          type: "tool-call-completed",
+          modelCallId: "native-model-call",
+          callId: "plan-rejected",
+          toolCall: {
+            type: "createPlan",
+            args: { plan: "Rejected plan." },
+            result: { status: "error", error: "plan failed" },
+          },
+        },
       ];
       const adapter = yield* makeCursorAdapterV2({
         instanceId,
@@ -905,6 +925,18 @@ describe("CursorAdapterV2", () => {
             status: "failed",
             results: [{ fileName: "src/a.ts", preview: "lint failed" }],
           },
+        ],
+      );
+      // Only a plan Cursor accepted can be implemented.
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "plan.updated" && event.plan.kind === "proposed_plan"
+            ? [{ markdown: event.plan.markdown, status: event.plan.status }]
+            : [],
+        ),
+        [
+          { markdown: "Ship the fix.", status: "active" },
+          { markdown: "Rejected plan.", status: "draft" },
         ],
       );
     }).pipe(
