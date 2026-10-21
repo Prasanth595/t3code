@@ -587,6 +587,7 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {
     const feed = buildThreadFeed([
       projected(userMessage(), 0),
