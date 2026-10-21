@@ -64,8 +64,8 @@ over 200,000 tokens. Each Claude provider's settings can override it:
 - **Before the cache expires (beta)** compacts an idle thread shortly before its
   prompt cache expires, so coming back does not reprocess the whole conversation.
   The compaction appears in the thread as a `/compact` turn sent by T3 Code.
-- **Never** keeps the full history and skips Claude's resume prompt. You can still
-  compact by hand.
+- **Never** skips idle compaction and Claude's resume prompt. **Auto-compact after**
+  still applies, and you can still compact by hand.
 
 ## Usage limits
 

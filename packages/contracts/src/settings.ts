@@ -728,7 +728,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Compact idle threads",
         description:
-          "When to compact a thread over 200,000 tokens whose prompt cache expired while you were away. Overrides the default in General settings.",
+          "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in General settings.",
         providerSettingsForm: {
           control: "select",
           options: INSTANCE_IDLE_COMPACTION_MODES,
