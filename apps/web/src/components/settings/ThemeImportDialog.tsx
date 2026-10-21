@@ -249,11 +249,10 @@ export function ThemeImportDialog({
       }
     }
     if (installed.length > 0) onImportedMany(installed, { updated: false });
-    if (failures.length > 0) {
-      setError(failures.join(" — "));
-    } else if (conflicting.length > 0) {
+    if (failures.length > 0) setError(failures.join(" — "));
+    if (conflicting.length > 0) {
       setConflicts(conflicting);
-    } else if (installed.length > 0) {
+    } else if (installed.length > 0 && failures.length === 0) {
       onOpenChange(false);
     }
   };
