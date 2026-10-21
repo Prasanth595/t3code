@@ -586,8 +586,8 @@ function AdaptiveWorkspaceLayoutContent(
   const listPaneFloor = listPaneSizing.listPaneFloor ?? 0;
   const listPaneCeiling = listPaneSizing.listPaneCeiling ?? 0;
   const listPaneRevision = listPaneSizing.revision;
-  // A hinge resize slides overlay anchors with the panes. Overlays get a new value only once the
-  // panes are at rest, so they never pair the hinge with an anchor that is still moving. A
+  // A hinge resize slides overlay anchors with the list pane. Overlays get a new value only once
+  // that resize settles, so they never pair the hinge with an anchor that is still moving. A
   // resize can end on the hinge it started from, so every resize publishes a new value.
   const [overlayHinge, setOverlayHinge] = useState({
     hinge: windowHinge,
