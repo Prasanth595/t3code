@@ -1,4 +1,4 @@
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   EnvironmentId,
@@ -46,12 +46,14 @@ function catalog(checkedAt: number, recovered = false): ServerProvider {
     models: [],
     slashCommands: [],
     skills: [],
-    workspaceSnapshots: [{
-      cwd: CWD,
-      checkedAt: new Date(checkedAt).toISOString(),
-      slashCommands: [],
-      skills: recovered ? [{ name: "recovered", path: `${CWD}/SKILL.md`, enabled: true }] : [],
-    }],
+    workspaceSnapshots: [
+      {
+        cwd: CWD,
+        checkedAt: new Date(checkedAt).toISOString(),
+        slashCommands: [],
+        skills: recovered ? [{ name: "recovered", path: `${CWD}/SKILL.md`, enabled: true }] : [],
+      },
+    ],
   };
 }
 
@@ -60,7 +62,9 @@ async function mount() {
   const container = document.createElement("div");
   const root = createRoot(container);
   let resolveResponse!: (provider: ServerProvider) => void;
-  const response = new Promise<ServerProvider>((resolve) => { resolveResponse = resolve; });
+  const response = new Promise<ServerProvider>((resolve) => {
+    resolveResponse = resolve;
+  });
   let publish!: (provider: ServerProvider) => void;
   const recovered = catalog(NOW + 2 * PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS, true);
   refreshProviders.mockReset();
@@ -74,8 +78,12 @@ async function mount() {
     return { _tag: "Success", value: { providers: [recovered] } };
   });
   function Picker({ draft }: { draft: string }) {
-    const [provider, setProvider] = useState(() => catalog(NOW - PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS));
-    publish = setProvider;
+    const [provider, setProvider] = useState(() =>
+      catalog(NOW - PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS),
+    );
+    useEffect(() => {
+      publish = setProvider;
+    }, []);
     const menu = useComposerCommandMenu({
       draftMessage: draft,
       ownerKey: null,
