@@ -260,7 +260,10 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             HttpClientRequest.post(`${endpoint}/v1internal:${operation}`).pipe(
               HttpClientRequest.setHeaders({
                 Authorization: `Bearer ${accessToken}`,
-                "User-Agent": `antigravity/hub/1.0.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
+                // The daily endpoint leaves the consumed Gemini group out of
+                // its summary for the legacy hub/1.0.0 client, while production
+                // reports it unused. 2.24.0 is the Antigravity app's version.
+                "User-Agent": `antigravity/hub/2.24.0 (aidev_client; os_type=${platform}; arch=${architecture}; cl=963137146)`,
               }),
               HttpClientRequest.bodyJsonUnsafe(
                 token.project_id ? { project: token.project_id } : {},
