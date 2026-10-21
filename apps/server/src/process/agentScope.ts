@@ -165,7 +165,9 @@ export const make = Effect.gen(function* () {
   let appliedMemoryLimit: AgentMemoryLimit | undefined;
   const memoryLimitLock = yield* Semaphore.make(1);
   // Reads the setting under the lock, so a change that lands while limits are
-  // being applied is applied next instead of losing to an older snapshot.
+  // being applied is applied next instead of losing to an older snapshot. A
+  // limit counts as applied only once systemd accepts it, so the next settings
+  // change retries one that failed.
   const syncMemoryLimits = Effect.gen(function* () {
     const systemctl = memoryLimitSystemctl;
     if (systemctl === undefined) return undefined;
@@ -173,7 +175,6 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
     );
     if (agentMemoryLimit === appliedMemoryLimit) return undefined;
-    appliedMemoryLimit = agentMemoryLimit;
     const limits = agentSliceMemoryLimits(NodeOS.totalmem(), agentMemoryLimit);
     const limited = yield* run(systemctl, [
       "--user",
@@ -187,7 +188,9 @@ export const make = Effect.gen(function* () {
       yield* Effect.logWarning("Could not set memory limits on the agents slice", {
         stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
       });
+      return undefined;
     }
+    appliedMemoryLimit = agentMemoryLimit;
     return limits;
   }).pipe(memoryLimitLock.withPermits(1), Effect.withSpan("agentScope.syncMemoryLimits"));
 

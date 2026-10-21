@@ -5,9 +5,10 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import type {
-  ServerSettings as ServerSettingsValue,
-  ServerSettingsError,
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type ServerSettings as ServerSettingsValue,
+  type ServerSettingsError,
 } from "@t3tools/contracts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -71,9 +72,11 @@ const withFakeSystemd = <A, E>(
   }) => Effect.Effect<A, E>,
   {
     oomPolicy = true,
+    failedSetProperties = 0,
     settings = ServerSettings.layerTest(),
   }: {
     readonly oomPolicy?: boolean;
+    readonly failedSetProperties?: number;
     readonly settings?: Layer.Layer<ServerSettings.ServerSettingsService, ServerSettingsError>;
   } = {},
 ) =>
@@ -99,6 +102,10 @@ const withFakeSystemd = <A, E>(
         Effect.sync(() => {
           calls.push(args);
           if (!oomPolicy && args.some((arg) => arg.startsWith("--property=OOMPolicy="))) {
+            return output("", 1);
+          }
+          if (args[1] === "set-property" && failedSetProperties > 0) {
+            failedSetProperties -= 1;
             return output("", 1);
           }
           const [, verb, unit = ""] = args;
@@ -172,6 +179,22 @@ const settingsChangedDuringFirstRead = Layer.effect(
     });
   }),
 ).pipe(Layer.provide(ServerSettings.layerTest()));
+
+/** Test settings whose change stream is `changes`. */
+const settingsWithChanges = (
+  changes: PubSub.PubSub<ServerSettingsValue>,
+  overrides: Parameters<typeof ServerSettings.layerTest>[0],
+) =>
+  Layer.effect(
+    ServerSettings.ServerSettingsService,
+    Effect.gen(function* () {
+      const base = yield* ServerSettings.ServerSettingsService;
+      return ServerSettings.ServerSettingsService.of({
+        ...base,
+        subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+      });
+    }),
+  ).pipe(Layer.provide(ServerSettings.layerTest(overrides)));
 
 describe("AgentScope service", () => {
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
@@ -286,5 +309,31 @@ describe("AgentScope service", () => {
         }),
       { settings: settingsChangedDuringFirstRead },
     ),
+  );
+
+  it.effect("retries memory limits that systemd did not accept", () =>
+    Effect.gen(function* () {
+      const changes = yield* PubSub.unbounded<ServerSettingsValue>();
+      yield* withFakeSystemd(
+        ({ scope, calls }) =>
+          Effect.gen(function* () {
+            yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+            yield* PubSub.publish(changes, {
+              ...DEFAULT_SERVER_SETTINGS,
+              agentMemoryLimit: "off",
+            });
+            for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+            const limits = calls.filter(([, verb]) => verb === "set-property");
+            expect(limits.map((args) => args.slice(4))).toEqual([
+              ["MemoryHigh=infinity", "MemoryMax=infinity"],
+              ["MemoryHigh=infinity", "MemoryMax=infinity"],
+            ]);
+          }),
+        {
+          settings: settingsWithChanges(changes, { agentMemoryLimit: "off" }),
+          failedSetProperties: 1,
+        },
+      );
+    }),
   );
 });
