@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - the script is run for real, against a temp clone and a stub status API.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - the script is run for real, against a temp clone, a stub status API and version directories whose real mtimes it compares.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
