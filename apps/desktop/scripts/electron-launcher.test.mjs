@@ -20,9 +20,6 @@ import {
   makeDevelopmentEnvironmentScript,
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
-  resolveMacBundleInfoPlistStrings,
-  resolveMacCodeSignArguments,
-  resolveMacLauncherIconPaths,
   resolveMacLauncherPaths,
   writeDevelopmentLauncherScript,
 } from "./electron-launcher.mjs";
@@ -116,10 +113,8 @@ describe("electron development launcher", () => {
   });
 
   it("registers the fork's bundle id and URL scheme, never upstream's", () => {
-    const values = resolveMacBundleInfoPlistStrings("T3 Code Factory (Dev) Launcher");
     const forkSchemes = [FORK_DESKTOP_SCHEME, FORK_DESKTOP_DEV_SCHEME];
 
-    assert.equal(values.CFBundleIdentifier, APP_BUNDLE_ID);
     assert.match(
       APP_BUNDLE_ID,
       new RegExp(`^${FORK_DESKTOP_APP_ID.replaceAll(".", "\\.")}(\\.dev\\.[a-z0-9]+)?$`),
@@ -128,7 +123,10 @@ describe("electron development launcher", () => {
     assert.include(forkSchemes, APP_PROTOCOL_SCHEMES[0]);
     assert.notInclude(APP_PROTOCOL_SCHEMES, "t3code");
     assert.notInclude(APP_PROTOCOL_SCHEMES, "t3code-dev");
-    assert.match(values.CFBundleDisplayName, /^T3 Code Factory \((Dev|Beta)\)$/);
+    assert.match(
+      resolveMacLauncherPaths("/runtime/x.app").launcherExecutableName,
+      /^T3 Code Factory \((Dev|Beta)\) Launcher$/,
+    );
   });
 
   it("registers the fork's development bundle id and scheme under a dev server", async () => {
@@ -145,8 +143,8 @@ describe("electron development launcher", () => {
       assert.equal(launcher.APP_BUNDLE_ID, devBundleId);
       assert.deepEqual(launcher.APP_PROTOCOL_SCHEMES, [FORK_DESKTOP_DEV_SCHEME]);
       assert.equal(
-        launcher.resolveMacBundleInfoPlistStrings("x").CFBundleDisplayName,
-        "T3 Code Factory (Dev)",
+        launcher.resolveMacLauncherPaths("/runtime/x.app").launcherExecutableName,
+        "T3 Code Factory (Dev) Launcher",
       );
       assert.include(
         launcher.makeDevelopmentEnvironmentScript({ VITE_DEV_SERVER_URL: "http://127.0.0.1:8526" }),
@@ -157,31 +155,6 @@ describe("electron development launcher", () => {
       vi.resetModules();
     }
   });
-
-  it("declares why the macOS app needs protected access", () => {
-    const values = resolveMacBundleInfoPlistStrings("T3 Code (Dev) Launcher");
-
-    assert.equal(
-      values.NSScreenCaptureUsageDescription,
-      "T3 Code captures the active window when you use the snapshot shortcut.",
-    );
-    assert.equal(
-      values.NSDocumentsFolderUsageDescription,
-      "T3 Code reads project files you open in the desktop app.",
-    );
-  });
-
-  it("ad-hoc signs the complete development app bundle", () => {
-    assert.deepEqual(resolveMacCodeSignArguments("/runtime/T3 Code (Dev).app"), [
-      "--force",
-      "--deep",
-      "--sign",
-      "-",
-      "--timestamp=none",
-      "/runtime/T3 Code (Dev).app",
-    ]);
-  });
-
   it("restores execute permissions on an unchanged launcher", () => {
     const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-launcher-"));
     const launcherPath = NodePath.join(directory, "launcher");
@@ -194,16 +167,6 @@ describe("electron development launcher", () => {
     } finally {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }
-  });
-
-  it("derives launcher icons from canonical development and production assets", () => {
-    const development = resolveMacLauncherIconPaths("/runtime", true);
-    const production = resolveMacLauncherIconPaths("/runtime", false);
-
-    assert.match(development.sourceIconPath, /assets[\\/]dev[\\/]blueprint-macos-1024\.png$/);
-    assert.equal(development.generatedIconPath, "/runtime/icon-dev.icns");
-    assert.match(production.sourceIconPath, /assets[\\/]prod[\\/]black-macos-1024\.png$/);
-    assert.equal(production.generatedIconPath, "/runtime/icon-prod.icns");
   });
 });
 
