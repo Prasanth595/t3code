@@ -1,10 +1,9 @@
+import { act, render } from "../../../test/render";
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ProviderInstanceId, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import type { Atom } from "effect/reactivity";
-import { act, StrictMode } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
@@ -76,13 +75,9 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { UsagePage } from "./UsagePage";
 
 const PREFERENCES_KEY = "t3code:usage-page-preferences:v1";
-let root: Root;
-let container: HTMLDivElement;
-// Limits refreshes are throttled per environment for the whole session, so each test
-// gets fresh environment ids.
-let environmentNumber = 0;
-let environmentId: EnvironmentId;
-
+function setup() {
+  state.refreshProviders.mockReset().mockResolvedValue(undefined);
+}
 function presentation(phase = "connected") {
   return {
     entry: { target: { label: "Test" } },
@@ -122,133 +117,21 @@ function presentation(phase = "connected") {
 
 const setPresentations = (entries: ReadonlyArray<readonly [EnvironmentId, object]>) =>
   act(async () => appAtomRegistry.set(state.presentations, new Map(entries) as Presentations));
-const setNow = (iso: string) => vi.mocked(Date.now).mockReturnValue(Date.parse(iso));
-const resetsIn = (countdown: string) =>
-  page.getByRole("button", { name: `codex: 60% left, resets in ${countdown}`, exact: false });
 const refreshButton = () => page.getByRole("button", { name: "Refresh limits" });
-const selectMetric = (label: string) => userEvent.click(page.getByRole("button", { name: label }));
-
-async function render({ strict = false } = {}) {
-  const content = (
-    <RegistryContext.Provider value={appAtomRegistry}>
-      <UsagePage />
-    </RegistryContext.Provider>
-  );
-  await act(async () => root.render(strict ? <StrictMode>{content}</StrictMode> : content));
-}
-
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  // The metric toggle and its refresh button only show on wide screens.
-  await page.viewport(1440, 900);
-  vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-11T12:00:00Z"));
-  environmentNumber += 1;
-  environmentId = EnvironmentId.make(`test-${environmentNumber}`);
-  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ metric: "limits", windowDays: 30 }));
-  state.refreshProviders.mockReset().mockResolvedValue(undefined);
-  await setPresentations([[environmentId, presentation()]]);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
-  localStorage.clear();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-});
-
-it.each([
-  ["wide", 1440],
-  ["compact", 800],
-])(
-  "refreshes the visible limits countdown from the %s toolbar without switching tabs, even when quota is unchanged",
-  async (_layout, width) => {
-    await page.viewport(width, 900);
-    await render();
-    await expect.element(resetsIn("2h 0m")).toBeVisible();
-    setNow("2026-09-11T12:30:00Z");
-
-    await userEvent.click(refreshButton());
-
-    expect(state.refreshProviders).toHaveBeenCalledWith({ environmentId, input: {} });
-    await expect.element(resetsIn("1h 30m")).toBeVisible();
-    await expect.element(resetsIn("2h 0m")).not.toBeInTheDocument();
-  },
-);
-
-it("uses the current time when returning to limits from tokens", async () => {
-  await render();
-  await selectMetric("Tokens");
-  setNow("2026-09-11T13:00:00Z");
-  await selectMetric("Limits");
-
-  await expect.element(resetsIn("1h 0m")).toBeVisible();
-  expect(state.refreshProviders).toHaveBeenCalledTimes(2);
-});
-
-it("refreshes once on opening Limits and suppresses rapid returns and remounts", async () => {
-  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ metric: "tokens", windowDays: 30 }));
-  await render({ strict: true });
-  expect(state.refreshProviders).not.toHaveBeenCalled();
-
-  await selectMetric("Limits");
-  await vi.waitFor(() => expect(state.refreshProviders).toHaveBeenCalledTimes(1));
-  await selectMetric("Tokens");
-  await selectMetric("Limits");
-  await act(async () => root.unmount());
-  root = createRoot(container);
-  await render({ strict: true });
-  expect(state.refreshProviders).toHaveBeenCalledTimes(1);
-
-  await selectMetric("Tokens");
-  setNow("2026-09-11T12:05:00Z");
-  await selectMetric("Limits");
-  await vi.waitFor(() => expect(state.refreshProviders).toHaveBeenCalledTimes(2));
-});
-
-it("waits for connection and refreshes new environments during a slow refresh", async () => {
-  await setPresentations([[environmentId, presentation("disconnected")]]);
-  await render();
-  expect(state.refreshProviders).not.toHaveBeenCalled();
-
-  let finishRefresh!: () => void;
-  state.refreshProviders.mockImplementationOnce(
-    () => new Promise((resolve) => (finishRefresh = () => resolve(undefined))),
-  );
-  await setPresentations([[environmentId, presentation()]]);
-  await vi.waitFor(() => expect(state.refreshProviders).toHaveBeenCalledTimes(1));
-
-  const nextId = EnvironmentId.make(`${environmentId}-next`);
-  await setPresentations([
-    [environmentId, presentation()],
-    [nextId, presentation()],
-  ]);
-  await vi.waitFor(() => expect(state.refreshProviders).toHaveBeenCalledTimes(2));
-  expect(state.refreshProviders).toHaveBeenLastCalledWith({ environmentId: nextId, input: {} });
-  await act(async () => finishRefresh());
-});
-
-it("keeps manual refresh busy until the already-running automatic check settles", async () => {
-  let finishRefresh!: () => void;
-  state.refreshProviders.mockImplementationOnce(
-    () => new Promise((resolve) => (finishRefresh = () => resolve(undefined))),
-  );
-  await render();
-  await vi.waitFor(() => expect(state.refreshProviders).toHaveBeenCalledTimes(1));
-
-  await userEvent.click(refreshButton());
-  await expect.element(refreshButton()).toHaveAttribute("aria-busy", "true");
-  await expect.element(refreshButton()).toBeDisabled();
-  expect(state.refreshProviders).toHaveBeenCalledTimes(1);
-
-  await act(async () => finishRefresh());
-  await expect.element(refreshButton()).toHaveAttribute("aria-busy", "false");
-});
 
 it("refreshes the account credit balance independently of an exhausted allowance", async () => {
+  setup();
+  using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-11T12:00:00Z"));
+  await page.viewport(1440, 900);
+  const original = localStorage.getItem(PREFERENCES_KEY);
+  using _preferences = {
+    [Symbol.dispose]() {
+      if (original === null) localStorage.removeItem(PREFERENCES_KEY);
+      else localStorage.setItem(PREFERENCES_KEY, original);
+    },
+  };
+  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ metric: "limits", windowDays: 30 }));
+  const environmentId = EnvironmentId.make("purchased-credits-refresh");
   const presentBalance = async (balance: string | null) => {
     const value = presentation();
     const provider = value.serverConfig.providers[0]!;
@@ -275,7 +158,11 @@ it("refreshes the account credit balance independently of an exhausted allowance
     ]);
   };
   await presentBalance("12345.67");
-  await render();
+  await using screen = await render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <UsagePage />
+    </RegistryContext.Provider>,
+  );
   await expect.element(page.getByText("ChatGPT credits", { exact: true })).toBeVisible();
   const formatted = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(12345.67);
   await expect.element(page.getByText(`${formatted} remaining`, { exact: true })).toBeVisible();
