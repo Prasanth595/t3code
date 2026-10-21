@@ -139,23 +139,23 @@ export const mcpToolSession = (
         ).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
   );
 
-  return Effect.acquireRelease(
-    Effect.gen(function* () {
-      yield* request("initialize", {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: options.clientName, version: "0.0.0" },
-      });
-      yield* send({ jsonrpc: "2.0", method: "notifications/initialized" });
-      return {
-        call: (tool, args) =>
-          request("tools/call", { name: tool, arguments: args }).pipe(
-            Effect.map((envelope) => envelope.result),
-          ),
-      } satisfies McpToolSession;
-    }),
-    () => terminate,
-  );
+  // Registered before the handshake so a session the server opened is ended
+  // even when the handshake fails, and the handshake stays interruptible.
+  return Effect.gen(function* () {
+    yield* Effect.addFinalizer(() => terminate);
+    yield* request("initialize", {
+      protocolVersion: MCP_PROTOCOL_VERSION,
+      capabilities: {},
+      clientInfo: { name: options.clientName, version: "0.0.0" },
+    });
+    yield* send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    return {
+      call: (tool, args) =>
+        request("tools/call", { name: tool, arguments: args }).pipe(
+          Effect.map((envelope) => envelope.result),
+        ),
+    } satisfies McpToolSession;
+  });
 };
 
 /**

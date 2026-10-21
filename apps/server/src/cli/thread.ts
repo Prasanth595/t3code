@@ -8,6 +8,7 @@ import {
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
+  type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadStatus,
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
@@ -271,7 +272,7 @@ const listAllProjects = Effect.fn("cli.thread.listAllProjects")(function* (tools
 });
 
 /** A project id, or a path inside a project's folder (deepest project wins). */
-export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
+const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   tools: ThreadTools,
   identifier: string,
 ) {
@@ -281,18 +282,27 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
 
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  const resolved = path.resolve(yield* HostProcess.WorkingDirectory, identifier);
-  const target = yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved));
-  const containing = projects
-    .filter((project) => {
-      const relative = path.relative(project.workspaceRoot, target);
-      return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  // Stored roots keep the path the project was added with, which may pass
+  // through a symlink (macOS /tmp), so both sides compare as real paths.
+  const realPath = (value: string) =>
+    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
+  const target = yield* realPath(path.resolve(yield* HostProcess.WorkingDirectory, identifier));
+  const roots = yield* Effect.forEach(projects, (project) =>
+    Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
+  );
+  const containing = roots
+    .filter(({ root }) => {
+      const relative = path.relative(root, target);
+      return (
+        relative === "" ||
+        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+      );
     })
-    .toSorted((left, right) => right.workspaceRoot.length - left.workspaceRoot.length)[0];
+    .toSorted((left, right) => right.root.length - left.root.length)[0];
   if (containing === undefined) {
     return yield* new ThreadProjectNotFoundError({ identifier });
   }
-  return containing;
+  return containing.project;
 });
 
 /** Every item on a timeline view, oldest first. */
@@ -444,7 +454,7 @@ const titleFromMessage = (message: string) => {
     : firstLine;
 };
 
-export const launchWorkspaceStrategy = (input: {
+const launchWorkspaceStrategy = (input: {
   readonly worktree: Option.Option<string>;
   readonly branch: Option.Option<string>;
 }) =>
@@ -497,15 +507,21 @@ const threadListCommand = Command.make("list", {
       flags,
       Effect.fn("cli.thread.list")(function* (tools) {
         const project = yield* resolveProject(tools, flags.project);
-        const result = yield* tools.call(
-          "t3_thread_list",
-          { projectId: project.id, includeSubagents: false, limit: 100 },
-          OrchestratorMcpThreadListResult,
-        );
-        if (flags.json) {
-          return yield* printJson(result.threads);
+        const threads: Array<OrchestratorMcpThreadListItem> = [];
+        let cursor: number | null = 0;
+        while (cursor !== null) {
+          const page: OrchestratorMcpThreadListResult = yield* tools.call(
+            "t3_thread_list",
+            { projectId: project.id, includeSubagents: false, limit: 100, cursor },
+            OrchestratorMcpThreadListResult,
+          );
+          threads.push(...page.threads);
+          cursor = page.nextCursor;
         }
-        for (const thread of result.threads) {
+        if (flags.json) {
+          return yield* printJson(threads);
+        }
+        for (const thread of threads) {
           yield* Console.log(`${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`);
         }
       }),
