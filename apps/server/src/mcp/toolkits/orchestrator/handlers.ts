@@ -7,7 +7,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
-import * as UsageLimitsReport from "../../../usage/UsageLimitsReport.ts";
+import * as UsageReport from "../../../usage/UsageReport.ts";
 
 const handlers = {
   orchestrator_capabilities: McpToolAccess.reads((input) =>
@@ -17,10 +17,10 @@ const handlers = {
       return yield* service.capabilities(scope, input);
     }),
   ),
-  provider_usage_limits: McpToolAccess.reads((input) =>
+  t3_usage: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const report = yield* UsageLimitsReport.UsageLimitsReport;
-      return yield* report.read({ refresh: input.refresh === true });
+      const report = yield* UsageReport.UsageReport;
+      return yield* report.read({ days: input.days ?? 30, refresh: input.refresh === true });
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>

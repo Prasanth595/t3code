@@ -215,15 +215,22 @@ user's model order for other providers. `omittedModels` counts the rest, and the
 `search` input finds them, legacy models included. `delegate_task` still accepts
 any catalog model.
 
-### `provider_usage_limits`
+### `t3_usage`
 
-Reads the subscription usage windows the provider registry already holds, so
-an agent can compare Codex and Claude headroom before choosing a target. The
-readings come from each driver's own probe (Codex app-server
-`account/rateLimits/read`, the Claude Agent SDK's `get_usage`) and turn-time rate-limit
-events, plus any configured usage limit sources. Snapshots only re-probe while
-a client is in the foreground, so `refresh: true` re-reads every provider
-before answering. `t3 usage` prints the same result.
+Returns what the Usage tab shows for this environment, so an agent can compare
+Codex and Claude headroom and cost before choosing a target.
+
+`limits` comes from the subscription windows the provider registry already
+holds: each driver's own probe (Codex app-server `account/rateLimits/read`, the
+Claude Agent SDK's `get_usage`), turn-time rate-limit events, and any
+configured usage limit sources. Snapshots only re-probe while a client is in
+the foreground, so `refresh: true` clears driver caches and re-reads every
+provider before answering.
+
+`spend` is `UsageService.readSummary` for the Usage tab's window (`makeWindow`),
+merged with the tab's own `mergeUsage`, so the totals match the tab when only
+this environment is selected. The tab can merge several environments; the tool
+reports the environment that serves it. `t3 usage` prints the same result.
 
 ### `delegate_task`
 

@@ -39,6 +39,7 @@ import {
 } from "./orchestrationV2.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
+import { UsagePricingStatus, UsageProviderKind, UsageResolution } from "./usage.ts";
 
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
@@ -582,25 +583,31 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
 });
 export type OrchestratorMcpCapabilitiesResult = typeof OrchestratorMcpCapabilitiesResult.Type;
 
-export const OrchestratorMcpUsageLimitsInput = Schema.Struct({
+export const OrchestratorMcpUsageInput = Schema.Struct({
+  days: Schema.optional(
+    Schema.Literals([1, 7, 30, 90]).annotate({
+      description:
+        "Spend window, as on the Usage tab: 1 is the past 24 hours by hour, otherwise calendar days ending today. Defaults to 30.",
+    }),
+  ),
   refresh: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Re-read every provider and usage source before answering. Slower; use when checkedAt is too old to trust.",
+        "Re-read every provider's limits and wait for slow spend sources before answering. Slower; use when checkedAt is too old to trust.",
     }),
   ),
 });
-export type OrchestratorMcpUsageLimitsInput = typeof OrchestratorMcpUsageLimitsInput.Type;
+export type OrchestratorMcpUsageInput = typeof OrchestratorMcpUsageInput.Type;
 
 export const OrchestratorMcpUsageWindow = Schema.Struct({
   id: Schema.String,
   kind: Schema.Literals(["session", "weekly", "monthly", "other"]),
   label: Schema.String,
-  usedPercent: Schema.Number,
-  remainingPercent: Schema.Number,
+  usedPercent: Schema.Finite,
+  remainingPercent: Schema.Finite,
   resetsAt: Schema.NullOr(IsoDateTime),
-  windowDurationMins: Schema.NullOr(NonNegativeInt),
-});
+  windowDurationMins: Schema.NullOr(Schema.Finite),
+}).annotate({ identifier: "UsageLimitWindow" });
 export type OrchestratorMcpUsageWindow = typeof OrchestratorMcpUsageWindow.Type;
 
 const OrchestratorMcpUsageReading = {
@@ -612,12 +619,11 @@ const OrchestratorMcpUsageReading = {
     Schema.Struct({
       reason: Schema.Literals(["unsupported", "probeFailed", "notReported", "providerUnavailable"]),
       message: Schema.String,
-    }),
+    }).annotate({ identifier: "UsageLimitUnavailable" }),
   ),
 };
 
-export const OrchestratorMcpUsageLimitsResult = Schema.Struct({
-  createdAt: IsoDateTime,
+export const OrchestratorMcpUsageLimits = Schema.Struct({
   providers: Schema.Array(
     Schema.Struct({
       providerInstanceId: ProviderInstanceId,
@@ -634,9 +640,89 @@ export const OrchestratorMcpUsageLimitsResult = Schema.Struct({
       ...OrchestratorMcpUsageReading,
     }),
   ),
+});
+export type OrchestratorMcpUsageLimits = typeof OrchestratorMcpUsageLimits.Type;
+
+const OrchestratorMcpUsageTokens = Schema.Struct({
+  total: Schema.Finite,
+  uncachedInput: Schema.Finite,
+  cachedInput: Schema.Finite,
+  cacheCreation: Schema.Finite,
+  output: Schema.Finite,
+  reasoning: Schema.Finite,
+}).annotate({ identifier: "UsageTokens" });
+
+const OrchestratorMcpUsageAmount = {
+  costUsd: Schema.Finite,
+  totalTokens: Schema.Finite,
+};
+
+export const OrchestratorMcpUsageSpend = Schema.Struct({
+  window: Schema.Struct({
+    days: Schema.Literals([1, 7, 30, 90]),
+    resolution: UsageResolution,
+    sinceDay: Schema.String,
+    untilDay: Schema.String,
+    timeZone: Schema.String,
+  }),
+  costUsd: Schema.Finite,
+  cacheSavingsUsd: Schema.Finite,
+  unpricedShare: Schema.Finite,
+  sessions: Schema.Finite,
+  tokens: OrchestratorMcpUsageTokens,
+  costByCategoryUsd: Schema.Struct({
+    input: Schema.Finite,
+    cacheRead: Schema.Finite,
+    cacheWrite: Schema.Finite,
+    output: Schema.Finite,
+    unsplit: Schema.Finite,
+  }),
+  costBySpeedUsd: Schema.Struct({
+    standard: Schema.Finite,
+    fast: Schema.Finite,
+    ultrafast: Schema.Finite,
+    premium: Schema.Finite,
+  }),
+  providers: Schema.Array(
+    Schema.Struct({
+      provider: UsageProviderKind,
+      ...OrchestratorMcpUsageAmount,
+      sessions: Schema.Finite,
+    }),
+  ),
+  models: Schema.Array(
+    Schema.Struct({
+      provider: UsageProviderKind,
+      model: Schema.String,
+      costUsd: Schema.NullOr(Schema.Finite),
+      tokens: OrchestratorMcpUsageTokens,
+    }),
+  ),
+  periods: Schema.Array(
+    Schema.Struct({
+      start: Schema.String,
+      ...OrchestratorMcpUsageAmount,
+      providers: Schema.Array(
+        Schema.Struct({ provider: UsageProviderKind, ...OrchestratorMcpUsageAmount }).annotate({
+          identifier: "UsageProviderAmount",
+        }),
+      ),
+    }),
+  ),
+  pricing: Schema.Struct({
+    status: UsagePricingStatus,
+    fetchedAt: Schema.NullOr(Schema.String),
+  }),
+});
+export type OrchestratorMcpUsageSpend = typeof OrchestratorMcpUsageSpend.Type;
+
+export const OrchestratorMcpUsageResult = Schema.Struct({
+  createdAt: IsoDateTime,
+  limits: OrchestratorMcpUsageLimits,
+  spend: Schema.NullOr(OrchestratorMcpUsageSpend),
   notices: Schema.Array(Schema.String),
 });
-export type OrchestratorMcpUsageLimitsResult = typeof OrchestratorMcpUsageLimitsResult.Type;
+export type OrchestratorMcpUsageResult = typeof OrchestratorMcpUsageResult.Type;
 
 export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   projectId: OrchestratorMcpProjectTarget,

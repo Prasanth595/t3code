@@ -62,7 +62,7 @@ import {
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
 import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
-import * as UsageLimitsReport from "../usage/UsageLimitsReport.ts";
+import * as UsageReport from "../usage/UsageReport.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
@@ -1015,7 +1015,7 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 ).pipe(
   Layer.provide(OrchestratorMcpService.layer),
   Layer.provide(ThreadMetadataMcpService.layer),
-  Layer.provide(UsageLimitsReport.layer),
+  Layer.provide(UsageReport.layer),
 );
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);

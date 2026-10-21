@@ -18,8 +18,8 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpUpdateScheduledTaskInput,
-  OrchestratorMcpUsageLimitsInput,
-  OrchestratorMcpUsageLimitsResult,
+  OrchestratorMcpUsageInput,
+  OrchestratorMcpUsageResult,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -38,7 +38,7 @@ import { Tool, Toolkit } from "effect/ai";
 import * as Schema from "effect/Schema";
 
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
-import * as UsageLimitsReport from "../../../usage/UsageLimitsReport.ts";
+import * as UsageReport from "../../../usage/UsageReport.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
@@ -68,16 +68,16 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-const ProviderUsageLimitsTool = Tool.make("provider_usage_limits", {
+const UsageTool = Tool.make("t3_usage", {
   description:
-    "Read subscription usage limits for each enabled provider instance, such as Codex and Claude, to compare headroom before choosing where to start or delegate work. Each window gives usedPercent, remainingPercent, and resetsAt. When unavailable is set, the provider's windows do not show its headroom: an API key or Bedrock account has no subscription limits (unsupported), the last read failed (probeFailed), the provider has not reported limits (notReported), or it is not installed, signed in, or available (providerUnavailable). Readings can be old while no T3 client is open; checkedAt says when each was read, and refresh re-reads them first. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub.",
-  parameters: OrchestratorMcpUsageLimitsInput,
-  success: OrchestratorMcpUsageLimitsResult,
+    "Read what the Usage tab shows for this environment, to compare Codex and Claude headroom and cost before choosing where to start or delegate work. limits lists each enabled provider instance's subscription windows with usedPercent, remainingPercent, and resetsAt. When unavailable is set, that provider's windows do not show its headroom: an API key or Bedrock account has no subscription limits (unsupported), the last read failed (probeFailed), the provider has not reported limits (notReported), or it is not installed, signed in, or healthy (providerUnavailable). Limits can be old while no T3 client is open; checkedAt says when each was read. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub. spend gives the token and API-priced USD totals the Usage tab calculates from local provider transcripts for the chosen window, split by provider, model, token type, and day (or hour for days=1). spend is null when transcripts cannot be read.",
+  parameters: OrchestratorMcpUsageInput,
+  success: OrchestratorMcpUsageResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [UsageLimitsReport.UsageLimitsReport],
+  dependencies: [UsageReport.UsageReport],
 })
-  .annotate(Tool.Title, "Get provider usage limits")
+  .annotate(Tool.Title, "Get usage limits and spend")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -292,7 +292,7 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
-  ProviderUsageLimitsTool,
+  UsageTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,
