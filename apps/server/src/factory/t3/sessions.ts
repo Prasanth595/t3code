@@ -604,13 +604,15 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new SessionsError({ operation: "running-threads", cause })),
     );
 
-  const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = (defaultDir) =>
-    Effect.gen(function* () {
+  const worktreesDirectory: FactorySessions["Service"]["worktreesDirectory"] = Effect.fn(
+    "Sessions.worktreesDirectory",
+  )(
+    function* (defaultDir) {
       const { worktreesDirectory: setting } = yield* settings.getSettings;
       return resolveWorktreesDirectory(setting, defaultDir, path, yield* HostProcess.HomeDirectory);
-    }).pipe(
-      Effect.mapError((cause) => new SessionsError({ operation: "worktrees-directory", cause })),
-    );
+    },
+    Effect.mapError((cause) => new SessionsError({ operation: "worktrees-directory", cause })),
+  );
 
   return FactorySessions.of({
     findProject,
