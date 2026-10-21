@@ -2,7 +2,7 @@
  * The machine config as the settings page edits it: a report of the file, the watched projects
  * and what the loop last read of each one's project config, and an edit that changes only the
  * keys the form sends, so the comments and the keys it does not know (`notify`, `keep_versions`,
- * a retired `repos`) stay as written. The edited text is
+ * `min_free_gib`, a retired `repos`) stay as written. The edited text is
  * checked with `parseMachineConfig`, the rules the factory itself loads the file by.
  */
 import * as Data from "effect/Data";
@@ -100,14 +100,15 @@ const EDITABLE_KEYS = [
 ] as const;
 
 /**
- * The keys an edit keeps: the form's, `notify` and `keep_versions` (hand edits), and the retired keys (the model
- * keys and `repos`). Those stay so that a rollback to a version that still requires them loads
- * the file; a key that is not here is dropped by an edit.
+ * The keys an edit keeps: the form's, `notify`, `keep_versions` and `min_free_gib` (hand edits),
+ * and the retired keys (the model keys and `repos`). Those stay so that a rollback to a version
+ * that still requires them loads the file; a key that is not here is dropped by an edit.
  */
 const KNOWN_KEYS: ReadonlySet<string> = new Set([
   ...EDITABLE_KEYS,
   "notify",
   "keep_versions",
+  "min_free_gib",
   ...RETIRED_MACHINE_KEYS,
 ]);
 

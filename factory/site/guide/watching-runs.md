@@ -32,11 +32,12 @@ Below the status rows, the Factory page lists what needs a person, and the sideb
 - a run went to `factory:stuck` or `factory:needs-info`,
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,
 - the machine config failed to load,
+- free disk space is below `min_free_gib`, so nothing is claimed or gated until there is room,
 - three passes in a row failed.
 
 Each item links to its run, or to Settings → Factory for a config problem. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
 
-An item clears itself when its cause goes away: the config loads, a pass succeeds, the issue is claimed again. Dismiss an item to hide it once you've dealt with it. A dismissed item stays hidden until its cause clears and comes back.
+An item clears itself when its cause goes away: the config loads, a pass succeeds, the issue is claimed again, the disk has room again. Dismiss an item to hide it once you've dealt with it. A dismissed item stays hidden until its cause clears and comes back.
 
 ## Settings → Factory
 

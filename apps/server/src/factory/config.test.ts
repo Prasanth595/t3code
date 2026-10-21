@@ -448,6 +448,7 @@ describe("machine config", () => {
       maxConcurrentRuns: 1,
       maxConcurrentGates: 2,
       notify: true,
+      minFreeGib: 10,
     });
     expect(machineLoaded(MACHINE).warnings).toEqual([]);
   });
@@ -516,6 +517,22 @@ describe("machine config", () => {
   it("machine a retired key of any type is a warning, never an error", () => {
     const loaded = machineLoaded(edit(MACHINE, (tree) => set(tree, "model", "[x]")));
     expect(loaded.warnings.map((w) => w.field)).toEqual(["model"]);
+  });
+
+  it("machine min_free_gib defaults to 10 and can be zero or more", () => {
+    expect(machine(MACHINE).minFreeGib).toBe(10);
+    for (const given of [0, 1, 25]) {
+      expect(machine(edit(MACHINE, (t) => set(t, "min_free_gib", String(given)))).minFreeGib).toBe(
+        given,
+      );
+    }
+  });
+
+  it("machine min_free_gib must be an integer of at least zero", () => {
+    for (const bad of ['"ten"', "-1", "1.5"]) {
+      const errs = machineErr(edit(MACHINE, (t) => set(t, "min_free_gib", bad)));
+      assertOne(errs, "min_free_gib", MFILE);
+    }
   });
 
   it("machine notify can be turned off", () => {
@@ -738,6 +755,7 @@ describe("loaders", () => {
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
             notify: true,
+            minFreeGib: 10,
           },
         }),
       );

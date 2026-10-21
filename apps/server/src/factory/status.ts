@@ -5,8 +5,8 @@
  * It writes nothing and reads no network, so it answers when GitHub and T3 do not.
  *
  * Left out, because the fork has nothing for them: softfac's `commit`, `self_update_repo`,
- * `disk`, `claims_paused` (the disk floor), `t3_env_holds` and `t3_logs`. `attention` is the
- * fork's own.
+ * `disk`, `claims_paused`, `t3_env_holds` and `t3_logs`. The fork's disk floor (`min_free_gib`)
+ * shows as the `low-disk` attention item instead. `attention` is the fork's own.
  */
 import type { AttentionItem } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";

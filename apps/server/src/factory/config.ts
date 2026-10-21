@@ -61,6 +61,7 @@ export const DEFAULT_MAX_CONCURRENT_GATES = 2;
  * has its own copy of this default in `prune_versions`; change both together.
  */
 const DEFAULT_KEEP_VERSIONS = 3;
+export const DEFAULT_MIN_FREE_GIB = 10;
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -146,6 +147,11 @@ export interface MachineConfig {
   readonly maxConcurrentGates: number;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
+  /**
+   * The free GiB the volumes of the worktrees and of the factory's data must have for a pass to
+   * claim an issue or start a gate. 0 turns the check off.
+   */
+  readonly minFreeGib: number;
 }
 
 type Mapping = Record<string, unknown>;
@@ -422,6 +428,7 @@ const MACHINE_KEYS = [
   "max_concurrent_gates",
   "notify",
   "keep_versions",
+  "min_free_gib",
 ] as const;
 
 /**
@@ -470,6 +477,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
   // Only checked here, so a bad value fails the load where a person sees it: autodeploy.sh reads
   // keep_versions from the file and the server has no use for it.
   const keepVersions = c.optionalUint(root, "", "keep_versions", DEFAULT_KEEP_VERSIONS, 0);
+  const minFreeGib = c.optionalUint(root, "", "min_free_gib", DEFAULT_MIN_FREE_GIB, 0);
   checkUnknownKeys(c, root);
 
   if (
@@ -478,7 +486,8 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
     notify === undefined ||
-    keepVersions === undefined
+    keepVersions === undefined ||
+    minFreeGib === undefined
   ) {
     return undefined;
   }
@@ -488,6 +497,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentRuns,
     maxConcurrentGates,
     notify,
+    minFreeGib,
   };
 };
 

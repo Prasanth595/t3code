@@ -21,6 +21,7 @@ import {
   type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
+import type { FreeSpace } from "./disk.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -209,6 +210,11 @@ export interface PassWorld {
   ) => Effect.Effect<void, LedgerError>;
   /** The claims pause a person made, when there is one. */
   readonly handPause: () => HandPause | null;
+  /**
+   * The free space of the fuller of the volumes that hold the sessions' worktrees and the gate's
+   * checkouts; not read when `min_free_gib` is 0.
+   */
+  readonly freeSpace: () => Effect.Effect<FreeSpace, PassError>;
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
@@ -395,6 +401,8 @@ const prepareText = (text: string): string => {
 /** A pass in flight: the counts, the lines, and whether the machine log has failed once. */
 class Pass {
   readonly report: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
+  /** A probed volume is below `min_free_gib`: nothing is claimed and no gate starts. */
+  lowDisk = false;
   private logFailed = false;
   private readonly world: PassWorld;
   private readonly out: (line: string) => void;
@@ -565,6 +573,7 @@ export const runPass = Effect.fn("Pass.runPass")(function* (
     }
   }
   const repos = yield* loadRepos(world, watched, pass);
+  pass.lowDisk = yield* lowDisk(world, machine, pass);
   // Without the ledger there is no telling how many runs are active, so nothing is claimed.
   const infos = yield* runs(world, pass);
   if (infos !== null) {
@@ -640,6 +649,62 @@ const closedStuck = Effect.fn("Pass.closedStuck")(function* (
       world.stuckReads.delete(item.id);
     }
   }
+});
+
+/** The machine's attention item while a probed volume is below `min_free_gib`. */
+const LOW_DISK_ITEM_ID = "low-disk";
+const GIB = 1024 ** 3;
+
+/**
+ * Whether the volume of the worktrees or of the gate's checkouts has less free than
+ * `min_free_gib`. A run that writes to a
+ * full disk fails partway, and its gate fails for reasons that are not the code, so while it is
+ * low the pass claims nothing and starts no gate: one line, one `claim_skipped` event and one
+ * attention item, which clears on the first pass that finds the space back. A space that cannot
+ * be read is an error line and holds nothing back. 0 turns the check off. Session relaunches of
+ * runs already claimed are not held back.
+ */
+const lowDisk = Effect.fn("Pass.lowDisk")(function* (
+  world: PassWorld,
+  machine: MachineConfig,
+  pass: Pass,
+) {
+  const clear = world.attention.clear((item) => item.id === LOW_DISK_ITEM_ID);
+  if (machine.minFreeGib === 0) {
+    yield* clear;
+    return false;
+  }
+  const read = yield* Effect.result(world.freeSpace());
+  if (read._tag === "Failure") {
+    yield* pass.fail(
+      null,
+      passError(read.failure.kind, "cannot read the free disk space: ", read.failure.message),
+    );
+    // Claims go on, so an item that says they do not would be wrong.
+    yield* clear;
+    return false;
+  }
+  const { path, freeBytes } = read.success;
+  if (freeBytes >= machine.minFreeGib * GIB) {
+    yield* clear;
+    return false;
+  }
+  const held = "no issue is claimed and no gate starts until there is more";
+  pass.line(
+    `low disk: ${(freeBytes / GIB).toFixed(1)} GiB free on ${plain(path)}, below min_free_gib ${machine.minFreeGib}; ${held}`,
+  );
+  pass.report.attention += 1;
+  yield* pass.record({ event: "claim_skipped", data: { reason: "low-disk" } });
+  yield* world.attention.raise({
+    id: LOW_DISK_ITEM_ID,
+    kind: "attention",
+    repo: null,
+    issue: null,
+    run: null,
+    // No figure and no path: an open item is not raised again, so they would go stale.
+    message: `low disk: free space is below min_free_gib ${machine.minFreeGib}; ${held}`,
+  });
+  return true;
 });
 
 /**
@@ -941,7 +1006,7 @@ const prOpenRuns = Effect.fn("Pass.prOpenRuns")(function* (
       if (yield* actedOnFeedback(world, repo, info, notes, pass)) {
         // Said.
       } else if (!(yield* unchanged(world, repo, info.id, tips))) {
-        yield* startGate(world, repo, info, notes);
+        yield* startGate(world, repo, info, notes, pass);
       }
     }
     yield* pass.flush(notes, info.id);
@@ -1159,16 +1224,28 @@ const followBuilding = Effect.fn("Pass.followBuilding")(function* (
   yield* advanceRun(world, repo, info, notes, pass, sent);
 });
 
-/** Starts the run's gate in the background, and says so, or that it is queued. */
+/** The words for a gate held back because the disk is low; a later pass starts it. */
+const GATE_WAITS_FOR_DISK = "the gate waits for more free disk space";
+
+/**
+ * Starts the run's gate in the background, and says so, or that it is queued. While the disk is
+ * low it is not started: the gate counts an attempt only when it runs, so the wait costs none.
+ */
 const startGate = (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
-): Effect.Effect<void> =>
-  Effect.map(world.gate(repo, info.id), (start) => {
+  pass: Pass,
+): Effect.Effect<void> => {
+  if (pass.lowDisk) {
+    notes.parts.push(GATE_WAITS_FOR_DISK);
+    return Effect.void;
+  }
+  return Effect.map(world.gate(repo, info.id), (start) => {
     notes.parts.push(start.kind === "started" ? GATE_STARTED : gateQueued(start));
   });
+};
 
 /**
  * `advance` for a run, and what it did in a line. The gate is not started when `sent` says
@@ -1251,7 +1328,7 @@ const advanceRun = Effect.fn("Pass.advanceRun")(function* (
     pending = read.success;
   }
   if (wantsGate && sent && !pending) notes.parts.push(GATE_WAITS);
-  else if (wantsGate || pending) yield* startGate(world, repo, info, notes);
+  else if (wantsGate || pending) yield* startGate(world, repo, info, notes, pass);
 });
 
 /**
@@ -1587,6 +1664,8 @@ const claim = Effect.fn("Pass.claim")(function* (
 ) {
   // A start before this step left runs that could not be read again.
   if (known.lost) return;
+  // Said once by `lowDisk`: a run started now would write to a disk that is nearly full.
+  if (pass.lowDisk) return;
   const paused = world.handPause();
   // Ready issues that were not tried because the limit was reached. Every repo is still
   // listed, so the count is the whole machine's.
