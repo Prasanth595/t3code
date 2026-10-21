@@ -33,7 +33,10 @@ export function resolveThreadDetailsCardLayout({
   const gap = THREAD_DETAILS_CARD_GAP;
   const width = THREAD_DETAILS_CARD_WIDTH;
   const x = container.width - width - gap;
-  if (narrowestWidth - width - gap - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth)
+  // The transition ends are sampled once, so a resize mid-animation can leave them
+  // wider than the container is now.
+  const fitWidth = Math.min(narrowestWidth, container.width);
+  if (fitWidth - width - gap - DETAILS_CARD_CLEARANCE - lane.padding < lane.minChatWidth)
     return null;
   const y = gap + topInset;
   const height =
