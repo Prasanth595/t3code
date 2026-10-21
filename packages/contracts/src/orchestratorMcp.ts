@@ -532,7 +532,7 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       options: Schema.optional(Schema.Array(OrchestratorMcpModelOption)),
     }),
   ),
-  /** Models left out of `models`; `search` finds them. */
+  /** Models left out of `models`: unlisted visible models, or matches past the cap with `search`. */
   omittedModels: Schema.optional(NonNegativeInt),
   runtimeModes: Schema.optional(Schema.Array(RuntimeMode)),
   canRunChildTask: Schema.Boolean,
