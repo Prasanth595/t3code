@@ -2957,7 +2957,10 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const path = yield* Path.Path;
     const repoRoot = yield* RepoRoot;
     buildConfig.linux = {
-      target: target === "AppImage" ? [target, "deb"] : [target],
+      // The AppImage target also ships the distribution-native packages:
+      // deb for Debian/Ubuntu, rpm for Fedora and the RHEL family. Both are
+      // produced from this same electron-builder invocation.
+      target: target === "AppImage" ? [target, "deb", "rpm"] : [target],
       executableName: "t3code",
       icon: "icons",
       category: "Development",

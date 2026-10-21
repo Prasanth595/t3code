@@ -363,6 +363,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config
+          # electron-builder shells out to rpmbuild to produce the rpm target
+          # that Fedora and RHEL-family users install with dnf.
+          sudo apt-get install -y rpm
           if ! command -v magick >/dev/null 2>&1 && ! command -v convert >/dev/null 2>&1; then
               sudo apt-get install -y imagemagick
           fi
