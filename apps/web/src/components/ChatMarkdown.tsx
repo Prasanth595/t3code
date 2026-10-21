@@ -497,12 +497,17 @@ function useChatMarkdownState({
     reportFailure: false,
     refresh: true,
   });
+  const readProjectFile = useAtomQueryRunner(projectEnvironment.readFile, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
@@ -851,6 +856,20 @@ function useChatMarkdownState({
         }
         resolveCopyPaths={async () =>
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
+        }
+        resolveContents={
+          environmentId !== null && cwd && canReadFiles
+            ? async () => {
+                const result = await readProjectFile({
+                  environmentId,
+                  input: { cwd, relativePath: (await resolveHostPath()).absolutePath },
+                });
+                if (result._tag !== "Success") throw squashAtomCommandFailure(result);
+                // A partial copy would look complete, so refuse files over the server's read cap.
+                if (result.value.truncated) throw new Error("File is too large to copy.");
+                return result.value.contents;
+              }
+            : undefined
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
         onOpenMedia={

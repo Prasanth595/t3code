@@ -38,6 +38,7 @@ interface MarkdownFileLinkProps {
   onOpen?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenInPanel: (panelPath: string, line: number | undefined) => void;
   resolveCopyPaths: () => Promise<ReturnType<typeof markdownFileCopyPaths>>;
+  resolveContents?: (() => Promise<string>) | undefined;
   openInEditorMenuLabel: string;
   onOpenInBrowser?: (() => Promise<AtomCommandResult<unknown, unknown>>) | undefined;
   onOpenMedia?: (() => void) | undefined;
@@ -67,6 +68,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   onReveal,
   revealLabel,
   resolveCopyPaths,
+  resolveContents,
 }: MarkdownFileLinkProps) {
   const handleOpenInEditor = () => {
     if (!onOpen) {
@@ -194,7 +196,11 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
     })();
   };
 
-  const handleCopy = (resolveValue: () => Promise<string>, title: string) => {
+  const handleCopy = (
+    resolveValue: () => Promise<string>,
+    title: string,
+    describe: (text: string) => string,
+  ) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
         stackedThreadToast({
@@ -206,8 +212,8 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       return;
     }
 
-    const value = resolveValue().then((text) => formatFilePathForClipboard(text, targetPath));
-    // Start the write before workspace lookup finishes so Safari retains the user gesture.
+    const value = resolveValue();
+    // Start the write before the value resolves so Safari retains the user gesture.
     const write =
       typeof navigator.clipboard.write === "function" && typeof ClipboardItem !== "undefined"
         ? navigator.clipboard.write([
@@ -221,12 +227,12 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         toastManager.add({
           type: "success",
           title: `${title} copied`,
-          description: text,
+          description: describe(text),
         });
       },
       (error) => {
         reportMarkdownActionFailure(
-          { operation: "copy-file-path", target: targetPath, copyTarget: title },
+          { operation: "copy-file-link", target: targetPath, copyTarget: title },
           error,
         );
         toastManager.add(
@@ -255,6 +261,9 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
             : []),
           ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
           ...copyItems.map(({ id, label }) => ({ id, label })),
+          ...(resolveContents
+            ? ([{ id: "copy-contents", label: "Copy file contents" }] as const)
+            : []),
         ] as const,
         position,
       );
@@ -279,10 +288,18 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(
           () =>
             resolveCopyPaths().then((paths) =>
-              clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
+              formatFilePathForClipboard(
+                clicked === "copy-relative" ? paths.relativePath : paths.fullPath,
+                targetPath,
+              ),
             ),
           clicked === "copy-relative" ? "Relative path" : "Full path",
+          (text) => text,
         );
+        return;
+      }
+      if (clicked === "copy-contents" && resolveContents) {
+        handleCopy(resolveContents, "File contents", () => label);
       }
     } catch (cause) {
       reportMarkdownActionFailure(
@@ -406,6 +423,7 @@ function areMarkdownFileLinkPropsEqual(
     previous.onOpenMedia === next.onOpenMedia &&
     previous.onReveal === next.onReveal &&
     previous.resolveCopyPaths === next.resolveCopyPaths &&
+    previous.resolveContents === next.resolveContents &&
     previous.revealLabel === next.revealLabel
   );
 }

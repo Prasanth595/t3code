@@ -2073,7 +2073,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         };
       }
       const target = resolveFileChipTarget(href, props.workspaceRoot);
-      return target ? fileChipMenu(target) : undefined;
+      return target
+        ? fileChipMenu(
+            target,
+            Boolean(props.workspaceRoot) &&
+              readEnvironmentScope(props.environmentId, AuthFilesystemReadScope),
+          )
+        : undefined;
     },
     onFileContextMenuAction: (href, actionId) => {
       const skill = enrichedSkillReference(href, props.skills);
@@ -2095,6 +2101,33 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "copy-relative-path": {
           const clipboardPath = fileChipClipboardPath(target, actionId);
           if (clipboardPath !== undefined) copyTextWithHaptic(clipboardPath);
+          return;
+        }
+        case "copy-contents": {
+          const { fullPath } = target;
+          const cwd = props.workspaceRoot;
+          if (!fullPath || !cwd) return;
+          void executeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.readFile({
+              environmentId: props.environmentId,
+              input: { cwd, relativePath: fullPath },
+            }),
+            { refresh: true, reportFailure: false },
+          ).then((result) => {
+            if (result._tag !== "Success") {
+              const error = squashAtomCommandFailure(result);
+              Dialog.alert(
+                "Could not copy file",
+                error instanceof Error ? error.message : "Try again.",
+              );
+            } else if (result.value.truncated) {
+              // A partial copy would look complete, so refuse files over the server's read cap.
+              Dialog.alert("Could not copy file", "File is too large to copy.");
+            } else {
+              copyTextWithHaptic(result.value.contents, { target: "file contents" });
+            }
+          });
           return;
         }
         case "open-file":

@@ -189,15 +189,41 @@ it("removes host actions after revocation while keeping file preview and copying
   using _setup = setup();
   await using screen = await renderMarkdown("[Readme](docs/readme.md)");
   await screen.openContextMenu();
-  expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
+  expect(offeredActions()).toEqual([
+    "open",
+    "reveal",
+    "copy-relative",
+    "copy-full",
+    "copy-contents",
+  ]);
   await setAllowed(false);
   state.choose.mockResolvedValue("copy-full");
   await screen.openContextMenu();
-  expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
+  expect(offeredActions()).toEqual(["copy-relative", "copy-full", "copy-contents"]);
   await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md"));
   await act(async () => screen.anchor().click());
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);
   expect(state.openEditor).not.toHaveBeenCalled();
+});
+
+it("copies the file contents the host reads", async () => {
+  using _setup = setup();
+  state.search.mockResolvedValue(
+    AsyncResult.success({
+      relativePath: "/work/docs/readme.md",
+      contents: "# Readme\n",
+      byteLength: 9,
+      truncated: false,
+    }),
+  );
+  state.choose.mockResolvedValue("copy-contents");
+  await using screen = await renderMarkdown("[Readme](docs/readme.md)");
+  await screen.openContextMenu();
+  await vi.waitFor(() => expect(state.copy).toHaveBeenCalledWith("# Readme\n"));
+  expect(state.search).toHaveBeenCalledWith({
+    environmentId: threadRef.environmentId,
+    input: { cwd: "/work", relativePath: "/work/docs/readme.md" },
+  });
 });
 
 it("does not launch an editor after revocation during a native context menu", async () => {
