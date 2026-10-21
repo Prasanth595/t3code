@@ -53,8 +53,11 @@ function Draft() {
         <span>Current thread</span>
       </WorkspacePageHeader>
       <input aria-label="Draft" value={value} onChange={(event) => setValue(event.target.value)} />
-      <button style={{ position: "fixed", right: "var(--workspace-controls-right)" }}>
+      <button style={{ position: "fixed", right: "var(--workspace-viewport-controls-right)" }}>
         Chat tools
+      </button>
+      <button style={{ position: "absolute", top: 60, right: "var(--workspace-controls-right)" }}>
+        Panel tools
       </button>
     </SidebarInset>
   );
@@ -80,6 +83,9 @@ describe("main sidebar position", () => {
       expect(main().getBoundingClientRect().left).toBe(navigation().getBoundingClientRect().right);
     });
     await userEvent.fill(screen.getByRole("textbox", { name: "Draft" }), "Keep this draft");
+    const panelTools = () =>
+      screen.getByRole("button", { name: "Panel tools" }).element().getBoundingClientRect();
+    const localControlInset = main().getBoundingClientRect().right - panelTools().right;
     mocks.side = "right";
     await screen.rerender(
       <AppSidebarLayout>
@@ -94,6 +100,7 @@ describe("main sidebar position", () => {
         .element()
         .getBoundingClientRect();
       expect(tools.right).toBeLessThanOrEqual(navigation().getBoundingClientRect().left);
+      expect(main().getBoundingClientRect().right - panelTools().right).toBe(localControlInset);
     });
     await expect
       .element(screen.getByRole("textbox", { name: "Draft" }))

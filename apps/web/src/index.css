@@ -122,6 +122,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-controls-top: 0px;
   --workspace-controls-left: calc(env(safe-area-inset-left) + 0.75rem);
   --workspace-controls-right: calc(env(safe-area-inset-right) + 0.75rem);
+  --workspace-viewport-controls-right: var(--workspace-controls-right);
   --workspace-native-controls-inset: 0px;
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
@@ -2477,8 +2478,10 @@ code {
   }
 }
 
-/* Main navigation can occupy the right edge. Keep chat controls in the
-   workspace and leave native window controls and the navigation toggle at left. */
+/* Only viewport-fixed controls compensate for navigation width. Workspace-local
+   controls already exclude the sidebar from their containing block. */
 [data-main-sidebar-side="right"][data-sidebar-state="expanded"] {
-  --workspace-controls-right: calc(var(--sidebar-width) + env(safe-area-inset-right) + 0.75rem);
+  --workspace-viewport-controls-right: calc(
+    var(--sidebar-width) + env(safe-area-inset-right) + 0.75rem
+  );
 }
