@@ -473,6 +473,41 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("keeps the macOS bundle filename stable across product names", () =>
+    Effect.gen(function* () {
+      const stable = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.0",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const nightly = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.1.1-nightly.20261017.3238",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.notEqual(stable.productName, nightly.productName);
+      assert.deepStrictEqual(
+        (stable.mac as { executableName: string }).executableName,
+        (nightly.mac as { executableName: string }).executableName,
+      );
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("omits update feeds for pull request preview builds", () =>
     Effect.gen(function* () {
       const preview = yield* createBuildConfig(
