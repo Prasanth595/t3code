@@ -71,8 +71,8 @@ const git = (cwd: string, ...args: Array<string>) => {
 // of one already there, so a test can make `current` the oldest. DEPLOY_FAIL fails the build,
 // INSTALL_FAIL the install (as a health check that rolled back would), BUILD_HANG makes the build
 // hang on a child whose pid it writes there, HOLD_DURING_BUILD leaves autodeploy.hold as a
-// deploy by hand during the build would, and ABSOLUTE_CURRENT points `current` by absolute path,
-// as a link repaired by hand might.
+// deploy by hand during the build would, and CURRENT_AT makes the version directory in that
+// directory instead and points `current` at it by absolute path, as a link repaired by hand might.
 const FAKE_DEPLOY = [
   "#!/usr/bin/env bash",
   "set -euo pipefail",
@@ -86,10 +86,10 @@ const FAKE_DEPLOY = [
   "[[ ${1:-} == --build-only ]] && exit 0",
   '[[ -z ${INSTALL_FAIL:-} ]] || { echo "health check failed; rolled back" >&2; exit 1; }',
   'r="$HOME/.local/share/t3fac"',
-  'mkdir -p "$r/versions/0.0.1+fac.$sha"',
+  'target="versions/0.0.1+fac.$sha"; [[ -z ${CURRENT_AT:-} ]] || target="$CURRENT_AT/0.0.1+fac.$sha"',
+  'mkdir -p "$r/versions" && (cd "$r" && mkdir -p "$target")',
   'old=$(readlink "$r/current" || true)',
-  '[[ -z $old || $old == "versions/0.0.1+fac.$sha" ]] || ln -sfn "$old" "$r/previous"',
-  'target="versions/0.0.1+fac.$sha"; [[ -z ${ABSOLUTE_CURRENT:-} ]] || target="$r/$target"',
+  '[[ -z $old || $old == "$target" ]] || ln -sfn "$old" "$r/previous"',
   'ln -sfn "$target" "$r/current"',
   "",
 ].join("\n");
@@ -674,20 +674,46 @@ describe("autodeploy.sh pruning old versions", () => {
     expect(pruned(result.output)).toHaveLength(3);
   });
 
-  it("deletes nothing when current is not a versions/<name> link", async () => {
+  // install.sh copies an absolute `current` into `previous` as it is on the next deploy.
+  it("knows current and previous by their directories when their links are absolute", async () => {
+    writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 1\n");
+    const first = installedName();
+    addVersion("0.0.1+fac.aaaaaaa", 60);
+    addVersion(first, 40);
+    const second = git(clone, "rev-parse", "--short", commitToOrigin("second"));
+
+    const absolute = await runAutodeploy({ CURRENT_AT: versionsDir() });
+
+    expect(absolute.status).toBe(0);
+    expect(current()).toBe(NodePath.join(versionsDir(), `0.0.1+fac.${second}`));
+    expect(versions()).toEqual([`0.0.1+fac.${second}`, first].toSorted());
+
+    // Installed after `second`, so only being `previous` keeps `second` ahead of it.
+    addVersion("0.0.1+fac.newerzz", -1);
+    const third = git(clone, "rev-parse", "--short", commitToOrigin("third"));
+
+    const relative = await runAutodeploy();
+
+    expect(relative.status).toBe(0);
+    expect(current()).toBe(`versions/0.0.1+fac.${third}`);
+    expect(versions()).toEqual([`0.0.1+fac.${third}`, `0.0.1+fac.${second}`].toSorted());
+    expect(pruned(relative.output).toSorted()).toEqual(
+      [`pruned versions/${first}`, "pruned versions/0.0.1+fac.newerzz"].toSorted(),
+    );
+  });
+
+  it("deletes nothing when current is not one of the version directories", async () => {
     writeMachineConfig("gh_config_dir: /gh\nmax_concurrent_runs: 1\nkeep_versions: 0\n");
     for (const [i, name] of ["a", "b", "c"].entries()) {
       addVersion(`0.0.1+fac.${name.repeat(7)}`, 60 - i);
     }
     addVersion(installedName(), 10);
-    const sha = commitToOrigin("second");
-    const short = git(clone, "rev-parse", "--short", sha);
+    commitToOrigin("second");
 
-    const result = await runAutodeploy({ ABSOLUTE_CURRENT: "1" });
+    const result = await runAutodeploy({ CURRENT_AT: NodePath.join(tmp, "elsewhere") });
 
     expect(result.status).toBe(0);
-    expect(current()).toBe(NodePath.join(root(), `versions/0.0.1+fac.${short}`));
-    expect(versions()).toHaveLength(5);
+    expect(versions()).toHaveLength(4);
     expect(pruned(result.output)).toEqual([]);
   });
 
