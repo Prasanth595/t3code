@@ -62,6 +62,7 @@ export const DelegatedLaunchBinding = Schema.Struct({
 export type DelegatedLaunchBinding = typeof DelegatedLaunchBinding.Type;
 
 export const CodexPoolRefusalCode = Schema.Literals([
+  "invalid_request",
   "invalid_prepare",
   "idempotency_conflict",
   "prepare_cancelled",

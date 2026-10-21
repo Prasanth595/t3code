@@ -121,16 +121,28 @@ export function classifyPoolRefusal(
 ): { readonly scope: LaunchRefusalScope; readonly domains?: ReadonlyArray<string> } | undefined {
   const refusal = state?.refusal;
   if (refusal) {
-    if (
-      refusal.code === "usage_limit" &&
-      refusal.quotaScope === "account" &&
-      refusal.quotaDomains.length > 0
-    )
-      return { scope: { type: "account" }, domains: refusal.quotaDomains };
-    if (refusal.quotaScope === "transient" || refusal.quotaScope === "model")
-      return { scope: { type: "candidate" } };
-    // Unverified quota scope may be the account; never treat it as independent.
-    return { scope: { type: "account" } };
+    switch (refusal.code) {
+      case "usage_limit":
+      case "model_quota":
+      case "throttled":
+        if (refusal.quotaScope === "account" && refusal.quotaDomains.length > 0)
+          return { scope: { type: "account" }, domains: refusal.quotaDomains };
+        if (refusal.quotaScope === "model" || refusal.quotaScope === "transient")
+          return { scope: { type: "candidate" } };
+        return { scope: { type: "account" } };
+      case "model_capacity":
+        return { scope: { type: "candidate" } };
+      case "capacity_unverified":
+      case "quota_unverified":
+      case "binding_changed":
+        return { scope: { type: "account" } };
+      case "binding_invalid":
+      case "binding_released":
+      case "prepare_cancelled":
+        return { scope: { type: "candidate" } };
+      default:
+        return undefined;
+    }
   }
   // The lease vanished (expiry, proxy restart, revocation) before any work.
   if (state?.state === "released" || state?.state === "invalid")

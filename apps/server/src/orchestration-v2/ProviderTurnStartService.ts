@@ -538,9 +538,13 @@ export const layer: Layer.Layer<
       const { isCurrentAttemptInStatus } = runControls;
       const launchGeneration = run.delegatedLaunch?.generation ?? 0;
       const boundLaunch =
-        run.delegatedLaunch && !run.delegatedLaunch.complete
-          ? run.delegatedLaunch.binding
-          : undefined;
+        run.delegatedLaunch?.binding ??
+        projection.runs.findLast(
+          (previous) =>
+            previous.providerThreadId === run.providerThreadId &&
+            previous.providerInstanceId === run.providerInstanceId &&
+            previous.delegatedLaunch?.binding !== undefined,
+        )?.delegatedLaunch?.binding;
       // A launch refusal before useful work returns to admission instead of
       // failing the delegated task.
       const recoverLaunch = (failure: unknown) =>

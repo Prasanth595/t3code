@@ -3392,3 +3392,37 @@ it.effect("finalizes the run when pool state proves an ordinary failure", () =>
     assert.include(observed, "root-finalized");
   }),
 );
+
+it.effect("restores buffered bound error items when recovery declines or a warning succeeds", () =>
+  Effect.gen(function* () {
+    for (const status of ["failed", "completed"] as const) {
+      const observed = yield* runBackgroundItemScenario(
+        `buffer-${status}`,
+        (ids) => {
+          const base = backgroundTurnItemEvent(ids, "command_execution", "running", 1);
+          if (base.type !== "turn_item.updated") return [];
+          return [
+            {
+              ...base,
+              turnItem: {
+                ...base.turnItem,
+                type: "error",
+                status: "failed",
+                failure: {
+                  class: "provider_error",
+                  message: "ordinary warning",
+                  code: null,
+                  retryable: null,
+                },
+              },
+            } as ProviderAdapter.ProviderAdapterV2Event,
+            rootTerminalEvent(ids, status),
+          ];
+        },
+        { isLaunchFailureCandidate: () => true, onLaunchQuotaFailure: () => Effect.succeed(false) },
+      );
+      assert.include(observed, "turn_item:failed");
+      assert.include(observed, "root-finalized");
+    }
+  }),
+);

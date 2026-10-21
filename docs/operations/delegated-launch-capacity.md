@@ -96,13 +96,13 @@ run's, the proxy `state` must be pending, inactive, with zero attempts and no
 refusal, and the native thread's provider must be `cliproxy_bound`. Any
 failure before useful work reads the authenticated `state`:
 
-| `state`                            | Effect                                                                       |
-| ---------------------------------- | ---------------------------------------------------------------------------- |
-| `usage_limit` with account domains | Blocks those accounts for every model                                        |
-| `throttled` / `model_capacity`     | Skips this instance+model for one minute (`capacityWait.reason` `throttled`) |
-| Unknown refusal scope              | Blocks the account; it is never treated as independent                       |
-| Lease `released` / `invalid`       | Skips the candidate                                                          |
-| No refusal                         | Ordinary failure, unless the native class was `usage_limit`                  |
+| `state`                                | Effect                                                                       |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| `usage_limit` with account domains     | Blocks those accounts for every model                                        |
+| `throttled` / `model_capacity`         | Skips this instance+model for one minute (`capacityWait.reason` `throttled`) |
+| Unknown actual quota/identity evidence | Blocks the account; it is never treated as independent                       |
+| Lease `released` / `invalid`           | Skips the candidate                                                          |
+| No refusal                             | Ordinary failure, unless the native class was `usage_limit`                  |
 
 After any content, tool call, plan or input request, no refusal relaunches the
 run. A superseded lease is cancelled and released. A session releases its
@@ -129,3 +129,68 @@ therefore reports unsupported; neither a GitHub login nor another account's
 usage establishes its runtime capacity. Configure a healthy native fallback or
 leave the task waiting. Antigravity's existing dashboard windows currently lack
 a reliable mapping to the selected runtime model and also remain unverified.
+
+### Recovery and restart boundary
+
+Before useful work, bound-launch error items are held until the trusted recovery
+outcome is known. A recovered quota refusal is omitted; an ordinary failure,
+nonfatal warning, or successful turn retains the error items in order. Both
+terminal failures and startup/stream transport failures use this decision.
+`model_mismatch`, `invalid_request`, `transport_unsupported`, authentication and
+unclassified upstream errors remain ordinary errors. Unknown actual quota or
+identity (`capacity_unverified`, `quota_unverified`, `binding_changed`) remains
+fail-closed.
+
+A pending lease that expires while the launcher starts re-enters admission on
+the same logical task. Reopened SQLite/service instances re-evaluate pending
+launches before opening a provider. Completed launch bindings also remain on
+subsequent turns and restart continuations sharing that native thread; they
+must never resume through an ordinary unpinned launcher. Useful output, tools,
+plans and input requests permanently close the launch retry boundary, including
+in the final persisted run.
+
+The v1 proxy stores bindings in memory, and the wrapper refuses `pool-launch`
+for an established binding. Consequently a T3 process restart cannot reopen an
+established native pin through this launch-only protocol, even when the proxy
+still has the binding. A proxy restart likewise loses the pin. These sessions
+stop/fail explicitly rather than change account or replay previous work.
+Transparent established-session restart would require a separately verified
+resume capability in the wrapper/proxy protocol; it is not implemented here.
+The guarantee covers quota at launch, not arbitrary mid-task infrastructure loss.
+
+### Account-scoped throttle limitation
+
+T3 can progress to another account on the same model when an authenticated
+`throttled` refusal supplies `quotaScope: "account"` and canonical quota domains.
+A model-wide `model_capacity` skips the candidate. The current proxy's
+`codexDelegatedFailure` emits `throttled/transient` with no account domains for
+`rate_limit_exceeded`, `rate_limit_error` and `slow_down`; `boundError` attaches
+domains only for account scope. This cannot distinguish account-specific
+throttle from a shared throttle. T3 conservatively skips that candidate instead
+of guessing independence. Full account-throttle fallback therefore remains
+blocked on a trustworthy producer scope/domain primitive. Exhaustion fallback
+and consumer handling of an explicitly account-scoped throttle are covered by
+orchestration tests.
+
+### Canonical Codex account evidence
+
+Native Codex maps backend `response.account_id` to `account/rateLimits/read`
+`accountId`, and exposes `ordinaryUsageAllowed` only when backend account and
+user match active authentication. The proxy uses OAuth metadata `account_id`
+for `Chatgpt-Account-Id`, rejects supplied usage-response account mismatches,
+and emits `codex:credential:<account_id>`. These are backend workspace/account
+identities, not email, auth-file ID, provider-instance ID or binding ID. Native
+missing/null permission or identity remains unverified. An authoritative
+weekly-only allowance is valid; primary/secondary are positions, not a
+mandatory five-hour/weekly pair.
+
+Source inspection: native Codex revision
+`83086188ae0614bd882818ff1aa23f3194962012`,
+`codex-rs/app-server/src/request_processors/account_processor.rs`
+(`get_account_rate_limits_response`) and `codex-rs/backend-client/src/types.rs`;
+proxy revision `d523fa86a409835223ee4b8be5bca6bf52f4122e`,
+`sdk/cliproxy/auth/delegated_launch.go` (`launchAccount`, `probe`,
+`decodeLaunchUsage`) and `internal/runtime/executor/codex_executor_terminal.go`.
+Synthetic native-schema fixtures prove weekly-only admission, withheld permission
+refusal, canonical pool/direct alias exclusion and independent same-model
+capacity. This is source/schema evidence, not a live credential comparison.

@@ -36,13 +36,16 @@ export const readCodexLaunchCapacity = Effect.fn("readCodexLaunchCapacity")(func
     confirmed?.type !== "chatgpt" ||
     !account.email?.trim() ||
     account.email !== confirmed.email ||
-    !limits.accountId?.trim()
+    !limits.accountId?.trim() ||
+    typeof limits.ordinaryUsageAllowed !== "boolean"
   )
     return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
   const raw = limits.rateLimitsByLimitId?.codex ?? limits.rateLimits;
+  const includedWindows = [raw.primary, raw.secondary].filter((window) => window != null);
   if (
-    [raw.primary, raw.secondary].some(
-      (w) => !w || !Number.isFinite(w.usedPercent) || w.usedPercent < 0 || w.usedPercent > 100,
+    includedWindows.length === 0 ||
+    includedWindows.some(
+      (w) => !Number.isFinite(w.usedPercent) || w.usedPercent < 0 || w.usedPercent > 100,
     )
   )
     return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
@@ -58,7 +61,7 @@ export const readCodexLaunchCapacity = Effect.fn("readCodexLaunchCapacity")(func
       ? { ordinaryUsageAllowed: limits.ordinaryUsageAllowed }
       : {}),
   };
-  if (!["primary", "secondary"].every((id) => usageLimits.windows.some((w) => w.id === id)))
+  if (!usageLimits.windows.some((w) => w.id === "primary" || w.id === "secondary"))
     return yield* new CodexLaunchCapacityError({ code: "delegated_capacity_unverified" });
   // Exhaustion is verified evidence; admission needs its identity to block aliases.
   return { email: account.email.trim().toLowerCase(), usageLimits };

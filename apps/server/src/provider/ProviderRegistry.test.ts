@@ -1,3 +1,8 @@
+import { ClaudeAgentSdkQueryRunner } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { ClaudeDriver } from "./Drivers/ClaudeDriver.ts";
+import * as FileSystem from "effect/FileSystem";
+import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";

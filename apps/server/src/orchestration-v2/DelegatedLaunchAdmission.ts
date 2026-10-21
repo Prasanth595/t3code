@@ -143,7 +143,9 @@ export function assessCapacity(
     return "unverified";
   const required =
     driver === "codex"
-      ? ["primary", "secondary"]
+      ? limits.ordinaryUsageAllowed !== undefined
+        ? []
+        : ["primary", "secondary"]
       : driver === "claudeAgent"
         ? ["five_hour", "seven_day"]
         : driver === "opencode" &&
@@ -156,7 +158,12 @@ export function assessCapacity(
               : driver === "grok"
                 ? ["subscription"]
                 : undefined;
-  if (!required || required.some((id) => !limits.windows.some((w) => w.id === id)))
+  if (
+    !required ||
+    (driver === "codex" &&
+      !limits.windows.some((w) => w.id === "primary" || w.id === "secondary")) ||
+    required.some((id) => !limits.windows.some((w) => w.id === id))
+  )
     return "unverified";
   const relevant = limits.windows.filter((window) => {
     if (driver === "cursor") return required.includes(window.id);
@@ -613,7 +620,15 @@ export const layer = Layer.effect(
               Effect.orElseSucceed(() => undefined),
             )
           : undefined;
-        const refusal = classifyPoolRefusal(state, isLaunchQuotaFailure(failure));
+        const expiredPending =
+          state?.state === "pending" &&
+          state.executorAttempts === 0 &&
+          !state.active &&
+          Date.parse(launch.binding.result.expiresAt) <=
+            DateTime.toEpochMillis(yield* DateTime.now);
+        const refusal = expiredPending
+          ? { scope: { type: "candidate" as const } }
+          : classifyPoolRefusal(state, isLaunchQuotaFailure(failure));
         if (!refusal) return false;
         return yield* recover(threadId, runId, launchGeneration, refusal.scope, refusal.domains);
       },
@@ -658,6 +673,20 @@ export const layer = Layer.effect(
           if (!run) return true;
           if (run.status !== "starting") return false;
           if (!run.delegatedTaskId || run.workStartedAt || run.delegatedLaunch?.complete)
+            return true;
+          // Continuations share the original native pin, even when the new run
+          // has no launch record. Admission must not turn prior work into a new launch.
+          if (
+            !run.delegatedLaunch &&
+            projection.runs.some(
+              (previous) =>
+                previous.id !== run.id &&
+                previous.delegatedTaskId === run.delegatedTaskId &&
+                previous.providerThreadId === run.providerThreadId &&
+                previous.providerInstanceId === run.providerInstanceId &&
+                previous.delegatedLaunch?.binding !== undefined,
+            )
+          )
             return true;
           if ((run.delegatedLaunch?.generation ?? 0) !== generation) return false;
           const providerThread = projection.providerThreads.find(

@@ -6846,7 +6846,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 // A new turn on an established pin is an explicit continuation:
                 // acknowledge only the refusal version actually observed.
                 const state = yield* pool.state(sessionBinding);
-                if (state?.refusal && !state.active)
+                if (!state || state.state !== "established")
+                  return yield* new CodexLaunchCapacityError({
+                    code: "delegated_capacity_unverified",
+                  });
+                if (state.refusal && !state.active)
                   yield* pool.resume(sessionBinding, state.refusalVersion);
               }
 

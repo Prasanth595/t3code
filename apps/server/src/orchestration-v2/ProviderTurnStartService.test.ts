@@ -1206,3 +1206,45 @@ effectIt.effect("settles a bound session-open failure when pool state proves it 
     expect(harness.startRootRun).not.toHaveBeenCalled();
   }),
 );
+
+effectIt.effect("keeps a completed launch pinned when opening a continuation session", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      delegatedLaunchBinding: boundLaunchBinding,
+      openFailure: new Error("bound continuation stopped"),
+    });
+    const run = harness.projection().runs[0]!;
+    Object.assign(run, { delegatedLaunch: { ...run.delegatedLaunch!, complete: true } });
+    yield* harness.start.pipe(Effect.exit);
+    expect(harness.open).toHaveBeenCalledWith(
+      expect.objectContaining({ delegatedLaunchBinding: boundLaunchBinding }),
+    );
+  }),
+);
+
+effectIt.effect(
+  "inherits the pin from an earlier run when a new continuation has no launch record",
+  () =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        delegatedLaunchBinding: boundLaunchBinding,
+        openFailure: new Error("bound continuation stopped"),
+      });
+      const current = harness.projection().runs[0]!;
+      const { delegatedLaunch, ...withoutLaunch } = current;
+      const previous = {
+        ...current,
+        id: RunId.make("previous-bound-run"),
+        ordinal: current.ordinal - 1,
+        status: "completed" as const,
+        delegatedLaunch: { ...delegatedLaunch!, complete: true },
+      };
+      Object.assign(harness.projection(), { runs: [previous, withoutLaunch] });
+      yield* harness.start.pipe(Effect.exit);
+      expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({ delegatedLaunchBinding: boundLaunchBinding }),
+      );
+    }),
+);

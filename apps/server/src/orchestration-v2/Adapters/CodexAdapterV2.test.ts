@@ -1,3 +1,5 @@
+import * as ServerConfig from "../../config.ts";
+import * as PlatformError from "effect/PlatformError";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import {
@@ -207,7 +209,6 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.isDefined(withT3.additionalContext?.["t3_code_runtime"]);
     }),
   );
-
 });
 
 describe("CodexAdapterV2 bound process spawning", () => {
@@ -1070,7 +1071,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                                 : method === "account/rateLimits/read"
                                   ? {
                                       accountId: capacity.accountId,
-                                      ordinaryUsageAllowed: capacity.ordinaryUsageAllowed,
+                                      ordinaryUsageAllowed: capacity.ordinaryUsageAllowed ?? true,
                                       rateLimits: {
                                         primary: { usedPercent: capacity.used },
                                         secondary: { usedPercent: 2 },

@@ -1,3 +1,4 @@
+import * as Layer from "effect/Layer";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -534,5 +535,22 @@ it.live.skipIf(!wrapperContractDir)(
         timeout: "20 seconds",
       });
       assert.equal(result.stdout.trim(), "accepted");
-    }).pipe(Effect.provide(ProcessRunner.layer), Effect.provide(NodeServices.layer)),
+    }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
+
+it("does not turn integration refusals into capacity exhaustion", () => {
+  for (const code of [
+    "model_mismatch",
+    "transport_unsupported",
+    "invalid_request",
+    "upstream_error",
+    "authentication_required",
+  ] as const) {
+    assert.isUndefined(
+      classifyPoolRefusal(
+        stateWith({ refusal: { code, quotaScope: "unknown", quotaDomains: [ACCOUNT] } }),
+        true,
+      ),
+    );
+  }
+});
