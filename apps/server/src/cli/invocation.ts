@@ -104,9 +104,12 @@ export function parseSystemdUnit(cgroup: string): ServerSystemdUnit | null {
     .split("\n")
     .map((line) => /^(?:0::|\d+:name=systemd:)(\/.*)$/.exec(line.trim())?.[1])
     .find((match) => match !== undefined);
-  const name = path?.split("/").at(-1);
-  if (path === undefined || name === undefined || !name.endsWith(".service")) return null;
-  if (/^user@\d+\.service$/.test(name)) return null;
+  // The owning unit, not the last segment: a `Delegate=yes` service may run us
+  // in a child cgroup of its own naming.
+  const name = path
+    ?.split("/")
+    .find((segment) => segment.endsWith(".service") && !/^user@\d+\.service$/.test(segment));
+  if (path === undefined || name === undefined) return null;
   return { name, scope: /\/user@\d+\.service\//.test(path) ? "user" : "system" };
 }
 

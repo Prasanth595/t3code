@@ -137,7 +137,7 @@ export function manualServerUpdate(
       command: `${systemctl} disable --now ${unitName} && ${launch} service install${baseDir}`,
       label: "Copy update command",
       title: "Update command copied",
-      description: `${unit.name} on ${serverLabel} keeps restarting this server on its old version. Run the command there: it turns ${unit.name} off and installs T3 Code's own service on t3@${targetVersion}, which updates in one click next time. Running agents stop.`,
+      description: `${unit.name} on ${serverLabel} keeps restarting this server on its old version. Run the command there: it turns ${unit.name} off and installs T3 Code's own service on t3@${targetVersion}, which updates in one click next time. Running agents stop. If the install fails, turn the old server back on with ${systemctl} enable --now ${unitName}.`,
     };
   }
   if (unit) {

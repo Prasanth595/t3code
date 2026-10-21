@@ -23,6 +23,12 @@ it("names only the service unit that would restart a stopped server", () => {
       "12:cpu,cpuacct:/system.slice/t3.service\n1:name=systemd:/system.slice/t3.service\n",
       { name: "t3.service", scope: "system" },
     ],
+    ["0::/system.slice/t3.service/payload\n", { name: "t3.service", scope: "system" }],
+    [
+      "0::/user.slice/user-1000.slice/user@1000.service/app.slice/t3.service/payload\n",
+      { name: "t3.service", scope: "user" },
+    ],
+    ["0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-term.scope", null],
     ["0::/user.slice/user-1000.slice/session-4.scope", null],
     ["0::/user.slice/user-1000.slice/user@1000.service", null],
     ["0::/", null],
