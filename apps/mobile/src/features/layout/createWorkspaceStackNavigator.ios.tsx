@@ -60,6 +60,11 @@ type ViewProps = ComponentProps<typeof NativeStackView>;
 type Descriptor = ViewProps["descriptors"][string];
 type Route = ViewProps["state"]["routes"][number];
 
+const isPullRequestRoute = (route: Route) =>
+  route.name === "PullRequest" ||
+  route.name === "PullRequestFile" ||
+  route.name === "PullRequestFiles";
+
 function ColumnScreen(props: {
   readonly descriptor: Descriptor;
   readonly primary?: boolean;
@@ -139,7 +144,8 @@ function WorkspaceColumns(
   const openNewTask = () => props.navigation.navigate("NewTaskSheet", { screen: "NewTask" });
   // The Duo keeps compose in the detail column's bar, which is its vertical bar in landscape
   // and folded, so it sits with the column's other actions whichever screen is shown. Pull
-  // requests leave it out; their bar is already full of review actions.
+  // requests leave it out, including one opened from a thread; their bar is already full of
+  // review actions.
   const detailCompose =
     isDuoDevice(deviceType) && selectedTab !== "pullRequests" ? openNewTask : undefined;
   const inspector = use(NativeWorkspaceInspectorContext);
@@ -149,12 +155,7 @@ function WorkspaceColumns(
   const collapsed = useRef(!layout.usesSplitView);
   const collapsedColumn = useRef<CollapsedSplitColumn>({ visible: compactColumn, leaving: null });
   const threadParams = props.detail.findLast((route) => route.name === "Thread")?.params;
-  const pullRequestParams = props.detail.findLast(
-    (route) =>
-      route.name === "PullRequest" ||
-      route.name === "PullRequestFile" ||
-      route.name === "PullRequestFiles",
-  )?.params;
+  const pullRequestParams = props.detail.findLast(isPullRequestRoute)?.params;
   const selectedPullRequestKey =
     pullRequestParams &&
     "environmentId" in pullRequestParams &&
@@ -294,7 +295,7 @@ function WorkspaceColumns(
                 descriptor={descriptor}
                 onDismiss={handleNativeDismiss}
                 onAppearance={followCollapsedSplit}
-                onCompose={detailCompose}
+                onCompose={isPullRequestRoute(route) ? undefined : detailCompose}
                 navigation={props.navigation}
               />
             ) : null;
