@@ -6,7 +6,6 @@ import {
   USAGE_CONTRACT_VERSION,
   UsageDay,
   UsageLimitSourceId,
-  UsageReadError,
   type ServerProvider,
   type ServerProviderUsageLimits,
   type UsageBucket,
@@ -121,59 +120,59 @@ const layerUsage = (
       }),
   });
 
-const read = (
-  input: { readonly days?: 1 | 7 | 30 | 90; readonly refresh?: boolean },
-  dependencies: {
-    readonly registry?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
-    readonly sources?: ReadonlyArray<UsageLimitSourceSnapshot>;
-    readonly usage?: Layer.Layer<UsageService.UsageService>;
-  },
-) =>
-  Effect.flatMap(UsageReport.UsageReport, (report) =>
-    report.read({ days: input.days ?? 30, refresh: input.refresh ?? false }),
-  ).pipe(
-    Effect.provide(
-      UsageReport.layer.pipe(
-        Layer.provide(dependencies.registry ?? ProviderRegistryMock.layer([])),
-        Layer.provide(
-          Layer.mock(UsageLimitSources.UsageLimitSources)({
-            current: Effect.succeed(dependencies.sources ?? []),
-            refresh: Effect.void,
-          }),
-        ),
-        Layer.provide(dependencies.usage ?? layerUsage([])),
-        Layer.provide(
-          Layer.mock(ServerEnvironment.ServerEnvironment)({
-            getDescriptor: Effect.succeed({
-              environmentId: EnvironmentId.make("usage-report-test"),
-              label: "Test environment",
-              platform: { os: "linux", arch: "x64" },
-              serverVersion: "0.0.0-test",
-              capabilities: { repositoryIdentity: true },
-            }),
-          }),
-        ),
-      ),
+interface Dependencies {
+  readonly registry?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
+  readonly sources?: ReadonlyArray<UsageLimitSourceSnapshot>;
+  readonly usage?: Layer.Layer<UsageService.UsageService>;
+}
+
+const layerReport = (dependencies: Dependencies) =>
+  UsageReport.layer.pipe(
+    Layer.provide(dependencies.registry ?? ProviderRegistryMock.layer([])),
+    Layer.provide(
+      Layer.mock(UsageLimitSources.UsageLimitSources)({
+        current: Effect.succeed(dependencies.sources ?? []),
+        refresh: Effect.void,
+      }),
+    ),
+    Layer.provide(dependencies.usage ?? layerUsage([])),
+    Layer.provide(
+      Layer.mock(ServerEnvironment.ServerEnvironment)({
+        getDescriptor: Effect.succeed({
+          environmentId: EnvironmentId.make("usage-report-test"),
+          label: "Test environment",
+          platform: { os: "linux", arch: "x64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        }),
+      }),
     ),
   );
 
+const readLimits = (dependencies: Dependencies, refresh = false) =>
+  Effect.flatMap(UsageReport.UsageReport, (report) => report.readLimits({ refresh })).pipe(
+    Effect.provide(layerReport(dependencies)),
+  );
+
+const readSpend = (dependencies: Dependencies, days: 1 | 7 | 30 | 90 = 30) =>
+  Effect.flatMap(UsageReport.UsageReport, (report) =>
+    report.readSpend({ days, refresh: false }),
+  ).pipe(Effect.provide(layerReport(dependencies)));
+
 it.effect("reports each enabled provider's remaining headroom and reset time", () =>
   Effect.gen(function* () {
-    const report = yield* read(
-      {},
-      {
-        registry: ProviderRegistryMock.layer([
-          provider("claudeAgent", {
-            displayName: "Claude",
-            auth: { status: "authenticated", label: "Max", email: "dev@example.com" },
-            usageLimits: limits(),
-          }),
-          provider("cursor", { enabled: false, usageLimits: limits() }),
-        ]),
-      },
-    );
+    const report = yield* readLimits({
+      registry: ProviderRegistryMock.layer([
+        provider("claudeAgent", {
+          displayName: "Claude",
+          auth: { status: "authenticated", label: "Max", email: "dev@example.com" },
+          usageLimits: limits(),
+        }),
+        provider("cursor", { enabled: false, usageLimits: limits() }),
+      ]),
+    });
 
-    assert.deepStrictEqual(report.limits.providers, [
+    assert.deepStrictEqual(report.providers, [
       {
         providerInstanceId: ProviderInstanceId.make("claudeAgent"),
         driverKind: ProviderDriverKind.make("claudeAgent"),
@@ -209,35 +208,32 @@ it.effect("reports each enabled provider's remaining headroom and reset time", (
 
 it.effect("says why a provider's windows do not show its headroom", () =>
   Effect.gen(function* () {
-    const report = yield* read(
-      {},
-      {
-        registry: ProviderRegistryMock.layer([
-          provider("apiKey", {
-            usageLimits: limits({
-              windows: [],
-              unavailable: { reason: "unsupported", message: "API keys have no limits." },
-            }),
+    const report = yield* readLimits({
+      registry: ProviderRegistryMock.layer([
+        provider("apiKey", {
+          usageLimits: limits({
+            windows: [],
+            unavailable: { reason: "unsupported", message: "API keys have no limits." },
           }),
-          provider("failed", {
-            usageLimits: limits({ unavailable: { reason: "probeFailed" } }),
-          }),
-          provider("silent"),
-          provider("failedUpdate", {
-            status: "error",
-            message: "Provider refresh failed after update.",
-            usageLimits: limits(),
-          }),
-          provider("signedOut", {
-            auth: { status: "unauthenticated" },
-            usageLimits: limits(),
-          }),
-        ]),
-      },
-    );
+        }),
+        provider("failed", {
+          usageLimits: limits({ unavailable: { reason: "probeFailed" } }),
+        }),
+        provider("silent"),
+        provider("failedUpdate", {
+          status: "error",
+          message: "Provider refresh failed after update.",
+          usageLimits: limits(),
+        }),
+        provider("signedOut", {
+          auth: { status: "unauthenticated" },
+          usageLimits: limits(),
+        }),
+      ]),
+    });
 
     assert.deepStrictEqual(
-      report.limits.providers.map(
+      report.providers.map(
         (entry) => [String(entry.providerInstanceId), entry.unavailable] as const,
       ),
       [
@@ -258,7 +254,7 @@ it.effect("says why a provider's windows do not show its headroom", () =>
       ],
     );
     assert.deepStrictEqual(
-      report.limits.providers.find((entry) => entry.providerInstanceId === "signedOut")?.windows,
+      report.providers.find((entry) => entry.providerInstanceId === "signedOut")?.windows,
       [],
     );
   }),
@@ -266,38 +262,35 @@ it.effect("says why a provider's windows do not show its headroom", () =>
 
 it.effect("includes hub accounts and the errors of hubs that could not be read", () =>
   Effect.gen(function* () {
-    const report = yield* read(
-      {},
-      {
-        sources: [
-          {
-            id: UsageLimitSourceId.make("hub"),
-            kind: "cliproxy",
-            label: "Team hub",
-            checkedAt,
-            accounts: [
-              {
-                id: "codex-1.json",
-                driver: ProviderDriverKind.make("codex"),
-                plan: "Pro",
-                usageLimits: limits(),
-              },
-            ],
-          },
-          {
-            id: UsageLimitSourceId.make("down"),
-            kind: "cliproxy",
-            label: "Down hub",
-            checkedAt,
-            accounts: [],
-            error: "Connection refused.",
-          },
-        ],
-      },
-    );
+    const report = yield* readLimits({
+      sources: [
+        {
+          id: UsageLimitSourceId.make("hub"),
+          kind: "cliproxy",
+          label: "Team hub",
+          checkedAt,
+          accounts: [
+            {
+              id: "codex-1.json",
+              driver: ProviderDriverKind.make("codex"),
+              plan: "Pro",
+              usageLimits: limits(),
+            },
+          ],
+        },
+        {
+          id: UsageLimitSourceId.make("down"),
+          kind: "cliproxy",
+          label: "Down hub",
+          checkedAt,
+          accounts: [],
+          error: "Connection refused.",
+        },
+      ],
+    });
 
     assert.deepStrictEqual(
-      report.limits.pooledAccounts.map((account) => ({
+      report.pooledAccounts.map((account) => ({
         sourceLabel: account.sourceLabel,
         accountId: account.accountId,
         plan: account.plan,
@@ -320,13 +313,10 @@ it.effect("re-reads providers before answering when asked to refresh", () =>
     });
 
     assert.strictEqual(
-      (yield* read({}, { registry })).limits.providers[0]?.checkedAt,
+      (yield* readLimits({ registry })).providers[0]?.checkedAt,
       "2026-10-20T00:00:00Z",
     );
-    assert.strictEqual(
-      (yield* read({ refresh: true }, { registry })).limits.providers[0]?.checkedAt,
-      checkedAt,
-    );
+    assert.strictEqual((yield* readLimits({ registry }, true)).providers[0]?.checkedAt, checkedAt);
   }),
 );
 
@@ -334,8 +324,7 @@ it.effect("totals spend by provider, model, and day for the Usage tab's window",
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-10-21T12:00:00Z"));
     const requests: Array<UsageSummaryInput> = [];
-    const report = yield* read(
-      { days: 7 },
+    const spend = yield* readSpend(
       {
         usage: layerUsage(
           [
@@ -352,6 +341,7 @@ it.effect("totals spend by provider, model, and day for the Usage tab's window",
           requests,
         ),
       },
+      7,
     );
 
     assert.strictEqual(requests[0]?.resolution, "day");
@@ -359,9 +349,6 @@ it.effect("totals spend by provider, model, and day for the Usage tab's window",
       [requests[0]?.sinceDay, requests[0]?.untilDay],
       ["2026-10-15", "2026-10-21"],
     );
-    const spend = report.spend;
-    assert.isNotNull(spend);
-    if (spend === null) return;
     assert.strictEqual(spend.window.days, 7);
     assert.strictEqual(spend.costUsd, 3.01);
     assert.strictEqual(spend.tokens.total, 31_500);
@@ -390,38 +377,17 @@ it.effect("totals spend by provider, model, and day for the Usage tab's window",
   }),
 );
 
-it.effect("keeps the limits when spend cannot be read", () =>
-  Effect.gen(function* () {
-    const report = yield* read(
-      {},
-      {
-        registry: ProviderRegistryMock.layer([provider("codex", { usageLimits: limits() })]),
-        usage: Layer.mock(UsageService.UsageService)({
-          readSummary: () =>
-            Effect.fail(
-              new UsageReadError({ reason: "scanFailed", detail: "Transcripts are unreadable." }),
-            ),
-        }),
-      },
-    );
-
-    assert.strictEqual(report.spend, null);
-    assert.strictEqual(report.limits.providers[0]?.unavailable, null);
-    assert.deepStrictEqual(report.notices, ["Spend: Transcripts are unreadable."]);
-  }),
-);
-
 it.effect("reads the past 24 hours by hour, as the Usage tab does", () =>
   Effect.gen(function* () {
     const requests: Array<UsageSummaryInput> = [];
-    const report = yield* read(
-      { days: 1 },
+    const spend = yield* readSpend(
       { usage: layerUsage([bucket({ hourStart: "2026-10-20T14:00:00.000Z" })], requests) },
+      1,
     );
 
     assert.strictEqual(requests[0]?.resolution, "hour");
     assert.deepStrictEqual(
-      report.spend?.periods.map((period) => period.start),
+      spend.periods.map((period) => period.start),
       ["2026-10-20T14:00:00.000Z"],
     );
   }),
@@ -429,22 +395,19 @@ it.effect("reads the past 24 hours by hour, as the Usage tab does", () =>
 
 it.effect("says when spend leaves out a source that is still loading or cannot be read", () =>
   Effect.gen(function* () {
-    const report = yield* read(
-      {},
-      {
-        usage: layerUsage(
-          [bucket({})],
-          [],
-          [
-            source("codex", { refreshing: true }),
-            source("cursor", { status: "missing", message: "Cursor account usage is off." }),
-            source("claude", { status: "missing", message: "No Claude transcripts found." }),
-          ],
-        ),
-      },
-    );
+    const spend = yield* readSpend({
+      usage: layerUsage(
+        [bucket({})],
+        [],
+        [
+          source("codex", { refreshing: true }),
+          source("cursor", { status: "missing", message: "Cursor account usage is off." }),
+          source("claude", { status: "missing", message: "No Claude transcripts found." }),
+        ],
+      ),
+    });
 
-    assert.deepStrictEqual(report.notices, [
+    assert.deepStrictEqual(spend.notices, [
       "codex usage is still being read, so spend leaves it out. Pass refresh: true to wait for it.",
       "Cursor account usage is off.",
     ]);

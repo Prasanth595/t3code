@@ -114,12 +114,13 @@ the message to read it from stdin.
 2 when the agent waits for an answer you give in the app. Add `--json` for a
 result that always includes the thread id.
 
-`t3 usage` prints what the Usage tab shows for this environment: each
-provider's remaining subscription limits and when they reset, and the token and
-dollar spend for the last 30 days. Spend counts days in the server's time zone
-and includes every provider, even ones hidden on the Usage tab. `--days 1|7|30|90` picks the spend window,
-`--refresh` reads the limits again first, and `--json` prints the same result
-agents get from the `t3_usage` tool.
+`t3 usage limits` prints each provider's remaining subscription limits and when
+they reset, so a script can pick the provider with the most headroom.
+`t3 usage spend` prints the Usage tab's token and dollar spend for the last 30
+days; `--days 1|7|30|90` picks another window. Spend counts days in the
+server's time zone and includes every provider, even ones hidden on the Usage
+tab. `--refresh` reads again first, and `--json` prints the same result agents
+get from the `t3_usage_limits` and `t3_usage_spend` tools.
 
 ## Remove an agent
 

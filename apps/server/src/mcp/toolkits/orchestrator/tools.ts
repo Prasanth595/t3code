@@ -18,8 +18,10 @@ import {
   OrchestratorMcpTaskCancelInput,
   OrchestratorMcpTaskCancelResult,
   OrchestratorMcpUpdateScheduledTaskInput,
-  OrchestratorMcpUsageInput,
-  OrchestratorMcpUsageResult,
+  OrchestratorMcpUsageLimitsInput,
+  OrchestratorMcpUsageLimitsResult,
+  OrchestratorMcpUsageSpendInput,
+  OrchestratorMcpUsageSpendResult,
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
@@ -68,16 +70,30 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-const UsageTool = Tool.make("t3_usage", {
+const UsageLimitsTool = Tool.make("t3_usage_limits", {
   description:
-    "Read what the Usage tab shows for this environment, to compare Codex and Claude headroom and cost before choosing where to start or delegate work. limits lists each enabled provider instance's subscription windows with usedPercent, remainingPercent, and resetsAt. When unavailable is set, that provider's windows do not show its headroom: an API key or Bedrock account has no subscription limits (unsupported), the last read failed (probeFailed), the provider has not reported limits (notReported), or it is not installed, signed in, or healthy (providerUnavailable). Limits can be old while no T3 client is open; checkedAt says when each was read. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub. spend gives the token and API-priced USD totals the Usage tab calculates from this environment's provider transcripts, split by provider, model, token type, and day (or hour for days=1) in the server's time zone. spend is null when transcripts cannot be read; notices say when a source is missing or still loading.",
-  parameters: OrchestratorMcpUsageInput,
-  success: OrchestratorMcpUsageResult,
+    "Read each enabled provider instance's subscription limits, such as Codex and Claude, to compare headroom before choosing where to start or delegate work. Each window gives usedPercent, remainingPercent, and resetsAt. When unavailable is set, that provider's windows do not show its headroom: an API key or Bedrock account has no subscription limits (unsupported), the last read failed (probeFailed), the provider has not reported limits (notReported), or it is not installed, signed in, or healthy (providerUnavailable). Limits can be old while no T3 client is open; checkedAt says when each was read. pooledAccounts lists accounts from usage limit sources such as a CLI Proxy hub. For token and dollar spend, use t3_usage_spend.",
+  parameters: OrchestratorMcpUsageLimitsInput,
+  success: OrchestratorMcpUsageLimitsResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [UsageReport.UsageReport],
 })
-  .annotate(Tool.Title, "Get usage limits and spend")
+  .annotate(Tool.Title, "Get usage limits")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
+const UsageSpendTool = Tool.make("t3_usage_spend", {
+  description:
+    "Read the token and API-priced USD spend the Usage tab calculates from this environment's provider transcripts, split by provider, model, token type, and day (or hour for days=1) in the server's time zone. notices say when a source is missing or still loading. For remaining quota and reset times, use t3_usage_limits.",
+  parameters: OrchestratorMcpUsageSpendInput,
+  success: OrchestratorMcpUsageSpendResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [UsageReport.UsageReport],
+})
+  .annotate(Tool.Title, "Get usage spend")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
@@ -292,7 +308,8 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
 
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
-  UsageTool,
+  UsageLimitsTool,
+  UsageSpendTool,
   DelegateTaskTool,
   TaskStatusTool,
   TaskCancelTool,

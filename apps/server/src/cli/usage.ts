@@ -1,7 +1,6 @@
 import {
-  OrchestratorMcpUsageResult,
-  type OrchestratorMcpUsageLimits,
-  type OrchestratorMcpUsageSpend,
+  OrchestratorMcpUsageLimitsResult,
+  OrchestratorMcpUsageSpendResult,
   type OrchestratorMcpUsageWindow,
 } from "@t3tools/contracts";
 import { formatCount, formatPercent, formatTokens, formatUsd } from "@t3tools/shared/usageFormat";
@@ -15,7 +14,7 @@ import { projectLocationFlags } from "./config.ts";
 import { printJson, reportThreadErrors, withThreadTools } from "./thread.ts";
 
 type Reading = Pick<
-  OrchestratorMcpUsageLimits["providers"][number],
+  OrchestratorMcpUsageLimitsResult["providers"][number],
   "email" | "plan" | "checkedAt" | "windows" | "unavailable"
 >;
 
@@ -27,7 +26,7 @@ const formatWindow = (window: OrchestratorMcpUsageWindow, now: number) => {
       : resetsAt <= now
         ? " · resets now"
         : ` · resets in ${formatDuration(resetsAt - now)}`;
-  return `    ${window.label.padEnd(16)} ${String(window.remainingPercent).padStart(3)}% left${reset}`;
+  return `  ${window.label.padEnd(16)} ${String(window.remainingPercent).padStart(3)}% left${reset}`;
 };
 
 const formatReading = (title: string, reading: Reading, now: number) => {
@@ -41,14 +40,17 @@ const formatReading = (title: string, reading: Reading, now: number) => {
     .filter((part) => part !== null)
     .join(" · ");
   return [
-    `  ${header}`,
+    header,
     ...(reading.unavailable === null
       ? reading.windows.map((window) => formatWindow(window, now))
-      : [`    ${reading.unavailable.message}`]),
+      : [`  ${reading.unavailable.message}`]),
   ];
 };
 
-const formatLimits = (limits: OrchestratorMcpUsageLimits, now: number) => {
+const formatNotices = (notices: ReadonlyArray<string>) =>
+  notices.length === 0 ? [] : ["Notices", ...notices.map((notice) => `  ${notice}`)];
+
+export const formatLimits = (limits: OrchestratorMcpUsageLimitsResult, now: number) => {
   const lines = [
     ...limits.providers.flatMap((provider) =>
       formatReading(
@@ -65,7 +67,10 @@ const formatLimits = (limits: OrchestratorMcpUsageLimits, now: number) => {
       ),
     ),
   ];
-  return ["Limits", ...(lines.length === 0 ? ["  No providers are enabled."] : lines)];
+  return [
+    ...(lines.length === 0 ? ["No providers are enabled."] : lines),
+    ...formatNotices(limits.notices),
+  ].join("\n");
 };
 
 const amount = (costUsd: number | null, totalTokens: number) =>
@@ -77,7 +82,7 @@ const joinNonZero = (parts: ReadonlyArray<readonly [string, number]>) =>
     .map(([label, value]) => `${label} ${formatUsd(value)}`)
     .join(" · ");
 
-const formatSpend = (spend: OrchestratorMcpUsageSpend) => {
+export const formatSpend = (spend: OrchestratorMcpUsageSpendResult) => {
   const { window, tokens } = spend;
   const range =
     window.days === 1
@@ -125,19 +130,48 @@ const formatSpend = (spend: OrchestratorMcpUsageSpend) => {
       (period) =>
         `    ${period.start.padEnd(width)}  ${amount(period.costUsd, period.totalTokens)}`,
     ),
-  ];
+    ...formatNotices(spend.notices),
+  ].join("\n");
 };
 
-export const formatUsage = (report: OrchestratorMcpUsageResult, now: number) =>
-  [
-    ...formatLimits(report.limits, now),
-    ...(report.spend === null ? [] : formatSpend(report.spend)),
-    ...(report.notices.length === 0
-      ? []
-      : ["Notices", ...report.notices.map((notice) => `  ${notice}`)]),
-  ].join("\n");
+const jsonFlag = Flag.Boolean("json").pipe(
+  Flag.withDescription("Print JSON instead of text."),
+  Flag.withDefault(false),
+);
 
-export const usageCommand = Command.make("usage", {
+const usageClient = { label: "t3 usage cli", name: "t3-usage-cli" };
+
+const usageLimitsCommand = Command.make("limits", {
+  ...projectLocationFlags,
+  refresh: Flag.Boolean("refresh").pipe(
+    Flag.withDescription("Re-read every provider before printing. Slower."),
+    Flag.withDefault(false),
+  ),
+  json: jsonFlag,
+}).pipe(
+  Command.withDescription(
+    "Show each provider's remaining subscription limits and when they reset.",
+  ),
+  Command.withHandler((flags) =>
+    withThreadTools(
+      flags,
+      Effect.fn("cli.usage.limits")(function* (tools) {
+        const limits = yield* tools.call(
+          "t3_usage_limits",
+          { refresh: flags.refresh },
+          OrchestratorMcpUsageLimitsResult,
+        );
+        if (flags.json) {
+          return yield* printJson(limits);
+        }
+        yield* Console.log(formatLimits(limits, DateTime.toEpochMillis(yield* DateTime.now)));
+      }),
+      usageClient,
+    ).pipe(reportThreadErrors),
+  ),
+);
+
+const usageSpendCommand = Command.make("spend", {
   ...projectLocationFlags,
   days: Flag.ChoiceWithValue("days", [
     ["1", 1],
@@ -145,36 +179,37 @@ export const usageCommand = Command.make("usage", {
     ["30", 30],
     ["90", 90],
   ] as const).pipe(
-    Flag.withDescription("Spend window in days, as on the Usage tab. 1 shows the past 24 hours."),
+    Flag.withDescription("Window in days, as on the Usage tab. 1 shows the past 24 hours."),
     Flag.withDefault(30),
   ),
   refresh: Flag.Boolean("refresh").pipe(
-    Flag.withDescription("Re-read every provider before printing. Slower."),
+    Flag.withDescription("Wait for sources that are still loading. Slower."),
     Flag.withDefault(false),
   ),
-  json: Flag.Boolean("json").pipe(
-    Flag.withDescription("Print JSON instead of text."),
-    Flag.withDefault(false),
-  ),
+  json: jsonFlag,
 }).pipe(
   Command.withDescription(
-    "Show what the Usage tab shows for this environment: each provider's subscription limits and reset times, and token and dollar spend, with days in the server's time zone.",
+    "Show the Usage tab's token and dollar spend for this environment, with days in the server's time zone.",
   ),
   Command.withHandler((flags) =>
     withThreadTools(
       flags,
-      Effect.fn("cli.usage")(function* (tools) {
-        const report = yield* tools.call(
-          "t3_usage",
+      Effect.fn("cli.usage.spend")(function* (tools) {
+        const spend = yield* tools.call(
+          "t3_usage_spend",
           { days: flags.days, refresh: flags.refresh },
-          OrchestratorMcpUsageResult,
+          OrchestratorMcpUsageSpendResult,
         );
-        if (flags.json) {
-          return yield* printJson(report);
-        }
-        yield* Console.log(formatUsage(report, DateTime.toEpochMillis(yield* DateTime.now)));
+        yield* flags.json ? printJson(spend) : Console.log(formatSpend(spend));
       }),
-      { label: "t3 usage cli", name: "t3-usage-cli" },
+      usageClient,
     ).pipe(reportThreadErrors),
   ),
+);
+
+export const usageCommand = Command.make("usage").pipe(
+  Command.withDescription(
+    "Show what the Usage tab shows, from the running server: limits or spend.",
+  ),
+  Command.withSubcommands([usageLimitsCommand, usageSpendCommand]),
 );
