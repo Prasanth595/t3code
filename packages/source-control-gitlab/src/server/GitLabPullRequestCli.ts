@@ -1315,14 +1315,18 @@ export const make = Effect.gen(function* () {
             id: String(id),
             isAssigned: true,
           }));
-          const assignedIds = new Set(assigned.map((user) => user.id));
+          const listed = new Set(assigned.map((user) => user.id));
+          // Every assignee id, not just the ones shown above: an assignee GitLab sent without a
+          // username can still turn up on the users page, and must read as assigned there or
+          // choosing them would assign again instead of unassigning.
+          const assignedIds = new Set(mergeRequest.assigneeIds.map(String));
           return {
             // The assignees lead, and come from the merge request rather than the users page:
             // that page stops at a hundred, and somebody missing from it could not be unassigned.
             candidates: [
               ...assigned,
               ...users.candidates.flatMap(({ kind: _kind, isRequested: _isRequested, ...user }) =>
-                assignedIds.has(user.id) ? [] : [{ ...user, isAssigned: false }],
+                listed.has(user.id) ? [] : [{ ...user, isAssigned: assignedIds.has(user.id) }],
               ),
             ],
             truncated: users.rawCount >= MAX_PAGE_SIZE,

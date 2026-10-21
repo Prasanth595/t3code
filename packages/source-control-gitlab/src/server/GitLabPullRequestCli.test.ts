@@ -1157,6 +1157,28 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("marks an assignee GitLab sent without a username as assigned on the users page", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ assignees: [{ id: 5, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listAssigneeCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.id, candidate.isAssigned])).toEqual([
+        ["1", false],
+        ["5", true],
+      ]);
+    }),
+  );
+
   it.effect("lists the assignees first, even when the users page does not reach them", () =>
     Effect.gen(function* () {
       mockedExecute
