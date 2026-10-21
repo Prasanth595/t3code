@@ -104,11 +104,15 @@ function summaryWindows(summary: typeof Summary.Type) {
   for (const group of groups ?? []) {
     for (const bucket of group.buckets ?? []) {
       if (bucket.disabled) continue;
-      const family = bucket.bucketId.startsWith("gemini-")
-        ? "Gemini"
-        : bucket.bucketId.startsWith("3p-")
-          ? "Claude & GPT (shared)"
-          : group.displayName?.trim() || bucket.bucketId;
+      // Argon's weekly allowance is metered apart from the default Gemini
+      // buckets, so it keeps its own name instead of a second "Gemini · Weekly".
+      const family = bucket.bucketId.startsWith("gemini-argon-")
+        ? group.displayName?.trim() || "Gemini 4 Argon"
+        : bucket.bucketId.startsWith("gemini-")
+          ? "Gemini"
+          : bucket.bucketId.startsWith("3p-")
+            ? "Claude & GPT (shared)"
+            : group.displayName?.trim() || bucket.bucketId;
       const weekly = bucket.window === "weekly";
       const session = bucket.window === "5h";
       const window = quotaWindow(
@@ -129,13 +133,15 @@ function modelWindows(models: typeof Models.Type) {
   const windows = new Map<string, ServerProviderUsageWindow>();
   for (const [modelId, model] of Object.entries(models.models)) {
     const family =
-      model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
-        ? "Gemini"
-        : model.modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")
-          ? "Claude"
-          : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
-            ? "GPT"
-            : undefined;
+      modelId.startsWith("gemini-") && modelId.includes("-argon")
+        ? "Gemini 4 Argon"
+        : model.modelProvider === "MODEL_PROVIDER_GOOGLE" || modelId.startsWith("gemini-")
+          ? "Gemini"
+          : model.modelProvider === "MODEL_PROVIDER_ANTHROPIC" || modelId.startsWith("claude-")
+            ? "Claude"
+            : model.modelProvider === "MODEL_PROVIDER_OPENAI" || modelId.startsWith("gpt-")
+              ? "GPT"
+              : undefined;
     if (!family) continue;
     for (const [suffix, quota] of [
       ["quota", model.quotaInfo],
@@ -143,7 +149,7 @@ function modelWindows(models: typeof Models.Type) {
     ] as const) {
       if (!quota) continue;
       const window = quotaWindow(
-        `${family.toLowerCase()}-${suffix}`,
+        `${family.toLowerCase().replaceAll(" ", "-")}-${suffix}`,
         `${family} · ${suffix === "weekly" ? "Weekly" : "Reported quota"}`,
         quota,
         suffix === "weekly" ? "weekly" : "other",

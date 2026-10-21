@@ -221,6 +221,41 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("labels Argon's weekly quota apart from the default Gemini weekly quota", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summary: {
+          groups: [
+            ...summary.groups,
+            {
+              displayName: "Gemini 4 Argon",
+              buckets: [
+                {
+                  bucketId: "gemini-argon-wtu-weekly",
+                  window: "weekly",
+                  remainingFraction: 0.6,
+                  resetTime: "2026-10-25T00:25:01Z",
+                },
+              ],
+            },
+          ],
+        },
+      });
+      const limits = yield* probe;
+      const labels = limits.windows.map((window) => window.label);
+      expect(new Set(labels).size).toBe(labels.length);
+      const byId = new Map(limits.windows.map((window) => [window.id, window]));
+      expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
+      expect(byId.get("gemini-argon-wtu-weekly")).toMatchObject({
+        label: "Gemini 4 Argon · Weekly",
+        kind: "weekly",
+        windowDurationMins: 10080,
+        resetsAt: "2026-10-25T00:25:01.000Z",
+      });
+      expect(byId.get("gemini-argon-wtu-weekly")?.usedPercent).toBeCloseTo(40);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("keeps one endpoint's quotas when the other fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
@@ -291,6 +326,38 @@ describe("Antigravity subscription limits", () => {
           (window) => window.kind === "other" && window.windowDurationMins === undefined,
         ),
       ).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps Argon model quotas apart from other Gemini models in the fallback", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summaryStatus: 404,
+        models: {
+          models: {
+            "gemini-3.8-flash-high": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              weeklyQuotaInfo: { remainingFraction: 0.95 },
+            },
+            "gemini-4-argon-medium": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              weeklyQuotaInfo: { remainingFraction: 0.7 },
+            },
+            "gemini-4-argon-high": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              weeklyQuotaInfo: { remainingFraction: 0.5 },
+            },
+          },
+        },
+      });
+      const byId = new Map((yield* probe).windows.map((window) => [window.id, window]));
+      expect(byId.get("gemini-weekly")?.usedPercent).toBeCloseTo(5);
+      expect(byId.get("gemini-4-argon-weekly")).toMatchObject({
+        label: "Gemini 4 Argon · Weekly",
+        kind: "weekly",
+      });
+      // Argon's tiers draw on one allowance, so the most-used reading wins.
+      expect(byId.get("gemini-4-argon-weekly")?.usedPercent).toBeCloseTo(50);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
