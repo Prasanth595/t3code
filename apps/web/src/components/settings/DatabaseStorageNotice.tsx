@@ -6,7 +6,6 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
-import { SettingsGroup } from "./SettingsGroup";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 const DismissedEnvironmentIds = Schema.Array(Schema.String);
@@ -34,40 +33,38 @@ export function DatabaseStorageNotice({
   if (visible.length === 0) return null;
   return (
     <SettingsSection id="storage-database" title="Database">
-      <SettingsGroup>
+      <SettingsRow
+        title="Reclaim freed database space"
+        description="Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment."
+      />
+      {visible.map(({ environmentId, status }) => (
         <SettingsRow
-          title="Reclaim freed database space"
-          description="Old history is cleaned up automatically, but these databases still hold the freed space. Run the command on each machine to return it to disk; it pauses and restarts the background service. Quit the desktop app first if it hosts the environment."
+          key={environmentId}
+          title={`${(status.reclaimableBytes / 1024 ** 3).toFixed(1)} GiB on ${
+            environments.find((environment) => environment.environmentId === environmentId)
+              ?.label ?? environmentId
+          }`}
+          description={<code className="select-text break-all">{status.compactCommand}</code>}
+          control={
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => copyToClipboard(status.compactCommand, undefined)}
+              >
+                Copy command
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => setDismissed((current) => [...current, environmentId])}
+              >
+                Dismiss
+              </Button>
+            </div>
+          }
         />
-        {visible.map(({ environmentId, status }) => (
-          <SettingsRow
-            key={environmentId}
-            title={`${(status.reclaimableBytes / 1024 ** 3).toFixed(1)} GiB on ${
-              environments.find((environment) => environment.environmentId === environmentId)
-                ?.label ?? environmentId
-            }`}
-            description={<code className="select-text break-all">{status.compactCommand}</code>}
-            control={
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Button
-                  variant="outline"
-                  size="xs"
-                  onClick={() => copyToClipboard(status.compactCommand, undefined)}
-                >
-                  Copy command
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => setDismissed((current) => [...current, environmentId])}
-                >
-                  Dismiss
-                </Button>
-              </div>
-            }
-          />
-        ))}
-      </SettingsGroup>
+      ))}
     </SettingsSection>
   );
 }
